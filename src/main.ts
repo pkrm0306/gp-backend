@@ -10,12 +10,12 @@ async function bootstrap() {
 
   app.enableCors({
     origin: [
-      'http://localhost:3001',
-      'http://localhost:3002',
-      'http://localhost:3000',
-      'http://localhost:3003',
+      'http://localhost:3001',           // Local development
+      'http://localhost:3002',           // Local development (if different port)
+      'https://greenpro-vendor.vercel.app',  // Your Vercel production domain
+      'https://*.vercel.app',            // All Vercel preview deployments
     ],
-    credentials: true,
+    credentials: false,  // Set to true only if you need cookies
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
