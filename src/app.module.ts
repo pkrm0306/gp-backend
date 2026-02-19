@@ -5,6 +5,8 @@ import { AuthModule } from './auth/auth.module';
 import { ManufacturersModule } from './manufacturers/manufacturers.module';
 import { VendorsModule } from './vendors/vendors.module';
 import { VendorUsersModule } from './vendor-users/vendor-users.module';
+import { PartnersModule } from './partners/partners.module';
+import { AdminModule } from './admin/admin.module';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
 
 @Module({
@@ -24,6 +26,8 @@ import { LoggingMiddleware } from './common/middleware/logging.middleware';
     ManufacturersModule,
     VendorsModule,
     VendorUsersModule,
+    PartnersModule,
+    AdminModule,
   ],
 })
 export class AppModule implements NestModule {

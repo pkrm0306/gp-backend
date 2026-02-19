@@ -17,6 +17,9 @@ export class Manufacturer {
   @Prop({ default: 1 })
   manufacturerStatus: number;
 
+  @Prop()
+  manufacturerImage?: string;
+
   createdAt?: Date;
   updatedAt?: Date;
 }

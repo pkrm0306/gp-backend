@@ -142,7 +142,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    if (!user.isVerified) {
+    if (user.type !== 'partner' && !user.isVerified) {
       throw new UnauthorizedException('Email not verified');
     }
 
