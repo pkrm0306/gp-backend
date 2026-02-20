@@ -106,7 +106,17 @@ export class AdminController {
   async updateManufacturer(
     @Param('id') id: string,
     @Body() body: any,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFile() file?: {
+      fieldname: string;
+      originalname: string;
+      encoding: string;
+      mimetype: string;
+      size: number;
+      destination: string;
+      filename: string;
+      path: string;
+      buffer: Buffer;
+    },
   ) {
     const updateDto = plainToClass(UpdateManufacturerDto, {
       manufacturerName: body.manufacturerName,

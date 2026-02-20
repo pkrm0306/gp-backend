@@ -1,0 +1,912 @@
+FUNCTIONAL SCOPE DOCUMENT
+Product Certification & Renewal Processes
+SECTION 1: PRODUCT CERTIFICATION PROCESS
+1.1 Entry Point
+Controller: application/controllers/vendor/Products.php
+Method: single_product_submit()
+Route: Vendor submits product registration form
+File: application/controllers/vendor/Products.php (lines 85-113)
+1.2 Preconditions
+Vendor must be logged in (vendor_id in session)
+Manufacturer must exist (manufacturer_id in session)
+Manufacturer must be active (manufacturer_status = 1) and manufacturer_initial should be filled and internal_id should be filled
+At least one plant must be provided (plant_name and plant_location required)
+Terms and conditions must be accepted
+Product must have category_id, product_name, and other required fields
+1.3 Step-by-Step Process Flow
+Step 1: Product Registration
+Location: application/controllers/vendor/Products.php::single_product_submit()
+URN generation: "URN-" . date("YmdHis") (line 104)
+EOI generation: generate_eoi_no($manufacturer_id) (line 113)
+Format: "GP" + manufacturer_initial + sprintf("%02d", internal_id) + sprintf("%03d", product_count)
+
+Location: application/controllers/vendor/Products.php::generate_eoi_no() (lines 530-552)
+Initial product_status: 0 (Pending)
+Initial urn_status: 0 (not explicitly set, defaults to 0)
+Step 2: Admin Product Approval
+Location: application/controllers/admin/Process_forms.php::change_urn_status()
+Admin changes urn_status to 1
+Email notification sent to vendor
+Status meaning: "product approved & registration payment pending"
+Step 3: Registration Payment Generation
+Location: application/controllers/admin/Process_forms.php::add_payment_details()
+Admin generates registration fee
+Payment record created in payment_details table
+payment_type: "registration"
+payment_status: 0 (Generated)
+urn_status updated to 2 (if proposal document uploaded)
+Step 4: Vendor Payment Submission
+Location: application/controllers/vendor/Process_forms.php::add_payment_details()
+Vendor submits payment details (offline: cheque/DD/TDS files)
+payment_status updated to 1 (Verification Pending)
+urn_status updated to 2 (if registration_payment) or 8 (if certification_payment)
+Email notification sent to admin when certification fee submitted
+Step 5: Online Payment (Alternative)
+Location: application/controllers/vendor/Process_forms.php::payment_confirmation()
+Payment gateway callback handler
+Validates payment signature using generate_payment_signature()
+On success:
+For registration: urn_status → 3
+For certification: urn_status → 10, all products set to product_status = 3, then selected products set to product_status = 2
+Step 6: Admin Payment Approval
+Location: application/controllers/admin/Process_forms.php::change_payment_status()
+Method: change_payment_status("registration_approve")
+On approval:
+payment_status → 2
+urn_status → 3
+Creates process form records in transaction:
+process_product_design
+process_manufacturing
+process_waste_management
+process_life_cycle_approach
+process_innovation
+process_product_stewardship
+raw_materials_hazardous
+raw_materials_green_supply
+raw_materials_elimination_of_prohibited_flame
+raw_materials_elimination_of_prohibited_flame_solvents
+raw_materials_utilization
+raw_materials_utilization_rmc
+process_comments
+process_final_review
+Transaction rollback on failure
+Step 7: Document Submission
+Location: application/controllers/vendor/Process_forms.php::urn()
+Vendor fills process forms and uploads documents
+Document upload: application/controllers/vendor/Process_forms.php::multi_image_upload()
+Documents stored in all_product_documents table
+Upload path: uploads/urns/{urn_no}/
+When vendor submits documents: urn_status → 4, product_status → 1
+Email notification sent to admin
+Step 8: Admin Review Process
+Location: application/controllers/admin/Process_forms.php::urn()
+Admin reviews submitted forms
+Admin can add comments via process_update_admin_comments()
+Admin can change urn_status:
+5: "your response pending"
+6: "final verification pending"
+7: "certification payment pending"
+11: "verification process completed"
+Step 9: Certification Fee Generation
+Location: application/controllers/admin/Process_forms.php::add_payment_details()
+Admin generates certification fee
+payment_type: "certification"
+products_to_be_certified: comma-separated product IDs
+urn_status → 7
+Step 10: Vendor Certification Payment
+Same as Step 4/5, but for certification payment
+On online payment success: urn_status → 10, products auto-certified
+Step 11: Admin Certification Approval
+Location: application/controllers/admin/Process_forms.php::change_payment_status("certification_approve")
+On approval:
+All products in URN set to product_status = 3 (Rejected)
+Selected products (from products_to_be_certified) set to:
+product_status = 2 (Certified)
+certified_date = current date (format: Y-12-31 H:i:s)
+validtill_date = certified_date + 2 years (format: Y-12-31 H:i:s)
+Uses update_batch() for bulk update
+1.4 Database Tables Involved
+Primary Tables:
+products: product_id, eoi_no, urn_no, product_name, product_status, urn_status, certified_date, validtill_date, vendor_id, manufacturer_id, category_id, created_date, updated_date
+payment_details: payment_id, vendor_id, urn_no, payment_type, payment_status, quote_total, products_to_be_certified, payment_mode, created_date, updated_date
+online_payment_details: online_payment_id, payment_id, transaction_id, pg_ref_no, online_payment_status, pg_json_response
+all_product_documents: product_document_id, urn_no, vendor_id, document_form, document_name, document_link
+product_plants: product_plant_id, product_id, eoi_no, urn_no, vendor_id, plant_name, plant_location, state, city
+Process Form Tables (created on registration payment approval):
+process_product_design
+process_pd_measures
+process_product_performance
+process_manufacturing
+process_mp_manufacturing_units
+process_mp_energy_consumption
+process_waste_management
+process_wm_manufacturing_units
+process_life_cycle_approach
+process_innovation
+process_product_stewardship
+process_ps_stakeholder_edu_awarness
+raw_materials_hazardous
+raw_materials_hazardous_products
+raw_materials_recycled_content
+raw_materials_regional_materials
+raw_materials_rapidly_renewable_materials
+raw_materials_green_supply
+raw_materials_elimination_of_prohibited_flame
+raw_materials_elimination_of_formaldehyde
+raw_materials_recovery
+raw_materials_elimination_of_prohibited_flame_solvents
+raw_materials_reduce_environmental
+raw_materials_utilization
+raw_materials_utilization_manufacturing_units
+raw_materials_optimization_of_raw_mix
+raw_materials_additives
+raw_materials_utilization_rmc
+process_comments
+process_final_review
+Supporting Tables:
+vendors: vendor_id, vendor_name, vendor_email, manufacturer_id
+manufacturers: manufacturer_id, manufacturer_name, manufacturer_initial, gp_internal_id
+categories: category_id, category_name, category_raw_material_forms
+states: id, name
+1.5 Status Transitions
+URN Status Flow:
+0: Initial/Unassigned
+1: Product Approved (Registration Payment Pending)
+2: Registration Payment Submitted (Verification Pending)
+3: Registration Payment Approved (Forms Available)
+4: Documents Uploaded
+5: Response Pending
+6: Final Verification Pending
+7: Certification Payment Pending
+8: Certification Payment Submitted (Verification Pending)
+9: Payment Rejected
+10: Certification Payment Approved (Products Auto-Certified if online)
+11: Verification Process Completed
+Product Status Values:
+0: Pending
+1: Submitted
+2: Certified
+3: Rejected
+4: Expired/Deactivated
+Payment Status Values:
+0: Generated
+1: Verification Pending
+2: Approved
+3: Rejected/Failed
+1.6 Payment Dependency
+Registration payment must be approved before process forms are available
+Certification payment must be approved before products are certified
+Online payment success auto-certifies products (bypasses admin approval step)
+Offline payment requires admin approval
+1.7 URN Generation Logic
+Format: "URN-" + date("YmdHis")
+Example: "URN-20250128143052"
+Generated at product registration
+Location: application/controllers/vendor/Products.php::single_product_submit() (line 104)
+1.8 EOI Generation Logic
+Format: "GP" + manufacturer_initial + sprintf("%02d", internal_id) + sprintf("%03d", sequence)
+Internal ID extracted from gp_internal_id (format: "GP-XX")
+Sequence based on certified products count for manufacturer
+Location: application/controllers/vendor/Products.php::generate_eoi_no() (lines 530-552)
+Also: application/controllers/admin/Products.php::generate_eoi_no() (lines 956-969)
+1.9 Admin Approval Interaction
+Registration payment approval: Creates process form records
+Certification payment approval: Certifies selected products
+Status changes via change_urn_status() trigger email notifications
+Final review credits assignment: process_final_review_credits()
+Assessment report upload: uploadAssessment()
+1.10 Edge Cases Handled
+Transaction rollback if process form creation fails on registration approval
+All products rejected before selected products certified
+Online payment signature validation
+Payment cancellation handling (Response_Code = "E00335")
+Directory creation for document uploads
+Product plant validation (empty plants removed)
+1.11 Validation Rules
+Plant name and location required
+Terms and conditions must be accepted
+Payment files validated on upload
+Payment signature verified for online payments
+URN and vendor_id must match for all operations
+1.12 Notification/Email Logic
+Email library: application/libraries/Notifications.php
+Templates in email_templates/ directory
+Notifications sent on:
+Status changes (change_urn_status())
+Payment submissions (add_payment_details())
+Document uploads (change_urn_status() when status = 4)
+Email helper: insert_notification() function
+Template variables replaced: @URN_NO@, @COMPANY_NAME@, @UPDATED_STATUS@, etc.
+1.13 Cron or Background Job Involvement
+Location: application/controllers/CronJob.php
+Methods:
+before2month(): Sends expiry notification 2 months before (checks first_notify_date)
+weeklyMail(): Sends weekly reminders between second and third notification dates
+deactivationMail(): Sets product_status = 4 when third_notify_date reached
+Notification dates calculated:
+first_notify_date: validtill_date - 2 months
+second_notify_date: validtill_date - 1 month
+third_notify_date: validtill_date + 1 month
+1.14 Final Outcome State
+product_status = 2 (Certified)
+certified_date = date of certification
+validtill_date = certified_date + 2 years (always December 31)
+urn_status = 11 (Verification Process Completed)
+Notification dates set for expiry reminders
+SECTION 2: PRODUCT RENEWAL PROCESS
+2.1 Entry Point
+Admin View: application/controllers/admin/RenewProducts.php::renew_products()
+Vendor View: application/controllers/vendor/RenewCertification.php::renew_products()
+Eligibility: Products with product_status = 2 AND validtill_date < (current_date + 60 days)
+2.2 Renewal Eligibility Rules
+product_status must be 2 (Certified)
+validtill_date must be within 60 days from current date
+Location: application/controllers/admin/RenewProducts.php::renew_products() (line 29)
+Query: "validtill_date<" => date('Y-m-d', strtotime('60 days'))
+Note: System shows both online (product_type = 0) and offline (product_type = 1) products
+2.3 Expiry Logic
+Products become eligible for renewal 60 days before expiry
+Expiry date: validtill_date field in products table
+Format: Y-12-31 (always December 31 of expiry year)
+After expiry: Products can be deactivated via cron (product_status = 4)
+2.4 Payment Flow
+Different from certification: Uses payment_type = "renew"
+Admin generates renewal fee: application/controllers/admin/Renew_process_forms.php::add_renew_payment_details()
+Vendor submits payment: application/controllers/vendor/Renew_process_forms.php::add_renew_payment_details()
+Payment approval: application/controllers/admin/Renew_process_forms.php::change_payment_status("renew_approve")
+On approval: Creates renewal-specific process form records
+2.5 Status Transitions
+URN Status for Renewal:
+12: Renewal Payment Pending (renewal phase started)
+13: Renewal Payment Submitted (Verification Pending)
+14: Renewal Payment Approved (Process Forms Available)
+15: Check Process Forms (Admin Review)
+16: Vendor Response Pending
+17: Final Verification Pending (Process Completed)
+Product Renew Status:
+0: Not Renewed
+1: Renewal In Progress
+2: Renewed
+2.6 Database Updates
+On Renewal Payment Approval:
+Location: application/controllers/admin/Renew_process_forms.php::change_payment_status("renew_approve")
+Creates renewal process tables:
+process_renew_product_performance
+process_renew_manufacturing
+process_renew_mp_energy_consumption
+process_renew_product_stewardship
+process_renew_innovation
+process_renew_comments
+process_renew_waste_management
+Uses database transaction with rollback on failure
+On Renewal Completion (urn_status = 17):
+Location: application/controllers/admin/Renew_process_forms.php::change_urn_status()
+Updates:
+renewed_date = current date
+product_renew_status = 2
+urn_status = 11
+validtill_date = existing validtill_date + 24 months (always December 31)
+first_notify_date = new validtill_date - 2 months
+second_notify_date = new validtill_date - 1 month
+third_notify_date = new validtill_date + 1 month
+Logic: date('Y-12-31', strtotime("+24 months", strtotime($product_data['validtill_date'])))
+2.7 Certificate Re-generation Logic
+No explicit certificate regeneration found in renewal process
+Certificate likely regenerated when product_renew_status = 2
+Certificate helper: application/helpers/certification_helper.php
+Certificate files: certificate/certificate.php, certificate/certificateNew.php
+2.8 Differences from Original Certification
+Separate Process Tables:
+Renewal uses process_renew_* tables instead of process_* tables
+Documents stored in all_renew_product_documents instead of all_product_documents
+Upload path: uploads/renew_urns/{urn_no}/ instead of uploads/urns/{urn_no}/
+Simplified Forms:
+Renewal focuses on: Product Performance, Manufacturing Process, Waste Management, Product Stewardship, Innovation
+Original certification includes all raw materials forms
+Payment Type:
+Uses payment_type = "renew" instead of "certification"
+Status Flow:
+Different URN status values (12-17) for renewal phase
+product_renew_status field tracks renewal state
+Validity Extension:
+Adds 24 months to existing validtill_date (not from current date)
+Original certification sets validtill_date = certified_date + 2 years
+2.9 Error Handling
+Transaction rollback if renewal form creation fails
+Payment status rollback on failure
+URN status rollback to 14 on transaction failure
+File upload error handling in multi_image_upload()
+2.10 Special Conditions
+Renewal can only start when product is within 60 days of expiry
+product_renew_status = 0 required (not already renewed)
+Admin must generate renewal fee before vendor can pay
+Renewal process forms are separate from original certification forms
+When urn_status = 15, product_renew_status set to 1
+2.11 Additional Renewal-Specific Logic
+Renewal Payment Generation:
+Location: application/controllers/admin/Renew_process_forms.php::add_renew_payment_details()
+Requires proposal_document upload
+Sets urn_status = 12
+payment_type = "renew"
+Renewal Document Upload:
+Location: application/controllers/vendor/Renew_process_forms.php::multi_image_upload()
+Stores in all_renew_product_documents table
+Path: uploads/renew_urns/{urn_no}/
+Renewal Status Change:
+Location: application/controllers/vendor/Renew_process_forms.php::change_urn_status()
+When urn_status = 15, sets product_renew_status = 1
+SECTION 3: KEY FINDINGS & REDESIGN CONSIDERATIONS
+3.1 Tightly Coupled Logic
+Business logic mixed in controllers (should be in services)
+Direct database queries in controllers (should use repositories)
+Status management scattered across multiple methods
+Payment logic duplicated between admin and vendor controllers
+3.2 Unclear Logic Areas
+URN status values not clearly documented (0-17, some gaps)
+Product status 4 (Expired) set by cron, but renewal eligibility uses different logic
+Date calculations use inconsistent formats (Y-12-31 vs Y-m-d)
+EOI regeneration logic exists but unclear when it's triggered
+3.3 Areas Requiring Redesign in NestJS
+Status Management: Implement state machine pattern
+Payment Processing: Separate payment service with proper gateway abstraction
+Document Management: File storage service with proper path management
+Notification System: Event-driven notification service
+Process Forms: Dynamic form builder based on category requirements
+Date Calculations: Centralized date utility service
+Transaction Management: Proper transaction boundaries
+Validation: Centralized validation service
+Email Templates: Template engine with proper variable substitution
+Cron Jobs: Scheduled task service with proper error handling
+3.4 File Paths Summary
+Key Controllers:
+application/controllers/vendor/Products.php
+application/controllers/vendor/Process_forms.php
+application/controllers/admin/Process_forms.php
+application/controllers/admin/Renew_process_forms.php
+application/controllers/vendor/Renew_process_forms.php
+application/controllers/admin/RenewProducts.php
+application/controllers/vendor/RenewCertification.php
+application/controllers/CronJob.php
+Key Models:
+application/models/Common_model.php
+Key Helpers:
+application/helpers/certification_helper.php
+application/helpers/notification_helper.php
+Key Libraries:
+application/libraries/Notifications.php
+Document End
+Analyze my entire CodeIgniter codebase and deeply understand the complete Product Registration flow.
+
+
+
+Your task is NOT to summarize files.
+
+Your task is to reverse-engineer the full functional flow and prepare a detailed MERN migration scope.
+
+
+
+Focus only on:
+
+- Product Registration
+
+- URN generation
+
+- EOI generation
+
+- Product plant management
+
+
+
+1. Identify all controllers, models, helpers, libraries related to:
+
+   - product registration
+
+   - URN
+
+   - EOI
+
+   - plant details
+
+
+
+2. Map complete step-by-step execution:
+
+   - Entry point
+
+   - Pre-conditions
+
+   - Data insert sequence
+
+   - Status updates
+
+   - Table relations
+
+   - Admin interactions
+
+   - Side effects (emails, logs, transactions)
+
+
+
+3. Extract:
+
+   - All tables used
+
+   - All status values and their meaning
+
+   - All validation conditions
+
+   - All edge cases handled
+
+
+
+4. Then design MERN architecture equivalent:
+
+
+
+Provide:
+
+- NestJS module structure (ProductModule, URNModule, PaymentModule, etc.)
+
+- MongoDB schema design (collections & relations)
+
+- Transaction handling approach
+
+- Status management strategy (state machine if needed)
+
+- File storage strategy
+
+
+
+5. Highlight improvements over CodeIgniter:
+
+   - Decoupling logic
+
+   - Service layer separation
+
+   - Centralized validation
+
+   - Event-driven notifications
+
+   - Proper transaction boundary
+
+
+
+Output format:
+
+1. Current CodeIgniter Functional Flow
+
+2. Data & Status Mapping
+
+3. MERN Equivalent Architecture
+
+4. Suggested Improvements
+
+5. Risks During Migration
+
+6. Data Migration Considerations
+
+
+
+Do NOT write code.
+
+Prepare an architectural scope document for migration.
+
+
+
+
+
+
+
+Analyzing the Product Registration flow, focusing on registration, URN/EOI generation, and plant management. Mapping the execution flow and preparing the MERN migration scope.
+Reviewing the admin product registration flow and related validation logic:
+Compiling the MERN migration scope document for Product Registration:
+MERN MIGRATION SCOPE DOCUMENT
+Product Registration, URN Generation, EOI Generation & Plant Management
+1. CURRENT CODEIGNITER FUNCTIONAL FLOW
+1.1 Product Registration Entry Points
+Vendor-Side Registration
+Controller: application/controllers/vendor/Products.php
+Methods:
+single_product_submit() (Line 85-139) — Single product registration
+multiple_product_upload() (Line 303-388) — Bulk product registration
+Route: vendor/products/single_product_submit (POST)
+View: application/views/vendor/single_product.php
+Admin-Side Registration
+Controller: application/controllers/admin/Products.php
+Method: add_product_submit() (Line 810-940)
+Route: admin/products/add_product_submit (POST)
+View: application/views/admin/add_product.php
+1.2 Pre-Conditions & Validation
+Session Requirements
+Vendor: vendor_id and manufacturer_id in session
+Admin: Can select vendor and manufacturer manually
+Form Validation Rules
+Terms & Conditions: Checkbox must be checked (terms_and_conditions == "on")
+Plant Validation:
+At least 1 plant required
+Each plant must have plant_name and plant_location (non-empty)
+Empty plants are filtered out before insertion
+Required Fields:
+product_name
+product_details
+category_id
+manufacturer_id (admin) or from session (vendor)
+vendor_id (admin) or from session (vendor)
+URN Reuse Logic (Admin Only)
+If urn_no provided in POST:
+Check if URN exists in products table
+If exists and urn_status > 2: Reject (already accepted)
+If exists and urn_status <= 2: Reuse existing URN, manufacturer_id, vendor_id
+If not exists: Error message
+1.3 Step-by-Step Execution Flow
+Single Product Registration Flow
+STEP 1: Data Collection & Sanitization├── Location: vendor/Products.php::single_product_submit() (Line 87-93)├── Action: Extract POST data, trim values, exclude 'terms_and_conditions' and 'product_plants'└── Output: $add_product_data arraySTEP 2: Plant Data Validation├── Location: vendor/Products.php::single_product_submit() (Line 96-99)├── Action: Filter empty plants (missing plant_name or plant_location)├── Validation: Count remaining plants must be > 0└── Error: "At least 1 plant location mandatory" if count == 0STEP 3: URN Generation├── Location: vendor/Products.php::single_product_submit() (Line 104)├── Format: "URN-" + date("YmdHis")├── Example: "URN-20250115143052"└── Stored: In $add_product_data['urn_no']STEP 4: Metadata Assignment├── Location: vendor/Products.php::single_product_submit() (Line 102-105)├── manufacturer_id: From session├── vendor_id: From session├── created_date: Current timestamp (Y-m-d H:i:s)└── plant_count: Count of valid plantsSTEP 5: Product Insert (First DB Operation)├── Location: vendor/Products.php::single_product_submit() (Line 108)├── Table: products├── Action: INSERT with $add_product_data└── Result: $product_id = last_insert_id()STEP 6: EOI Number Generation (After Product Insert)├── Location: vendor/Products.php::generate_eoi_no() (Line 587-603)├── Trigger: Called immediately after product insert├── Logic:│   ├── Fetch manufacturer details (manufacturer_initial, gp_internal_id)│   ├── Extract internal_id from gp_internal_id (format: "GP-XX")│   ├── Count all products for manufacturer│   └── Format: "GP" + manufacturer_initial + sprintf("%02s", internal_id) + sprintf("%03d", product_count)├── Example: "GPGS02001" (GP + GS + 02 + 001)└── Update: UPDATE products SET eoi_no = ? WHERE product_id = ?STEP 7: Plant Data Insertion├── Location: vendor/Products.php::single_product_submit() (Line 120-129)├── Table: product_plants├── Action: Batch insert (insert_batch) or loop insert├── Data Enrichment per plant:│   ├── category_id: From product│   ├── manufacturer_id: From product│   ├── product_id: From inserted product│   ├── vendor_id: From product│   ├── eoi_no: Generated EOI number│   ├── urn_no: Generated URN│   ├── created_date: Same as product│   ├── plant_name: From form│   ├── plant_location: From form│   ├── state: From form (may need state ID lookup)│   └── city: From form└── State ID Resolution: get_stateId() for multiple products (Line 366)STEP 8: Response & Redirect├── Success: Flash message + redirect to single_product└── Error: Flash error message + redirect
+Multiple Product Registration Flow
+STEP 1: JSON Decode├── Location: vendor/Products.php::multiple_product_upload() (Line 308)├── Input: $_POST['multiple_products'] (JSON string)└── Output: Array of product dataSTEP 2: Loop Through Each Product├── Same validation as single product├── Shared URN: "URN-" + date("YmdHis") (same for all in batch)└── Individual EOI: Generated per productSTEP 3: State ID Resolution (Multiple Products Only)├── Location: vendor/Products.php::multiple_product_upload() (Line 366)├── Method: get_stateId($state_name)├── Logic: SOUNDEX matching for state name└── Fallback: Returns null if no match
+1.4 Database Tables & Relations
+Primary Tables
+products
+product_id (PK, AUTO_INCREMENT)
+urn_no (VARCHAR) — Generated at registration
+eoi_no (VARCHAR) — Generated after insert
+category_id (FK → categories)
+manufacturer_id (FK → manufacturers)
+vendor_id (FK → vendors)
+product_name (VARCHAR)
+product_details (TEXT)
+product_image (VARCHAR, nullable)
+product_type (INT, default: 0)
+product_status (INT: 0=Pending, 1=Active, 2=Certified, 3=Rejected)
+plant_count (INT)
+created_date (DATETIME)
+updated_date (DATETIME, nullable)
+certified_date (DATE, nullable)
+validtill_date (DATE, nullable)
+product_plants
+product_plant_id (PK, AUTO_INCREMENT)
+product_id (FK → products)
+category_id (FK → categories, duplicated)
+manufacturer_id (FK → manufacturers, duplicated)
+vendor_id (FK → vendors, duplicated)
+eoi_no (VARCHAR, duplicated from products)
+urn_no (VARCHAR, duplicated from products)
+plant_name (VARCHAR)
+plant_location (VARCHAR)
+state (INT, FK → states.id)
+city (VARCHAR, nullable)
+created_date (DATETIME)
+manufacturers
+manufacturer_id (PK)
+manufacturer_initial (VARCHAR) — Used in EOI generation
+gp_internal_id (VARCHAR) — Format: "GP-XX", used in EOI generation
+manufacturer_name (VARCHAR)
+states
+id (PK)
+name (VARCHAR)
+categories
+category_id (PK)
+category_name (VARCHAR)
+category_status (INT)
+Table Relations
+products (1) ──→ (N) product_plantsproducts (N) ──→ (1) categoriesproducts (N) ──→ (1) manufacturersproducts (N) ──→ (1) vendorsproduct_plants (N) ──→ (1) states
+1.5 URN Generation Logic
+Format
+Pattern: "URN-" + date("YmdHis")
+Example: "URN-20250115143052"
+Uniqueness: Time-based, but collisions possible if multiple registrations in same second
+Generation Points
+Single Product: Generated per product (Line 104)
+Multiple Products: Shared URN for entire batch (Line 335)
+Admin with Existing URN: Reused from existing product (Line 850)
+URN Status Check (Admin)
+Location: admin/Products.php::add_product_submit() (Line 830)
+Condition: urn_status > 2 → Reject
+Meaning: URN already accepted/processed
+1.6 EOI Generation Logic
+Method
+Location: vendor/Products.php::generate_eoi_no() (Line 587-603)
+Called: After product insert, before plant insert
+Algorithm
+1. Fetch manufacturer: manufacturer_initial, gp_internal_id2. Parse gp_internal_id: explode('-', gp_internal_id) → ["GP", "XX"]3. Extract internal_id: $words[1]4. Handle leading zeros:   - If starts with '0': Keep as string, pad to 2 digits   - Else: Convert to integer5. Count products: COUNT(*) WHERE manufacturer_id = ?6. Format: "GP" + manufacturer_initial + sprintf("%02s", internal_id) + sprintf("%03d", count)
+Example
+Manufacturer: manufacturer_initial = "GS", gp_internal_id = "GP-02"
+Product Count: 1
+Result: "GPGS02001"
+Edge Cases
+Leading zero preservation in internal_id
+Product count includes all products (not just certified)
+EOI updated via separate UPDATE query (not in initial INSERT)
+1.7 Plant Management Logic
+Plant Validation
+Location: vendor/Products.php::single_product_submit() (Line 96-99)
+Rules:
+Filter: Remove plants with empty plant_name OR empty plant_location
+Minimum: At least 1 valid plant required
+Error: "At least 1 plant location mandatory"
+Plant Data Enrichment
+Location: vendor/Products.php::single_product_submit() (Line 120-129)
+Enriched Fields:
+category_id, manufacturer_id, product_id, vendor_id (from product)
+eoi_no, urn_no (from product)
+created_date (same as product)
+plant_name, plant_location, state, city (from form)
+State Name Resolution
+Location: vendor/Products.php::get_stateId() (Line 235-253)
+Method: SOUNDEX matching
+Query: WHERE SOUNDEX(name) = SOUNDEX(?) ORDER BY LENGTH(name) LIMIT 1
+Used: Only in multiple_product_upload() (Line 366)
+Single Product: State ID expected directly from form
+Plant Update
+Location: vendor/Products.php::update_unit_plants() (Line 63-83)
+Method: Loop UPDATE per plant
+Fields: plant_name, plant_location, state
+1.8 Status Management
+Product Status Values
+0: Pending/Inactive
+1: Active
+2: Certified
+3: Rejected
+Initial Status
+New Registration: product_status = 0 (default)
+product_type = 0 (default)
+Status Transitions
+Toggle: change_product_status() (Line 182-202) — Switches between 0 and 1
+Certification: Set to 2 during certification process (not in registration)
+1.9 Edge Cases & Error Handling
+Edge Cases Identified
+URN Collision: Time-based generation can collide in same second
+State Name Mismatch: SOUNDEX may not match all variations
+Empty Plant Array: Handled with count check
+EOI Generation Failure: No explicit rollback if UPDATE fails
+Plant Insert Failure: No transaction rollback
+Multiple Products with Same URN: Shared URN in batch
+Error Messages
+"Product creation failed. At least 1 plant location mandatory"
+"Product creation failed. Please try again!"
+"Product created successfully" (with link to EOI list)
+Admin: "Product creation failed under this URN as it is already accepted by the Admin."
+1.10 Side Effects & Dependencies
+No Transaction Management
+Product insert and EOI update are separate queries
+Plant insert happens after EOI update
+No rollback on failure
+Session Dependencies
+Vendor: Requires vendor_id and manufacturer_id in session
+Admin: Can work without session (manual selection)
+No Email/Notification Triggers
+No email sent during registration
+No admin notification
+Success message via flash data only
+No Logging
+No audit trail
+No activity logs
+2. DATA & STATUS MAPPING
+2.1 Status Value Mapping
+Status Code	Meaning	Usage Context
+product_status = 0	Pending/Inactive	Initial registration state
+product_status = 1	Active	Vendor-activated products
+product_status = 2	Certified	After certification approval
+product_status = 3	Rejected	Admin rejection
+product_type = 0	Standard Product	Default for all registrations
+urn_status > 2	URN Accepted	Prevents reuse in admin flow
+2.2 Data Flow Diagram
+[Form Submission]    ↓[Data Sanitization]    ↓[Plant Validation] → [Error if count = 0]    ↓[URN Generation] → "URN-YYYYMMDDHHmmss"    ↓[Product INSERT] → product_id    ↓[EOI Generation] → "GP" + initial + internal_id + count    ↓[Product UPDATE] → Set eoi_no    ↓[Plant Data Enrichment]    ↓[Plant INSERT] → Batch insert    ↓[Success Response]
+2.3 Validation Conditions Summary
+Condition	Location	Error Message
+Terms not checked	Line 95	Implicit (form validation)
+No valid plants	Line 101	"At least 1 plant location mandatory"
+Plant name empty	Line 97	Filtered out
+Plant location empty	Line 97	Filtered out
+Product insert fails	Line 111	"Product creation failed. Please try again!"
+URN already accepted	Admin Line 830	"Product creation failed under this URN..."
+URN not found	Admin Line 879	"Sorry The URN Number You Entered Is Not Exist!"
+3. MERN EQUIVALENT ARCHITECTURE
+3.1 NestJS Module Structure
+src/├── modules/│   ├── product/│   │   ├── product.module.ts│   │   ├── product.controller.ts│   │   ├── product.service.ts│   │   ├── product.repository.ts│   │   ├── dto/│   │   │   ├── create-product.dto.ts│   │   │   ├── create-plant.dto.ts│   │   │   └── bulk-create-product.dto.ts│   │   └── schemas/│   │       └── product.schema.ts│   ││   ├── urn/│   │   ├── urn.module.ts│   │   ├── urn.service.ts│   │   └── urn.generator.ts│   ││   ├── eoi/│   │   ├── eoi.module.ts│   │   ├── eoi.service.ts│   │   └── eoi.generator.ts│   ││   ├── plant/│   │   ├── plant.module.ts│   │   ├── plant.service.ts│   │   ├── plant.repository.ts│   │   └── schemas/│   │       └── plant.schema.ts│   ││   ├── manufacturer/│   │   ├── manufacturer.module.ts│   │   ├── manufacturer.service.ts│   │   └── manufacturer.repository.ts│   ││   ├── state/│   │   ├── state.module.ts│   │   ├── state.service.ts│   │   └── state.resolver.ts (for name matching)│   ││   └── notification/│       ├── notification.module.ts│       ├── notification.service.ts│       └── events/│           └── product-registered.event.ts│├── common/│   ├── decorators/│   │   └── roles.decorator.ts│   ├── guards/│   │   └── auth.guard.ts│   ├── interceptors/│   │   └── transform.interceptor.ts│   └── pipes/│       └── validation.pipe.ts│└── config/    ├── database.config.ts    └── app.config.ts
+3.2 MongoDB Schema Design
+Product Collection Schema
+{  _id: ObjectId,  urnNo: String,           // Indexed, unique  eoiNo: String,            // Indexed, unique  categoryId: ObjectId,     // Reference to categories  manufacturerId: ObjectId, // Reference to manufacturers  vendorId: ObjectId,       // Reference to vendors  productName: String,  productDetails: String,  productImage: String,     // URL or file path  productType: Number,      // Default: 0  productStatus: Number,   // 0=Pending, 1=Active, 2=Certified, 3=Rejected  plantCount: Number,  createdAt: Date,  updatedAt: Date,  certifiedDate: Date,     // Optional  validTillDate: Date,      // Optional  metadata: {    createdBy: ObjectId,    // User ID    ipAddress: String,      // Audit trail    userAgent: String  }}
+Plant Collection Schema
+{  _id: ObjectId,  productId: ObjectId,     // Reference to products (indexed)  categoryId: ObjectId,     // Denormalized  manufacturerId: ObjectId, // Denormalized  vendorId: ObjectId,       // Denormalized  eoiNo: String,            // Denormalized (indexed)  urnNo: String,            // Denormalized (indexed)  plantName: String,  plantLocation: String,  stateId: ObjectId,        // Reference to states  stateName: String,         // Denormalized for quick access  city: String,  createdAt: Date,  updatedAt: Date}
+Manufacturer Collection Schema
+{  _id: ObjectId,  manufacturerInitial: String,  // Indexed  gpInternalId: String,         // Format: "GP-XX"  manufacturerName: String,  productCount: Number,          // Denormalized count for EOI generation  createdAt: Date,  updatedAt: Date}
+State Collection Schema
+{  _id: ObjectId,  name: String,              // Indexed, unique  code: String,              // State code (optional)  soundexCode: String,      // Pre-computed for matching  createdAt: Date}
+Indexes Required
+// Productsdb.products.createIndex({ urnNo: 1 }, { unique: true });db.products.createIndex({ eoiNo: 1 }, { unique: true });db.products.createIndex({ manufacturerId: 1, createdAt: -1 });db.products.createIndex({ vendorId: 1, productStatus: 1 });// Plantsdb.plants.createIndex({ productId: 1 });db.plants.createIndex({ eoiNo: 1 });db.plants.createIndex({ urnNo: 1 });db.plants.createIndex({ stateId: 1 });// Manufacturersdb.manufacturers.createIndex({ manufacturerInitial: 1 });db.manufacturers.createIndex({ gpInternalId: 1 }, { unique: true });// Statesdb.states.createIndex({ name: 1 }, { unique: true });db.states.createIndex({ soundexCode: 1 });
+3.3 Transaction Handling Approach
+Strategy: MongoDB Transactions
+// Product Registration Serviceasync createProduct(dto: CreateProductDto): Promise<Product> {  const session = await this.connection.startSession();  session.startTransaction();    try {    // 1. Generate URN    const urnNo = await this.urnService.generate();        // 2. Insert Product (without EOI)    const product = await this.productRepository.create({      ...dto,      urnNo,      productStatus: 0,      plantCount: dto.plants.length    }, { session });        // 3. Generate EOI    const eoiNo = await this.eoiService.generate(      dto.manufacturerId,      session    );        // 4. Update Product with EOI    product.eoiNo = eoiNo;    await this.productRepository.update(      product._id,      { eoiNo },      { session }    );        // 5. Insert Plants    const plants = dto.plants.map(plant => ({      ...plant,      productId: product._id,      categoryId: dto.categoryId,      manufacturerId: dto.manufacturerId,      vendorId: dto.vendorId,      eoiNo,      urnNo,      createdAt: new Date()    }));        await this.plantRepository.createMany(plants, { session });        // 6. Update Manufacturer Product Count    await this.manufacturerRepository.incrementProductCount(      dto.manufacturerId,      { session }    );        // 7. Emit Event (after transaction)    await session.commitTransaction();        this.eventEmitter.emit('product.registered', {      productId: product._id,      eoiNo,      urnNo    });        return product;      } catch (error) {    await session.abortTransaction();    throw error;  } finally {    session.endSession();  }}
+3.4 Status Management Strategy
+State Machine Implementation
+// Product Status State Machineenum ProductStatus {  PENDING = 0,  ACTIVE = 1,  CERTIFIED = 2,  REJECTED = 3}// Allowed Transitionsconst statusTransitions = {  [ProductStatus.PENDING]: [ProductStatus.ACTIVE, ProductStatus.REJECTED],  [ProductStatus.ACTIVE]: [ProductStatus.PENDING, ProductStatus.CERTIFIED],  [ProductStatus.CERTIFIED]: [], // Terminal state  [ProductStatus.REJECTED]: [ProductStatus.PENDING] // Can resubmit};// Service Methodasync changeStatus(  productId: string,  newStatus: ProductStatus,  userId: string): Promise<void> {  const product = await this.productRepository.findById(productId);    if (!statusTransitions[product.productStatus].includes(newStatus)) {    throw new BadRequestException('Invalid status transition');  }    await this.productRepository.update(productId, {    productStatus: newStatus,    updatedAt: new Date()  });    // Emit event  this.eventEmitter.emit('product.status.changed', {    productId,    oldStatus: product.productStatus,    newStatus,    changedBy: userId  });}
+3.5 File Storage Strategy
+Approach: Cloud Storage (AWS S3 / Azure Blob)
+// File Upload Service@Injectable()export class FileUploadService {  async uploadProductImage(    file: Express.Multer.File,    productId: string  ): Promise<string> {    const fileName = `${productId}/${Date.now()}-${file.originalname}`;    const url = await this.s3Service.upload(file.buffer, fileName);    return url;  }    async deleteProductImage(url: string): Promise<void> {    await this.s3Service.delete(url);  }}
+Alternative: Local Storage with CDN
+// For development/stagingconst uploadPath = `./uploads/products/${productId}`;const fileName = `${Date.now()}-${file.originalname}`;const filePath = path.join(uploadPath, fileName);// Store in MongoDB: relative path or CDN URL
+3.6 Service Layer Separation
+Product Service Responsibilities
+@Injectable()export class ProductService {  constructor(    private productRepository: ProductRepository,    private plantService: PlantService,    private urnService: UrnService,    private eoiService: EoiService,    private manufacturerService: ManufacturerService,    private eventEmitter: EventEmitter2  ) {}    // Business Logic Only  async registerProduct(dto: CreateProductDto): Promise<Product> {    // Validation    await this.validateProduct(dto);        // Orchestration    const product = await this.createProductWithTransaction(dto);        // Side Effects    await this.handlePostRegistration(product);        return product;  }    private async validateProduct(dto: CreateProductDto): Promise<void> {    // Centralized validation    if (dto.plants.length === 0) {      throw new BadRequestException('At least 1 plant location mandatory');    }        // Validate manufacturer exists    await this.manufacturerService.validateExists(dto.manufacturerId);        // Validate category exists    // ... etc  }}
+Repository Pattern
+@Injectable()export class ProductRepository {  constructor(    @InjectModel(Product.name) private productModel: Model<ProductDocument>  ) {}    async create(data: Partial<Product>, options?: any): Promise<Product> {    return this.productModel.create([data], options);  }    async findByUrn(urnNo: string): Promise<Product | null> {    return this.productModel.findOne({ urnNo }).exec();  }    async findByEoi(eoiNo: string): Promise<Product | null> {    return this.productModel.findOne({ eoiNo }).exec();  }    async countByManufacturer(manufacturerId: string): Promise<number> {    return this.productModel.countDocuments({ manufacturerId }).exec();  }}
+4. SUGGESTED IMPROVEMENTS
+4.1 Decoupling Logic
+Current Issues
+Business logic in controllers
+Direct database access in controllers
+Tight coupling between URN/EOI generation and product creation
+Improvements
+Service layer for business logic
+Repository pattern for data access
+Dependency injection for testability
+Event-driven architecture for side effects
+4.2 Centralized Validation
+Current Issues
+Validation scattered across controllers
+No DTO validation
+Manual validation checks
+Improvements
+Use class-validator DTOs
+Custom validation pipes
+Reusable validation decorators
+Schema validation at API gateway
+4.3 Event-Driven Notifications
+Current Issues
+No notifications during registration
+No audit trail
+No async processing
+Improvements
+Event emitter for product registration
+Email service as event listener
+Audit log service as event listener
+Admin notification service
+4.4 Proper Transaction Boundaries
+Current Issues
+No transaction management
+Partial failures leave inconsistent state
+EOI update separate from product insert
+Improvements
+MongoDB transactions for atomicity
+Retry logic for transient failures
+Compensation actions for rollback
+Saga pattern for distributed transactions (if needed)
+4.5 URN Generation Improvements
+Current Issues
+Time-based collision risk
+No uniqueness guarantee
+No URN reuse tracking
+Improvements
+UUID-based URN: "URN-" + UUID.v4()
+Or: Sequence-based with Redis counter
+URN registry collection for tracking
+URN status state machine
+4.6 EOI Generation Improvements
+Current Issues
+Race condition in product count
+No atomic increment
+Count includes all products (not just active)
+Improvements
+Atomic increment in manufacturer document
+Use manufacturer.productCount field
+Separate counters for certified vs. all products
+Distributed lock for concurrent registrations
+4.7 State Name Matching Improvements
+Current Issues
+SOUNDEX may not match all variations
+No fuzzy matching fallback
+Returns null on no match
+Improvements
+Pre-compute SOUNDEX codes in states collection
+Levenshtein distance for fuzzy matching
+State name normalization (uppercase, trim)
+Admin approval for unmatched states
+4.8 Error Handling Improvements
+Current Issues
+Generic error messages
+No error codes
+No structured error responses
+Improvements
+Custom exception classes
+Error code enumeration
+Structured error response DTO
+Error logging with context
+5. RISKS DURING MIGRATION
+5.1 Data Migration Risks
+Risk: URN/EOI Uniqueness
+Impact: High
+Mitigation: Validate all URNs/EOIs are unique before migration
+Action: Create migration script to check duplicates
+Risk: State Name Mismatches
+Impact: Medium
+Mitigation: Pre-migrate state names, create mapping table
+Action: Normalize state names in MySQL before migration
+Risk: Plant Data Integrity
+Impact: High
+Mitigation: Validate all plants have valid product_id references
+Action: Foreign key validation script
+5.2 Functional Risks
+Risk: EOI Generation Logic Differences
+Impact: High
+Mitigation: Unit tests comparing old vs. new EOI generation
+Action: Test with sample manufacturer data
+Risk: URN Reuse Logic
+Impact: Medium
+Mitigation: Document all URN reuse scenarios
+Action: Test admin URN reuse flow thoroughly
+Risk: Bulk Registration Performance
+Impact: Medium
+Mitigation: Batch processing with proper indexing
+Action: Load testing with 100+ products
+5.3 Integration Risks
+Risk: Session-Based Authentication
+Impact: High
+Mitigation: Implement JWT-based auth in NestJS
+Action: Migrate session data to JWT tokens
+Risk: File Upload Paths
+Impact: Medium
+Mitigation: Maintain backward compatibility or migration script
+Action: Map old file paths to new storage
+5.4 Business Logic Risks
+Risk: Status Transition Rules
+Impact: High
+Mitigation: Document all status transitions
+Action: State machine implementation with tests
+Risk: Plant Count Calculation
+Impact: Low
+Mitigation: Validate plant_count matches actual plants
+Action: Data validation script
+6. DATA MIGRATION CONSIDERATIONS
+6.1 Migration Strategy
+Phase 1: Schema Migration
+Create MongoDB collections with indexes
+Migrate reference data (categories, states, manufacturers, vendors)
+Validate reference data integrity
+Phase 2: Product Data Migration
+Migrate products table
+Generate new URNs if needed (or preserve existing)
+Validate EOI numbers
+Migrate product_plants table
+Validate relationships
+Phase 3: Data Validation
+Count validation (products, plants)
+Foreign key validation
+URN/EOI uniqueness check
+Status value validation
+Phase 4: Rollback Plan
+Keep MySQL database as backup
+Maintain mapping table (MySQL ID → MongoDB ID)
+Dual-write period (optional)
+6.2 Data Transformation Requirements
+URN Format
+Option 1: Preserve existing URNs
+Option 2: Regenerate with new format
+Recommendation: Preserve for audit trail
+EOI Format
+Preserve existing EOI numbers
+Validate format consistency
+Handle edge cases (leading zeros, etc.)
+Date Format
+MySQL: Y-m-d H:i:s
+MongoDB: ISO 8601 Date objects
+Transform during migration
+State ID Mapping
+MySQL: Integer ID
+MongoDB: ObjectId
+Create mapping table during migration
+6.3 Migration Script Structure
+// Migration Script Outlineasync function migrateProducts() {  // 1. Connect to both databases  const mysql = await connectMySQL();  const mongo = await connectMongo();    // 2. Migrate reference data first  await migrateStates(mysql, mongo);  await migrateCategories(mysql, mongo);  await migrateManufacturers(mysql, mongo);  await migrateVendors(mysql, mongo);    // 3. Migrate products  const products = await mysql.query('SELECT * FROM products');  for (const product of products) {    const mongoProduct = await transformProduct(product);    await mongo.products.insertOne(mongoProduct);  }    // 4. Migrate plants  const plants = await mysql.query('SELECT * FROM product_plants');  for (const plant of plants) {    const mongoPlant = await transformPlant(plant);    await mongo.plants.insertOne(mongoPlant);  }    // 5. Validate  await validateMigration(mysql, mongo);}
+SUMMARY
+This document covers:
+Current CodeIgniter flow for product registration, URN/EOI generation, and plant management
+Database schema and relationships
+MERN architecture with NestJS modules, MongoDB schemas, and service separation
+Improvements: decoupling, validation, events, transactions
+Migration risks and mitigation
+Data migration strategy and considerations
+The migration should prioritize:
+Transaction management for data consistency
+Event-driven architecture for scalability
+Centralized validation for maintainability
+Proper error handling and logging
+Comprehensive testing before production deployment
