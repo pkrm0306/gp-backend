@@ -31,6 +31,6 @@ import { EmailService } from '../common/services/email.service';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, CaptchaService, EmailService],
-  exports: [AuthService],
+  exports: [AuthService, JwtStrategy],
 })
 export class AuthModule {}

@@ -7,6 +7,10 @@ import { VendorsModule } from './vendors/vendors.module';
 import { VendorUsersModule } from './vendor-users/vendor-users.module';
 import { PartnersModule } from './partners/partners.module';
 import { AdminModule } from './admin/admin.module';
+import { StatesModule } from './states/states.module';
+import { CategoriesModule } from './categories/categories.module';
+import { CountriesModule } from './countries/countries.module';
+import { ProductRegistrationModule } from './product-registration/product-registration.module';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
 
 @Module({
@@ -28,6 +32,10 @@ import { LoggingMiddleware } from './common/middleware/logging.middleware';
     VendorUsersModule,
     PartnersModule,
     AdminModule,
+    StatesModule,
+    CategoriesModule,
+    CountriesModule,
+    ProductRegistrationModule,
   ],
 })
 export class AppModule implements NestModule {
