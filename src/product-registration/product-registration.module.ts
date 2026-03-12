@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PassportModule } from '@nestjs/passport';
 import { ProductRegistrationController } from './product-registration.controller';
+import { ProductsController } from './products.controller';
 import { ProductRegistrationService } from './product-registration.service';
 import { Product, ProductSchema } from './schemas/product.schema';
 import { ProductPlant, ProductPlantSchema } from './schemas/product-plant.schema';
@@ -11,6 +12,8 @@ import { VendorsModule } from '../vendors/vendors.module';
 import { CountriesModule } from '../countries/countries.module';
 import { StatesModule } from '../states/states.module';
 import { AuthModule } from '../auth/auth.module';
+import { CategoriesModule } from '../categories/categories.module';
+import { ActivityLogModule } from '../activity-log/activity-log.module';
 
 @Module({
   imports: [
@@ -24,9 +27,11 @@ import { AuthModule } from '../auth/auth.module';
     VendorsModule,
     CountriesModule,
     StatesModule,
+    CategoriesModule,
+    ActivityLogModule,
   ],
-  controllers: [ProductRegistrationController],
+  controllers: [ProductRegistrationController, ProductsController],
   providers: [ProductRegistrationService, SequenceHelper],
-  exports: [ProductRegistrationService],
+  exports: [ProductRegistrationService, SequenceHelper],
 })
 export class ProductRegistrationModule {}

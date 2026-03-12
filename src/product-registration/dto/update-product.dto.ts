@@ -1,9 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsString,
-  IsNotEmpty,
   IsOptional,
   IsNumber,
+  IsDateString,
 } from 'class-validator';
 
 export class UpdateProductDto {
@@ -41,4 +41,44 @@ export class UpdateProductDto {
   @IsNumber()
   @IsOptional()
   urnStatus?: number;
+
+  @ApiProperty({ description: 'Assessment report URL', required: false })
+  @IsString()
+  @IsOptional()
+  assessmentReportUrl?: string;
+
+  @ApiProperty({ description: 'Rejected details', required: false })
+  @IsString()
+  @IsOptional()
+  rejectedDetails?: string;
+
+  @ApiProperty({ description: 'Certified date', required: false, type: String, format: 'date-time' })
+  @IsOptional()
+  @IsDateString()
+  certifiedDate?: string;
+
+  @ApiProperty({ description: 'Valid till date', required: false, type: String, format: 'date-time' })
+  @IsOptional()
+  @IsDateString()
+  validtillDate?: string;
+
+  @ApiProperty({ description: 'First notify date', required: false, type: String, format: 'date-time' })
+  @IsOptional()
+  @IsDateString()
+  firstNotifyDate?: string;
+
+  @ApiProperty({ description: 'Second notify date', required: false, type: String, format: 'date-time' })
+  @IsOptional()
+  @IsDateString()
+  secondNotifyDate?: string;
+
+  @ApiProperty({ description: 'Third notify date', required: false, type: String, format: 'date-time' })
+  @IsOptional()
+  @IsDateString()
+  thirdNotifyDate?: string;
+
+  @ApiProperty({ description: 'Renewed date', required: false, type: String, format: 'date-time' })
+  @IsOptional()
+  @IsDateString()
+  renewedDate?: string;
 }

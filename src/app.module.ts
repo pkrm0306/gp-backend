@@ -11,6 +11,19 @@ import { StatesModule } from './states/states.module';
 import { CategoriesModule } from './categories/categories.module';
 import { CountriesModule } from './countries/countries.module';
 import { ProductRegistrationModule } from './product-registration/product-registration.module';
+import { PaymentsModule } from './payments/payments.module';
+import { ActivityLogModule } from './activity-log/activity-log.module';
+import { ProductDesignModule } from './product-design/product-design.module';
+import { ProductPerformanceModule } from './product-performance/product-performance.module';
+import { RawMaterialsHazardousProductsModule } from './raw-materials-hazardous-products/raw-materials-hazardous-products.module';
+import { ProcessManufacturingModule } from './process-manufacturing/process-manufacturing.module';
+import { ProcessMpManufacturingUnitsModule } from './process-mp-manufacturing-units/process-mp-manufacturing-units.module';
+import { ProcessWasteManagementModule } from './process-waste-management/process-waste-management.module';
+import { ProcessWmManufacturingUnitsModule } from './process-wm-manufacturing-units/process-wm-manufacturing-units.module';
+import { ProcessLifeCycleApproachModule } from './process-life-cycle-approach/process-life-cycle-approach.module';
+import { ProcessProductStewardshipModule } from './process-product-stewardship/process-product-stewardship.module';
+import { ProcessInnovationModule } from './process-innovation/process-innovation.module';
+import { ProcessCommentsModule } from './process-comments/process-comments.module';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
 
 @Module({
@@ -36,6 +49,19 @@ import { LoggingMiddleware } from './common/middleware/logging.middleware';
     CategoriesModule,
     CountriesModule,
     ProductRegistrationModule,
+    PaymentsModule,
+    ActivityLogModule,
+    ProductDesignModule,
+    ProductPerformanceModule,
+    RawMaterialsHazardousProductsModule,
+    ProcessManufacturingModule,
+    ProcessMpManufacturingUnitsModule,
+    ProcessWasteManagementModule,
+    ProcessWmManufacturingUnitsModule,
+    ProcessLifeCycleApproachModule,
+    ProcessProductStewardshipModule,
+    ProcessInnovationModule,
+    ProcessCommentsModule,
   ],
 })
 export class AppModule implements NestModule {

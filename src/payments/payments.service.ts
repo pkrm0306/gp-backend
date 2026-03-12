@@ -1,0 +1,434 @@
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Connection, Types, ClientSession } from 'mongoose';
+import { PaymentDetails, PaymentDetailsDocument } from './schemas/payment-details.schema';
+import { CreatePaymentDto } from './dto/create-payment.dto';
+import { ListPaymentsDto } from './dto/list-payments.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
+import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { ActivityLogService } from '../activity-log/activity-log.service';
+
+@Injectable()
+export class PaymentsService {
+  constructor(
+    @InjectModel(PaymentDetails.name)
+    private paymentDetailsModel: Model<PaymentDetailsDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
+    @InjectConnection() private connection: Connection,
+    private sequenceHelper: SequenceHelper,
+    private activityLogService: ActivityLogService,
+  ) {}
+
+  /**
+   * Certification Flow Status Mapping (URN status -> activity label)
+   */
+  private getActivityName(urnStatus: number): string {
+    const activityMap: { [key: number]: string } = {
+      0: 'Proposal Pending',
+      1: 'Registration Payment Pending',
+      2: 'Approve Registration Pending',
+      3: 'Process Form In Progress',
+      4: 'Check Process Forms',
+      5: 'Vendor Response Pending',
+      6: 'Final Verification Pending',
+      7: 'Certificate Payment Pending',
+      8: 'Approve Certificate Fee',
+      9: 'Payment Rejected',
+      10: 'Certification Fee Approved',
+      11: 'Publish Certificate',
+    };
+    return activityMap[urnStatus] || 'Unknown Activity';
+  }
+
+  private getNextActivityName(urnStatus: number): string | undefined {
+    const nextStatus = urnStatus + 1;
+    if (nextStatus > 11) return undefined;
+    return this.getActivityName(nextStatus);
+  }
+
+  /**
+   * Safely convert string to ObjectId with validation
+   */
+  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+    if (id instanceof Types.ObjectId) {
+      return id;
+    }
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException(`Invalid ${fieldName} format: ${id}`);
+    }
+    return new Types.ObjectId(id);
+  }
+
+  /**
+   * Create payment details
+   */
+  async createPayment(
+    createPaymentDto: CreatePaymentDto,
+    vendorId: string,
+    proposalFile?: Express.Multer.File,
+  ): Promise<PaymentDetailsDocument> {
+    const maxRetries = 3;
+    let retryCount = 0;
+
+    while (retryCount < maxRetries) {
+      const session = await this.connection.startSession();
+      session.startTransaction();
+
+      try {
+        // Convert vendorId to ObjectId
+        const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+
+        // Get next payment ID
+        const paymentId = await this.sequenceHelper.getPaymentId();
+        console.log(`[Payment Creation] Generated paymentId: ${paymentId} (attempt ${retryCount + 1})`);
+
+      // Get current date
+      const now = new Date();
+
+      // Prepare proposal file path
+      let proposalFilePath: string | undefined;
+      if (proposalFile) {
+        proposalFilePath = `/uploads/payments/${proposalFile.filename}`;
+      }
+
+      // Create payment data
+      const paymentData = {
+        paymentId,
+        urnNo: createPaymentDto.urnNo,
+        vendorId: vendorObjectId,
+        quoteAmount: createPaymentDto.quoteAmount,
+        quoteGstAmount: createPaymentDto.quoteGstAmount,
+        quoteTdsAmount: createPaymentDto.quoteTdsAmount,
+        quoteTotal: createPaymentDto.quoteTotal,
+        proposalFile: proposalFilePath,
+        adminGstNo: createPaymentDto.adminGstNo,
+        vendorGstNo: createPaymentDto.vendorGstNo,
+        paymentType: createPaymentDto.paymentType || 'registration',
+        paymentMode: createPaymentDto.paymentMode,
+        onlinePaymentId: createPaymentDto.onlinePaymentId || 0,
+        paymentReferenceNo: createPaymentDto.paymentReferenceNo,
+        paymentChequeDate: createPaymentDto.paymentChequeDate
+          ? new Date(createPaymentDto.paymentChequeDate)
+          : undefined,
+        productsToBeCertified: createPaymentDto.productsToBeCertified,
+        paymentStatus: 0, // Default: 0=Created
+        createdDate: now,
+        updatedDate: now,
+      };
+
+        const payment = new this.paymentDetailsModel(paymentData);
+        const savedPayment = await payment.save({ session });
+
+        await session.commitTransaction();
+        session.endSession();
+
+        return savedPayment;
+      } catch (error: any) {
+        await session.abortTransaction();
+        session.endSession();
+
+        // For validation errors, throw immediately
+        if (error instanceof NotFoundException || error instanceof BadRequestException) {
+          console.error('Validation error:', error.message);
+          throw error;
+        }
+
+        // Check for duplicate key error (11000) - retry with new paymentId
+        if (error.code === 11000 || (error.name === 'MongoServerError' && error.message?.includes('duplicate'))) {
+          retryCount++;
+          console.error(`[Payment Creation] Duplicate paymentId error detected. Error code: ${error.code}, Message: ${error.message}`);
+          if (retryCount < maxRetries) {
+            console.warn(`[Payment Creation] Retrying payment creation. Attempt ${retryCount + 1}/${maxRetries}...`);
+            // Wait a bit before retry (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 200 * retryCount));
+            continue; // Retry the while loop
+          } else {
+            console.error(`[Payment Creation] Failed after ${maxRetries} attempts due to duplicate paymentId`);
+            throw new InternalServerErrorException(
+              'Failed to create payment after multiple attempts due to duplicate paymentId. Please try again.',
+            );
+          }
+        }
+
+        // Log the actual error for debugging
+        console.error('Payment creation error:', error);
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error stack:', error.stack);
+
+        // Check for specific error types
+        if (error.name === 'CastError' || error.message?.includes('Cast to ObjectId')) {
+          throw new BadRequestException(`Invalid ID format provided: ${error.message}`);
+        }
+
+        // Return more detailed error message
+        const errorMessage = error.message || 'Failed to create payment';
+        throw new InternalServerErrorException(
+          `${errorMessage}. Check server logs for details.`,
+        );
+      }
+    }
+
+    // Should never reach here, but just in case
+    throw new InternalServerErrorException('Failed to create payment after all retry attempts.');
+  }
+
+  /**
+   * Update payment details. If urnStatus is provided, also updates products.urnStatus for that URN
+   * and creates an activity log entry.
+   */
+  async updatePaymentDetails(
+    paymentId: number,
+    updatePaymentDto: UpdatePaymentDto,
+    vendorId: string,
+  ): Promise<PaymentDetailsDocument> {
+    const session = await this.connection.startSession();
+    session.startTransaction();
+
+    try {
+      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+
+      const existingPayment = await this.paymentDetailsModel
+        .findOne({ paymentId, vendorId: vendorObjectId })
+        .session(session)
+        .exec();
+
+      if (!existingPayment) {
+        throw new NotFoundException('Payment not found');
+      }
+
+      const now = new Date();
+      const updateData: any = { updatedDate: now };
+
+      if (updatePaymentDto.urnNo !== undefined) updateData.urnNo = updatePaymentDto.urnNo;
+      if (updatePaymentDto.quoteAmount !== undefined) updateData.quoteAmount = updatePaymentDto.quoteAmount;
+      if (updatePaymentDto.quoteGstAmount !== undefined) updateData.quoteGstAmount = updatePaymentDto.quoteGstAmount;
+      if (updatePaymentDto.quoteTdsAmount !== undefined) updateData.quoteTdsAmount = updatePaymentDto.quoteTdsAmount;
+      if (updatePaymentDto.quoteTotal !== undefined) updateData.quoteTotal = updatePaymentDto.quoteTotal;
+      if (updatePaymentDto.adminGstNo !== undefined) updateData.adminGstNo = updatePaymentDto.adminGstNo;
+      if (updatePaymentDto.vendorGstNo !== undefined) updateData.vendorGstNo = updatePaymentDto.vendorGstNo;
+      if (updatePaymentDto.paymentType !== undefined) updateData.paymentType = updatePaymentDto.paymentType;
+      if (updatePaymentDto.paymentMode !== undefined) updateData.paymentMode = updatePaymentDto.paymentMode;
+      if (updatePaymentDto.onlinePaymentId !== undefined) updateData.onlinePaymentId = updatePaymentDto.onlinePaymentId;
+      if (updatePaymentDto.paymentReferenceNo !== undefined) updateData.paymentReferenceNo = updatePaymentDto.paymentReferenceNo;
+      if (updatePaymentDto.paymentChequeDate !== undefined) {
+        updateData.paymentChequeDate = updatePaymentDto.paymentChequeDate
+          ? new Date(updatePaymentDto.paymentChequeDate)
+          : undefined;
+      }
+      if (updatePaymentDto.productsToBeCertified !== undefined) {
+        updateData.productsToBeCertified = updatePaymentDto.productsToBeCertified;
+      }
+      if (updatePaymentDto.paymentStatus !== undefined) updateData.paymentStatus = updatePaymentDto.paymentStatus;
+
+      const updatedPayment = await this.paymentDetailsModel
+        .findOneAndUpdate({ paymentId, vendorId: vendorObjectId }, updateData, {
+          new: true,
+          session,
+        })
+        .exec();
+
+      if (!updatedPayment) {
+        throw new NotFoundException('Payment not found after update');
+      }
+
+      // If urnStatus is provided, update products.urnStatus for this URN and log activity
+      if (updatePaymentDto.urnStatus !== undefined) {
+        const urnNoToUse = (updatePaymentDto.urnNo ?? existingPayment.urnNo)?.trim();
+        if (!urnNoToUse) {
+          throw new BadRequestException('URN number is required to update urnStatus');
+        }
+
+        // Find any one product to get manufacturerId for activity log
+        const anyProduct = await this.productModel
+          .findOne({ urnNo: urnNoToUse, vendorId: vendorObjectId })
+          .session(session)
+          .exec();
+
+        if (!anyProduct) {
+          throw new NotFoundException(`No product found for URN: ${urnNoToUse}`);
+        }
+
+        await this.productModel.updateMany(
+          { urnNo: urnNoToUse, vendorId: vendorObjectId },
+          { $set: { urnStatus: updatePaymentDto.urnStatus, updatedDate: now } },
+          { session },
+        );
+
+        const activity = this.getActivityName(updatePaymentDto.urnStatus);
+        const nextActivity = this.getNextActivityName(updatePaymentDto.urnStatus);
+        const nextActivitiesId =
+          updatePaymentDto.urnStatus < 11 ? updatePaymentDto.urnStatus + 1 : undefined;
+
+        await this.activityLogService.logActivity({
+          vendor_id: vendorId,
+          manufacturer_id: anyProduct.manufacturerId.toString(),
+          urn_no: urnNoToUse,
+          activities_id: updatePaymentDto.urnStatus,
+          activity,
+          activity_status: updatePaymentDto.urnStatus,
+          responsibility: 'Vendor',
+          next_responsibility: nextActivitiesId !== undefined ? 'Admin' : undefined,
+          next_acitivities_id: nextActivitiesId,
+          next_activity: nextActivity,
+          status: 1,
+        });
+      }
+
+      await session.commitTransaction();
+      session.endSession();
+
+      return updatedPayment;
+    } catch (error: any) {
+      await session.abortTransaction();
+      session.endSession();
+
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+
+      console.error('[Update Payment] Error:', error);
+      console.error('[Update Payment] Error stack:', error.stack);
+
+      throw new InternalServerErrorException(
+        error.message || 'Failed to update payment. Please check the logs for details.',
+      );
+    }
+  }
+
+  /**
+   * Get payments for a vendor with pagination, search, filtering, and sorting
+   * Filtered by vendorId from authenticated user
+   */
+  async getPayments(listPaymentsDto: ListPaymentsDto, vendorId: string) {
+    try {
+      const {
+        page = 1,
+        limit = 10,
+        search,
+        status,
+        paymentType,
+        sort = 'desc',
+      } = listPaymentsDto;
+
+      const skip = (page - 1) * limit;
+      const sortOrder = sort === 'asc' ? 1 : -1;
+
+      // Convert vendorId to ObjectId
+      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+
+      // Build initial match conditions
+      const initialMatchConditions: any = {
+        vendorId: vendorObjectId, // Always filter by vendorId
+      };
+
+      // Status filter
+      if (status !== undefined && status !== null) {
+        initialMatchConditions.paymentStatus = status;
+      }
+
+      // Payment type filter
+      if (paymentType) {
+        initialMatchConditions.paymentType = paymentType;
+      }
+
+      // Aggregation pipeline
+      const pipeline: any[] = [];
+
+      // Stage 1: Initial $match for vendorId, status, and paymentType
+      if (Object.keys(initialMatchConditions).length > 0) {
+        pipeline.push({ $match: initialMatchConditions });
+      }
+
+      // Stage 2: $match for global search (searches in urnNo and paymentReferenceNo)
+      if (search && search.trim() !== '') {
+        const searchRegex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        pipeline.push({
+          $match: {
+            $or: [
+              { urnNo: searchRegex },
+              { paymentReferenceNo: searchRegex },
+            ],
+          },
+        });
+      }
+
+      // Stage 3: $project formatted result
+      pipeline.push({
+        $project: {
+          _id: 1,
+          paymentId: 1,
+          urnNo: 1,
+          quoteAmount: 1,
+          quoteGstAmount: 1,
+          quoteTdsAmount: 1,
+          quoteTotal: 1,
+          proposalFile: 1,
+          adminGstNo: 1,
+          vendorGstNo: 1,
+          paymentType: 1,
+          paymentMode: 1,
+          onlinePaymentId: 1,
+          paymentReferenceNo: 1,
+          paymentChequeDate: 1,
+          chequeOrDdFile: 1,
+          tdsFile: 1,
+          productsToBeCertified: 1,
+          paymentStatus: 1,
+          createdDate: 1,
+          updatedDate: 1,
+        },
+      });
+
+      // Stage 4: Sort by createdDate
+      pipeline.push({
+        $sort: { createdDate: sortOrder },
+      });
+
+      // Stage 5: Use $facet for pagination and total count
+      pipeline.push({
+        $facet: {
+          data: [
+            { $skip: skip },
+            { $limit: limit },
+          ],
+          totalCount: [
+            { $count: 'count' },
+          ],
+        },
+      });
+
+      // Execute aggregation
+      const result = await this.paymentDetailsModel.aggregate(pipeline).exec();
+
+      // Extract data and total count
+      const data = result[0]?.data || [];
+      const totalCount = result[0]?.totalCount[0]?.count || 0;
+      const totalPages = Math.ceil(totalCount / limit);
+
+      return {
+        data,
+        pagination: {
+          page,
+          limit,
+          totalCount,
+          totalPages,
+        },
+      };
+    } catch (error: any) {
+      console.error('[Get Payments] Error:', error);
+      console.error('[Get Payments] Error stack:', error.stack);
+      throw new InternalServerErrorException(
+        error.message || 'Failed to get payments. Please check the logs for details.',
+      );
+    }
+  }
+}
