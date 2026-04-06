@@ -24,7 +24,11 @@ import { ProcessLifeCycleApproachModule } from './process-life-cycle-approach/pr
 import { ProcessProductStewardshipModule } from './process-product-stewardship/process-product-stewardship.module';
 import { ProcessInnovationModule } from './process-innovation/process-innovation.module';
 import { ProcessCommentsModule } from './process-comments/process-comments.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { SectorsModule } from './sectors/sectors.module';
+import { StandardsModule } from './standards/standards.module';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
+import { WebsiteModule } from './website/website.module';
 
 @Module({
   imports: [
@@ -62,6 +66,10 @@ import { LoggingMiddleware } from './common/middleware/logging.middleware';
     ProcessProductStewardshipModule,
     ProcessInnovationModule,
     ProcessCommentsModule,
+    WebsiteModule,
+    DashboardModule,
+    SectorsModule,
+    StandardsModule,
   ],
 })
 export class AppModule implements NestModule {

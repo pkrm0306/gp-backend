@@ -17,6 +17,7 @@ import { RegisterVendorDto } from './dto/register-vendor.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -204,6 +205,44 @@ export class AuthService {
 
     return {
       message: 'New password has been sent to your email',
+    };
+  }
+
+  async refresh(refreshTokenDto: RefreshTokenDto) {
+    const secret = this.configService.get<string>('JWT_SECRET') || 'secret';
+
+    let payload: any;
+    try {
+      payload = this.jwtService.verify(refreshTokenDto.refreshToken, { secret });
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    if (!payload?.userId || !payload?.vendorId || !payload?.role) {
+      throw new UnauthorizedException('Invalid refresh token payload');
+    }
+
+    const newPayload = {
+      userId: payload.userId,
+      vendorId: payload.vendorId,
+      role: payload.role,
+    };
+
+    const accessToken = this.jwtService.sign(newPayload, {
+      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '15m',
+    });
+
+    const refreshToken = this.jwtService.sign(newPayload, {
+      expiresIn:
+        this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+    });
+
+    return {
+      message: 'Token refreshed successfully',
+      data: {
+        accessToken,
+        refreshToken,
+      },
     };
   }
 }

@@ -46,6 +46,24 @@ export class VendorsController {
     return { message: 'Profile updated successfully', data: profile };
   }
 
+  @Patch('profile/edit')
+  @ApiOperation({
+    summary: 'Edit vendor profile (unique GST + phone)',
+    description:
+      'Same as update profile, but blocks the update if GST number or phone number already exists for another vendor.',
+  })
+  @ApiBody({ type: UpdateProfileDto })
+  async editProfile(
+    @CurrentUser() user: any,
+    @Body() updateProfileDto: UpdateProfileDto,
+  ) {
+    const profile = await this.vendorsService.editProfile(
+      user.userId,
+      updateProfileDto,
+    );
+    return { message: 'Profile updated successfully', data: profile };
+  }
+
   @Patch('change-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Change password' })

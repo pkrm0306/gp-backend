@@ -116,6 +116,104 @@ export class VendorsService {
     }
   }
 
+  async editProfile(userId: string, updateDto: UpdateProfileDto) {
+    const session = await this.connection.startSession();
+    session.startTransaction();
+
+    try {
+      const vendorUser = await this.vendorUsersService.findById(userId);
+      if (!vendorUser) {
+        throw new NotFoundException('Vendor user not found');
+      }
+
+      const vendor = await this.vendorModel
+        .findById(vendorUser.vendorId.toString())
+        .exec();
+      if (!vendor) {
+        throw new NotFoundException('Vendor not found');
+      }
+
+      // Uniqueness checks (exclude current vendor)
+      if (updateDto.gst) {
+        const gstExists = await this.vendorModel
+          .findOne({
+            _id: { $ne: vendor._id },
+            vendorGst: updateDto.gst,
+          })
+          .select('_id')
+          .lean()
+          .exec();
+        if (gstExists) {
+          throw new BadRequestException(
+            'GST number already exists. Please change it.',
+          );
+        }
+      }
+
+      if (updateDto.mobile) {
+        const phoneExists = await this.vendorModel
+          .findOne({
+            _id: { $ne: vendor._id },
+            vendorPhone: updateDto.mobile,
+          })
+          .select('_id')
+          .lean()
+          .exec();
+        if (phoneExists) {
+          throw new BadRequestException(
+            'Phone number already exists. Please change it.',
+          );
+        }
+      }
+
+      const manufacturerId = vendor.manufacturerId.toString();
+
+      const updateData: any = {};
+
+      if (updateDto.companyName) {
+        await this.manufacturersService.update(
+          manufacturerId,
+          { manufacturerName: updateDto.companyName },
+          session,
+        );
+      }
+
+      if (updateDto.name) {
+        updateData.vendorName = updateDto.name;
+      }
+
+      if (updateDto.designation !== undefined) {
+        updateData.vendorDesignation = updateDto.designation;
+      }
+
+      if (updateDto.gst !== undefined) {
+        updateData.vendorGst = updateDto.gst;
+      }
+
+      if (updateDto.email) {
+        updateData.vendorEmail = updateDto.email;
+      }
+
+      if (updateDto.mobile) {
+        updateData.vendorPhone = updateDto.mobile;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await this.update(vendor._id.toString(), updateData, session);
+      }
+
+      await session.commitTransaction();
+
+      const updatedVendor = await this.findById(vendor._id.toString());
+      return updatedVendor;
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
   async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
     if (changePasswordDto.newPassword !== changePasswordDto.confirmPassword) {
       throw new BadRequestException('New password and confirm password do not match');

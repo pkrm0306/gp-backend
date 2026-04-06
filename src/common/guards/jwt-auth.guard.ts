@@ -18,10 +18,32 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   handleRequest(err: any, user: any, info: any, context: ExecutionContext) {
-    // You can throw an exception based on either "info" or "err" arguments
-    if (err || !user) {
-      throw err || new UnauthorizedException('Invalid or expired token');
+    // Passport-JWT provides details in `info` when auth fails.
+    if (err) {
+      throw err;
     }
+
+    if (!user) {
+      const infoName = info?.name;
+      const infoMessage: string | undefined = info?.message;
+
+      if (infoName === 'TokenExpiredError') {
+        throw new UnauthorizedException('Token expired');
+      }
+
+      // When the Authorization header is missing, passport-jwt typically sets:
+      // info = { name: 'Error', message: 'No auth token' }
+      if (infoMessage?.toLowerCase().includes('no auth token')) {
+        throw new UnauthorizedException('Authorization token missing');
+      }
+
+      if (infoMessage) {
+        throw new UnauthorizedException(infoMessage);
+      }
+
+      throw new UnauthorizedException('Unauthorized');
+    }
+
     return user;
   }
 }

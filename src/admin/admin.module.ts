@@ -4,12 +4,25 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { Manufacturer, ManufacturerSchema } from '../manufacturers/schemas/manufacturer.schema';
 import { Vendor, VendorSchema } from '../vendors/schemas/vendor.schema';
+import { VendorsModule } from '../vendors/vendors.module';
+import { VendorUser, VendorUserSchema } from '../vendor-users/schemas/vendor-user.schema';
+import { Banner, BannerSchema } from '../banners/schemas/banner.schema';
+import {
+  NewsletterSubscriber,
+  NewsletterSubscriberSchema,
+} from '../website/schemas/newsletter-subscriber.schema';
+import { ContactMessage, ContactMessageSchema } from '../website/schemas/contact-message.schema';
 
 @Module({
   imports: [
+    VendorsModule,
     MongooseModule.forFeature([
       { name: Manufacturer.name, schema: ManufacturerSchema },
       { name: Vendor.name, schema: VendorSchema },
+      { name: VendorUser.name, schema: VendorUserSchema },
+      { name: Banner.name, schema: BannerSchema },
+      { name: NewsletterSubscriber.name, schema: NewsletterSubscriberSchema },
+      { name: ContactMessage.name, schema: ContactMessageSchema },
     ]),
   ],
   controllers: [AdminController],

@@ -17,6 +17,21 @@ export class VendorUser {
   @Prop({ required: true })
   phone: string;
 
+  @Prop()
+  designation?: string;
+
+  @Prop()
+  image?: string;
+
+  @Prop()
+  facebookUrl?: string;
+
+  @Prop()
+  twitterUrl?: string;
+
+  @Prop()
+  linkedinUrl?: string;
+
   @Prop({ required: true })
   password: string;
 

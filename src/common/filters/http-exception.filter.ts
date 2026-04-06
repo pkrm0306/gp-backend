@@ -32,6 +32,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
     }
 
+    if (
+      status === HttpStatus.BAD_REQUEST &&
+      request.method === 'POST' &&
+      request.path === '/auth/login' &&
+      Array.isArray(message)
+    ) {
+      message = `${message.join(' ')} — No login data received. Use Body → raw → JSON (Content-Type: application/json) or x-www-form-urlencoded with keys email and password; do not use Body → none.`;
+    }
+
     const apiResponse: ApiResponse = {
       success: false,
       message,

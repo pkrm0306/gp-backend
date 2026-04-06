@@ -3,19 +3,33 @@ import { Document } from 'mongoose';
 
 export type CategoryDocument = Category & Document;
 
-@Schema({ timestamps: true })
+@Schema({ collection: 'categories' })
 export class Category {
+  @Prop({ required: true, unique: true })
+  category_id: number;
+
   @Prop({ required: true })
-  categoryName: string;
+  category_name: string;
 
   @Prop()
-  categoryCode?: string;
+  category_image?: string;
+
+  /** Comma-separated raw material form ids, e.g. "1,3,2" */
+  @Prop()
+  category_raw_material_forms?: string;
+
+  @Prop({ default: 1 })
+  category_status: number;
+
+  /** Sector id */
+  @Prop({ default: 1 })
+  sector: number;
 
   @Prop()
-  description?: string;
+  created_date?: string;
 
-  createdAt?: Date;
-  updatedAt?: Date;
+  @Prop()
+  updated_date?: string;
 }
 
 export const CategorySchema = SchemaFactory.createForClass(Category);

@@ -38,7 +38,7 @@ export class PartnersController {
   @ApiOperation({
     summary: 'Get all partners',
     description:
-      'Returns all partners for the logged-in vendor where type is "partner" and status is not 2, sorted by name ascending',
+      'Returns all partners / team members for the logged-in vendor where type is "partner" and status is not 2, newest first (by createdAt)',
   })
   @ApiResponse({ status: 200, description: 'List of partners retrieved successfully' })
   async findAll(@CurrentUser() user: any) {

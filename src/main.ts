@@ -2,28 +2,88 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { urlencoded } from 'express';
 import { join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
+function ensureUploadDirectories() {
+  const base = join(process.cwd(), 'uploads');
+  const dirs = [
+    base,
+    join(base, 'manufacturers'),
+    join(base, 'team-members'),
+  ];
+  for (const dir of dirs) {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+  }
+}
+
+/** Origins always allowed (API + common local frontends). */
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:3002',
+  'http://127.0.0.1:5173',
+  'https://greenpro-vendor.vercel.app',
+];
+
+function isCorsOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) {
+    return true;
+  }
+  const fromEnv =
+    process.env.CORS_ORIGINS?.split(',')
+      .map((o) => o.trim())
+      .filter(Boolean) ?? [];
+  const allowList = new Set([...DEFAULT_CORS_ORIGINS, ...fromEnv]);
+  if (allowList.has(origin)) {
+    return true;
+  }
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (protocol === 'https:' && hostname.endsWith('.vercel.app')) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-  
+
+  ensureUploadDirectories();
+
   app.useStaticAssets(join(__dirname, '..', 'uploads'), {
     prefix: '/uploads/',
   });
 
+  app.use(urlencoded({ extended: true, limit: '1mb' }));
+
   app.enableCors({
-    origin: [
-      'http://localhost:3001',           // Local development
-      'http://localhost:3002',           // Local development (if different port)
-      'https://greenpro-vendor.vercel.app',  // Your Vercel production domain
-      'https://*.vercel.app',            // All Vercel preview deployments
-    ],
-    credentials: false,  // Set to true only if you need cookies
+    origin: (origin, callback) => {
+      callback(null, isCorsOriginAllowed(origin));
+    },
+    credentials: process.env.CORS_CREDENTIALS === 'true',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'X-Requested-With',
+      'X-Access-Token',
+      'Origin',
+    ],
   });
 
   app.useGlobalPipes(
@@ -45,7 +105,11 @@ async function bootstrap() {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
+  SwaggerModule.setup('api', app, document, {
+    swaggerOptions: {
+      persistAuthorization: true,
+    },
+  });
 
   const port = process.env.PORT || 3000;
   await app.listen(port,'0.0.0.0');

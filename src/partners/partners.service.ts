@@ -10,7 +10,7 @@ import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-u
 import { CreatePartnerDto } from './dto/create-partner.dto';
 import { UpdatePartnerDto } from './dto/update-partner.dto';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class PartnersService {
@@ -37,7 +37,7 @@ export class PartnersService {
           type: 'partner',
           status: { $ne: 2 },
         })
-        .sort({ name: 1 })
+        .sort({ createdAt: -1, _id: -1 })
         .exec();
 
       return partners;
