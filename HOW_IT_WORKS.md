@@ -60,6 +60,7 @@ User sends: POST /auth/register-vendor
 ```typescript
 // main.ts - This is where the app starts
 // It sets up:
+// - CORS (which browser origins may call the API — login, etc.)
 // - Validation (checks if data is correct)
 // - Error handling (catches mistakes)
 // - Swagger (API documentation)
@@ -294,23 +295,31 @@ export class HttpExceptionFilter implements ExceptionFilter {
 ```typescript
 // This is the first file that runs
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  
-  // Add global validation
-  app.useGlobalPipes(new ValidationPipe());
-  
-  // Add error handling
+  const app = await NestFactory.create(AppModule); // real app uses NestExpressApplication for /uploads
+
+  // CORS — browser apps on these origins can call /auth/login, /vendor/..., etc.
+  app.enableCors({
+    origin: [
+      'http://localhost:3001',
+      'http://localhost:3002',
+      'https://greenpro-vendor.vercel.app',
+      'https://*.vercel.app', // see CORS section below for wildcard notes
+    ],
+    credentials: false,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new HttpExceptionFilter());
-  
-  // Add response formatting
   app.useGlobalInterceptors(new ResponseInterceptor());
-  
-  // Start the server
-  await app.listen(3000);
+  // Swagger at /api ...
+
+  await app.listen(process.env.PORT || 3000, '0.0.0.0');
 }
 ```
 
-**What it does:** Sets up the entire application when it starts.
+**What it does:** Sets up the entire application when it starts, including **CORS** so your React/Next (or other) frontends can send `fetch`/axios requests with JSON and the `Authorization` header.
 
 ### Step 3: Created App Module (`app.module.ts`)
 ```typescript
@@ -351,11 +360,17 @@ For each feature (auth, vendors, etc.), we created:
 
 ### Step 7: Implemented Authentication
 1. Created JWT strategy for token validation
-2. Created login endpoint that:
+2. Created **login** endpoint (`POST /auth/login`) that:
    - Checks email/password
-   - Verifies user is active
-   - Returns JWT tokens
-3. Created registration endpoint that:
+   - Requires email verification (for vendor users) and active status
+   - Returns **access** and **refresh** JWT tokens plus user info
+3. Created **forgot password** endpoint (`POST /auth/forgot-password`) that:
+   - Accepts an email, generates a new random password if the user exists
+   - Sends the new password by email (Mailtrap / SMTP from `.env`)
+4. Created **change password** (`PATCH /vendor/change-password`) for logged-in users:
+   - Requires `Authorization: Bearer <accessToken>`
+   - Checks current password, then saves new password (min 6 characters)
+5. Created registration endpoint that:
    - Validates data
    - Checks reCAPTCHA
    - Creates records in transaction
@@ -366,6 +381,224 @@ For each feature (auth, vendors, etc.), we created:
 - JWT tokens for authentication
 - Guards to protect routes
 - Role-based access control
+
+## 🔐 Login, Forgot Password & Change Password (APIs & JSON)
+
+Use your server base URL (for example `http://localhost:3000` if `PORT` is not set). There is **no** path prefix: routes are exactly `/auth/...` and `/vendor/...`.
+
+### CORS (browser → API)
+
+CORS stays **enabled** in `src/main.ts` via `app.enableCors(...)`. That matters when your **frontend runs on a different origin** than the API (e.g. app on `http://localhost:3001`, API on `http://localhost:3000`).
+
+**Allowed origins** (as in code today):
+
+| Origin | Purpose |
+| ------ | ------- |
+| `http://localhost:3001` | Local frontend |
+| `http://localhost:3002` | Local frontend (alternate port) |
+| `https://greenpro-vendor.vercel.app` | Production vendor app |
+| `https://*.vercel.app` | Listed for Vercel previews (if a browser blocks this, add your exact preview URL to the array or use a dynamic `origin` function in `main.ts`) |
+
+**Allowed methods:** `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`
+
+**Allowed headers:** `Content-Type`, `Authorization` — so **login** (JSON body) and **change password** (`Authorization: Bearer ...`) work from the browser.
+
+**Credentials:** `credentials: false`. If you later use cookies across origins, set `credentials: true` and list explicit origins (no `*`).
+
+**Adding another dev URL:** Edit the `origin` array in `main.ts` (e.g. add `http://localhost:5173` for Vite) and restart the server.
+
+Example **fetch** from a page on `http://localhost:3001`:
+
+```javascript
+const res = await fetch('http://localhost:3000/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    email: 'prabhasmiraki@gmail.com',
+    password: 'Dedeepya@123',
+  }),
+});
+const json = await res.json();
+```
+
+---
+
+All successful responses are wrapped by the **ResponseInterceptor** like this:
+
+```json
+{
+  "success": true,
+  "message": "...",
+  "data": { }
+}
+```
+
+If the handler returns only a `message` and no `data` field, `data` may contain the full returned object (see forgot-password below).
+
+---
+
+### 1. Login — `POST /auth/login`
+
+**No auth header.** Send JSON with `email` and `password` (both required strings; email must be valid).
+
+**Example request body** (same shape your app or Postman should use):
+
+```json
+{
+  "email": "prabhasmiraki@gmail.com",
+  "password": "Dedeepya@123"
+}
+```
+
+**cURL example:**
+
+```bash
+curl -X POST http://localhost:3000/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"prabhasmiraki@gmail.com\",\"password\":\"Dedeepya@123\"}"
+```
+
+**What the server checks (in order):**
+
+1. User exists for that email → if not: `401` *Invalid credentials*
+2. Password matches stored hash → if not: `401` *Invalid credentials*
+3. For users who are **not** type `partner`, email must be verified (`isVerified`) → else: `401` *Email not verified*
+4. User `status` must be `1` (active) → else: `401` *Account is inactive*
+
+**Typical success response** (tokens and `user` are real values from your server):
+
+```json
+{
+  "success": true,
+  "message": "Login successful",
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": "507f1f77bcf86cd799439011",
+      "email": "prabhasmiraki@gmail.com",
+      "name": "Your Company Name",
+      "type": "vendor"
+    }
+  }
+}
+```
+
+Copy **`data.accessToken`** and send it on protected routes:
+
+```http
+Authorization: Bearer <accessToken>
+```
+
+Token lifetime comes from `.env`: `JWT_EXPIRES_IN` (default `15m`) and `JWT_REFRESH_EXPIRES_IN` (default `7d` for the refresh token). There is **no** separate refresh endpoint in this project yet—you can still use the refresh token in your own client logic or add an endpoint later.
+
+---
+
+### 2. Forgot password — `POST /auth/forgot-password`
+
+**No auth header.** Only the registered **email** is required.
+
+**Example request body:**
+
+```json
+{
+  "email": "prabhasmiraki@gmail.com"
+}
+```
+
+**cURL example:**
+
+```bash
+curl -X POST http://localhost:3000/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"prabhasmiraki@gmail.com\"}"
+```
+
+**Behavior:**
+
+- If the email **is not** in the database, the API still responds with a **generic** message (so strangers cannot discover which emails are registered).
+- If the email **exists**, the password is **replaced** with a new random hex string, and an email is sent with that new password (configure `MAIL_*` in `.env`).
+
+**Example response when email was found** (shape may vary slightly in `data` because of the interceptor):
+
+```json
+{
+  "success": true,
+  "message": "New password has been sent to your email",
+  "data": {
+    "message": "New password has been sent to your email"
+  }
+}
+```
+
+**Example response when email was not found** (same idea—generic wording):
+
+```json
+{
+  "success": true,
+  "message": "If the email exists, a new password has been sent to your email.",
+  "data": {
+    "message": "If the email exists, a new password has been sent to your email."
+  }
+}
+```
+
+After you receive the new password in email, call **`POST /auth/login`** again with that password. Then use **change password** if you want to set your own.
+
+---
+
+### 3. Change password — `PATCH /vendor/change-password`
+
+**Requires login:** `Authorization: Bearer <accessToken>` from a successful login.
+
+**Example request body** (`newPassword` must be at least **6** characters; `confirmPassword` must match `newPassword`):
+
+```json
+{
+  "currentPassword": "Dedeepya@123",
+  "newPassword": "MyNewSecurePass1",
+  "confirmPassword": "MyNewSecurePass1"
+}
+```
+
+**cURL example** (replace `YOUR_ACCESS_TOKEN`):
+
+```bash
+curl -X PATCH http://localhost:3000/vendor/change-password \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -d "{\"currentPassword\":\"Dedeepya@123\",\"newPassword\":\"MyNewSecurePass1\",\"confirmPassword\":\"MyNewSecurePass1\"}"
+```
+
+**Errors you might see:**
+
+- `400` — New and confirm password do not match
+- `401` — Missing/invalid token, or **current password is incorrect**
+- `400` — User not found (unusual if token is valid)
+
+**Success response:**
+
+```json
+{
+  "success": true,
+  "message": "Password changed successfully",
+  "data": {
+    "message": "Password changed successfully"
+  }
+}
+```
+
+---
+
+### Quick copy-paste summary
+
+| Action           | Method | Path                        | Auth        |
+| ---------------- | ------ | --------------------------- | ----------- |
+| Login            | POST   | `/auth/login`               | None        |
+| Forgot password  | POST   | `/auth/forgot-password`     | None        |
+| Change password  | PATCH  | `/vendor/change-password`   | Bearer JWT  |
+
+Test the same JSON in **Swagger**: open `http://localhost:3000/api` → **Auth** / **Vendor** tags.
 
 ## 🎓 How to Create Your Own Module
 

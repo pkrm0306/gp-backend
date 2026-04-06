@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blossom Child Development Center - Poster</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    html, body {
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+        height: 100%;
+    }
+
+    body {
+        font-family: "Poppins", sans-serif;
+        background: #111;
+    }
+
+    /* Full-page poster: background image covers the viewport */
+    .poster {
+        position: relative;
+        min-height: 100vh;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .poster-bg {
+        position: absolute;
+        inset: 0;
+        background-color: #1a1a1a;
+        /* Same image as before — use relative paths if you copy images next to this file */
+        background-image: url("file:///C:/Users/ADMIN/Downloads/goodfriday.png");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        z-index: 0;
+    }
+
+    /* Light gradient so text stays readable on the photo */
+    .poster-bg::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+            to bottom,
+            rgba(0, 0, 0, 0.15) 0%,
+            rgba(0, 0, 0, 0.35) 55%,
+            rgba(0, 0, 0, 0.5) 100%
+        );
+        pointer-events: none;
+    }
+
+    .logo {
+        position: absolute;
+        top: clamp(12px, 3vw, 28px);
+        left: clamp(12px, 3vw, 28px);
+        z-index: 2;
+        width: min(42vw, 260px);
+        height: auto;
+        display: block;
+        filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.45));
+    }
+
+    .content {
+        position: relative;
+        z-index: 1;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        align-items: center;
+        text-align: center;
+        padding: clamp(72px, 18vw, 120px) clamp(16px, 4vw, 32px) clamp(20px, 4vw, 32px);
+    }
+
+    .title {
+        font-size: clamp(28px, 7vw, 44px);
+        font-weight: 700;
+        color: #fff;
+        margin: 0 0 12px;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5), 0 4px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .subtitle {
+        font-size: clamp(14px, 3.2vw, 18px);
+        font-weight: 400;
+        color: rgba(255, 255, 255, 0.95);
+        max-width: 36em;
+        margin: 0 auto;
+        line-height: 1.55;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    }
+
+    .footer-bar {
+        position: relative;
+        z-index: 2;
+        width: 100%;
+        background: #f9c400;
+        padding: 14px clamp(10px, 3vw, 20px);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .footer-left,
+    .footer-right {
+        flex: 1 1 140px;
+        font-size: clamp(13px, 2.5vw, 16px);
+        font-weight: 600;
+        color: #000;
+        text-align: center;
+    }
+
+    .footer-center {
+        flex: 1 1 160px;
+        text-align: center;
+    }
+
+    .footer-center a {
+        font-size: clamp(13px, 2.5vw, 16px);
+        color: #004AAD;
+        text-decoration: none;
+        font-weight: 600;
+    }
+
+    .small-icon {
+        width: 20px;
+        height: 20px;
+        vertical-align: middle;
+        margin-right: 5px;
+    }
+</style>
+</head>
+<body>
+
+<div class="poster">
+    <div class="poster-bg" role="img" aria-label="Good Friday scene"></div>
+
+    <img
+        src="file:///C:/Users/ADMIN/Downloads/bcdclogo2.png"
+        class="logo"
+        alt="Blossom Child Development Center"
+    >
+
+    <div class="content">
+        <div class="title">Good Friday</div>
+        <div class="subtitle">
+            On this Good Friday, may we remember the sacrifice of Jesus and follow the path of kindness, forgiveness, and compassion.
+        </div>
+    </div>
+
+    <div class="footer-bar">
+        <div class="footer-left">
+            <img src="https://cdn-icons-png.flaticon.com/512/733/733585.png" class="small-icon" alt="">
+            +91 70082 10751
+        </div>
+        <div class="footer-center">
+            <a href="https://www.bcdctherapy.com">www.bcdctherapy.com</a>
+        </div>
+        <div class="footer-right">
+            <img src="https://cdn-icons-png.flaticon.com/512/684/684908.png" class="small-icon" alt="">
+            Malakpet | Himayatnagar
+        </div>
+    </div>
+</div>
+
+</body>
+</html>
