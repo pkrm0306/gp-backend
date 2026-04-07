@@ -70,20 +70,31 @@ async function bootstrap() {
 
   app.use(urlencoded({ extended: true, limit: '1mb' }));
 
-  app.enableCors({
-    origin: (origin, callback) => {
-      callback(null, isCorsOriginAllowed(origin));
-    },
-    credentials: process.env.CORS_CREDENTIALS === 'true',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'Accept',
-      'X-Requested-With',
-      'X-Access-Token',
-      'Origin',
-    ],
+  // Explicit CORS middleware (avoids flaky preflight handling and guarantees OPTIONS won't 404).
+  app.use((req, res, next) => {
+    const origin = req.headers.origin as string | undefined;
+    const allowed = isCorsOriginAllowed(origin);
+    if (origin && allowed) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Vary', 'Origin');
+    }
+    if (process.env.CORS_CREDENTIALS === 'true') {
+      res.header('Access-Control-Allow-Credentials', 'true');
+    }
+    res.header(
+      'Access-Control-Allow-Methods',
+      'GET,POST,PATCH,PUT,DELETE,OPTIONS',
+    );
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Content-Type,Authorization,Accept,X-Requested-With,X-Access-Token,Origin',
+    );
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).send();
+      return;
+    }
+    next();
   });
 
   app.useGlobalPipes(

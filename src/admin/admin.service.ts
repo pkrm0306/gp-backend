@@ -686,6 +686,22 @@ export class AdminService {
     };
   }
 
+  /** Permanently deletes a contact message by MongoDB id. */
+  async deleteContactMessage(id: string) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException('Invalid contact id');
+    }
+
+    const res = await this.contactMessageModel.deleteOne({ _id: objectId }).exec();
+    if (res.deletedCount === 0) {
+      throw new NotFoundException('Contact message not found');
+    }
+    return { id };
+  }
+
   /**
    * Toggle active flag for a team member (partner): status 1 ↔ 0.
    * Same semantics as partners PATCH /partners/status; excludes soft-deleted (2).

@@ -42,6 +42,7 @@ import { CreateBannerDto } from './dto/create-banner.dto';
 import { DeleteBannerDto } from './dto/delete-banner.dto';
 import { DeleteNewsletterSubscriberDto } from './dto/delete-newsletter-subscriber.dto';
 import { UpdateNewsletterSubscriberStatusDto } from './dto/update-newsletter-subscriber-status.dto';
+import { DeleteContactMessageDto } from './dto/delete-contact-message.dto';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { validate } from 'class-validator';
@@ -710,6 +711,38 @@ export class AdminController {
   async viewContactMessage(@Param('id') id: string) {
     const data = await this.adminService.getContactMessageById(id);
     return { message: 'Contact message retrieved successfully', data };
+  }
+
+  @Post('contact/delete')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Delete contact message',
+    description:
+      'Permanently deletes a contact message by id. JSON body: `{ "id": "..." }`.',
+  })
+  @ApiBody({ type: DeleteContactMessageDto })
+  @ApiResponse({ status: 200, description: 'Contact message deleted successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid id / validation error' })
+  @ApiResponse({ status: 404, description: 'Contact message not found' })
+  async deleteContactMessagePost(@Body() body: DeleteContactMessageDto) {
+    const data = await this.adminService.deleteContactMessage(body.id);
+    return { message: 'Contact message deleted successfully', data };
+  }
+
+  @Delete('contact/delete')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Delete contact message',
+    description:
+      'Same as **POST /admin/contact/delete** — JSON body `{ "id": "..." }`.',
+  })
+  @ApiBody({ type: DeleteContactMessageDto })
+  @ApiResponse({ status: 200, description: 'Contact message deleted successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid id / validation error' })
+  @ApiResponse({ status: 404, description: 'Contact message not found' })
+  async deleteContactMessageDelete(@Body() body: DeleteContactMessageDto) {
+    const data = await this.adminService.deleteContactMessage(body.id);
+    return { message: 'Contact message deleted successfully', data };
   }
 
   @Get('team-member/search/by-name')
