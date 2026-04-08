@@ -28,6 +28,10 @@ const ALLOWED_CORS_ORIGINS = [
   'http://127.0.0.1:3001',
   'http://localhost:3003',
   'http://127.0.0.1:3003',
+  
+  'http://localhost:3004',
+  'http://127.0.0.1:3004',
+  'https://cursor-greenpro-admin-mern-cyan.vercel.app',
 ];
 
 async function bootstrap() {
@@ -43,10 +47,11 @@ async function bootstrap() {
 
   app.enableCors({
     origin: ALLOWED_CORS_ORIGINS,
-    credentials: false,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    credentials: false,
     optionsSuccessStatus: 204,
+    preflightContinue: false,
   });
 
   app.useGlobalPipes(
