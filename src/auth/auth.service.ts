@@ -9,7 +9,6 @@ import { ConfigService } from '@nestjs/config';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
-import { VendorsService } from '../vendors/vendors.service';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
 import { CaptchaService } from '../common/services/captcha.service';
 import { EmailService } from '../common/services/email.service';
@@ -27,7 +26,6 @@ export class AuthService {
     private configService: ConfigService,
     @InjectConnection() private connection: Connection,
     private manufacturersService: ManufacturersService,
-    private vendorsService: VendorsService,
     private vendorUsersService: VendorUsersService,
     private captchaService: CaptchaService,
     private emailService: EmailService,
@@ -56,29 +54,21 @@ export class AuthService {
     session.startTransaction();
 
     try {
-      const gpInternalId = `GP${Date.now()}`;
-      const manufacturerInitial = registerDto.companyName
-        .substring(0, 3)
-        .toUpperCase();
-
       const manufacturer = await this.manufacturersService.create({
         manufacturerName: registerDto.companyName,
-        gpInternalId,
-        manufacturerInitial,
-        manufacturerStatus: 1,
-      }, session);
-
-      const vendor = await this.vendorsService.create({
-        manufacturerId: manufacturer._id,
-        vendorName: registerDto.companyName,
-        vendorEmail: registerDto.email,
-        vendorPhone: registerDto.phone,
-        vendorStatus: 0,
+        gpInternalId: null,
+        manufacturerInitial: null,
+        manufacturerStatus: 0,
+        vendor_name: registerDto.companyName,
+        vendor_email: registerDto.email,
+        vendor_phone: registerDto.phone,
+        vendor_status: 0,
       }, session);
 
       const otp = '123456';
       const vendorUser = await this.vendorUsersService.create({
-        vendorId: vendor._id,
+        manufacturerId: manufacturer._id,
+        vendorId: manufacturer._id,
         name: registerDto.companyName,
         email: registerDto.email,
         phone: registerDto.phone,
@@ -153,7 +143,7 @@ export class AuthService {
 
     const payload = {
       userId: user._id.toString(),
-      vendorId: user.vendorId.toString(),
+      manufacturerId: user.manufacturerId?.toString() || user.vendorId.toString(),
       role: user.type,
     };
 
@@ -218,13 +208,13 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    if (!payload?.userId || !payload?.vendorId || !payload?.role) {
+    if (!payload?.userId || !(payload?.manufacturerId || payload?.vendorId) || !payload?.role) {
       throw new UnauthorizedException('Invalid refresh token payload');
     }
 
     const newPayload = {
       userId: payload.userId,
-      vendorId: payload.vendorId,
+      manufacturerId: payload.manufacturerId || payload.vendorId,
       role: payload.role,
     };
 

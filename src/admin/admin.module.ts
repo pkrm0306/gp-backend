@@ -3,8 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { Manufacturer, ManufacturerSchema } from '../manufacturers/schemas/manufacturer.schema';
-import { Vendor, VendorSchema } from '../vendors/schemas/vendor.schema';
-import { VendorsModule } from '../vendors/vendors.module';
+import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { VendorUser, VendorUserSchema } from '../vendor-users/schemas/vendor-user.schema';
 import { Banner, BannerSchema } from '../banners/schemas/banner.schema';
 import {
@@ -15,10 +14,9 @@ import { ContactMessage, ContactMessageSchema } from '../website/schemas/contact
 
 @Module({
   imports: [
-    VendorsModule,
+    ManufacturersModule,
     MongooseModule.forFeature([
       { name: Manufacturer.name, schema: ManufacturerSchema },
-      { name: Vendor.name, schema: VendorSchema },
       { name: VendorUser.name, schema: VendorUserSchema },
       { name: Banner.name, schema: BannerSchema },
       { name: NewsletterSubscriber.name, schema: NewsletterSubscriberSchema },

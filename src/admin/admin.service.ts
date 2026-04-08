@@ -7,12 +7,12 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Manufacturer, ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
-import { Vendor, VendorDocument } from '../vendors/schemas/vendor.schema';
 import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
 import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
+import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
 import {
   NewsletterSubscriber,
   NewsletterSubscriberDocument,
@@ -31,8 +31,6 @@ export class AdminService {
   constructor(
     @InjectModel(Manufacturer.name)
     private manufacturerModel: Model<ManufacturerDocument>,
-    @InjectModel(Vendor.name)
-    private vendorModel: Model<VendorDocument>,
     @InjectModel(VendorUser.name)
     private vendorUserModel: Model<VendorUserDocument>,
     @InjectModel(Banner.name)
@@ -147,6 +145,68 @@ export class AdminService {
       mobile: m.phone,
       is_active: m.status === 1,
     }));
+  }
+
+  async listTeamMembersPaginated(vendorId: string, query: ListTeamMembersQueryDto) {
+    const page = Number(query?.page ?? 1);
+    const limit = Number(query?.limit ?? 10);
+    const currentPage = Number.isFinite(page) && page > 0 ? page : 1;
+    const perPage = Number.isFinite(limit) && limit > 0 ? limit : 10;
+    const skip = (currentPage - 1) * perPage;
+
+    let vendorObjectId: Types.ObjectId;
+    try {
+      vendorObjectId = new Types.ObjectId(vendorId);
+    } catch {
+      throw new BadRequestException('Invalid vendor ID format');
+    }
+
+    const mongoQuery: Record<string, unknown> = {
+      $or: [{ vendorId: vendorObjectId }, { vendorId }],
+      type: 'partner',
+      status: { $ne: 2 },
+    };
+
+    const rawStatus = query?.status?.trim().toLowerCase();
+    if (rawStatus) {
+      if (rawStatus === 'active' || rawStatus === '1') mongoQuery.status = 1;
+      if (rawStatus === 'inactive' || rawStatus === '0') mongoQuery.status = 0;
+    }
+
+    const designation = query?.designation?.trim();
+    if (designation) {
+      mongoQuery.designation = new RegExp(`^${escapeRegex(designation)}$`, 'i');
+    }
+
+    const [totalCount, members] = await Promise.all([
+      this.vendorUserModel.countDocuments(mongoQuery).exec(),
+      this.vendorUserModel
+        .find(mongoQuery)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(perPage)
+        .select('name designation email phone status')
+        .lean()
+        .exec(),
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
+    const data = (members ?? []).map((m, index) => ({
+      s_no: skip + index + 1,
+      id: String(m._id),
+      name: m.name,
+      designation: m.designation ?? '',
+      email: m.email,
+      mobile: m.phone,
+      is_active: m.status === 1,
+    }));
+
+    return {
+      data,
+      totalCount,
+      currentPage,
+      totalPages,
+    };
   }
 
   /**
@@ -360,6 +420,69 @@ export class AdminService {
     }
 
     return { id: bannerId };
+  }
+
+  /**
+   * Set or toggle a banner's status (vendor-scoped).
+   *
+   * - When `status` is provided: sets explicitly (active/inactive)
+   * - When `status` is omitted: toggles (1 ↔ 0)
+   */
+  async setOrToggleBannerStatus(vendorId: string, bannerId: string, status?: string) {
+    let vendorObjectId: Types.ObjectId;
+    let bannerObjectId: Types.ObjectId;
+    try {
+      vendorObjectId = new Types.ObjectId(vendorId);
+      bannerObjectId = new Types.ObjectId(bannerId);
+    } catch {
+      throw new BadRequestException('Invalid ID format');
+    }
+
+    const existing = await this.bannerModel
+      .findOne({
+        _id: bannerObjectId,
+        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+      })
+      .select('status')
+      .lean()
+      .exec();
+
+    if (!existing) {
+      throw new NotFoundException('Banner not found');
+    }
+
+    const desired = status !== undefined ? String(status).trim().toLowerCase() : undefined;
+    let newStatus: number | null = null;
+
+    if (desired === undefined || desired === '') {
+      const cur = Number(existing.status) === 1 ? 1 : 0;
+      newStatus = cur === 1 ? 0 : 1;
+    } else {
+      if (desired === 'active' || desired === '1') newStatus = 1;
+      if (desired === 'inactive' || desired === '0') newStatus = 0;
+      if (newStatus === null) {
+        throw new BadRequestException('Invalid status. Use "active" or "inactive"');
+      }
+    }
+
+    const updated = await this.bannerModel
+      .findByIdAndUpdate(
+        bannerObjectId,
+        { $set: { status: newStatus, updatedAt: new Date() } },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Banner not found');
+    }
+
+    return {
+      id: String(updated._id),
+      status: Number(updated.status) === 1 ? 'active' : 'inactive',
+      is_active: Number(updated.status) === 1,
+    };
   }
 
   async updateTeamMember(
@@ -832,14 +955,14 @@ export class AdminService {
 
   async updateVendorStatus(id: string) {
     try {
-      const vendorId = new Types.ObjectId(id);
-      const vendor = await this.vendorModel.findById(vendorId).exec();
+      const manufacturerId = new Types.ObjectId(id);
+      const manufacturer = await this.manufacturerModel.findById(manufacturerId).exec();
 
-      if (!vendor) {
-        throw new NotFoundException('Vendor not found');
+      if (!manufacturer) {
+        throw new NotFoundException('Manufacturer not found');
       }
 
-      const currentStatus = vendor.vendorStatus;
+      const currentStatus = manufacturer.vendor_status;
       let newStatus: number;
 
       if (currentStatus === 0) {
@@ -850,11 +973,11 @@ export class AdminService {
         throw new BadRequestException(`Invalid vendor status: ${currentStatus}`);
       }
 
-      const updatedVendor = await this.vendorModel
+      const updatedVendor = await this.manufacturerModel
         .findByIdAndUpdate(
-          vendorId,
+          manufacturerId,
           {
-            vendorStatus: newStatus,
+            vendor_status: newStatus,
             updatedAt: new Date(),
           },
           { new: true },
@@ -867,7 +990,7 @@ export class AdminService {
         throw error;
       }
       if (error.name === 'CastError') {
-        throw new BadRequestException('Invalid vendor ID format');
+        throw new BadRequestException('Invalid manufacturer ID format');
       }
       throw new BadRequestException(error.message || 'Failed to update vendor status');
     }

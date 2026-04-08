@@ -23,41 +23,12 @@ function ensureUploadDirectories() {
   }
 }
 
-/** Origins always allowed (API + common local frontends). */
-const DEFAULT_CORS_ORIGINS = [
-  'http://localhost:3000',
+const ALLOWED_CORS_ORIGINS = [
   'http://localhost:3001',
-  'http://localhost:3002',
-  'http://localhost:5173',
-  'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
-  'http://127.0.0.1:3002',
-  'http://127.0.0.1:5173',
-  'https://greenpro-vendor.vercel.app',
+  'http://localhost:3003',
+  'http://127.0.0.1:3003',
 ];
-
-function isCorsOriginAllowed(origin: string | undefined): boolean {
-  if (!origin) {
-    return true;
-  }
-  const fromEnv =
-    process.env.CORS_ORIGINS?.split(',')
-      .map((o) => o.trim())
-      .filter(Boolean) ?? [];
-  const allowList = new Set([...DEFAULT_CORS_ORIGINS, ...fromEnv]);
-  if (allowList.has(origin)) {
-    return true;
-  }
-  try {
-    const { protocol, hostname } = new URL(origin);
-    if (protocol === 'https:' && hostname.endsWith('.vercel.app')) {
-      return true;
-    }
-  } catch {
-    return false;
-  }
-  return false;
-}
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -70,31 +41,12 @@ async function bootstrap() {
 
   app.use(urlencoded({ extended: true, limit: '1mb' }));
 
-  // Explicit CORS middleware (avoids flaky preflight handling and guarantees OPTIONS won't 404).
-  app.use((req, res, next) => {
-    const origin = req.headers.origin as string | undefined;
-    const allowed = isCorsOriginAllowed(origin);
-    if (origin && allowed) {
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Vary', 'Origin');
-    }
-    if (process.env.CORS_CREDENTIALS === 'true') {
-      res.header('Access-Control-Allow-Credentials', 'true');
-    }
-    res.header(
-      'Access-Control-Allow-Methods',
-      'GET,POST,PATCH,PUT,DELETE,OPTIONS',
-    );
-    res.header(
-      'Access-Control-Allow-Headers',
-      'Content-Type,Authorization,Accept,X-Requested-With,X-Access-Token,Origin',
-    );
-
-    if (req.method === 'OPTIONS') {
-      res.status(204).send();
-      return;
-    }
-    next();
+  app.enableCors({
+    origin: ALLOWED_CORS_ORIGINS,
+    credentials: false,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    optionsSuccessStatus: 204,
   });
 
   app.useGlobalPipes(

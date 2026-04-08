@@ -3,7 +3,6 @@ import { getConnectionToken } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { AppModule } from '../app.module';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
-import { VendorsService } from '../vendors/vendors.service';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
 
 const EMAIL = 'greenpro@gmail.com';
@@ -16,7 +15,6 @@ async function run() {
 
   const vendorUsers = app.get(VendorUsersService);
   const manufacturers = app.get(ManufacturersService);
-  const vendors = app.get(VendorsService);
   const connection = app.get<Connection>(getConnectionToken());
 
   const existing = await vendorUsers.findByEmail(EMAIL);
@@ -40,24 +38,18 @@ async function run() {
         gpInternalId: `GP_SEED_${Date.now()}`,
         manufacturerInitial: 'GRE',
         manufacturerStatus: 1,
-      },
-      session,
-    );
-
-    const vendor = await vendors.create(
-      {
-        manufacturerId: manufacturer._id,
-        vendorName: 'GreenPro',
-        vendorEmail: EMAIL,
-        vendorPhone: '0000000000',
-        vendorStatus: 1,
+        vendor_name: 'GreenPro',
+        vendor_email: EMAIL,
+        vendor_phone: '0000000000',
+        vendor_status: 1,
       },
       session,
     );
 
     await vendorUsers.create(
       {
-        vendorId: vendor._id,
+        manufacturerId: manufacturer._id,
+        vendorId: manufacturer._id,
         name: 'GreenPro',
         email: EMAIL,
         phone: '0000000000',

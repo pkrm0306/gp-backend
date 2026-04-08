@@ -8,14 +8,35 @@ export class Manufacturer {
   @Prop({ required: true })
   manufacturerName: string;
 
-  @Prop({ required: true, unique: true })
-  gpInternalId: string;
+  @Prop({ required: false, unique: true, sparse: true, default: null })
+  gpInternalId?: string | null;
+
+  @Prop({ required: false, default: null })
+  manufacturerInitial?: string | null;
+
+  @Prop({ default: 0 })
+  manufacturerStatus: number;
 
   @Prop({ required: true })
-  manufacturerInitial: string;
+  vendor_name: string;
 
-  @Prop({ default: 1 })
-  manufacturerStatus: number;
+  @Prop({ required: true, unique: true })
+  vendor_email: string;
+
+  @Prop({ required: true })
+  vendor_phone: string;
+
+  @Prop()
+  vendor_website?: string;
+
+  @Prop()
+  vendor_designation?: string;
+
+  @Prop()
+  vendor_gst?: string;
+
+  @Prop({ default: 0 })
+  vendor_status: number;
 
   @Prop()
   manufacturerImage?: string;

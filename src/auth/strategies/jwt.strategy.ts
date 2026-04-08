@@ -30,12 +30,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    if (!payload.userId || !payload.vendorId || !payload.role) {
+    const manufacturerId = payload.manufacturerId || payload.vendorId;
+    if (!payload.userId || !manufacturerId || !payload.role) {
       throw new UnauthorizedException('Invalid token payload');
     }
     return {
       userId: payload.userId,
-      vendorId: payload.vendorId,
+      manufacturerId,
+      vendorId: manufacturerId,
       role: payload.role,
     };
   }

@@ -5,8 +5,12 @@ export type VendorUserDocument = VendorUser & Document;
 
 @Schema({ timestamps: true })
 export class VendorUser {
-  @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })
-  vendorId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: true })
+  manufacturerId: Types.ObjectId;
+
+  // Legacy alias retained for backward compatibility with existing modules.
+  @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: false })
+  vendorId?: Types.ObjectId;
 
   @Prop({ required: true })
   name: string;

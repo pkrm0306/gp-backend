@@ -6,7 +6,7 @@ import { Product, ProductSchema } from '../product-registration/schemas/product.
 import { PaymentDetails, PaymentDetailsSchema } from '../payments/schemas/payment-details.schema';
 import { VendorUser, VendorUserSchema } from '../vendor-users/schemas/vendor-user.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
-import { Vendor, VendorSchema } from '../vendors/schemas/vendor.schema';
+import { Manufacturer, ManufacturerSchema } from '../manufacturers/schemas/manufacturer.schema';
 
 @Module({
   imports: [
@@ -15,7 +15,7 @@ import { Vendor, VendorSchema } from '../vendors/schemas/vendor.schema';
       { name: PaymentDetails.name, schema: PaymentDetailsSchema },
       { name: VendorUser.name, schema: VendorUserSchema },
       { name: Event.name, schema: EventSchema },
-      { name: Vendor.name, schema: VendorSchema },
+      { name: Manufacturer.name, schema: ManufacturerSchema },
     ]),
   ],
   controllers: [DashboardController],

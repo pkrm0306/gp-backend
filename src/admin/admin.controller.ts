@@ -29,17 +29,19 @@ import {
   ApiHeader,
 } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
-import { VendorsService } from '../vendors/vendors.service';
+import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
-import { ChangePasswordDto } from '../vendors/dto/change-password.dto';
-import { UpdateProfileDto } from '../vendors/dto/update-vendor.dto';
+import { ChangePasswordDto } from '../manufacturers/dto/change-password.dto';
+import { UpdateProfileDto } from '../manufacturers/dto/update-manufacturer-profile.dto';
 import { CreateTeamMemberDto } from './dto/create-team-member.dto';
 import { EditTeamMemberDto } from './dto/edit-team-member.dto';
 import { DeleteTeamMemberDto } from './dto/delete-team-member.dto';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { DeleteBannerDto } from './dto/delete-banner.dto';
+import { UpdateBannerStatusDto } from './dto/update-banner-status.dto';
+import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
 import { DeleteNewsletterSubscriberDto } from './dto/delete-newsletter-subscriber.dto';
 import { UpdateNewsletterSubscriberStatusDto } from './dto/update-newsletter-subscriber-status.dto';
 import { DeleteContactMessageDto } from './dto/delete-contact-message.dto';
@@ -139,7 +141,7 @@ function TeamMemberEditDocs() {
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly vendorsService: VendorsService,
+    private readonly manufacturersService: ManufacturersService,
   ) {}
 
   @Patch('profile/edit')
@@ -160,7 +162,7 @@ export class AdminController {
     @CurrentUser() user: { userId: string },
     @Body() updateProfileDto: UpdateProfileDto,
   ) {
-    const profile = await this.vendorsService.editProfile(
+    const profile = await this.manufacturersService.editProfile(
       user.userId,
       updateProfileDto,
     );
@@ -292,6 +294,34 @@ export class AdminController {
     }
     const data = await this.adminService.getBannerById(user.vendorId, id);
     return { message: 'Banner retrieved successfully', data };
+  }
+
+  @Patch('banner/:id/status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Set/toggle banner status',
+    description:
+      'Sets a banner **status** to **active/inactive** (1/0). If body `status` is omitted, backend toggles current state. Vendor-scoped.',
+  })
+  @ApiParam({ name: 'id', description: 'Banner MongoDB id' })
+  @ApiBody({ type: UpdateBannerStatusDto })
+  @ApiResponse({ status: 200, description: 'Banner status updated successfully' })
+  @ApiResponse({ status: 404, description: 'Banner not found' })
+  @ApiResponse({ status: 400, description: 'Invalid id/status' })
+  async updateBannerStatus(
+    @CurrentUser() user: { vendorId: string },
+    @Param('id') id: string,
+    @Body() body: UpdateBannerStatusDto,
+  ) {
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
+    const data = await this.adminService.setOrToggleBannerStatus(
+      user.vendorId,
+      id,
+      body?.status,
+    );
+    return { message: 'Banner status updated successfully', data };
   }
 
   @Post('team-member/create')
@@ -651,12 +681,49 @@ export class AdminController {
       },
     },
   })
-  async listTeamMembers(@CurrentUser() user: { vendorId: string }) {
+  async listTeamMembers(
+    @CurrentUser() user: { vendorId: string },
+    @Query() query: ListTeamMembersQueryDto,
+  ) {
+    return this.executeListTeamMembers(user, query);
+  }
+
+  @Get('team-members/list')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List team members (filters + pagination)',
+    description:
+      'Supports filters (status, designation) and pagination (page, limit). Vendor-scoped.',
+  })
+  @ApiQuery({ name: 'status', required: false, description: 'active | inactive' })
+  @ApiQuery({ name: 'designation', required: false, description: 'Exact designation match (case-insensitive)' })
+  @ApiQuery({ name: 'page', required: false, description: 'Default 1' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Default 10' })
+  async listTeamMembersPaginated(
+    @CurrentUser() user: { vendorId: string },
+    @Query() query: ListTeamMembersQueryDto,
+  ) {
+    return this.executeListTeamMembers(user, query);
+  }
+
+  private async executeListTeamMembers(
+    user: { vendorId: string },
+    query: ListTeamMembersQueryDto,
+  ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
-    const data = await this.adminService.listTeamMembers(user.vendorId);
-    return { message: 'Team members retrieved successfully', data };
+    const result = await this.adminService.listTeamMembersPaginated(
+      user.vendorId,
+      query,
+    );
+    return {
+      message: 'Team members retrieved successfully',
+      data: result.data,
+      totalCount: result.totalCount,
+      currentPage: result.currentPage,
+      totalPages: result.totalPages,
+    };
   }
 
   @Get('contact/list')
@@ -898,7 +965,7 @@ export class AdminController {
     @CurrentUser() user: { userId: string },
     @Body() changePasswordDto: ChangePasswordDto,
   ) {
-    await this.vendorsService.changePassword(user.userId, changePasswordDto);
+    await this.manufacturersService.changePassword(user.userId, changePasswordDto);
     return { message: 'Password changed successfully' };
   }
 

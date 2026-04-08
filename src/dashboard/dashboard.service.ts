@@ -5,7 +5,7 @@ import { Product, ProductDocument } from '../product-registration/schemas/produc
 import { PaymentDetails, PaymentDetailsDocument } from '../payments/schemas/payment-details.schema';
 import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
-import { Vendor, VendorDocument } from '../vendors/schemas/vendor.schema';
+import { Manufacturer, ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
 
 @Injectable()
 export class DashboardService {
@@ -18,8 +18,8 @@ export class DashboardService {
     private vendorUserModel: Model<VendorUserDocument>,
     @InjectModel(Event.name)
     private eventModel: Model<EventDocument>,
-    @InjectModel(Vendor.name)
-    private vendorModel: Model<VendorDocument>,
+    @InjectModel(Manufacturer.name)
+    private manufacturerModel: Model<ManufacturerDocument>,
   ) {}
 
   async getDashboardData(vendorId: string) {
@@ -27,13 +27,17 @@ export class DashboardService {
       const vendorObjectId = new Types.ObjectId(vendorId);
 
       // Check if vendor profile is complete
-      const vendor = await this.vendorModel.findById(vendorObjectId).exec();
-      if (!vendor) {
-        throw new ForbiddenException('Vendor not found');
+      const manufacturer = await this.manufacturerModel.findById(vendorObjectId).exec();
+      if (!manufacturer) {
+        throw new ForbiddenException('Manufacturer not found');
       }
 
       // Check if vendor profile is complete (GST, designation, phone)
-      if (!vendor.vendorGst || !vendor.vendorDesignation || !vendor.vendorPhone) {
+      if (
+        !manufacturer.vendor_gst ||
+        !manufacturer.vendor_designation ||
+        !manufacturer.vendor_phone
+      ) {
         throw new ForbiddenException('Please enter your account details to access all options!');
       }
 

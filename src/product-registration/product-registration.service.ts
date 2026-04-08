@@ -14,7 +14,6 @@ import { UpdateUrnStatusDto } from './dto/update-urn-status.dto';
 import { ListProductsDto } from './dto/list-products.dto';
 import { SequenceHelper } from './helpers/sequence.helper';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
-import { VendorsService } from '../vendors/vendors.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
@@ -29,7 +28,6 @@ export class ProductRegistrationService {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private manufacturersService: ManufacturersService,
-    private vendorsService: VendorsService,
     private countriesService: CountriesService,
     private statesService: StatesService,
     private activityLogService: ActivityLogService,

@@ -8,7 +8,6 @@ import { Product, ProductSchema } from './schemas/product.schema';
 import { ProductPlant, ProductPlantSchema } from './schemas/product-plant.schema';
 import { SequenceHelper } from './helpers/sequence.helper';
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
-import { VendorsModule } from '../vendors/vendors.module';
 import { CountriesModule } from '../countries/countries.module';
 import { StatesModule } from '../states/states.module';
 import { AuthModule } from '../auth/auth.module';
@@ -24,7 +23,6 @@ import { ActivityLogModule } from '../activity-log/activity-log.module';
     PassportModule,
     AuthModule,
     ManufacturersModule,
-    VendorsModule,
     CountriesModule,
     StatesModule,
     CategoriesModule,

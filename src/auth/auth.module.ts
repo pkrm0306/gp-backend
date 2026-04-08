@@ -7,7 +7,6 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
-import { VendorsModule } from '../vendors/vendors.module';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
 import { CaptchaService } from '../common/services/captcha.service';
 import { EmailService } from '../common/services/email.service';
@@ -26,7 +25,6 @@ import { EmailService } from '../common/services/email.service';
       inject: [ConfigService],
     }),
     ManufacturersModule,
-    VendorsModule,
     VendorUsersModule,
   ],
   controllers: [AuthController],

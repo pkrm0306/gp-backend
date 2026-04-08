@@ -3,7 +3,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from './auth/auth.module';
 import { ManufacturersModule } from './manufacturers/manufacturers.module';
-import { VendorsModule } from './vendors/vendors.module';
 import { VendorUsersModule } from './vendor-users/vendor-users.module';
 import { PartnersModule } from './partners/partners.module';
 import { AdminModule } from './admin/admin.module';
@@ -45,7 +44,6 @@ import { WebsiteModule } from './website/website.module';
     }),
     AuthModule,
     ManufacturersModule,
-    VendorsModule,
     VendorUsersModule,
     PartnersModule,
     AdminModule,

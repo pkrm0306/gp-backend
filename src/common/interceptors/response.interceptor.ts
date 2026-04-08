@@ -28,7 +28,14 @@ export class ResponseInterceptor implements NestInterceptor {
               ? (data as { data: unknown }).data
               : data,
         };
-        const payload = data as { total?: number; page?: number; limit?: number };
+        const payload = data as {
+          total?: number;
+          page?: number;
+          limit?: number;
+          totalCount?: number;
+          currentPage?: number;
+          totalPages?: number;
+        };
         if (typeof payload?.total === 'number') {
           response.total = payload.total;
         }
@@ -37,6 +44,15 @@ export class ResponseInterceptor implements NestInterceptor {
         }
         if (typeof payload?.limit === 'number') {
           response.limit = payload.limit;
+        }
+        if (typeof payload?.totalCount === 'number') {
+          response.totalCount = payload.totalCount;
+        }
+        if (typeof payload?.currentPage === 'number') {
+          response.currentPage = payload.currentPage;
+        }
+        if (typeof payload?.totalPages === 'number') {
+          response.totalPages = payload.totalPages;
         }
         return response as unknown as ApiResponse;
       }),
