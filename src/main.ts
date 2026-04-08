@@ -32,6 +32,7 @@ const ALLOWED_CORS_ORIGINS = [
   'http://localhost:3004',
   'http://127.0.0.1:3004',
   'https://cursor-greenpro-admin-mern-cyan.vercel.app',
+  'https://cursor-greenpro-admin-mern-dun.vercel.app',
 ];
 
 async function bootstrap() {
