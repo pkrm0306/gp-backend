@@ -40,6 +40,8 @@ const ALLOWED_CORS_ORIGINS = [
   'http://127.0.0.1:5173',
   'https://cursor-greenpro-admin-mern-cyan.vercel.app',
   'https://cursor-greenpro-website-mern-seven.vercel.app',
+  'https://cursor-greenpro-admin-mern-dun.vercel.app/',
+
 ];
 
 function buildCorsOrigins(): string[] {
