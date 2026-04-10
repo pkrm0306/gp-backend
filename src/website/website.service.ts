@@ -2,9 +2,10 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import {
   NewsletterSubscriber,
   NewsletterSubscriberDocument,
@@ -12,6 +13,8 @@ import {
 import { NewsletterSubscribeDto } from './dto/newsletter-subscribe.dto';
 import { ContactSubmitDto } from './dto/contact-submit.dto';
 import { ContactMessage, ContactMessageDocument } from './schemas/contact-message.schema';
+import { Event, EventDocument } from '../events/schemas/event.schema';
+import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
 
 function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
   const prefs: string[] = [];
@@ -34,6 +37,10 @@ export class WebsiteService {
     private subscriberModel: Model<NewsletterSubscriberDocument>,
     @InjectModel(ContactMessage.name)
     private contactMessageModel: Model<ContactMessageDocument>,
+    @InjectModel(Event.name)
+    private eventModel: Model<EventDocument>,
+    @InjectModel(VendorUser.name)
+    private vendorUserModel: Model<VendorUserDocument>,
   ) {}
 
   async subscribeNewsletter(dto: NewsletterSubscribeDto) {
@@ -152,12 +159,100 @@ export class WebsiteService {
         phoneNumber: (saved as any).phoneNumber,
         subject: (saved as any).subject,
         message: (saved as any).message,
+        createdAt: (saved as any).createdAt,
       };
     } catch (e: any) {
       throw new InternalServerErrorException(
         e?.message || 'Failed to submit contact message',
       );
     }
+  }
+
+  /**
+   * Public event status toggle for the website events page.
+   *
+   * - Accepts Mongo `_id` OR numeric `eventId`
+   * - If status is missing/invalid, treats it as active by default (1)
+   * - Toggles: 1 ↔ 0
+   */
+  async toggleWebsiteEventStatus(identifier: string) {
+    const raw = String(identifier ?? '').trim();
+    if (!raw) {
+      throw new BadRequestException('Event id is required');
+    }
+
+    const findQuery: Record<string, any> = {};
+    if (Types.ObjectId.isValid(raw)) {
+      findQuery._id = new Types.ObjectId(raw);
+    } else {
+      const asNumber = Number.parseInt(raw, 10);
+      if (!Number.isFinite(asNumber) || asNumber <= 0) {
+        throw new BadRequestException(
+          'Invalid event id (expected Mongo _id or numeric eventId)',
+        );
+      }
+      findQuery.eventId = asNumber;
+    }
+
+    const current = await this.eventModel
+      .findOne(findQuery)
+      .select('eventStatus')
+      .lean()
+      .exec();
+
+    if (!current) {
+      throw new NotFoundException('Event not found');
+    }
+
+    const cur = Number((current as any).eventStatus);
+    const normalized = cur === 0 || cur === 1 ? cur : 1; // default active
+    const next = normalized === 1 ? 0 : 1;
+
+    const updated = await this.eventModel
+      .findOneAndUpdate(
+        findQuery,
+        { $set: { eventStatus: next, updatedDate: new Date() } },
+        { new: true },
+      )
+      .select('eventStatus eventId')
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Event not found');
+    }
+
+    return {
+      id: String((updated as any)._id),
+      eventId: (updated as any).eventId,
+      status: Number((updated as any).eventStatus) === 1 ? 'active' : 'inactive',
+    };
+  }
+
+  /**
+   * Public website team members list.
+   * Pulls active partners from VendorUser (type=partner, status=1).
+   */
+  async listWebsiteTeamMembers() {
+    const rows = await this.vendorUserModel
+      .find({ type: 'partner', status: 1 })
+      .sort({ createdAt: -1, _id: -1 })
+      .select('name designation email phone image facebookUrl twitterUrl linkedinUrl')
+      .lean()
+      .exec();
+
+    return (rows ?? []).map((m: any, idx: number) => ({
+      s_no: idx + 1,
+      id: String(m._id),
+      name: String(m.name ?? ''),
+      designation: String(m.designation ?? ''),
+      email: String(m.email ?? ''),
+      mobile: String(m.phone ?? ''),
+      image: m.image ?? null,
+      facebookUrl: String(m.facebookUrl ?? ''),
+      twitterUrl: String(m.twitterUrl ?? ''),
+      linkedinUrl: String(m.linkedinUrl ?? ''),
+    }));
   }
 }
 

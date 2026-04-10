@@ -79,3 +79,11 @@ export class Product {
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);
+
+// Unified lifecycle listing indexes
+ProductSchema.index({ productStatus: 1 });
+ProductSchema.index({ productType: 1 });
+ProductSchema.index({ manufacturerId: 1 });
+ProductSchema.index({ categoryId: 1 });
+ProductSchema.index({ createdDate: -1 });
+ProductSchema.index({ validtillDate: 1 });

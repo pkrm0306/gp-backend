@@ -32,7 +32,7 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Get products eligible for renewal',
     description:
-      'Returns a list of certified products (product_status = 2) for the logged-in vendor that are expiring within 60 days (validtill_date < current_date + 60 days). Products are joined with categories collection to get category_name. Results are sorted by created_date DESC.',
+      'Returns a list of certified products (product_status = 2) for the logged-in manufacturer that are expiring within 60 days (validtill_date < current_date + 60 days). Products are joined with categories collection to get category_name. Results are sorted by created_date DESC.',
   })
   @ApiResponse({
     status: 200,
@@ -61,14 +61,14 @@ export class ProductsController {
     },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
-  @ApiResponse({ status: 400, description: 'Bad request - Vendor ID not found in token' })
+  @ApiResponse({ status: 400, description: 'Bad request - Manufacturer ID not found in token' })
   async getRenewList(@CurrentUser() user: any) {
     try {
-      if (!user?.vendorId) {
-        throw new BadRequestException('Vendor ID not found in token');
+      if (!user?.manufacturerId) {
+        throw new BadRequestException('Manufacturer ID not found in token');
       }
 
-      const data = await this.productRegistrationService.getRenewList(user.vendorId);
+      const data = await this.productRegistrationService.getRenewList(user.manufacturerId);
 
       return {
         success: true,
@@ -245,7 +245,7 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Update URN status',
     description:
-      'Updates the URN status for a product matching the given vendorId and urnNo. The products table will be updated where vendorId and urnNo match, setting urnStatus to the provided updateStatusTo value. Activity logging is automatically performed for the status change.',
+      'Updates the URN status for a product matching the logged-in manufacturer and urnNo. Activity logging is automatically performed for the status change.',
   })
   @ApiResponse({
     status: 200,
@@ -272,12 +272,21 @@ export class ProductsController {
       },
     },
   })
-  @ApiResponse({ status: 404, description: 'Product not found with the given vendorId and urnNo' })
+  @ApiResponse({ status: 404, description: 'Product not found with the given manufacturer and urnNo' })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid input data' })
   @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
-  async updateUrnStatus(@Body() updateUrnStatusDto: UpdateUrnStatusDto) {
+  async updateUrnStatus(
+    @CurrentUser() user: any,
+    @Body() updateUrnStatusDto: UpdateUrnStatusDto,
+  ) {
     try {
-      const data = await this.productRegistrationService.updateUrnStatus(updateUrnStatusDto);
+      if (!user?.manufacturerId) {
+        throw new BadRequestException('Manufacturer ID not found in token');
+      }
+      const data = await this.productRegistrationService.updateUrnStatus(
+        updateUrnStatusDto,
+        user.manufacturerId,
+      );
 
       return {
         success: true,

@@ -11,6 +11,10 @@ export class Category {
   @Prop({ required: true })
   category_name: string;
 
+  /** Lowercase trimmed/collapsed name for case-insensitive global uniqueness */
+  @Prop()
+  category_name_normalized?: string;
+
   @Prop()
   category_image?: string;
 
@@ -33,3 +37,7 @@ export class Category {
 }
 
 export const CategorySchema = SchemaFactory.createForClass(Category);
+
+CategorySchema.index({ category_name_normalized: 1 }, { unique: true, sparse: true });
+/** Backfill + syncIndexes in CategoriesService.onModuleInit — avoid building unique index before backfill */
+CategorySchema.set('autoIndex', false);

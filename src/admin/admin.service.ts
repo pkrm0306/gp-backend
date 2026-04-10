@@ -13,6 +13,12 @@ import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
+import { Event, EventDocument } from '../events/schemas/event.schema';
+import {
+  EventIdCounter,
+  EventIdCounterDocument,
+  EVENT_ID_COUNTER_KEY,
+} from '../events/schemas/event-id-counter.schema';
 import {
   NewsletterSubscriber,
   NewsletterSubscriberDocument,
@@ -26,6 +32,11 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const DEFAULT_EVENT_REGISTRATION_LINK =
+  'https://cam.mycii.in/OR/OnlineRegistrationLogin.html?EventId=E000069218';
+const DEFAULT_EVENT_BROCHURE_LINK =
+  'https://www.linkedin.com/posts/cii-greenpro-ecolabelling_greenpro-summit-2025-brochure-03062025-activity-7335663123154014208-2ScV?utm_source=share&utm_medium=member_desktop&rcm=ACoAAB-BYukBl9XKRWqUfyykOlftYFSgtIQGafI';
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -35,11 +46,239 @@ export class AdminService {
     private vendorUserModel: Model<VendorUserDocument>,
     @InjectModel(Banner.name)
     private bannerModel: Model<BannerDocument>,
+    @InjectModel(Event.name)
+    private eventModel: Model<EventDocument>,
+    @InjectModel(EventIdCounter.name)
+    private eventCounterModel: Model<EventIdCounterDocument>,
     @InjectModel(NewsletterSubscriber.name)
     private newsletterSubscriberModel: Model<NewsletterSubscriberDocument>,
     @InjectModel(ContactMessage.name)
     private contactMessageModel: Model<ContactMessageDocument>,
   ) {}
+
+  private async nextEventId(): Promise<number> {
+    const doc = await this.eventCounterModel
+      .findOneAndUpdate(
+        { _id: EVENT_ID_COUNTER_KEY },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true },
+      )
+      .exec();
+    if (!doc || typeof doc.seq !== 'number' || !Number.isFinite(doc.seq)) {
+      throw new Error('Failed to allocate event id');
+    }
+    return doc.seq;
+  }
+
+  private formatEventResponse(event: any) {
+    if (!event) return event;
+    const obj = typeof event.toObject === 'function' ? event.toObject() : event;
+    const id = obj?._id ? String(obj._id) : obj?.id ? String(obj.id) : undefined;
+    const { _id, __v, ...rest } = obj ?? {};
+    return {
+      ...rest,
+      registrationLink:
+        (rest as any)?.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
+      brochureLink: (rest as any)?.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
+      ...(id ? { id } : {}),
+    };
+  }
+
+  async createEvent(payload: {
+    eventName: string;
+    eventDate: Date;
+    eventStartTime?: string;
+    eventEndTime?: string;
+    eventLocation?: string;
+    eventDescription?: string;
+    contactPersonName?: string;
+    contactPersonDesignation?: string;
+    contactPersonEmail?: string;
+    contactPersonPhone?: string;
+    eventImage?: string;
+    registrationLink?: string;
+    brochureLink?: string;
+  }) {
+    const eventId = await this.nextEventId();
+    const now = new Date();
+
+    const doc = new this.eventModel({
+      eventId,
+      eventName: payload.eventName,
+      eventImage: payload.eventImage,
+      eventDescription: payload.eventDescription,
+      eventDate: payload.eventDate,
+      eventStartTime: payload.eventStartTime,
+      eventEndTime: payload.eventEndTime,
+      eventLocation: payload.eventLocation,
+      contactPersonName: payload.contactPersonName,
+      contactPersonDesignation: payload.contactPersonDesignation,
+      contactPersonEmail: payload.contactPersonEmail,
+      contactPersonPhone: payload.contactPersonPhone,
+      registrationLink: payload.registrationLink,
+      brochureLink: payload.brochureLink,
+      eventStatus: 1,
+      createdDate: now,
+      updatedDate: now,
+    });
+
+    const saved = await doc.save();
+    return this.formatEventResponse(saved);
+  }
+
+  async updateEvent(
+    identifier: string,
+    payload: {
+      eventName?: string;
+      eventDate?: Date;
+      eventStartTime?: string;
+      eventEndTime?: string;
+      eventLocation?: string;
+      eventDescription?: string;
+      contactPersonName?: string;
+      contactPersonDesignation?: string;
+      contactPersonEmail?: string;
+      contactPersonPhone?: string;
+      eventImage?: string;
+      registrationLink?: string;
+      brochureLink?: string;
+    },
+  ) {
+    const raw = String(identifier ?? '').trim();
+    if (!raw) throw new BadRequestException('Event id is required');
+
+    const $set: Record<string, unknown> = { updatedDate: new Date() };
+    if (payload.eventName !== undefined && String(payload.eventName).trim() !== '')
+      $set.eventName = payload.eventName;
+    if (payload.eventDate !== undefined) $set.eventDate = payload.eventDate;
+    if (payload.eventStartTime !== undefined && String(payload.eventStartTime).trim() !== '')
+      $set.eventStartTime = payload.eventStartTime;
+    if (payload.eventEndTime !== undefined && String(payload.eventEndTime).trim() !== '')
+      $set.eventEndTime = payload.eventEndTime;
+    if (payload.eventLocation !== undefined && String(payload.eventLocation).trim() !== '')
+      $set.eventLocation = payload.eventLocation;
+    if (payload.eventDescription !== undefined && String(payload.eventDescription).trim() !== '')
+      $set.eventDescription = payload.eventDescription;
+    if (payload.contactPersonName !== undefined && String(payload.contactPersonName).trim() !== '')
+      $set.contactPersonName = payload.contactPersonName;
+    if (
+      payload.contactPersonDesignation !== undefined &&
+      String(payload.contactPersonDesignation).trim() !== ''
+    )
+      $set.contactPersonDesignation = payload.contactPersonDesignation;
+    if (payload.contactPersonEmail !== undefined && String(payload.contactPersonEmail).trim() !== '')
+      $set.contactPersonEmail = payload.contactPersonEmail;
+    if (payload.contactPersonPhone !== undefined && String(payload.contactPersonPhone).trim() !== '')
+      $set.contactPersonPhone = payload.contactPersonPhone;
+    if (payload.eventImage !== undefined) $set.eventImage = payload.eventImage;
+    if (payload.registrationLink !== undefined && String(payload.registrationLink).trim() !== '')
+      $set.registrationLink = payload.registrationLink;
+    if (payload.brochureLink !== undefined && String(payload.brochureLink).trim() !== '')
+      $set.brochureLink = payload.brochureLink;
+
+    let updated: any = null;
+    if (Types.ObjectId.isValid(raw)) {
+      updated = await this.eventModel
+        .findByIdAndUpdate(new Types.ObjectId(raw), { $set }, { new: true })
+        .lean()
+        .exec();
+    } else {
+      const asNumber = Number.parseInt(raw, 10);
+      if (!Number.isFinite(asNumber) || asNumber <= 0) {
+        throw new BadRequestException('Invalid event id (expected Mongo _id or numeric eventId)');
+      }
+      updated = await this.eventModel
+        .findOneAndUpdate({ eventId: asNumber }, { $set }, { new: true })
+        .lean()
+        .exec();
+    }
+
+    if (!updated) {
+      throw new NotFoundException('Event not found');
+    }
+
+    return this.formatEventResponse(updated);
+  }
+
+  async listEvents() {
+    const rows = await this.eventModel
+      .find({})
+      .sort({ createdDate: -1, _id: -1 })
+      .select(
+        'eventName eventImage eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+      )
+      .lean()
+      .exec();
+
+    return (rows ?? []).map((e: any, idx: number) => {
+      const datePart =
+        e?.eventDate instanceof Date
+          ? e.eventDate.toISOString().slice(0, 10)
+          : e?.eventDate
+            ? new Date(e.eventDate).toISOString().slice(0, 10)
+            : '';
+      const timePart = String(e?.eventStartTime ?? '').trim();
+
+      return {
+        s_no: idx + 1,
+        id: String(e._id),
+        eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
+        image: e.eventImage ?? null,
+        eventName: String(e.eventName ?? ''),
+        dateTime: [datePart, timePart].filter(Boolean).join(' '),
+        location: String(e.eventLocation ?? ''),
+        is_active: Number(e.eventStatus) === 1,
+        registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
+        brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
+      };
+    });
+  }
+
+  async getEventById(identifier: string) {
+    const raw = String(identifier ?? '').trim();
+    if (!raw) throw new BadRequestException('Event id is required');
+
+    let event: any = null;
+    if (Types.ObjectId.isValid(raw)) {
+      event = await this.eventModel.findById(new Types.ObjectId(raw)).lean().exec();
+    } else {
+      const asNumber = Number.parseInt(raw, 10);
+      if (!Number.isFinite(asNumber) || asNumber <= 0) {
+        throw new BadRequestException('Invalid event id (expected Mongo _id or numeric eventId)');
+      }
+      event = await this.eventModel.findOne({ eventId: asNumber }).lean().exec();
+    }
+
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    return this.formatEventResponse(event);
+  }
+
+  async deleteEvent(identifier: string) {
+    const raw = String(identifier ?? '').trim();
+    if (!raw) throw new BadRequestException('Event id is required');
+
+    let res: { deletedCount?: number } | null = null;
+    if (Types.ObjectId.isValid(raw)) {
+      res = await this.eventModel
+        .deleteOne({ _id: new Types.ObjectId(raw) })
+        .exec();
+    } else {
+      const asNumber = Number.parseInt(raw, 10);
+      if (!Number.isFinite(asNumber) || asNumber <= 0) {
+        throw new BadRequestException('Invalid event id (expected Mongo _id or numeric eventId)');
+      }
+      res = await this.eventModel.deleteOne({ eventId: asNumber }).exec();
+    }
+
+    if (!res || res.deletedCount === 0) {
+      throw new NotFoundException('Event not found');
+    }
+
+    return { id: raw };
+  }
 
   async createTeamMember(
     vendorId: string,
@@ -63,10 +302,13 @@ export class AdminService {
 
     const existingActive = await this.vendorUserModel
       .findOne({
-        vendorId: vendorObjectId,
-        status: { $ne: 2 },
-        type: 'partner',
-        $or: [{ email: data.email }, { phone: data.mobile }],
+        $and: [
+          // Support both the new canonical field (`manufacturerId`) and legacy alias (`vendorId`)
+          { $or: [{ manufacturerId: vendorObjectId }, { vendorId: vendorObjectId }] },
+          { status: { $ne: 2 } },
+          { type: 'partner' },
+          { $or: [{ email: data.email }, { phone: data.mobile }] },
+        ],
       })
       .select('_id email phone')
       .lean()
@@ -85,6 +327,8 @@ export class AdminService {
     const password = crypto.randomBytes(8).toString('hex');
 
     const teamMember: Partial<VendorUser> = {
+      // Canonical + legacy alias (some modules still query vendorId)
+      manufacturerId: vendorObjectId,
       vendorId: vendorObjectId,
       type: 'partner',
       status: 1,
@@ -103,7 +347,23 @@ export class AdminService {
     };
 
     const created = new this.vendorUserModel(teamMember);
-    const saved = await created.save();
+    let saved: any;
+    try {
+      saved = await created.save();
+    } catch (e: any) {
+      // Handle unique index conflicts (e.g. VendorUser.email is globally unique in schema)
+      if (e?.code === 11000) {
+        const key = Object.keys(e?.keyPattern ?? e?.keyValue ?? {})[0];
+        if (key === 'email') {
+          throw new ConflictException('Email already exists');
+        }
+        if (key === 'phone') {
+          throw new ConflictException('Phone number already exists');
+        }
+        throw new ConflictException('Duplicate record');
+      }
+      throw e;
+    }
 
     // Never return password hash/plaintext
     const obj: any = saved.toObject();
@@ -126,7 +386,11 @@ export class AdminService {
 
     const members = await this.vendorUserModel
       .find({
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
         type: 'partner',
         status: { $ne: 2 },
       })
@@ -162,7 +426,11 @@ export class AdminService {
     }
 
     const mongoQuery: Record<string, unknown> = {
-      $or: [{ vendorId: vendorObjectId }, { vendorId }],
+      $or: [
+        { manufacturerId: vendorObjectId },
+        { vendorId: vendorObjectId },
+        { vendorId },
+      ],
       type: 'partner',
       status: { $ne: 2 },
     };
@@ -231,7 +499,11 @@ export class AdminService {
     }
 
     const query: Record<string, unknown> = {
-      $or: [{ vendorId: vendorObjectId }, { vendorId }],
+      $or: [
+        { manufacturerId: vendorObjectId },
+        { vendorId: vendorObjectId },
+        { vendorId },
+      ],
       type: 'partner',
       status: { $ne: 2 },
     };
@@ -274,7 +546,11 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
         type: 'partner',
         status: { $ne: 2 },
       })
@@ -511,7 +787,11 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
         type: 'partner',
         status: { $ne: 2 },
       })
@@ -525,7 +805,11 @@ export class AdminService {
       .findOne({
         $and: [
           {
-            $or: [{ vendorId: vendorObjectId }, { vendorId }],
+            $or: [
+              { manufacturerId: vendorObjectId },
+              { vendorId: vendorObjectId },
+              { vendorId },
+            ],
           },
           { _id: { $ne: memberObjectId } },
           { status: { $ne: 2 } },
@@ -604,7 +888,11 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
         type: 'partner',
         status: { $ne: 2 },
       })
@@ -767,7 +1055,7 @@ export class AdminService {
   async listContactMessages() {
     const rows = await this.contactMessageModel
       .find({})
-      .select('name email phoneNumber createdAt')
+      .select('name email phoneNumber message createdAt')
       .sort({ createdAt: -1, _id: -1 })
       .lean()
       .exec();
@@ -778,6 +1066,11 @@ export class AdminService {
       name: String(r.name ?? ''),
       email: String(r.email ?? ''),
       phoneNo: String((r as any).phoneNumber ?? ''),
+      message:
+        typeof (r as any).message === 'string'
+          ? String((r as any).message).trim()
+          : '',
+      createdAt: (r as any).createdAt ?? null,
     }));
   }
 
@@ -842,7 +1135,11 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
         type: 'partner',
         status: { $ne: 2 },
       })

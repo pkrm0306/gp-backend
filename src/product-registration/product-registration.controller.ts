@@ -136,13 +136,13 @@ export class ProductRegistrationController {
     @Query() listProductsDto: ListProductsDto,
   ) {
     try {
-      if (!user?.vendorId) {
-        throw new BadRequestException('Vendor ID not found in token');
+      if (!user?.manufacturerId) {
+        throw new BadRequestException('Manufacturer ID not found in token');
       }
 
       const result = await this.productRegistrationService.listProducts(
         listProductsDto,
-        user.vendorId,
+        user.manufacturerId,
       );
       return {
         message: 'Products retrieved successfully',
@@ -158,7 +158,7 @@ export class ProductRegistrationController {
   @ApiOperation({
     summary: 'Register a single product',
     description:
-      'Registers a single product with its plants. Generates URN and EOI automatically. Requires manufacturerId and vendorId in the request body.',
+      'Registers a single product with its plants. Generates URN and EOI automatically. Manufacturer is resolved from logged-in user.',
   })
   @ApiBody({ type: RegisterProductDto })
   @ApiResponse({
@@ -188,13 +188,13 @@ export class ProductRegistrationController {
     @Body() registerProductDto: RegisterProductDto,
   ) {
     try {
-      // Use manufacturerId and vendorId from request body
-      const manufacturerId = registerProductDto.manufacturerId;
-      const vendorId = registerProductDto.vendorId;
+      const manufacturerId = user?.manufacturerId;
+      if (!manufacturerId) {
+        throw new BadRequestException('Manufacturer ID not found in token');
+      }
 
       const result = await this.productRegistrationService.registerProduct(
         registerProductDto,
-        vendorId,
         manufacturerId,
       );
 
@@ -246,28 +246,24 @@ export class ProductRegistrationController {
     @Body() bulkRegisterProductDto: BulkRegisterProductDto,
   ) {
     try {
-      // Validate that all products have the same manufacturerId and vendorId
       if (bulkRegisterProductDto.products.length === 0) {
         throw new BadRequestException('At least one product is required');
       }
 
-      // Get manufacturerId and vendorId from the first product (all should be the same)
-      const manufacturerId = bulkRegisterProductDto.products[0].manufacturerId;
-      const vendorId = bulkRegisterProductDto.products[0].vendorId;
+      const manufacturerId = user?.manufacturerId;
+      if (!manufacturerId) {
+        throw new BadRequestException('Manufacturer ID not found in token');
+      }
 
-      // Validate all products have the same manufacturerId and vendorId
+      // Optional guard for backward compatibility: if manufacturerId is sent in payload, it must match JWT
       for (const product of bulkRegisterProductDto.products) {
-        if (product.manufacturerId !== manufacturerId) {
-          throw new BadRequestException('All products must have the same manufacturerId');
-        }
-        if (product.vendorId !== vendorId) {
-          throw new BadRequestException('All products must have the same vendorId');
+        if (product.manufacturerId && product.manufacturerId !== manufacturerId) {
+          throw new BadRequestException('Payload manufacturerId must match logged-in manufacturer');
         }
       }
 
       const results = await this.productRegistrationService.registerBulkProducts(
         bulkRegisterProductDto,
-        vendorId,
         manufacturerId,
       );
 

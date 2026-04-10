@@ -11,6 +11,10 @@ export class Event {
   @Prop({ required: true })
   eventName: string;
 
+  /** Local upload path (e.g. /uploads/events/xxx.png) or absolute URL */
+  @Prop()
+  eventImage?: string;
+
   @Prop()
   eventDescription?: string;
 
@@ -18,7 +22,33 @@ export class Event {
   eventDate: Date;
 
   @Prop()
+  eventStartTime?: string;
+
+  @Prop()
+  eventEndTime?: string;
+
+  @Prop()
   eventLocation?: string;
+
+  @Prop()
+  contactPersonName?: string;
+
+  @Prop()
+  contactPersonDesignation?: string;
+
+  @Prop()
+  contactPersonEmail?: string;
+
+  @Prop()
+  contactPersonPhone?: string;
+
+  /** Optional external registration URL */
+  @Prop()
+  registrationLink?: string;
+
+  /** Optional brochure/attachment URL */
+  @Prop()
+  brochureLink?: string;
 
   @Prop({ required: true, type: Number, default: 1 })
   eventStatus: number; // 0=Inactive, 1=Active

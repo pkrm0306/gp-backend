@@ -15,7 +15,7 @@ export class VendorUser {
   @Prop({ required: true })
   name: string;
 
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true })
   email: string;
 
   @Prop({ required: true })
@@ -56,3 +56,7 @@ export class VendorUser {
 }
 
 export const VendorUserSchema = SchemaFactory.createForClass(VendorUser);
+
+// Uniqueness should be per vendor/manufacturer (not global).
+VendorUserSchema.index({ manufacturerId: 1, email: 1 }, { unique: true });
+VendorUserSchema.index({ manufacturerId: 1, phone: 1 }, { unique: true });

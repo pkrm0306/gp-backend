@@ -11,6 +11,11 @@ import {
   NewsletterSubscriberSchema,
 } from '../website/schemas/newsletter-subscriber.schema';
 import { ContactMessage, ContactMessageSchema } from '../website/schemas/contact-message.schema';
+import { Event, EventSchema } from '../events/schemas/event.schema';
+import {
+  EventIdCounter,
+  EventIdCounterSchema,
+} from '../events/schemas/event-id-counter.schema';
 
 @Module({
   imports: [
@@ -21,6 +26,8 @@ import { ContactMessage, ContactMessageSchema } from '../website/schemas/contact
       { name: Banner.name, schema: BannerSchema },
       { name: NewsletterSubscriber.name, schema: NewsletterSubscriberSchema },
       { name: ContactMessage.name, schema: ContactMessageSchema },
+      { name: Event.name, schema: EventSchema },
+      { name: EventIdCounter.name, schema: EventIdCounterSchema },
     ]),
   ],
   controllers: [AdminController],

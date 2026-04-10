@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { PassportModule } from '@nestjs/passport';
 import { ProductRegistrationController } from './product-registration.controller';
 import { ProductsController } from './products.controller';
+import { AdminProductsController } from './admin-products.controller';
 import { ProductRegistrationService } from './product-registration.service';
 import { Product, ProductSchema } from './schemas/product.schema';
 import { ProductPlant, ProductPlantSchema } from './schemas/product-plant.schema';
@@ -28,7 +29,7 @@ import { ActivityLogModule } from '../activity-log/activity-log.module';
     CategoriesModule,
     ActivityLogModule,
   ],
-  controllers: [ProductRegistrationController, ProductsController],
+  controllers: [ProductRegistrationController, ProductsController, AdminProductsController],
   providers: [ProductRegistrationService, SequenceHelper],
   exports: [ProductRegistrationService, SequenceHelper],
 })

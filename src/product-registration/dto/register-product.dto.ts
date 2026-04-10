@@ -12,17 +12,15 @@ import { Type } from 'class-transformer';
 import { PlantDto } from './plant.dto';
 
 export class RegisterProductDto {
-  @ApiProperty({ description: 'Manufacturer ID', example: '507f1f77bcf86cd799439011' })
+  @ApiProperty({
+    description: 'Manufacturer ID (optional; backend uses JWT manufacturerId for vendor APIs)',
+    example: '507f1f77bcf86cd799439011',
+    required: false,
+  })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @IsMongoId()
   manufacturerId: string;
-
-  @ApiProperty({ description: 'Vendor ID', example: '507f1f77bcf86cd799439012' })
-  @IsString()
-  @IsNotEmpty()
-  @IsMongoId()
-  vendorId: string;
 
   @ApiProperty({ description: 'Category ID', example: '507f1f77bcf86cd799439011' })
   @IsString()

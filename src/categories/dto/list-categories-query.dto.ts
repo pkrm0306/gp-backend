@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class ListCategoriesQueryDto {
   @ApiPropertyOptional({
@@ -12,6 +12,15 @@ export class ListCategoriesQueryDto {
   @IsInt()
   @Min(1)
   sector?: number;
+
+  @ApiPropertyOptional({
+    example: '1,2,5',
+    description:
+      'Listing only: filter by multiple sector ids (multi-select). Pass comma-separated values.',
+  })
+  @IsOptional()
+  @IsString()
+  sectors?: string;
 
   @ApiPropertyOptional({
     example: 1,
@@ -31,4 +40,13 @@ export class ListCategoriesQueryDto {
   @IsOptional()
   @IsEnum(['asc', 'desc'])
   sort?: 'asc' | 'desc';
+
+  @ApiPropertyOptional({
+    example: '1,3,5',
+    description:
+      'Filter by raw material ids (multi-select). Pass comma-separated values; matches categories containing any selected raw material.',
+  })
+  @IsOptional()
+  @IsString()
+  raw_material?: string;
 }

@@ -6,20 +6,49 @@ import {
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, ClientSession, Connection, Types } from 'mongoose';
+import { createHash, randomUUID } from 'crypto';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import ExcelJS from 'exceljs';
 import { Product, ProductDocument } from './schemas/product.schema';
 import { ProductPlant, ProductPlantDocument } from './schemas/product-plant.schema';
 import { RegisterProductDto, BulkRegisterProductDto } from './dto/register-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateUrnStatusDto } from './dto/update-urn-status.dto';
 import { ListProductsDto } from './dto/list-products.dto';
+import { AdminListProductsDto } from './dto/admin-list-products.dto';
+import { AdminProductsExportDto } from './dto/admin-products-export.dto';
 import { SequenceHelper } from './helpers/sequence.helper';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 
+type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+type AdminExportJob = {
+  jobId: string;
+  status: AdminExportJobStatus;
+  progress: number;
+  format: 'xlsx' | 'csv';
+  includeSheets: Array<'urn_summary' | 'eoi_details'>;
+  filtersHash: string;
+  createdAt: Date;
+  updatedAt: Date;
+  expiresAt: Date | null;
+  fileUrl?: string;
+  fileName?: string;
+  rowCount?: number;
+  error?: string;
+  requestedBy?: string;
+};
+
 @Injectable()
 export class ProductRegistrationService {
+  private readonly exportJobs = new Map<string, AdminExportJob>();
+  private readonly exportDir = join(process.cwd(), 'uploads', 'exports');
+  private readonly exportTtlMs = 24 * 60 * 60 * 1000;
+  private readonly exportMaxRows = 200000;
+
   constructor(
     @InjectModel(Product.name)
     private productModel: Model<ProductDocument>,
@@ -32,6 +61,27 @@ export class ProductRegistrationService {
     private statesService: StatesService,
     private activityLogService: ActivityLogService,
   ) {}
+
+  private ensureExportDir() {
+    if (!existsSync(this.exportDir)) {
+      mkdirSync(this.exportDir, { recursive: true });
+    }
+  }
+
+  private buildPublicFileUrl(fileName: string): string {
+    const fromEnv = (process.env.API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+    const rel = `/uploads/exports/${fileName}`;
+    return fromEnv ? `${fromEnv}${rel}` : rel;
+  }
+
+  private cleanupExpiredExportJobs() {
+    const now = Date.now();
+    for (const [jobId, job] of this.exportJobs.entries()) {
+      if (job.expiresAt && job.expiresAt.getTime() < now) {
+        this.exportJobs.delete(jobId);
+      }
+    }
+  }
 
   /**
    * Safely convert string to ObjectId with validation
@@ -263,7 +313,6 @@ export class ProductRegistrationService {
    */
   async registerProduct(
     registerProductDto: RegisterProductDto,
-    vendorId: string,
     manufacturerId: string,
   ) {
     const maxRetries = 3;
@@ -276,11 +325,11 @@ export class ProductRegistrationService {
       try {
         console.log('[Product Registration] Starting registration (attempt ' + (retryCount + 1) + ')...');
         console.log('[Product Registration] Manufacturer ID:', manufacturerId);
-        console.log('[Product Registration] Vendor ID:', vendorId);
+        console.log('[Product Registration] Auth manufacturer ID:', manufacturerId);
         
         // Validate manufacturer ID
         const manufacturerObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
-        const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+        const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
 
         // Generate URN: "URN-" + YmdHis format
         const urnNo = this.generateURN();
@@ -366,7 +415,7 @@ export class ProductRegistrationService {
         // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment Pending)
         try {
           await this.activityLogService.logActivity({
-            vendor_id: vendorId,
+            vendor_id: manufacturerId,
             manufacturer_id: manufacturerId,
             urn_no: urnNo,
             activities_id: 0, // Current urnStatus
@@ -444,7 +493,6 @@ export class ProductRegistrationService {
    */
   async registerBulkProducts(
     bulkRegisterProductDto: BulkRegisterProductDto,
-    vendorId: string,
     manufacturerId: string,
   ) {
     const maxRetries = 3;
@@ -457,12 +505,12 @@ export class ProductRegistrationService {
       try {
         console.log('[Bulk Product Registration] Starting bulk registration (attempt ' + (retryCount + 1) + ')...');
         console.log('[Bulk Product Registration] Manufacturer ID:', manufacturerId);
-        console.log('[Bulk Product Registration] Vendor ID:', vendorId);
+        console.log('[Bulk Product Registration] Auth manufacturer ID:', manufacturerId);
         console.log('[Bulk Product Registration] Number of products:', bulkRegisterProductDto.products.length);
 
         // Validate manufacturer ID
         const manufacturerObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
-        const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+        const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
 
         // Generate ONE URN for all products in bulk
         const urnNo = this.generateURN();
@@ -572,7 +620,7 @@ export class ProductRegistrationService {
         // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment Pending)
         try {
           await this.activityLogService.logActivity({
-            vendor_id: vendorId,
+            vendor_id: manufacturerId,
             manufacturer_id: manufacturerId,
             urn_no: urnNo,
             activities_id: 0, // Current urnStatus
@@ -796,15 +844,18 @@ export class ProductRegistrationService {
    * Updates products table where vendorId and urnNo match, sets urnStatus to updateStatusTo
    * Also logs activity for the status change
    */
-  async updateUrnStatus(updateUrnStatusDto: UpdateUrnStatusDto): Promise<ProductDocument> {
+  async updateUrnStatus(
+    updateUrnStatusDto: UpdateUrnStatusDto,
+    manufacturerId: string,
+  ): Promise<ProductDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
     try {
-      // Convert vendorId to ObjectId
-      const vendorObjectId = this.toObjectId(updateUrnStatusDto.vendorId, 'vendorId');
+      // Resolve from authenticated manufacturer
+      const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
 
-      // Find product by vendorId and urnNo
+      // Find product by authenticated manufacturer(vendor alias) and urnNo
       const existingProduct = await this.productModel
         .findOne({
           vendorId: vendorObjectId,
@@ -815,13 +866,13 @@ export class ProductRegistrationService {
 
       if (!existingProduct) {
         throw new NotFoundException(
-          `Product not found with vendorId: ${updateUrnStatusDto.vendorId} and urnNo: ${updateUrnStatusDto.urnNo}`,
+          `Product not found with manufacturerId: ${manufacturerId} and urnNo: ${updateUrnStatusDto.urnNo}`,
         );
       }
 
       // Get current urnStatus and manufacturerId for activity logging
       const currentUrnStatus = existingProduct.urnStatus;
-      const manufacturerId = existingProduct.manufacturerId;
+      const manufacturerObjectId = existingProduct.manufacturerId;
 
       // Update urnStatus
       const updatedProduct = await this.productModel
@@ -854,7 +905,7 @@ export class ProductRegistrationService {
 
         await this.activityLogService.logActivity({
           vendor_id: vendorObjectId,
-          manufacturer_id: manufacturerId,
+          manufacturer_id: manufacturerObjectId,
           urn_no: updateUrnStatusDto.urnNo,
           activities_id: updateUrnStatusDto.updateStatusTo,
           activity: this.getActivityName(updateUrnStatusDto.updateStatusTo),
@@ -893,7 +944,7 @@ export class ProductRegistrationService {
    * List all products with pagination, search, filtering, and sorting
    * Filtered by vendorId from authenticated user
    */
-  async listProducts(listProductsDto: ListProductsDto, vendorId: string) {
+  async listProducts(listProductsDto: ListProductsDto, manufacturerId: string) {
     try {
       const {
         page = 1,
@@ -906,8 +957,8 @@ export class ProductRegistrationService {
       const skip = (page - 1) * limit;
       const sortOrder = sort === 'asc' ? 1 : -1;
 
-      // Convert vendorId to ObjectId
-      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+      // Resolve vendor alias using authenticated manufacturerId
+      const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
 
       // Build initial match conditions
       const initialMatchConditions: any = {
@@ -1068,10 +1119,10 @@ export class ProductRegistrationService {
    * - vendor_id = logged-in vendor
    * - validtill_date < (current_date + 60 days)
    */
-  async getRenewList(vendorId: string) {
+  async getRenewList(manufacturerId: string) {
     try {
-      // Convert vendorId to ObjectId
-      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+      // Resolve vendor alias using authenticated manufacturerId
+      const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
 
       // Calculate date threshold: current date + 60 days
       const currentDate = new Date();
@@ -2251,6 +2302,726 @@ export class ProductRegistrationService {
       throw new InternalServerErrorException(
         error.message || 'Failed to get product details. Please check the logs for details.',
       );
+    }
+  }
+
+  async adminListProducts(dto: AdminListProductsDto) {
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 10;
+    const skip = (page - 1) * limit;
+    const sortOrder = (dto.order ?? dto.sortOrder) === 'asc' ? 1 : -1;
+    const now = new Date();
+
+    const sortFieldMap: Record<string, string> = {
+      createdDate: 'createdDate',
+      createdAt: 'createdDate',
+      validTill: 'validtillDate',
+      productName: 'productName',
+      eoiNo: 'eoiNo',
+      urnNo: 'urnNo',
+    };
+    const sortField = sortFieldMap[dto.sortBy ?? 'createdDate'] ?? 'createdDate';
+
+    const nativeMatch: Record<string, unknown> = {};
+    if (dto.product_type !== undefined) {
+      nativeMatch.productType = dto.product_type;
+    }
+    if (dto.categoryId) {
+      nativeMatch.categoryId = this.toObjectId(dto.categoryId, 'categoryId');
+    }
+    if (dto.manufacturerId) {
+      nativeMatch.manufacturerId = this.toObjectId(dto.manufacturerId, 'manufacturerId');
+    }
+    const createdFrom = dto.from ?? dto.fromDate;
+    const createdTo = dto.to ?? dto.toDate;
+    if (createdFrom || createdTo) {
+      const createdRange: Record<string, Date> = {};
+      if (createdFrom) {
+        createdRange.$gte = new Date(createdFrom);
+      }
+      if (createdTo) {
+        const to = new Date(createdTo);
+        to.setHours(23, 59, 59, 999);
+        createdRange.$lte = to;
+      }
+      nativeMatch.createdDate = createdRange;
+    }
+    if (dto.validTillYear !== undefined) {
+      const y = dto.validTillYear;
+      nativeMatch.validtillDate = {
+        $gte: new Date(Date.UTC(y, 0, 1, 0, 0, 0, 0)),
+        $lte: new Date(Date.UTC(y, 11, 31, 23, 59, 59, 999)),
+      };
+    }
+
+    const basePipeline: any[] = [];
+    if (Object.keys(nativeMatch).length > 0) {
+      basePipeline.push({ $match: nativeMatch });
+    }
+
+    basePipeline.push(
+      {
+        $lookup: {
+          from: 'manufacturers',
+          localField: 'manufacturerId',
+          foreignField: '_id',
+          as: 'manufacturer',
+        },
+      },
+      {
+        $unwind: {
+          path: '$manufacturer',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $lookup: {
+          from: 'categories',
+          localField: 'categoryId',
+          foreignField: '_id',
+          as: 'category',
+        },
+      },
+      {
+        $unwind: {
+          path: '$category',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $lookup: {
+          from: 'product_plants',
+          let: { pid: '$_id' },
+          pipeline: [{ $match: { $expr: { $eq: ['$productId', '$$pid'] } } }],
+          as: 'plants',
+        },
+      },
+    );
+
+    if (dto.stateId || dto.city) {
+      const plantMatch: Record<string, unknown> = {};
+      if (dto.stateId) {
+        plantMatch.stateId = this.toObjectId(dto.stateId, 'stateId');
+      }
+      if (dto.city && dto.city.trim() !== '') {
+        plantMatch.city = new RegExp(dto.city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      }
+      basePipeline.push({ $match: { plants: { $elemMatch: plantMatch } } });
+    }
+
+    if (dto.search && dto.search.trim() !== '') {
+      const rx = new RegExp(dto.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      basePipeline.push({
+        $match: {
+          $or: [
+            { eoiNo: rx },
+            { urnNo: rx },
+            { productName: rx },
+            { 'manufacturer.manufacturerName': rx },
+            { 'manufacturer.vendor_email': rx },
+            { 'manufacturer.vendor_phone': rx },
+          ],
+        },
+      });
+    }
+
+    const statuses = Array.isArray(dto.status) ? dto.status : [];
+    const includeExpired = statuses.includes(4);
+    const regularStatuses = statuses.filter((s) => s !== 4);
+
+    let statusMatch: Record<string, unknown> | null = null;
+    if (statuses.length > 0) {
+      if (includeExpired && regularStatuses.length > 0) {
+        statusMatch = {
+          $or: [
+            { productStatus: { $in: regularStatuses } },
+            {
+              productStatus: 2,
+              validtillDate: { $exists: true, $ne: null, $lt: now },
+            },
+          ],
+        };
+      } else if (includeExpired) {
+        statusMatch = {
+          productStatus: 2,
+          validtillDate: { $exists: true, $ne: null, $lt: now },
+        };
+      } else if (regularStatuses.length === 1) {
+        statusMatch = { productStatus: regularStatuses[0] };
+      } else {
+        statusMatch = { productStatus: { $in: regularStatuses } };
+      }
+    }
+
+    const rowBase: any[] = [...basePipeline];
+    if (statusMatch) {
+      rowBase.push({ $match: statusMatch });
+    }
+
+    const urnSummaryPipeline: any[] = [
+      ...rowBase,
+      {
+        $group: {
+          _id: '$urnNo',
+          urnNo: { $first: '$urnNo' },
+          createdDate: { $min: '$createdDate' },
+          totalEoi: { $sum: 1 },
+          statusCodes: { $addToSet: '$productStatus' },
+        },
+      },
+      { $sort: { [sortField]: sortOrder } },
+    ];
+
+    const urnDataPipeline = [
+      ...urnSummaryPipeline,
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: 'products',
+          let: { urnNo: '$urnNo' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$urnNo', '$$urnNo'] } } },
+            {
+              $lookup: {
+                from: 'manufacturers',
+                localField: 'manufacturerId',
+                foreignField: '_id',
+                as: 'manufacturer',
+              },
+            },
+            { $unwind: { path: '$manufacturer', preserveNullAndEmptyArrays: true } },
+            {
+              $lookup: {
+                from: 'categories',
+                localField: 'categoryId',
+                foreignField: '_id',
+                as: 'category',
+              },
+            },
+            { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
+            {
+              $project: {
+                _id: 1,
+                productId: 1,
+                eoiNo: 1,
+                urnNo: 1,
+                productName: 1,
+                categoryName: { $ifNull: ['$category.categoryName', '$category.category_name'] },
+                manufacturerName: '$manufacturer.manufacturerName',
+                productStatus: 1,
+                createdDate: 1,
+              },
+            },
+            { $sort: { createdDate: -1 } },
+          ],
+          as: 'eois',
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          urnNo: 1,
+          createdDate: 1,
+          totalEoi: 1,
+          statusCodes: 1,
+          eois: 1,
+        },
+      },
+    ];
+
+    const totalUrnPipeline = [...urnSummaryPipeline, { $count: 'count' }];
+
+    const facetResult = await this.productModel
+      .aggregate([
+        {
+          $facet: {
+            data: urnDataPipeline,
+            total: totalUrnPipeline,
+            byStatus: [...rowBase, { $group: { _id: '$productStatus', count: { $sum: 1 } } }],
+            expired: [
+              ...rowBase,
+              { $match: { productStatus: 2, validtillDate: { $exists: true, $ne: null, $lt: now } } },
+              { $count: 'count' },
+            ],
+          },
+        },
+      ])
+      .exec();
+
+    const payload = facetResult[0] ?? { data: [], total: [], byStatus: [], expired: [] };
+    const total = payload.total?.[0]?.count ?? 0;
+
+    const statusCounts: Record<string, number> = {
+      0: 0,
+      1: 0,
+      2: 0,
+      3: 0,
+      4: payload.expired?.[0]?.count ?? 0,
+    };
+    for (const row of payload.byStatus ?? []) {
+      if (row?._id !== undefined && row?._id !== null) {
+        statusCounts[String(row._id)] = row.count ?? 0;
+      }
+    }
+
+    const mapProductStatusLabel = (code: number): 'Pending' | 'Approved' | 'Rejected' => {
+      if (code === 3) return 'Rejected';
+      if (code === 2) return 'Approved';
+      return 'Pending';
+    };
+    const deriveUrnStatus = (codes: number[]): 'Active' | 'Pending' | 'Inactive' => {
+      if (codes.includes(3)) return 'Inactive';
+      if (codes.includes(2)) return 'Active';
+      return 'Pending';
+    };
+
+    const grouped = (payload.data ?? []).map((u: any) => ({
+      urnNo: u.urnNo,
+      createdDate: u.createdDate,
+      urnStatus: deriveUrnStatus(Array.isArray(u.statusCodes) ? u.statusCodes : []),
+      totalEoi: u.totalEoi ?? 0,
+      eois: Array.isArray(u.eois)
+        ? u.eois.map((e: any) => ({
+            ...e,
+            statusLabel: mapProductStatusLabel(Number(e.productStatus ?? 0)),
+          }))
+        : [],
+    }));
+
+    return {
+      message: 'Products listed successfully',
+      data: grouped,
+      total,
+      page,
+      limit,
+      statusCounts,
+    };
+  }
+
+  async getManufacturersByCategory(categoryId: string) {
+    const categoryObjectId = this.toObjectId(categoryId, 'categoryId');
+    const apiBaseUrl = (process.env.API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+    const toImageUrl = (path?: string | null): string | null => {
+      if (!path) return null;
+      if (/^https?:\/\//i.test(path)) return path;
+      if (path.startsWith('/')) {
+        return apiBaseUrl ? `${apiBaseUrl}${path}` : path;
+      }
+      return apiBaseUrl ? `${apiBaseUrl}/${path}` : `/${path}`;
+    };
+
+    const rows = await this.productModel
+      .aggregate([
+        { $match: { categoryId: categoryObjectId } },
+        {
+          $group: {
+            _id: '$manufacturerId',
+            productCount: { $sum: 1 },
+          },
+        },
+        {
+          $lookup: {
+            from: 'manufacturers',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'manufacturer',
+          },
+        },
+        {
+          $unwind: {
+            path: '$manufacturer',
+            preserveNullAndEmptyArrays: false,
+          },
+        },
+        {
+          $project: {
+            _id: '$manufacturer._id',
+            manufacturerName: '$manufacturer.manufacturerName',
+            gpInternalId: '$manufacturer.gpInternalId',
+            manufacturerInitial: '$manufacturer.manufacturerInitial',
+            manufacturerImage: { $ifNull: ['$manufacturer.manufacturerImage', null] },
+            manufacturerStatus: '$manufacturer.manufacturerStatus',
+            vendor_status: '$manufacturer.vendor_status',
+            vendor_name: '$manufacturer.vendor_name',
+            vendor_email: '$manufacturer.vendor_email',
+            vendor_phone: '$manufacturer.vendor_phone',
+            productCount: 1,
+          },
+        },
+        { $sort: { manufacturerName: 1 } },
+      ])
+      .exec();
+
+    const data = rows.map((row: any) => ({
+      ...row,
+      manufacturerImageUrl: toImageUrl(row.manufacturerImage),
+    }));
+
+    return {
+      categoryId,
+      total: data.length,
+      data,
+    };
+  }
+
+  async getCategoriesByManufacturer(manufacturerId: string) {
+    const manufacturerObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+    const apiBaseUrl = (process.env.API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+    const toImageUrl = (path?: string | null): string | null => {
+      if (!path) return null;
+      if (/^https?:\/\//i.test(path)) return path;
+      if (path.startsWith('/')) {
+        return apiBaseUrl ? `${apiBaseUrl}${path}` : path;
+      }
+      return apiBaseUrl ? `${apiBaseUrl}/${path}` : `/${path}`;
+    };
+
+    const rows = await this.productModel
+      .aggregate([
+        { $match: { manufacturerId: manufacturerObjectId } },
+        {
+          $group: {
+            _id: '$categoryId',
+            productCount: { $sum: 1 },
+          },
+        },
+        {
+          $lookup: {
+            from: 'categories',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'category',
+          },
+        },
+        {
+          $unwind: {
+            path: '$category',
+            preserveNullAndEmptyArrays: false,
+          },
+        },
+        {
+          $project: {
+            _id: '$category._id',
+            category_id: '$category.category_id',
+            category_name: '$category.category_name',
+            category_image: '$category.category_image',
+            category_status: '$category.category_status',
+            sector: '$category.sector',
+            productCount: 1,
+          },
+        },
+        { $sort: { category_name: 1 } },
+      ])
+      .exec();
+
+    const data = rows.map((row: any) => ({
+      ...row,
+      category_image_url: toImageUrl(row.category_image),
+    }));
+
+    return {
+      manufacturerId,
+      total: data.length,
+      data,
+    };
+  }
+
+  async exportAdminProductsXlsx(
+    dto: AdminListProductsDto,
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    const batchSize = 500;
+    let page = 1;
+    let totalUrn = 0;
+    const urnRows: any[] = [];
+
+    while (true) {
+      const batch = await this.adminListProducts({
+        ...dto,
+        page,
+        limit: batchSize,
+      } as AdminListProductsDto);
+
+      if (totalUrn === 0) {
+        totalUrn = batch.total ?? 0;
+      }
+      urnRows.push(...(batch.data ?? []));
+      if (urnRows.length >= totalUrn || (batch.data ?? []).length === 0) {
+        break;
+      }
+      page += 1;
+    }
+
+    const mapStatusLabel = (code: number): 'Pending' | 'Approved' | 'Rejected' => {
+      if (code === 3) return 'Rejected';
+      if (code === 2) return 'Approved';
+      return 'Pending';
+    };
+
+    const eoiRows = urnRows.flatMap((u) =>
+      (u.eois ?? []).map((e: any) => ({
+        urnNo: e.urnNo ?? u.urnNo ?? '',
+        eoiNo: e.eoiNo ?? '',
+        productName: e.productName ?? '',
+        categoryName: e.categoryName ?? '',
+        manufacturerName: e.manufacturerName ?? '',
+        statusLabel: e.statusLabel ?? mapStatusLabel(Number(e.productStatus ?? 0)),
+        createdDate: e.createdDate ?? u.createdDate ?? null,
+      })),
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet('Products Export');
+    ws.columns = [
+      { header: 'URN No', key: 'urnNo', width: 28 },
+      { header: 'EOI No', key: 'eoiNo', width: 24 },
+      { header: 'Product Name', key: 'productName', width: 32 },
+      { header: 'Category Name', key: 'categoryName', width: 24 },
+      { header: 'Manufacturer Name', key: 'manufacturerName', width: 30 },
+      { header: 'Product Status Label', key: 'statusLabel', width: 20 },
+      { header: 'Created Date', key: 'createdDate', width: 24 },
+    ];
+    eoiRows.forEach((r) => ws.addRow(r));
+
+    const raw = await workbook.xlsx.writeBuffer();
+    const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    return {
+      buffer,
+      fileName: `admin-products-export-${stamp}.xlsx`,
+    };
+  }
+
+  async createAdminProductsExportJob(dto: AdminProductsExportDto, requestedBy?: string) {
+    this.cleanupExpiredExportJobs();
+
+    const format = dto.format ?? 'xlsx';
+    const includeSheets = dto.includeSheets?.length
+      ? dto.includeSheets
+      : (['urn_summary', 'eoi_details'] as Array<'urn_summary' | 'eoi_details'>);
+
+    const filtersForHash = {
+      ...dto,
+      page: undefined,
+      limit: undefined,
+      format,
+      includeSheets,
+    };
+    const filtersHash = createHash('sha256')
+      .update(JSON.stringify(filtersForHash))
+      .digest('hex')
+      .slice(0, 16);
+
+    const now = new Date();
+    const jobId = `exp_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const job: AdminExportJob = {
+      jobId,
+      status: 'queued',
+      progress: 0,
+      format,
+      includeSheets,
+      filtersHash,
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: null,
+      requestedBy,
+    };
+    this.exportJobs.set(jobId, job);
+
+    setImmediate(() => {
+      void this.runAdminProductsExportJob(jobId, dto);
+    });
+
+    return {
+      jobId,
+      status: 'queued',
+    };
+  }
+
+  getAdminProductsExportJob(jobId: string) {
+    this.cleanupExpiredExportJobs();
+    const job = this.exportJobs.get(jobId);
+    if (!job) {
+      throw new NotFoundException('Export job not found');
+    }
+    return {
+      jobId: job.jobId,
+      status: job.status,
+      progress: job.progress,
+      fileUrl: job.fileUrl,
+      fileName: job.fileName,
+      expiresAt: job.expiresAt,
+      error: job.error,
+      rowCount: job.rowCount,
+      updatedAt: job.updatedAt,
+      createdAt: job.createdAt,
+    };
+  }
+
+  private async runAdminProductsExportJob(jobId: string, dto: AdminProductsExportDto) {
+    const job = this.exportJobs.get(jobId);
+    if (!job) return;
+
+    try {
+      this.ensureExportDir();
+      job.status = 'processing';
+      job.progress = 5;
+      job.updatedAt = new Date();
+
+      const pageSize = 500;
+      let page = 1;
+      let total = 0;
+      const urnRows: any[] = [];
+
+      while (true) {
+        const batch = await this.adminListProducts({
+          ...dto,
+          page,
+          limit: pageSize,
+        } as AdminListProductsDto);
+
+        if (total === 0) {
+          total = batch.total ?? 0;
+        }
+        urnRows.push(...(batch.data ?? []));
+        if (urnRows.length >= total || (batch.data ?? []).length === 0) {
+          break;
+        }
+        page += 1;
+        job.progress = Math.min(70, 10 + Math.floor((urnRows.length / Math.max(total, 1)) * 60));
+        job.updatedAt = new Date();
+      }
+
+      const eoiRows = urnRows.flatMap((u) =>
+        (u.eois ?? []).map((e: any) => ({
+          urnNo: u.urnNo,
+          eoiNo: e.eoiNo,
+          productId: e.productId,
+          productName: e.productName,
+          categoryName: e.categoryName,
+          manufacturerName: e.manufacturerName,
+          productStatus: e.productStatus,
+          statusLabel: e.statusLabel,
+          createdDate: e.createdDate,
+        })),
+      );
+
+      if (eoiRows.length > this.exportMaxRows) {
+        throw new BadRequestException(
+          `Export exceeds maximum allowed rows (${this.exportMaxRows}). Narrow down filters and try again.`,
+        );
+      }
+
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const ext = job.format === 'csv' ? 'csv' : 'xlsx';
+      const fileName = `products_export_${jobId}_${stamp}.${ext}`;
+      const filePath = join(this.exportDir, fileName);
+
+      if (job.format === 'csv') {
+        const esc = (v: unknown) => {
+          const s = v === null || v === undefined ? '' : String(v);
+          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        const header = [
+          'URN',
+          'EOI Number',
+          'Product ID',
+          'Product Name',
+          'Category Name',
+          'Manufacturer Name',
+          'Product Status',
+          'Status Label',
+          'Created Date',
+        ];
+        const lines = [header.join(',')];
+        for (const row of eoiRows) {
+          lines.push(
+            [
+              row.urnNo,
+              row.eoiNo,
+              row.productId,
+              row.productName,
+              row.categoryName,
+              row.manufacturerName,
+              row.productStatus,
+              row.statusLabel,
+              row.createdDate,
+            ]
+              .map(esc)
+              .join(','),
+          );
+        }
+        writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
+      } else {
+        const workbook = new ExcelJS.Workbook();
+
+        if (job.includeSheets.includes('urn_summary')) {
+          const ws1 = workbook.addWorksheet('URN Summary');
+          ws1.columns = [
+            { header: 'S.No', key: 'sno', width: 8 },
+            { header: 'URN', key: 'urnNo', width: 28 },
+            { header: 'Created Date', key: 'createdDate', width: 24 },
+            { header: 'URN Status', key: 'urnStatus', width: 16 },
+            { header: 'Total EOI', key: 'totalEoi', width: 12 },
+          ];
+          urnRows.forEach((u, idx) => {
+            ws1.addRow({
+              sno: idx + 1,
+              urnNo: u.urnNo,
+              createdDate: u.createdDate,
+              urnStatus: u.urnStatus,
+              totalEoi: u.totalEoi,
+            });
+          });
+        }
+
+        if (job.includeSheets.includes('eoi_details')) {
+          const ws2 = workbook.addWorksheet('EOI Details');
+          ws2.columns = [
+            { header: 'URN', key: 'urnNo', width: 28 },
+            { header: 'EOI Number', key: 'eoiNo', width: 20 },
+            { header: 'Product ID', key: 'productId', width: 12 },
+            { header: 'Product Name', key: 'productName', width: 30 },
+            { header: 'Category Name', key: 'categoryName', width: 24 },
+            { header: 'Manufacturer Name', key: 'manufacturerName', width: 28 },
+            { header: 'Product Status', key: 'productStatus', width: 14 },
+            { header: 'Status Label', key: 'statusLabel', width: 14 },
+            { header: 'Created Date', key: 'createdDate', width: 24 },
+          ];
+          eoiRows.forEach((row) => ws2.addRow(row));
+        }
+
+        await workbook.xlsx.writeFile(filePath);
+      }
+
+      job.status = 'completed';
+      job.progress = 100;
+      job.fileName = fileName;
+      job.fileUrl = this.buildPublicFileUrl(fileName);
+      job.rowCount = eoiRows.length;
+      job.updatedAt = new Date();
+      job.expiresAt = new Date(Date.now() + this.exportTtlMs);
+
+      // Audit trail for export execution
+      console.log(
+        '[AdminProductsExport]',
+        JSON.stringify({
+          jobId: job.jobId,
+          requestedBy: job.requestedBy ?? null,
+          format: job.format,
+          includeSheets: job.includeSheets,
+          filtersHash: job.filtersHash,
+          rowCount: job.rowCount,
+          createdAt: job.createdAt,
+          completedAt: job.updatedAt,
+        }),
+      );
+    } catch (error: any) {
+      job.status = 'failed';
+      job.progress = 100;
+      job.error = error?.message || 'Export failed';
+      job.updatedAt = new Date();
+      job.expiresAt = new Date(Date.now() + this.exportTtlMs);
     }
   }
 }

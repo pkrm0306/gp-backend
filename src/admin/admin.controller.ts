@@ -42,9 +42,12 @@ import { CreateBannerDto } from './dto/create-banner.dto';
 import { DeleteBannerDto } from './dto/delete-banner.dto';
 import { UpdateBannerStatusDto } from './dto/update-banner-status.dto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
+import { CreateEventDto } from './dto/create-event.dto';
+import { UpdateEventDto } from './dto/update-event.dto';
 import { DeleteNewsletterSubscriberDto } from './dto/delete-newsletter-subscriber.dto';
 import { UpdateNewsletterSubscriberStatusDto } from './dto/update-newsletter-subscriber-status.dto';
 import { DeleteContactMessageDto } from './dto/delete-contact-message.dto';
+import { Public } from '../common/decorators/public.decorator';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { validate } from 'class-validator';
@@ -228,6 +231,327 @@ export class AdminController {
     }
     const data = await this.adminService.createBanner(user.vendorId, dto);
     return { message: 'Banner created successfully', data };
+  }
+
+  @Post('events/create')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'events'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `event-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        const allowedMimes = [
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+          'image/gif',
+          'image/webp',
+        ];
+        cb(null, allowedMimes.includes(file.mimetype));
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiOperation({
+    summary: 'Create event',
+    description:
+      'Creates an event (Admin panel). Multipart form fields: eventName, image, eventDate, eventStartTime, eventEndTime, eventLocation, eventDescription, and contact person details.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['eventName', 'eventDate'],
+      properties: {
+        eventName: { type: 'string' },
+        image: { type: 'string', format: 'binary' },
+        eventDate: { type: 'string', example: '2026-04-08' },
+        eventStartTime: { type: 'string' },
+        eventEndTime: { type: 'string' },
+        eventLocation: { type: 'string' },
+        eventDescription: { type: 'string' },
+        contactPersonName: { type: 'string' },
+        contactPersonDesignation: { type: 'string' },
+        contactPersonEmail: { type: 'string' },
+        contactPersonPhone: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Event created successfully' })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  async createEvent(
+    @Body() body: any,
+    @UploadedFile() file?: any,
+  ) {
+    const dto = plainToClass(CreateEventDto, {
+      eventName: body.eventName,
+      eventDate: body.eventDate,
+      eventStartTime: body.eventStartTime,
+      eventEndTime: body.eventEndTime,
+      eventLocation: body.eventLocation,
+      eventDescription: body.eventDescription,
+      contactPersonName: body.contactPersonName,
+      contactPersonDesignation: body.contactPersonDesignation,
+      contactPersonEmail: body.contactPersonEmail,
+      contactPersonPhone: body.contactPersonPhone,
+      registrationLink: body.registrationLink,
+      brochureLink: body.brochureLink,
+    });
+
+    const errors = await validate(dto);
+    if (errors.length > 0) {
+      const errorMessages = errors
+        .map((error) => Object.values(error.constraints || {}))
+        .flat();
+      throw new BadRequestException(errorMessages.join(', '));
+    }
+
+    const rawDate = String(dto.eventDate ?? '').trim();
+    const eventDate =
+      /^\d{2}-\d{2}-\d{4}$/.test(rawDate)
+        ? new Date(
+            `${rawDate.slice(6, 10)}-${rawDate.slice(3, 5)}-${rawDate.slice(0, 2)}`,
+          )
+        : new Date(rawDate);
+    if (Number.isNaN(eventDate.getTime())) {
+      throw new BadRequestException('Invalid eventDate (expected ISO date/datetime)');
+    }
+
+    const eventImage = file ? `/uploads/events/${file.filename}` : undefined;
+    const data = await this.adminService.createEvent({
+      eventName: dto.eventName,
+      eventDate,
+      eventStartTime: dto.eventStartTime,
+      eventEndTime: dto.eventEndTime,
+      eventLocation: dto.eventLocation,
+      eventDescription: dto.eventDescription,
+      contactPersonName: dto.contactPersonName,
+      contactPersonDesignation: dto.contactPersonDesignation,
+      contactPersonEmail: dto.contactPersonEmail,
+      contactPersonPhone: dto.contactPersonPhone,
+      registrationLink: dto.registrationLink,
+      brochureLink: dto.brochureLink,
+      eventImage,
+    });
+
+    return { message: 'Event created successfully', data };
+  }
+
+  @Patch('events/:id/edit')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'events'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `event-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        const allowedMimes = [
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+          'image/gif',
+          'image/webp',
+        ];
+        cb(null, allowedMimes.includes(file.mimetype));
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiOperation({
+    summary: 'Edit event',
+    description:
+      'Edits an event (Admin panel). Same fields as create. URL param `id` can be MongoDB _id or numeric eventId.',
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        eventName: { type: 'string' },
+        image: { type: 'string', format: 'binary' },
+        eventDate: { type: 'string', example: '09-04-2026' },
+        eventStartTime: { type: 'string' },
+        eventEndTime: { type: 'string' },
+        eventLocation: { type: 'string' },
+        eventDescription: { type: 'string' },
+        contactPersonName: { type: 'string' },
+        contactPersonDesignation: { type: 'string' },
+        contactPersonEmail: { type: 'string' },
+        contactPersonPhone: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Event updated successfully' })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async editEvent(
+    @Param('id') id: string,
+    @Body() body: any,
+    @UploadedFile() file?: any,
+  ) {
+    const pick = (keys: string[]) => {
+      for (const k of keys) {
+        if (body?.[k] !== undefined) return body[k];
+      }
+      return undefined;
+    };
+
+    const dto = plainToClass(UpdateEventDto, {
+      eventName: pick(['eventName', 'name', 'event_name']),
+      eventDate: pick(['eventDate', 'date', 'event_date']),
+      eventStartTime: pick(['eventStartTime', 'startTime', 'event_start_time']),
+      eventEndTime: pick(['eventEndTime', 'endTime', 'event_end_time']),
+      eventLocation: pick(['eventLocation', 'location', 'event_location']),
+      eventDescription: pick(['eventDescription', 'description', 'event_description']),
+      contactPersonName: pick(['contactPersonName', 'contact_person_name', 'contactName']),
+      contactPersonDesignation: pick([
+        'contactPersonDesignation',
+        'contact_person_designation',
+        'contactDesignation',
+      ]),
+      contactPersonEmail: pick([
+        'contactPersonEmail',
+        'contactPersonemail',
+        'contact_person_email',
+        'contactEmail',
+      ]),
+      contactPersonPhone: pick(['contactPersonPhone', 'contact_person_phone', 'contactPhone']),
+      registrationLink: pick(['registrationLink', 'registration_link']),
+      brochureLink: pick(['brochureLink', 'brochure_link']),
+    });
+
+    const errors = await validate(dto);
+    if (errors.length > 0) {
+      const errorMessages = errors
+        .map((error) => Object.values(error.constraints || {}))
+        .flat();
+      throw new BadRequestException(errorMessages.join(', '));
+    }
+
+    let eventDate: Date | undefined = undefined;
+    if (dto.eventDate !== undefined) {
+      const raw = String(dto.eventDate ?? '').trim();
+      eventDate =
+        /^\d{2}-\d{2}-\d{4}$/.test(raw)
+          ? new Date(`${raw.slice(6, 10)}-${raw.slice(3, 5)}-${raw.slice(0, 2)}`)
+          : new Date(raw);
+      if (Number.isNaN(eventDate.getTime())) {
+        throw new BadRequestException('Invalid eventDate (expected ISO date/datetime)');
+      }
+    }
+
+    const eventImage = file ? `/uploads/events/${file.filename}` : undefined;
+    const data = await this.adminService.updateEvent(id, {
+      ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
+      ...(eventDate !== undefined ? { eventDate } : {}),
+      ...(dto.eventStartTime !== undefined ? { eventStartTime: dto.eventStartTime } : {}),
+      ...(dto.eventEndTime !== undefined ? { eventEndTime: dto.eventEndTime } : {}),
+      ...(dto.eventLocation !== undefined ? { eventLocation: dto.eventLocation } : {}),
+      ...(dto.eventDescription !== undefined ? { eventDescription: dto.eventDescription } : {}),
+      ...(dto.contactPersonName !== undefined ? { contactPersonName: dto.contactPersonName } : {}),
+      ...(dto.contactPersonDesignation !== undefined
+        ? { contactPersonDesignation: dto.contactPersonDesignation }
+        : {}),
+      ...(dto.contactPersonEmail !== undefined ? { contactPersonEmail: dto.contactPersonEmail } : {}),
+      ...(dto.contactPersonPhone !== undefined ? { contactPersonPhone: dto.contactPersonPhone } : {}),
+      ...(dto.registrationLink !== undefined ? { registrationLink: dto.registrationLink } : {}),
+      ...(dto.brochureLink !== undefined ? { brochureLink: dto.brochureLink } : {}),
+      ...(eventImage ? { eventImage } : {}),
+    });
+
+    return { message: 'Event updated successfully', data };
+  }
+
+  @Get('events/list')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List events',
+    description:
+      'Returns events for the Events table: image, event name, date & time, location, active flag, and id for actions. Newest first.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Events list',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Events retrieved successfully' },
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              s_no: { type: 'number', example: 1 },
+              id: { type: 'string' },
+              eventId: { type: 'number', nullable: true },
+              image: { type: 'string', nullable: true },
+              eventName: { type: 'string' },
+              dateTime: { type: 'string', example: '2026-03-25 03:00 PM' },
+              location: { type: 'string' },
+              is_active: { type: 'boolean' },
+            },
+          },
+        },
+      },
+    },
+  })
+  @Public()
+  async listEvents() {
+    const data = await this.adminService.listEvents();
+    return { message: 'Events retrieved successfully', data };
+  }
+
+  @Get('events/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get event by id (for edit/view)',
+    description:
+      'Fetches one event with all fields needed to pre-fill the edit form. Accepts MongoDB _id or numeric eventId.',
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
+  @ApiResponse({ status: 200, description: 'Event retrieved successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  @Public()
+  async getEventById(@Param('id') id: string) {
+    const data = await this.adminService.getEventById(id);
+    return { message: 'Event retrieved successfully', data };
+  }
+
+  @Delete('events/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Delete event',
+    description:
+      'Permanently deletes an event. `id` can be MongoDB _id or numeric eventId.',
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
+  @ApiResponse({ status: 200, description: 'Event deleted successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  async deleteEvent(@Param('id') id: string) {
+    const data = await this.adminService.deleteEvent(id);
+    return { message: 'Event deleted successfully', data };
   }
 
   @Post('banner/delete')
@@ -753,6 +1077,8 @@ export class AdminController {
               name: { type: 'string' },
               email: { type: 'string' },
               phoneNo: { type: 'string' },
+              message: { type: 'string' },
+              createdAt: { type: 'string', format: 'date-time' },
             },
           },
         },

@@ -9,8 +9,13 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { Model, Types } from 'mongoose';
+import { AnyBulkWriteOperation, Model, Types } from 'mongoose';
+import { MongoServerError } from 'mongodb';
 import { Category, CategoryDocument } from './schemas/category.schema';
+import {
+  formatCategoryDisplayName,
+  normalizeCategoryNameKey,
+} from './category-name-normalize';
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { ProductPlant, ProductPlantDocument } from '../product-registration/schemas/product-plant.schema';
 import {
@@ -46,6 +51,19 @@ function numericFromMax(value: unknown): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
+function csvEscape(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 @Injectable()
 export class CategoriesService implements OnModuleInit {
   constructor(
@@ -62,7 +80,71 @@ export class CategoriesService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     this.ensureCategoryUploadDirs();
+    await this.backfillCategoryNameNormalized();
     await this.syncCategoryIdCounterFromCategories();
+    try {
+      await this.categoryModel.syncIndexes();
+    } catch (err) {
+      console.error(
+        '[categories] syncIndexes failed — duplicate normalized names or DB issue:',
+        err,
+      );
+    }
+  }
+
+  /** Ensures category_name_normalized exists for legacy rows before unique index sync */
+  private async backfillCategoryNameNormalized(): Promise<void> {
+    const cursor = this.categoryModel
+      .find({
+        $or: [
+          { category_name_normalized: { $exists: false } },
+          { category_name_normalized: null },
+          { category_name_normalized: '' },
+        ],
+      })
+      .select('_id category_name')
+      .cursor();
+
+    const ops: AnyBulkWriteOperation<CategoryDocument>[] = [];
+
+    for await (const doc of cursor) {
+      const display = formatCategoryDisplayName(String(doc.category_name ?? ''));
+      const key = normalizeCategoryNameKey(display);
+      if (!key) continue;
+      ops.push({
+        updateOne: {
+          filter: { _id: doc._id },
+          update: { $set: { category_name_normalized: key } },
+        },
+      });
+    }
+
+    if (ops.length > 0) {
+      await this.categoryModel.bulkWrite(ops, { ordered: false });
+    }
+  }
+
+  private rethrowIfDuplicateCategoryName(err: unknown): void {
+    if (err instanceof MongoServerError && err.code === 11000) {
+      const pattern = err.keyPattern as Record<string, unknown> | undefined;
+      if (pattern && Object.prototype.hasOwnProperty.call(pattern, 'category_name_normalized')) {
+        throw new ConflictException('A category with this name already exists');
+      }
+    }
+  }
+
+  private async assertCategoryNameUnique(
+    normalized: string,
+    excludeId?: Types.ObjectId,
+  ): Promise<void> {
+    const filter: Record<string, unknown> = { category_name_normalized: normalized };
+    if (excludeId) {
+      filter._id = { $ne: excludeId };
+    }
+    const existing = await this.categoryModel.findOne(filter).select('_id').lean().exec();
+    if (existing) {
+      throw new ConflictException('A category with this name already exists');
+    }
   }
 
   /** Ensures project/uploads/categories exists (matches main.ts static /uploads/) */
@@ -100,14 +182,46 @@ export class CategoriesService implements OnModuleInit {
     return `${this.getApiBaseUrl()}/${segments.join('/')}`;
   }
 
-  async findAll(query: ListCategoriesQueryDto): Promise<CategoryListItem[]> {
-    const filter: Record<string, number> = {};
-    if (query.sector !== undefined && query.sector !== null) {
+  private buildFindFilter(
+    query: ListCategoriesQueryDto,
+    options?: { enableMultiSector?: boolean },
+  ): Record<string, unknown> {
+    const filter: Record<string, unknown> = {};
+    const enableMultiSector = options?.enableMultiSector ?? false;
+
+    if (enableMultiSector) {
+      const sectors = (query.sectors ?? '')
+        .split(',')
+        .map((v) => parseInt(v.trim(), 10))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (sectors.length > 0) {
+        filter.sector = { $in: sectors };
+      } else if (query.sector !== undefined && query.sector !== null) {
+        filter.sector = query.sector;
+      }
+    } else if (query.sector !== undefined && query.sector !== null) {
       filter.sector = query.sector;
     }
     if (query.status !== undefined && query.status !== null) {
       filter.category_status = query.status;
     }
+
+    const rawMaterialTokens = (query.raw_material ?? '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+    if (rawMaterialTokens.length > 0) {
+      filter.$or = rawMaterialTokens.map((token) => ({
+        category_raw_material_forms: {
+          $regex: new RegExp(`(^|,)\\s*${escapeRegex(token)}\\s*(,|$)`),
+        },
+      }));
+    }
+    return filter;
+  }
+
+  async findAll(query: ListCategoriesQueryDto): Promise<CategoryListItem[]> {
+    const filter = this.buildFindFilter(query, { enableMultiSector: true });
     const sortOrder = query.sort === 'desc' ? -1 : 1;
     const rows = await this.categoryModel
       .find(filter)
@@ -122,6 +236,49 @@ export class CategoriesService implements OnModuleInit {
       });
     }
     return out;
+  }
+
+  async buildCsvExport(query: ListCategoriesQueryDto): Promise<string> {
+    const filter = this.buildFindFilter(query);
+    const sortOrder = query.sort === 'desc' ? -1 : 1;
+    const rows = await this.categoryModel
+      .find(filter)
+      .sort({ category_name: sortOrder })
+      .lean()
+      .exec();
+
+    const header = [
+      'category_id',
+      'category_name',
+      'category_image',
+      'category_image_url',
+      'category_raw_material_forms',
+      'category_status',
+      'sector',
+      'created_date',
+      'updated_date',
+    ];
+
+    const lines = [
+      header.join(','),
+      ...rows.map((r) =>
+        [
+          r.category_id,
+          r.category_name,
+          r.category_image ?? '',
+          this.resolveCategoryImageUrl(r.category_image) ?? '',
+          r.category_raw_material_forms ?? '',
+          r.category_status,
+          r.sector,
+          r.created_date ?? '',
+          r.updated_date ?? '',
+        ]
+          .map(csvEscape)
+          .join(','),
+      ),
+    ];
+
+    return lines.join('\r\n');
   }
 
   /** Max numeric category_id in categories (legacy string/int/long values). */
@@ -190,21 +347,35 @@ export class CategoriesService implements OnModuleInit {
   }
 
   async create(dto: CreateCategoryDto) {
+    const displayName = formatCategoryDisplayName(dto.category_name);
+    if (!displayName) {
+      throw new BadRequestException('Category name is required');
+    }
+    const category_name_normalized = normalizeCategoryNameKey(displayName);
+    await this.assertCategoryNameUnique(category_name_normalized);
+
     const created_date = this.formatCreatedDate();
     const updated_date = this.formatUpdatedDate();
 
     const category_id = await this.nextCategoryIdFromCounter();
 
-    const doc = await this.categoryModel.create({
-      category_name: dto.category_name,
-      category_image: dto.category_image,
-      category_raw_material_forms: dto.category_raw_material_forms,
-      category_status: dto.category_status ?? 1,
-      sector: dto.sector ?? 1,
-      created_date,
-      updated_date,
-      category_id,
-    });
+    let doc: CategoryDocument;
+    try {
+      doc = await this.categoryModel.create({
+        category_name: displayName,
+        category_name_normalized,
+        category_image: dto.category_image,
+        category_raw_material_forms: dto.category_raw_material_forms,
+        category_status: dto.category_status ?? 1,
+        sector: dto.sector ?? 1,
+        created_date,
+        updated_date,
+        category_id,
+      });
+    } catch (err) {
+      this.rethrowIfDuplicateCategoryName(err);
+      throw err;
+    }
     const plain = doc.toObject();
     return {
       ...plain,
@@ -268,7 +439,14 @@ export class CategoriesService implements OnModuleInit {
     const set: Record<string, unknown> = { updated_date: this.formatUpdatedDate() };
 
     if (dto.category_name !== undefined && String(dto.category_name).trim() !== '') {
-      set.category_name = String(dto.category_name).trim();
+      const displayName = formatCategoryDisplayName(dto.category_name);
+      if (!displayName) {
+        throw new BadRequestException('Category name cannot be empty');
+      }
+      const category_name_normalized = normalizeCategoryNameKey(displayName);
+      await this.assertCategoryNameUnique(category_name_normalized, oid);
+      set.category_name = displayName;
+      set.category_name_normalized = category_name_normalized;
     }
     if (dto.category_raw_material_forms !== undefined) {
       set.category_raw_material_forms = dto.category_raw_material_forms;
@@ -283,9 +461,15 @@ export class CategoriesService implements OnModuleInit {
       set.category_image = `categories/${image.filename}`;
     }
 
-    const updated = await this.categoryModel
-      .findOneAndUpdate({ _id: oid }, { $set: set }, { new: true })
-      .exec();
+    let updated: CategoryDocument | null;
+    try {
+      updated = await this.categoryModel
+        .findOneAndUpdate({ _id: oid }, { $set: set }, { new: true })
+        .exec();
+    } catch (err) {
+      this.rethrowIfDuplicateCategoryName(err);
+      throw err;
+    }
     if (!updated) {
       throw new NotFoundException('Category not found');
     }

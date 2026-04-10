@@ -12,15 +12,6 @@ export class UpdateUrnStatusDto {
   urnNo: string;
 
   @ApiProperty({
-    description: 'Vendor ID',
-    example: '507f1f77bcf86cd799439011',
-    required: true,
-  })
-  @IsString()
-  @IsNotEmpty()
-  vendorId: string;
-
-  @ApiProperty({
     description: 'Update status type (for future use)',
     example: 'urn_status',
     required: false,

@@ -14,7 +14,12 @@ export class ResponseInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest();
     const url = (req?.url as string) || '';
     /** CSV/binary exports must not be wrapped as JSON */
-    if (url.includes('/sectors/export') || url.includes('/standards/export')) {
+    if (
+      url.includes('/sectors/export') ||
+      url.includes('/standards/export') ||
+      url.includes('/categories/export') ||
+      url.includes('/api/admin/products/export')
+    ) {
       return next.handle();
     }
 
