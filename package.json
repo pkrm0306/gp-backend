@@ -12,7 +12,6 @@
     "start:once": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "prestart:prod": "npm run build",
     "start:prod": "node dist/main.js",
     "seed:greenpro": "ts-node -r tsconfig-paths/register src/scripts/seed-greenpro-user.ts",
     "migrate:vendor-users:manufacturer-id": "ts-node -r tsconfig-paths/register src/scripts/backfill-vendor-users-manufacturer-id.ts",
