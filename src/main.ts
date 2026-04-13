@@ -8,12 +8,13 @@ import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
-
+ 
 function ensureUploadDirectories() {
   const base = join(process.cwd(), 'uploads');
   const dirs = [
     base,
     join(base, 'categories'),
+    join(base, 'banners'),
     join(base, 'manufacturers'),
     join(base, 'events'),
     join(base, 'team-members'),
@@ -24,7 +25,7 @@ function ensureUploadDirectories() {
     }
   }
 }
-
+ 
 const ALLOWED_CORS_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:3001',
@@ -40,9 +41,9 @@ const ALLOWED_CORS_ORIGINS = [
   'http://127.0.0.1:5173',
   'https://cursor-greenpro-admin-mern-cyan.vercel.app',
   'https://cursor-greenpro-website-mern-seven.vercel.app',
-  'https://cursor-greenpro-admin-mern-dun.vercel.app/',
+  'https://cursor-greenpro-admin-mern-dun.vercel.app',
 ];
-
+ 
 function buildCorsOrigins(): string[] {
   const fromEnv =
     process.env.CORS_ORIGINS?.split(',')
@@ -50,16 +51,16 @@ function buildCorsOrigins(): string[] {
       .filter(Boolean) ?? [];
   return [...new Set([...ALLOWED_CORS_ORIGINS, ...fromEnv])];
 }
-
+ 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-
+ 
   ensureUploadDirectories();
-
+ 
   app.useStaticAssets(join(__dirname, '..', 'uploads'), {
     prefix: '/uploads/',
   });
-
+ 
   /**
    * Legacy static fallback:
    * Some older records store category images as `/uploads/<filename>` but the actual file
@@ -79,12 +80,25 @@ async function bootstrap() {
     }
     next();
   });
-
+ 
   app.use(urlencoded({ extended: true, limit: '1mb' }));
-
+ 
   const corsOrigins = buildCorsOrigins();
   app.enableCors({
-    origin: corsOrigins,
+    origin: (origin, callback) => {
+      // Allow non-browser clients (no Origin header)
+      if (!origin) return callback(null, true);
+ 
+      // Allow any localhost/127.0.0.1 port during development
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+        return callback(null, true);
+      }
+ 
+      // Allow known deployed/admin origins
+      if (corsOrigins.includes(origin)) return callback(null, true);
+ 
+      return callback(new Error(`CORS blocked for origin: ${origin}`), false);
+    },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
@@ -98,7 +112,7 @@ async function bootstrap() {
     optionsSuccessStatus: 204,
     preflightContinue: false,
   });
-
+ 
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -106,28 +120,28 @@ async function bootstrap() {
       transform: true,
     }),
   );
-
+ 
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());
-
+ 
   const config = new DocumentBuilder()
     .setTitle('GreenPro API')
     .setDescription('Production-ready NestJS backend API')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
-
+ 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document, {
     swaggerOptions: {
       persistAuthorization: true,
     },
   });
-
+ 
   const port = process.env.PORT || 3000;
   await app.listen(port,'0.0.0.0');
   console.log(`Application is running on: http://localhost:${port}`);
   console.log(`Swagger documentation: http://localhost:${port}/api`);
 }
-
+ 
 bootstrap();
