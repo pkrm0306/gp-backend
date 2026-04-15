@@ -108,7 +108,7 @@ async function bootstrap() {
       'X-Access-Token',
       'Origin',
     ],
-    credentials: process.env.CORS_CREDENTIALS === 'true',
+    credentials: process.env.CORS_CREDENTIALS === 'false',
     optionsSuccessStatus: 204,
     preflightContinue: false,
   });
