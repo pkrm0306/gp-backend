@@ -12,6 +12,7 @@
     "start:once": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
+
     "start:prod": "node dist/main.js",
     "seed:greenpro": "ts-node -r tsconfig-paths/register src/scripts/seed-greenpro-user.ts",
     "migrate:vendor-users:manufacturer-id": "ts-node -r tsconfig-paths/register src/scripts/backfill-vendor-users-manufacturer-id.ts",
@@ -39,6 +40,7 @@
     "class-validator": "^0.14.0",
     "cors": "^2.8.6",
     "exceljs": "^4.4.0",
+    "mongodb": "^7.1.1",
     "mongoose": "^8.0.3",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.8",

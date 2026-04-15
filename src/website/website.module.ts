@@ -12,6 +12,11 @@ import { VendorUser, VendorUserSchema } from '../vendor-users/schemas/vendor-use
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
+import { EmailService } from '../common/services/email.service';
+import {
+  Notification,
+  NotificationSchema,
+} from '../common/schemas/notification.schema';
 
 @Module({
   imports: [
@@ -20,13 +25,14 @@ import { ProductRegistrationModule } from '../product-registration/product-regis
       { name: ContactMessage.name, schema: ContactMessageSchema },
       { name: Event.name, schema: EventSchema },
       { name: VendorUser.name, schema: VendorUserSchema },
+      { name: Notification.name, schema: NotificationSchema },
     ]),
     ManufacturersModule,
     CategoriesModule,
     ProductRegistrationModule,
   ],
   controllers: [WebsiteController],
-  providers: [WebsiteService],
+  providers: [WebsiteService, EmailService],
 })
 export class WebsiteModule {}
 

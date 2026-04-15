@@ -81,6 +81,7 @@ export class CategoriesService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     this.ensureCategoryUploadDirs();
     await this.backfillCategoryNameNormalized();
+    await this.dedupeCategoryNameNormalized();
     await this.syncCategoryIdCounterFromCategories();
     try {
       await this.categoryModel.syncIndexes();
@@ -89,6 +90,68 @@ export class CategoriesService implements OnModuleInit {
         '[categories] syncIndexes failed — duplicate normalized names or DB issue:',
         err,
       );
+    }
+  }
+
+  /**
+   * If legacy data contains duplicates for category_name_normalized, a UNIQUE index build will fail.
+   * This step makes duplicates unique by appending "-<shortId>" to all but the newest document.
+   */
+  private async dedupeCategoryNameNormalized(): Promise<void> {
+    const dupGroups = await this.categoryModel
+      .aggregate([
+        {
+          $match: {
+            category_name_normalized: { $exists: true, $nin: [null, ''] },
+          },
+        },
+        {
+          $group: {
+            _id: '$category_name_normalized',
+            ids: { $push: '$_id' },
+            count: { $sum: 1 },
+          },
+        },
+        { $match: { count: { $gt: 1 } } },
+      ])
+      .exec();
+
+    if (!dupGroups?.length) return;
+
+    const ops: AnyBulkWriteOperation<CategoryDocument>[] = [];
+
+    for (const g of dupGroups) {
+      const ids: Types.ObjectId[] = (g?.ids ?? []).filter(Boolean);
+      if (ids.length < 2) continue;
+
+      // Keep the newest as-is (highest _id), rewrite the rest.
+      const sorted = [...ids].sort((a, b) => (String(a) < String(b) ? -1 : 1));
+      const keep = sorted[sorted.length - 1];
+      const rewrite = sorted.slice(0, -1);
+
+      for (const id of rewrite) {
+        const shortId = String(id).slice(-6);
+        const base = String(g._id);
+        const next = `${base}-${shortId}`;
+        ops.push({
+          updateOne: {
+            filter: { _id: id },
+            update: { $set: { category_name_normalized: next } },
+          },
+        });
+      }
+
+      // Ensure the kept doc still has the base (in case it was rewritten earlier).
+      ops.push({
+        updateOne: {
+          filter: { _id: keep },
+          update: { $set: { category_name_normalized: String(g._id) } },
+        },
+      });
+    }
+
+    if (ops.length > 0) {
+      await this.categoryModel.bulkWrite(ops, { ordered: false });
     }
   }
 
@@ -125,8 +188,10 @@ export class CategoriesService implements OnModuleInit {
   }
 
   private rethrowIfDuplicateCategoryName(err: unknown): void {
-    if (err instanceof MongoServerError && err.code === 11000) {
-      const pattern = err.keyPattern as Record<string, unknown> | undefined;
+    if (err instanceof MongoServerError && (err as MongoServerError).code === 11000) {
+      const pattern = (err as MongoServerError).keyPattern as
+        | Record<string, unknown>
+        | undefined;
       if (pattern && Object.prototype.hasOwnProperty.call(pattern, 'category_name_normalized')) {
         throw new ConflictException('A category with this name already exists');
       }

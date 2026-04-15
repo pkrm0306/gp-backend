@@ -19,6 +19,11 @@ import {
   EventIdCounterDocument,
   EVENT_ID_COUNTER_KEY,
 } from '../events/schemas/event-id-counter.schema';
+import { EmailService } from '../common/services/email.service';
+import {
+  ContactReplyThread,
+  ContactReplyThreadDocument,
+} from './schemas/contact-reply-thread.schema';
 import {
   NewsletterSubscriber,
   NewsletterSubscriberDocument,
@@ -27,9 +32,23 @@ import {
   ContactMessage,
   ContactMessageDocument,
 } from '../website/schemas/contact-message.schema';
+import {
+  Notification,
+  NotificationDocument,
+} from '../common/schemas/notification.schema';
+import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeHtml(input: string): string {
+  return String(input ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 const DEFAULT_EVENT_REGISTRATION_LINK =
@@ -54,7 +73,32 @@ export class AdminService {
     private newsletterSubscriberModel: Model<NewsletterSubscriberDocument>,
     @InjectModel(ContactMessage.name)
     private contactMessageModel: Model<ContactMessageDocument>,
+    @InjectModel(ContactReplyThread.name)
+    private contactReplyThreadModel: Model<ContactReplyThreadDocument>,
+    @InjectModel(Notification.name)
+    private notificationModel: Model<NotificationDocument>,
+    private readonly emailService: EmailService,
   ) {}
+
+  private async createNotification(input: {
+    title: string;
+    message: string;
+    type?: string;
+    source?: string;
+    referenceType?: string;
+    referenceId?: string;
+    actorName?: string;
+  }) {
+    await this.notificationModel.create({
+      title: input.title,
+      message: input.message,
+      type: input.type ?? 'info',
+      source: input.source ?? 'admin',
+      referenceType: input.referenceType,
+      referenceId: input.referenceId,
+      actorName: input.actorName,
+    });
+  }
 
   private async nextEventId(): Promise<number> {
     const doc = await this.eventCounterModel
@@ -123,6 +167,14 @@ export class AdminService {
     });
 
     const saved = await doc.save();
+    await this.createNotification({
+      title: 'Event created',
+      message: `Event "${payload.eventName}" was created.`,
+      type: 'success',
+      source: 'admin',
+      referenceType: 'event',
+      referenceId: String((saved as any)._id),
+    });
     return this.formatEventResponse(saved);
   }
 
@@ -196,6 +248,15 @@ export class AdminService {
     if (!updated) {
       throw new NotFoundException('Event not found');
     }
+
+    await this.createNotification({
+      title: 'Event updated',
+      message: `Event "${String((updated as any).eventName ?? '')}" was updated.`,
+      type: 'info',
+      source: 'admin',
+      referenceType: 'event',
+      referenceId: String((updated as any)._id),
+    });
 
     return this.formatEventResponse(updated);
   }
@@ -277,7 +338,250 @@ export class AdminService {
       throw new NotFoundException('Event not found');
     }
 
+    await this.createNotification({
+      title: 'Event deleted',
+      message: `Event (${raw}) was deleted.`,
+      type: 'warning',
+      source: 'admin',
+      referenceType: 'event',
+      referenceId: raw,
+    });
+
     return { id: raw };
+  }
+
+  async replyToCustomerViaManufacturer(payload: {
+    email: string;
+    userMessage: string;
+    replyMessage: string;
+  }) {
+    const brand = 'GreenPro';
+    const subject = `Reply from ${brand}`;
+    const htmlBody = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>${subject}</title>
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827; max-width: 640px; margin: 0 auto; padding: 20px;">
+          <div style="background-color:#16a34a; color:#fff; padding:16px 20px; border-radius:8px 8px 0 0;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div>
+                <div style="font-size:18px; font-weight:700;">${brand}</div>
+                <div style="font-size:12px; opacity:.9;">GreenPro Support</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="background:#f9fafb; padding:20px; border-radius:0 0 8px 8px; border:1px solid #e5e7eb; border-top:0;">
+            <p style="margin:0 0 12px 0;">Hello,</p>
+
+            <div style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid #16a34a; padding:14px; border-radius:6px; margin:12px 0;">
+              <div style="font-size:13px; color:#6b7280; margin-bottom:6px;">Your message</div>
+              <div style="white-space:pre-wrap;">${escapeHtml(payload.userMessage)}</div>
+            </div>
+
+            <div style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid #7c3aed; padding:14px; border-radius:6px; margin:12px 0;">
+              <div style="font-size:13px; color:#6b7280; margin-bottom:6px;">Our reply</div>
+              <div style="white-space:pre-wrap;">${escapeHtml(payload.replyMessage)}</div>
+            </div>
+
+            <p style="margin:18px 0 0 0;">Thanks,<br/>${brand}</p>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const textBody = `Your message:\n${payload.userMessage}\n\nOur reply:\n${payload.replyMessage}\n\nThanks,\n${brand}`;
+
+    await this.emailService.sendEmail(payload.email, subject, htmlBody, textBody);
+
+    return { to: payload.email, subject };
+  }
+
+  async sendContactReply(contactMessageId: string, replyMessage: string) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(contactMessageId);
+    } catch {
+      throw new BadRequestException('Invalid contact message id');
+    }
+
+    const contact = await this.contactMessageModel
+      .findById(objectId)
+      .select('name email phoneNumber subject message createdAt')
+      .lean()
+      .exec();
+
+    if (!contact) {
+      throw new NotFoundException('Contact message not found');
+    }
+
+    const to = String((contact as any).email ?? '').trim().toLowerCase();
+    if (!to) {
+      throw new BadRequestException('Contact message has no email');
+    }
+
+    const userMessage = String((contact as any).message ?? '').trim();
+    const subject = `Reply to your inquiry${(contact as any).subject ? `: ${String((contact as any).subject).trim()}` : ''}`;
+
+    const htmlBody = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>${escapeHtml(subject)}</title>
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827; max-width: 640px; margin: 0 auto; padding: 20px;">
+          <div style="background:#16a34a; color:#fff; padding:16px 20px; border-radius:8px 8px 0 0;">
+            <h2 style="margin:0;">GreenPro Support Reply</h2>
+          </div>
+          <div style="border:1px solid #e5e7eb; border-top:0; padding:20px; border-radius:0 0 8px 8px;">
+            <p style="margin-top:0;">Hi ${escapeHtml(String((contact as any).name ?? ''))},</p>
+
+            <div style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid #16a34a; padding:14px; border-radius:6px; margin:12px 0;">
+              <div style="font-size:13px; color:#6b7280; margin-bottom:6px;">Your message</div>
+              <div style="white-space:pre-wrap;">${escapeHtml(userMessage)}</div>
+            </div>
+
+            <div style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid #7c3aed; padding:14px; border-radius:6px; margin:12px 0;">
+              <div style="font-size:13px; color:#6b7280; margin-bottom:6px;">Our reply</div>
+              <div style="white-space:pre-wrap;">${escapeHtml(replyMessage)}</div>
+            </div>
+
+            <p style="margin:18px 0 0 0;">Thanks,<br/>GreenPro</p>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const textBody = `Your message:\n${userMessage}\n\nOur reply:\n${replyMessage}\n\nThanks,\nGreenPro`;
+
+    await this.emailService.sendEmail(to, subject, htmlBody, textBody);
+
+    const entry = {
+      adminReply: replyMessage,
+      repliedAt: new Date(),
+    };
+
+    await this.contactReplyThreadModel
+      .updateOne(
+        { contactMessageId: objectId },
+        {
+          $setOnInsert: { contactMessageId: objectId, email: to },
+          $push: { conversations: entry },
+        },
+        { upsert: true },
+      )
+      .exec();
+
+    await this.createNotification({
+      title: 'Contact replied',
+      message: `Admin replied to contact ${to}.`,
+      type: 'info',
+      source: 'admin',
+      referenceType: 'contact',
+      referenceId: String(objectId),
+    });
+
+    return { sent: true };
+  }
+
+  async getContactReplyHistory(contactMessageId: string) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(contactMessageId);
+    } catch {
+      throw new BadRequestException('Invalid contact message id');
+    }
+
+    const thread = await this.contactReplyThreadModel
+      .findOne({ contactMessageId: objectId })
+      .lean()
+      .exec();
+
+    if (!thread) {
+      return { contactMessageId, email: null, conversations: [] };
+    }
+
+    return {
+      contactMessageId: String((thread as any).contactMessageId),
+      email: String((thread as any).email ?? ''),
+      conversations: ((thread as any).conversations ?? []).map((c: any) => ({
+        adminReply: String(c?.adminReply ?? ''),
+        repliedAt: c?.repliedAt ?? null,
+      })),
+    };
+  }
+
+  async listNotifications(query: ListNotificationsQueryDto) {
+    const page = Number(query?.page ?? 1);
+    const limit = Number(query?.limit ?? 20);
+    const safePage = Number.isFinite(page) && page > 0 ? page : 1;
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 20;
+    const skip = (safePage - 1) * safeLimit;
+
+    const now = new Date();
+    const where: Record<string, unknown> = {};
+    switch (query?.range) {
+      case 'today': {
+        const start = new Date(now);
+        start.setHours(0, 0, 0, 0);
+        where.createdAt = { $gte: start };
+        break;
+      }
+      case 'week': {
+        const start = new Date(now);
+        start.setDate(now.getDate() - 7);
+        where.createdAt = { $gte: start };
+        break;
+      }
+      case '30d': {
+        const start = new Date(now);
+        start.setDate(now.getDate() - 30);
+        where.createdAt = { $gte: start };
+        break;
+      }
+      case '90d': {
+        const start = new Date(now);
+        start.setDate(now.getDate() - 90);
+        where.createdAt = { $gte: start };
+        break;
+      }
+      default:
+        break;
+    }
+
+    const [totalCount, rows] = await Promise.all([
+      this.notificationModel.countDocuments(where).exec(),
+      this.notificationModel
+        .find(where)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(safeLimit)
+        .lean()
+        .exec(),
+    ]);
+
+    return {
+      data: (rows ?? []).map((n: any) => ({
+        id: String(n._id),
+        title: String(n.title ?? ''),
+        message: String(n.message ?? ''),
+        type: String(n.type ?? 'info'),
+        source: String(n.source ?? 'system'),
+        referenceType: n.referenceType ?? null,
+        referenceId: n.referenceId ?? null,
+        actorName: n.actorName ?? null,
+        createdAt: n.createdAt ?? null,
+      })),
+      totalCount,
+      currentPage: safePage,
+      totalPages: Math.max(1, Math.ceil(totalCount / safeLimit)),
+    };
   }
 
   async createTeamMember(
@@ -588,7 +892,7 @@ export class AdminService {
     const created = new this.bannerModel({
       vendorId: vendorObjectId,
       imageUrl: dto.imageUrl.trim(),
-      targetUrl: dto.targetUrl.trim(),
+      targetUrl: (dto.targetUrl ?? '').trim(),
       heading: dto.heading.trim(),
       description: dto.description.trim(),
     });
@@ -657,7 +961,7 @@ export class AdminService {
         _id: bannerObjectId,
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .select('imageUrl heading description')
+      .select('imageUrl targetUrl heading description')
       .lean()
       .exec();
 
@@ -668,8 +972,71 @@ export class AdminService {
     return {
       id: String(b._id),
       imageUrl: b.imageUrl,
+      targetUrl: b.targetUrl ?? '',
       heading: b.heading,
       description: b.description,
+    };
+  }
+
+  /** Updates a banner that belongs to the vendor. */
+  async updateBanner(
+    vendorId: string,
+    bannerId: string,
+    payload: { imageUrl?: string; targetUrl?: string; heading: string; description: string },
+  ) {
+    let vendorObjectId: Types.ObjectId;
+    let bannerObjectId: Types.ObjectId;
+    try {
+      vendorObjectId = new Types.ObjectId(vendorId);
+      bannerObjectId = new Types.ObjectId(bannerId);
+    } catch {
+      throw new BadRequestException('Invalid ID format');
+    }
+
+    const existing = await this.bannerModel
+      .findOne({
+        _id: bannerObjectId,
+        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+      })
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (!existing) {
+      throw new NotFoundException('Banner not found');
+    }
+
+    const $set: Record<string, unknown> = {
+      heading: payload.heading.trim(),
+      description: payload.description.trim(),
+      updatedAt: new Date(),
+    };
+    if (payload.imageUrl !== undefined) {
+      $set.imageUrl = payload.imageUrl.trim();
+    }
+    if (payload.targetUrl !== undefined) {
+      $set.targetUrl = payload.targetUrl.trim();
+    }
+
+    const updated = await this.bannerModel
+      .findByIdAndUpdate(bannerObjectId, { $set }, { new: true })
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Banner not found');
+    }
+
+    const st = updated.status ?? 1;
+    return {
+      id: String(updated._id),
+      imageUrl: updated.imageUrl,
+      targetUrl: updated.targetUrl ?? '',
+      heading: updated.heading,
+      description: updated.description,
+      is_active: st === 1,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
     };
   }
 

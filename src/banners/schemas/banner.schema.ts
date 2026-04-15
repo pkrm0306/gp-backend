@@ -11,8 +11,8 @@ export class Banner {
   @Prop({ required: true })
   imageUrl: string;
 
-  @Prop({ required: true })
-  targetUrl: string;
+  @Prop({ required: false, default: '' })
+  targetUrl?: string;
 
   @Prop({ required: true })
   heading: string;

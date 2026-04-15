@@ -12,6 +12,7 @@ import { ListCategoriesQueryDto } from '../categories/dto/list-categories-query.
 import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
 import { PublicCategoryManufacturersDto } from './dto/public-category-manufacturers.dto';
 import { PublicManufacturerCategoriesDto } from './dto/public-manufacturer-categories.dto';
+import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
 
 @ApiTags('Website')
 @Controller('website')
@@ -183,6 +184,21 @@ export class WebsiteController {
       return { message: 'No team members found', data: [] };
     }
     return { data };
+  }
+
+  @Post('manufacturer/inquiry')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Manufacturer inquiry (send email to customer)',
+    description:
+      'Accepts name, email, contact, message, manufacturerId. Fetches manufacturer details and sends an email to the customer.',
+  })
+  @ApiResponse({ status: 200, description: 'Email sent successfully' })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  @ApiResponse({ status: 404, description: 'Manufacturer not found' })
+  async manufacturerInquiry(@Body() dto: ManufacturerInquiryDto) {
+    const data = await this.websiteService.submitManufacturerInquiry(dto);
+    return { message: 'Email sent successfully', data };
   }
 }
 

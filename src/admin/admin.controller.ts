@@ -8,15 +8,20 @@ import {
   Param,
   Query,
   Body,
+  Req,
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  UploadedFiles,
   HttpCode,
   HttpStatus,
   BadRequestException,
   applyDecorators,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+} from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -41,9 +46,13 @@ import { DeleteTeamMemberDto } from './dto/delete-team-member.dto';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { DeleteBannerDto } from './dto/delete-banner.dto';
 import { UpdateBannerStatusDto } from './dto/update-banner-status.dto';
+import { EditBannerDto } from './dto/edit-banner.dto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { ManufacturerReplyDto } from './dto/manufacturer-reply.dto';
+import { ContactReplyDto } from './dto/contact-reply.dto';
+import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 import { DeleteNewsletterSubscriberDto } from './dto/delete-newsletter-subscriber.dto';
 import { UpdateNewsletterSubscriberStatusDto } from './dto/update-newsletter-subscriber-status.dto';
 import { DeleteContactMessageDto } from './dto/delete-contact-message.dto';
@@ -52,6 +61,7 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
+import type { Request } from 'express';
 
 const storage = diskStorage({
   destination: join(process.cwd(), 'uploads', 'manufacturers'),
@@ -204,33 +214,207 @@ export class AdminController {
       },
     },
   })
-  async listBanners(@CurrentUser() user: { vendorId: string }) {
+  async listBanners(@CurrentUser() user: { vendorId: string }, @Req() req: Request) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const data = await this.adminService.listBanners(user.vendorId);
-    return { message: 'Banners retrieved successfully', data };
+
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = (raw ?? '').toString().trim();
+      if (!v) return v;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v; // keep as-is (legacy values)
+    };
+
+    const normalized = data.map((b) => ({
+      ...b,
+      imageUrl: normalizeImageUrl(b.imageUrl),
+    }));
+    return { message: 'Banners retrieved successfully', data: normalized };
   }
 
   @Post('banner')
   @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'banners'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `banner-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        // Accept any image/* mimetype (some browsers report webp as image/x-webp etc.)
+        cb(null, typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'));
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
   @ApiOperation({
     summary: 'Create banner',
     description:
-      'Creates a banner for the logged-in vendor: image URL, target (click) URL, heading, and description. Matches the admin **Add Banner** form.',
+      'Creates a banner for the logged-in vendor. Multipart form: image (binary), optional targetUrl, heading, description. (imageUrl string is also accepted for backward compatibility).',
   })
-  @ApiBody({ type: CreateBannerDto })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['heading', 'description'],
+      properties: {
+        image: { type: 'string', format: 'binary' },
+        imageUrl: { type: 'string', description: 'Optional if image is uploaded' },
+        targetUrl: { type: 'string', description: 'Optional' },
+        heading: { type: 'string' },
+        description: { type: 'string' },
+      },
+    },
+  })
   @ApiResponse({ status: 201, description: 'Banner created successfully' })
   @ApiResponse({ status: 400, description: 'Validation error or invalid vendor' })
   async createBanner(
     @CurrentUser() user: { vendorId: string },
-    @Body() dto: CreateBannerDto,
+    @Req() req: Request,
+    @Body() body: any,
+    @UploadedFile() file?: any,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
-    const data = await this.adminService.createBanner(user.vendorId, dto);
-    return { message: 'Banner created successfully', data };
+    const dto = plainToClass(CreateBannerDto, {
+      imageUrl: body.imageUrl,
+      targetUrl: body.targetUrl,
+      heading: body.heading,
+      description: body.description,
+    });
+    const errors = await validate(dto);
+    if (errors.length > 0) {
+      const errorMessages = errors
+        .map((error) => Object.values(error.constraints || {}))
+        .flat();
+      throw new BadRequestException(errorMessages.join(', '));
+    }
+
+    const imageUrl = file ? `/uploads/banners/${file.filename}` : dto.imageUrl;
+    if (!imageUrl) {
+      throw new BadRequestException('Banner image is required');
+    }
+
+    const data = await this.adminService.createBanner(user.vendorId, {
+      ...dto,
+      imageUrl,
+    });
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalized = {
+      ...data,
+      imageUrl:
+        typeof data?.imageUrl === 'string' && data.imageUrl.startsWith('/uploads/')
+          ? `${origin}${data.imageUrl}`
+          : data.imageUrl,
+    };
+    return { message: 'Banner created successfully', data: normalized };
+  }
+
+  @Patch(['banner/:id', 'banner/:id/edit'])
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'banners'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `banner-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        // Accept any image/* mimetype (some browsers report webp as image/x-webp etc.)
+        cb(null, typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'));
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  @ApiOperation({
+    summary: 'Edit banner',
+    description:
+      'Edits a banner for the logged-in vendor. Multipart form: optional image (binary), optional targetUrl, required heading + description.',
+  })
+  @ApiParam({ name: 'id', description: 'Banner MongoDB id (from banner list)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['heading', 'description'],
+      properties: {
+        image: { type: 'string', format: 'binary' },
+        imageUrl: { type: 'string', description: 'Optional if image is uploaded' },
+        targetUrl: { type: 'string', description: 'Optional' },
+        heading: { type: 'string' },
+        description: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Banner updated successfully' })
+  @ApiResponse({ status: 400, description: 'Validation error / invalid id' })
+  @ApiResponse({ status: 404, description: 'Banner not found' })
+  async editBanner(
+    @CurrentUser() user: { vendorId: string },
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: any,
+    @UploadedFile() file?: any,
+  ) {
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
+
+    const dto = plainToClass(EditBannerDto, {
+      imageUrl: body.imageUrl,
+      targetUrl: body.targetUrl,
+      heading: body.heading,
+      description: body.description,
+    });
+
+    const errors = await validate(dto);
+    if (errors.length > 0) {
+      const errorMessages = errors
+        .map((error) => Object.values(error.constraints || {}))
+        .flat();
+      throw new BadRequestException(errorMessages.join(', '));
+    }
+
+    // In edit: image is optional. If neither `image` (binary) nor `imageUrl` is provided,
+    // we keep the existing imageUrl stored in DB.
+    const imageUrl = file ? `/uploads/banners/${file.filename}` : dto.imageUrl;
+
+    const data = await this.adminService.updateBanner(user.vendorId, id, {
+      ...(imageUrl ? { imageUrl } : {}),
+      targetUrl: dto.targetUrl,
+      heading: dto.heading,
+      description: dto.description,
+    });
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalized = {
+      ...data,
+      imageUrl:
+        typeof data?.imageUrl === 'string' && data.imageUrl.startsWith('/uploads/')
+          ? `${origin}${data.imageUrl}`
+          : data.imageUrl,
+    };
+    return { message: 'Banner updated successfully', data: normalized };
   }
 
   @Post('events/create')
@@ -350,7 +534,13 @@ export class AdminController {
   @Patch('events/:id/edit')
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
-    FileInterceptor('image', {
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'eventImage', maxCount: 1 },
+        { name: 'event_image', maxCount: 1 },
+      ],
+      {
       storage: diskStorage({
         destination: join(process.cwd(), 'uploads', 'events'),
         filename: (req, file, cb) => {
@@ -374,7 +564,8 @@ export class AdminController {
         cb(null, allowedMimes.includes(file.mimetype));
       },
       limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+      },
+    ),
   )
   @ApiOperation({
     summary: 'Edit event',
@@ -407,7 +598,12 @@ export class AdminController {
   async editEvent(
     @Param('id') id: string,
     @Body() body: any,
-    @UploadedFile() file?: any,
+    @UploadedFiles()
+    files?: {
+      image?: Express.Multer.File[];
+      eventImage?: Express.Multer.File[];
+      event_image?: Express.Multer.File[];
+    },
   ) {
     const pick = (keys: string[]) => {
       for (const k of keys) {
@@ -460,7 +656,9 @@ export class AdminController {
       }
     }
 
-    const eventImage = file ? `/uploads/events/${file.filename}` : undefined;
+    const picked =
+      files?.image?.[0] || files?.eventImage?.[0] || files?.event_image?.[0] || null;
+    const eventImage = picked ? `/uploads/events/${picked.filename}` : undefined;
     const data = await this.adminService.updateEvent(id, {
       ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
       ...(eventDate !== undefined ? { eventDate } : {}),
@@ -554,6 +752,75 @@ export class AdminController {
     return { message: 'Event deleted successfully', data };
   }
 
+  @Post('manufacturer/reply')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reply to customer (email)',
+    description:
+      'Sends an email to the customer. Requires email, userMessage, replyMessage.',
+  })
+  @ApiBody({ type: ManufacturerReplyDto })
+  @ApiResponse({ status: 200, description: 'Reply email sent successfully' })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  async replyToCustomer(@Body() dto: ManufacturerReplyDto) {
+    const data = await this.adminService.replyToCustomerViaManufacturer(dto);
+    return { message: 'Reply email sent successfully', data };
+  }
+
+  @Post('contact/:id/reply')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reply to contact message (store history)',
+    description:
+      'Sends reply email to the contact message email, and stores only the admin reply history linked to contact message id.',
+  })
+  @ApiParam({ name: 'id', description: 'Contact message MongoDB id' })
+  @ApiBody({ type: ContactReplyDto })
+  @ApiResponse({ status: 200, description: 'Reply sent and stored' })
+  @ApiResponse({ status: 400, description: 'Validation error / invalid id' })
+  @ApiResponse({ status: 404, description: 'Contact message not found' })
+  async replyToContact(@Param('id') id: string, @Body() dto: ContactReplyDto) {
+    const data = await this.adminService.sendContactReply(id, dto.replyMessage);
+    return { message: 'Reply sent successfully', data };
+  }
+
+  @Get('contact/:id/replies')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get contact reply history',
+    description:
+      'Returns stored admin reply history for a given contact message id.',
+  })
+  @ApiParam({ name: 'id', description: 'Contact message MongoDB id' })
+  @ApiResponse({ status: 200, description: 'Reply history' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
+  async getContactReplies(@Param('id') id: string) {
+    const data = await this.adminService.getContactReplyHistory(id);
+    return { message: 'Reply history retrieved successfully', data };
+  }
+
+  @Get('notifications')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List notifications',
+    description:
+      'Returns notification list for admin panel with optional time-range filter: all, today, week, 30d, 90d.',
+  })
+  @ApiQuery({ name: 'range', required: false, enum: ['all', 'today', 'week', '30d', '90d'] })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, example: 20 })
+  @ApiResponse({ status: 200, description: 'Notifications retrieved successfully' })
+  async listNotifications(@Query() query: ListNotificationsQueryDto) {
+    const result = await this.adminService.listNotifications(query);
+    return {
+      message: 'Notifications retrieved successfully',
+      data: result.data,
+      totalCount: result.totalCount,
+      currentPage: result.currentPage,
+      totalPages: result.totalPages,
+    };
+  }
+
   @Post('banner/delete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -611,13 +878,22 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   async getBannerById(
     @CurrentUser() user: { vendorId: string },
+    @Req() req: Request,
     @Param('id') id: string,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const data = await this.adminService.getBannerById(user.vendorId, id);
-    return { message: 'Banner retrieved successfully', data };
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalized = {
+      ...data,
+      imageUrl:
+        typeof data?.imageUrl === 'string' && data.imageUrl.startsWith('/uploads/')
+          ? `${origin}${data.imageUrl}`
+          : data.imageUrl,
+    };
+    return { message: 'Banner retrieved successfully', data: normalized };
   }
 
   @Patch('banner/:id/status')

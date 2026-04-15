@@ -16,6 +16,15 @@ import {
   EventIdCounter,
   EventIdCounterSchema,
 } from '../events/schemas/event-id-counter.schema';
+import { EmailService } from '../common/services/email.service';
+import {
+  ContactReplyThread,
+  ContactReplyThreadSchema,
+} from './schemas/contact-reply-thread.schema';
+import {
+  Notification,
+  NotificationSchema,
+} from '../common/schemas/notification.schema';
 
 @Module({
   imports: [
@@ -26,12 +35,14 @@ import {
       { name: Banner.name, schema: BannerSchema },
       { name: NewsletterSubscriber.name, schema: NewsletterSubscriberSchema },
       { name: ContactMessage.name, schema: ContactMessageSchema },
+      { name: ContactReplyThread.name, schema: ContactReplyThreadSchema },
+      { name: Notification.name, schema: NotificationSchema },
       { name: Event.name, schema: EventSchema },
       { name: EventIdCounter.name, schema: EventIdCounterSchema },
     ]),
   ],
   controllers: [AdminController],
-  providers: [AdminService],
+  providers: [AdminService, EmailService],
   exports: [AdminService],
 })
 export class AdminModule {}

@@ -8,14 +8,35 @@ export class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor(private configService: ConfigService) {
+    const host =
+      this.configService.get<string>('SMTP_SERVER_HOST') ||
+      this.configService.get<string>('MAIL_HOST') ||
+      'sandbox.smtp.mailtrap.io';
+    const port = parseInt(
+      this.configService.get<string>('SMTP_SERVER_PORT') ||
+        this.configService.get<string>('MAIL_PORT') ||
+        '2525',
+      10,
+    );
+    const secureRaw =
+      this.configService.get<string>('SMTP_SERVER_SECURE') ||
+      this.configService.get<string>('MAIL_SECURE') ||
+      'false';
+    const secure = String(secureRaw).toLowerCase() === 'true';
+    const user =
+      this.configService.get<string>('SMTP_SERVER_USER') ||
+      this.configService.get<string>('MAIL_USERNAME') ||
+      '';
+    const pass =
+      this.configService.get<string>('SMTP_SERVER_PASS') ||
+      this.configService.get<string>('MAIL_PASSWORD') ||
+      '';
+
     this.transporter = nodemailer.createTransport({
-      host: this.configService.get<string>('MAIL_HOST') || 'sandbox.smtp.mailtrap.io',
-      port: parseInt(this.configService.get<string>('MAIL_PORT') || '2525', 10),
-      secure: false,
-      auth: {
-        user: this.configService.get<string>('MAIL_USERNAME') || 'f287ab81e654be',
-        pass: this.configService.get<string>('MAIL_PASSWORD') || 'baba66e91e9271',
-      },
+      host,
+      port,
+      secure,
+      ...(user && pass ? { auth: { user, pass } } : {}),
       tls: {
         rejectUnauthorized: false,
       },
@@ -29,8 +50,18 @@ export class EmailService {
     textBody?: string,
   ): Promise<void> {
     try {
+      const disabledRaw = this.configService.get<string>('EMAIL_DISABLED') || 'false';
+      const disabled = String(disabledRaw).toLowerCase() === 'true';
+      if (disabled) {
+        this.logger.warn(`EMAIL_DISABLED=true, skipping email send to ${to}`);
+        return;
+      }
+
       const mailOptions = {
-        from: this.configService.get<string>('MAIL_FROM_ADDRESS') || 'noreply@greenpro.com',
+        from:
+          this.configService.get<string>('SMTP_SERVER_FROM') ||
+          this.configService.get<string>('MAIL_FROM_ADDRESS') ||
+          'noreply@greenpro.com',
         to,
         subject,
         html: htmlBody,
