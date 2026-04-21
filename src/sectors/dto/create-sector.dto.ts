@@ -8,6 +8,11 @@ export class CreateSectorDto {
   @IsNotEmpty()
   name: string;
 
+  @ApiPropertyOptional({ example: 'Covers farming, irrigation, and agri-tech segments.' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
   @ApiPropertyOptional({ enum: [0, 1], default: 1, description: '1 active, 0 inactive' })
   @IsOptional()
   @Type(() => Number)

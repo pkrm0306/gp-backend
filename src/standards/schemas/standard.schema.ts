@@ -11,6 +11,9 @@ export class Standard {
   @Prop({ required: true })
   name: string;
 
+  @Prop({ type: String, default: '' })
+  description: string;
+
   /** Stored relative path under uploads/ or same path segment for S3 key suffix, e.g. standards/1700000000_file.pdf */
   @Prop({ required: true })
   filename: string;

@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Patch,
   Post,
   StreamableFile,
   UseGuards,
@@ -12,12 +15,14 @@ import {
   ApiBody,
   ApiConsumes,
   ApiOperation,
+  ApiParam,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ProductRegistrationService } from './product-registration.service';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
+import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 
 @ApiTags('Admin Products')
 @Controller('api/admin/products')
@@ -25,6 +30,51 @@ import { AdminListProductsDto } from './dto/admin-list-products.dto';
 @ApiBearerAuth()
 export class AdminProductsController {
   constructor(private readonly productRegistrationService: ProductRegistrationService) {}
+
+  @Get('details/:urn')
+  @ApiOperation({
+    summary: 'Get product details by URN (platform admin)',
+    description:
+      'Same payload as **GET /products/details/:urn_no** — lookup by URN only (no manufacturer filter). ' +
+      'Each row includes **product_details.urnStatus** (number). Response may also include top-level **urnStatus** for timeline highlighting. ' +
+      'Requires a valid Bearer token (any authenticated user).',
+  })
+  @ApiParam({ name: 'urn', description: 'Full URN (e.g. URN-20260303140911)', example: 'URN-20260303140911' })
+  @ApiResponse({ status: 200, description: 'Product details for the URN' })
+  @ApiResponse({ status: 404, description: 'No products for this URN' })
+  async adminGetProductDetailsByUrn(@Param('urn') urn: string) {
+    const data = await this.productRegistrationService.getProductDetailsByUrn(urn.trim());
+    const urnStatus =
+      Array.isArray(data) && data[0]?.product_details?.urnStatus !== undefined
+        ? Number(data[0].product_details.urnStatus)
+        : undefined;
+    return {
+      message: 'Product details retrieved successfully',
+      data,
+      ...(urnStatus !== undefined ? { urnStatus } : {}),
+    };
+  }
+
+  @Patch('urn-status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update URN status (platform admin)',
+    description:
+      'Resolves all products by **urnNo** only. Body: **urnNo**, **updateStatusType** (`urn_status` or `product_status`), and **updateStatusTo**. ' +
+      '`urn_status` accepts 0–11. `product_status` accepts 0–3. ' +
+      'Requires a valid Bearer token (any authenticated user).',
+  })
+  @ApiBody({ type: AdminUpdateUrnStatusDto })
+  @ApiResponse({ status: 200, description: 'Status updated' })
+  @ApiResponse({ status: 400, description: 'Invalid updateStatusType/updateStatusTo' })
+  @ApiResponse({ status: 404, description: 'Unknown URN' })
+  async adminPatchUrnStatus(@Body() dto: AdminUpdateUrnStatusDto) {
+    const data = await this.productRegistrationService.adminUpdateUrnStatus(dto);
+    return {
+      message: 'URN status updated',
+      data,
+    };
+  }
 
   @Post('list')
   @ApiOperation({

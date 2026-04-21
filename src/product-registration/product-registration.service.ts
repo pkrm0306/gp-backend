@@ -15,6 +15,7 @@ import { ProductPlant, ProductPlantDocument } from './schemas/product-plant.sche
 import { RegisterProductDto, BulkRegisterProductDto } from './dto/register-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateUrnStatusDto } from './dto/update-urn-status.dto';
+import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 import { ListProductsDto } from './dto/list-products.dto';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
 import { AdminProductsExportDto } from './dto/admin-products-export.dto';
@@ -164,44 +165,107 @@ export class ProductRegistrationService {
 
   /**
    * Map urnStatus to activity name
-   * Certification Flow Status Mapping:
+   * Certification Flow Status Mapping (activity log labels):
    * 0  Proposal Pending
-   * 1  Registration Payment Pending
-   * 2  Approve Registration Pending
+   * 1  Registration Payment
+   * 2  Approve Registration Fee
    * 3  Process Form In Progress
-   * 4  Check Process Forms
-   * 5  Vendor Response Pending
-   * 6  Final Verification Pending
-   * 7  Certificate Payment Pending
+   * 4  Process Form Submitted
+   * 5  Vendor Response
+   * 6  Final Verification
+   * 7  Certificate Payment
    * 8  Approve Certificate Fee
    * 9  Payment Rejected
-   * 10 Certification Fee Approved
-   * 11 Publish Certificate
+   * 10 Approved Certificate Fee
+   * 11 Certificate Published
+   *
+   * Next-step display: after 4 (or 5) next is 6; after 8 (or 9) next is 10.
    */
   private getActivityName(urnStatus: number): string {
     const activityMap: { [key: number]: string } = {
       0: 'Proposal Pending',
-      1: 'Registration Payment Pending',
-      2: 'Approve Registration Pending',
+      1: 'Registration Payment',
+      2: 'Approve Registration Fee',
       3: 'Process Form In Progress',
-      4: 'Check Process Forms',
-      5: 'Vendor Response Pending',
-      6: 'Final Verification Pending',
-      7: 'Certificate Payment Pending',
+      4: 'Process Form Submitted',
+      5: 'Vendor Response',
+      6: 'Final Verification',
+      7: 'Certificate Payment',
       8: 'Approve Certificate Fee',
       9: 'Payment Rejected',
-      10: 'Certification Fee Approved',
-      11: 'Publish Certificate',
+      10: 'Approved Certificate Fee',
+      11: 'Certificate Published',
     };
     return activityMap[urnStatus] || 'Unknown Activity';
+  }
+
+  /** Next timeline step id: skips 5 after 4, and 9 after 8 (resend paths use 5 / 9). */
+  private getNextActivityIdForLog(currentStatus: number): number {
+    if (currentStatus >= 11) return 11;
+    if (currentStatus === 4) return 6;
+    if (currentStatus === 8) return 10;
+    return Math.min(currentStatus + 1, 11);
+  }
+
+  /** Responsibility owner by status for activity timeline rows. */
+  private getResponsibilityForStatus(status: number): 'Admin' | 'Vendor' {
+    switch (status) {
+      case 0:
+      case 2:
+      case 6:
+      case 8:
+      case 9:
+      case 10:
+      case 11:
+        return 'Admin';
+      default:
+        return 'Vendor';
+    }
   }
 
   /**
    * Get next activity name based on current urnStatus
    */
   private getNextActivityName(urnStatus: number): string {
-    const nextStatus = urnStatus + 1;
-    return this.getActivityName(nextStatus);
+    return this.getActivityName(this.getNextActivityIdForLog(urnStatus));
+  }
+
+  /**
+   * Persists one timeline row when `products.urnStatus` advances to `newUrnStatus`.
+   * Errors are swallowed so the primary DB operation still succeeds.
+   */
+  private async tryLogUrnLifecycleStep(
+    vendorId: string | Types.ObjectId,
+    manufacturerId: string | Types.ObjectId,
+    urnNo: string,
+    newUrnStatus: number,
+  ): Promise<void> {
+    try {
+      const responsibility = this.getResponsibilityForStatus(newUrnStatus);
+      const nextActivityId = this.getNextActivityIdForLog(newUrnStatus);
+      const nextResponsibility = this.getResponsibilityForStatus(nextActivityId);
+      await this.activityLogService.logActivity({
+        vendor_id: vendorId instanceof Types.ObjectId ? vendorId.toString() : vendorId,
+        manufacturer_id:
+          manufacturerId instanceof Types.ObjectId
+            ? manufacturerId.toString()
+            : manufacturerId,
+        urn_no: urnNo,
+        activities_id: newUrnStatus,
+        activity: this.getActivityName(newUrnStatus),
+        activity_status: newUrnStatus,
+        responsibility,
+        next_responsibility: nextResponsibility,
+        next_acitivities_id: nextActivityId,
+        next_activity:
+          nextActivityId <= 11
+            ? this.getActivityName(nextActivityId)
+            : this.getActivityName(11),
+        status: 1,
+      });
+    } catch (err) {
+      console.error('[Activity Log] tryLogUrnLifecycleStep failed:', err);
+    }
   }
 
   /**
@@ -412,7 +476,7 @@ export class ProductRegistrationService {
         session.endSession();
 
         // Log activity after successful product registration
-        // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment Pending)
+        // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment)
         try {
           await this.activityLogService.logActivity({
             vendor_id: manufacturerId,
@@ -421,10 +485,10 @@ export class ProductRegistrationService {
             activities_id: 0, // Current urnStatus
             activity: this.getActivityName(0), // "Proposal Pending"
             activity_status: 0,
-            responsibility: 'Vendor',
-            next_responsibility: 'Admin',
+            responsibility: this.getResponsibilityForStatus(0),
+            next_responsibility: this.getResponsibilityForStatus(1),
             next_acitivities_id: 1,
-            next_activity: this.getNextActivityName(0), // "Registration Payment Pending"
+            next_activity: this.getNextActivityName(0),
             status: 1,
           });
         } catch (activityLogError: any) {
@@ -617,7 +681,7 @@ export class ProductRegistrationService {
         session.endSession();
 
         // Log activity after successful bulk product registration
-        // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment Pending)
+        // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment)
         try {
           await this.activityLogService.logActivity({
             vendor_id: manufacturerId,
@@ -626,10 +690,10 @@ export class ProductRegistrationService {
             activities_id: 0, // Current urnStatus
             activity: this.getActivityName(0), // "Proposal Pending"
             activity_status: 0,
-            responsibility: 'Vendor',
-            next_responsibility: 'Admin',
+            responsibility: this.getResponsibilityForStatus(0),
+            next_responsibility: this.getResponsibilityForStatus(1),
             next_acitivities_id: 1,
-            next_activity: this.getNextActivityName(0), // "Registration Payment Pending"
+            next_activity: this.getNextActivityName(0),
             status: 1,
           });
         } catch (activityLogError: any) {
@@ -713,6 +777,8 @@ export class ProductRegistrationService {
       if (!existingProduct) {
         throw new NotFoundException('Product not found');
       }
+
+      const previousUrnStatus = existingProduct.urnStatus;
 
       // Check if productName has changed
       const productNameChanged = 
@@ -815,6 +881,18 @@ export class ProductRegistrationService {
       await session.commitTransaction();
       session.endSession();
 
+      if (
+        updateProductDto.urnStatus !== undefined &&
+        updatedProduct.urnStatus !== previousUrnStatus
+      ) {
+        await this.tryLogUrnLifecycleStep(
+          existingProduct.vendorId,
+          existingProduct.manufacturerId,
+          updatedProduct.urnNo,
+          updatedProduct.urnStatus,
+        );
+      }
+
       return updatedProduct.toObject();
     } catch (error: any) {
       await session.abortTransaction();
@@ -870,10 +948,6 @@ export class ProductRegistrationService {
         );
       }
 
-      // Get current urnStatus and manufacturerId for activity logging
-      const currentUrnStatus = existingProduct.urnStatus;
-      const manufacturerObjectId = existingProduct.manufacturerId;
-
       // Update urnStatus
       const updatedProduct = await this.productModel
         .findOneAndUpdate(
@@ -895,34 +969,15 @@ export class ProductRegistrationService {
         throw new NotFoundException('Product not found after update');
       }
 
-      // Log activity for URN status change
-      try {
-        // Determine responsibility based on status
-        // Status 0-2: Vendor responsibility, Status 3+: Admin responsibility
-        const responsibility = updateUrnStatusDto.updateStatusTo <= 2 ? 'Vendor' : 'Admin';
-        const nextResponsibility = updateUrnStatusDto.updateStatusTo < 11 ? (updateUrnStatusDto.updateStatusTo + 1 <= 2 ? 'Vendor' : 'Admin') : 'Admin';
-        const nextActivityId = updateUrnStatusDto.updateStatusTo < 11 ? updateUrnStatusDto.updateStatusTo + 1 : 11;
-
-        await this.activityLogService.logActivity({
-          vendor_id: vendorObjectId,
-          manufacturer_id: manufacturerObjectId,
-          urn_no: updateUrnStatusDto.urnNo,
-          activities_id: updateUrnStatusDto.updateStatusTo,
-          activity: this.getActivityName(updateUrnStatusDto.updateStatusTo),
-          activity_status: updateUrnStatusDto.updateStatusTo,
-          responsibility: responsibility,
-          next_responsibility: nextResponsibility,
-          next_acitivities_id: nextActivityId,
-          next_activity: nextActivityId <= 11 ? this.getActivityName(nextActivityId) : this.getActivityName(11),
-          status: 1,
-        });
-      } catch (activityLogError: any) {
-        // Log error but don't fail the URN status update
-        console.error('[Update URN Status] Failed to log activity:', activityLogError);
-      }
-
       await session.commitTransaction();
       session.endSession();
+
+      await this.tryLogUrnLifecycleStep(
+        vendorObjectId,
+        existingProduct.manufacturerId,
+        updateUrnStatusDto.urnNo,
+        updateUrnStatusDto.updateStatusTo,
+      );
 
       return updatedProduct;
     } catch (error: any) {
@@ -938,6 +993,64 @@ export class ProductRegistrationService {
         error.message || 'Failed to update URN status',
       );
     }
+  }
+
+  /**
+   * Admin path: update either `urnStatus` or `productStatus` for all products under one URN.
+   * `updateStatusType`: `urn_status` | `product_status`.
+   */
+  async adminUpdateUrnStatus(
+    dto: AdminUpdateUrnStatusDto,
+  ): Promise<{ urnNo: string; urnStatus?: number; productStatus?: number }> {
+    const urnNo = dto.urnNo.trim();
+    if (!urnNo) {
+      throw new BadRequestException('urnNo is required');
+    }
+
+    const products = await this.productModel.find({ urnNo }).lean().exec();
+    if (!products.length) {
+      throw new NotFoundException(`No product found for URN: ${urnNo}`);
+    }
+    if (dto.updateStatusType === 'urn_status') {
+      if (dto.updateStatusTo < 0 || dto.updateStatusTo > 11) {
+        throw new BadRequestException('updateStatusTo must be between 0 and 11 for urn_status');
+      }
+    } else if (dto.updateStatusType === 'product_status') {
+      if (dto.updateStatusTo < 0 || dto.updateStatusTo > 3) {
+        throw new BadRequestException('updateStatusTo must be between 0 and 3 for product_status');
+      }
+    }
+
+    const now = new Date();
+    const vendorId = products[0].vendorId;
+    const manufacturerId = products[0].manufacturerId;
+
+    const setDoc: Record<string, unknown> = { updatedDate: now };
+    if (dto.updateStatusType === 'urn_status') {
+      setDoc.urnStatus = dto.updateStatusTo;
+    } else {
+      setDoc.productStatus = dto.updateStatusTo;
+    }
+
+    const session = await this.connection.startSession();
+    try {
+      session.startTransaction();
+      await this.productModel
+        .updateMany({ urnNo }, { $set: setDoc }, { session })
+        .exec();
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
+    }
+
+    if (dto.updateStatusType === 'urn_status') {
+      await this.tryLogUrnLifecycleStep(vendorId, manufacturerId, urnNo, dto.updateStatusTo);
+      return { urnNo, urnStatus: dto.updateStatusTo };
+    }
+    return { urnNo, productStatus: dto.updateStatusTo };
   }
 
   /**
@@ -1465,6 +1578,49 @@ export class ProductRegistrationService {
         },
       });
 
+      // Stage 13A+: $lookup - Join raw-materials collections (by urn_no + vendor_id)
+      const rawMaterialsCollections = [
+        'raw_materials_additives',
+        'raw_materials_elimination_of_formaldehyde',
+        'raw_materials_elimination_of_prohibited_flame',
+        'raw_materials_elimination_of_prohibited_flame_solvents',
+        'raw_materials_elimination_of_prohibited_flame_solvents_products',
+        'raw_materials_green_supply',
+        'raw_materials_hazardous',
+        'raw_materials_optimization_of_raw_mix',
+        'raw_materials_rapidly_renewable_materials',
+        'raw_materials_recovery',
+        'raw_materials_recycled_content',
+        'raw_materials_reduce_environmental',
+        'raw_materials_regional_materials',
+        'raw_materials_utilization',
+        'raw_materials_utilization_manufacturing_units',
+        'raw_materials_utilization_rmc',
+      ];
+
+      for (const collectionName of rawMaterialsCollections) {
+        pipeline.push({
+          $lookup: {
+            from: collectionName,
+            let: { urnNo: '$urnNo', vendorId: '$vendorId' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$urnNo', '$$urnNo'] },
+                      { $eq: ['$vendorId', '$$vendorId'] },
+                    ],
+                  },
+                },
+              },
+              { $sort: { createdDate: 1 } },
+            ],
+            as: collectionName,
+          },
+        });
+      }
+
       // Stage 14: $lookup - Join with process_manufacturing collection (by urn_no)
       pipeline.push({
         $lookup: {
@@ -1792,6 +1948,22 @@ export class ProductRegistrationService {
           product_performance_documents: 1,
           raw_materials_hazardous_products: 1,
           raw_materials_hazardous_products_documents: 1,
+          raw_materials_additives: 1,
+          raw_materials_elimination_of_formaldehyde: 1,
+          raw_materials_elimination_of_prohibited_flame: 1,
+          raw_materials_elimination_of_prohibited_flame_solvents: 1,
+          raw_materials_elimination_of_prohibited_flame_solvents_products: 1,
+          raw_materials_green_supply: 1,
+          raw_materials_hazardous: 1,
+          raw_materials_optimization_of_raw_mix: 1,
+          raw_materials_rapidly_renewable_materials: 1,
+          raw_materials_recovery: 1,
+          raw_materials_recycled_content: 1,
+          raw_materials_reduce_environmental: 1,
+          raw_materials_regional_materials: 1,
+          raw_materials_utilization: 1,
+          raw_materials_utilization_manufacturing_units: 1,
+          raw_materials_utilization_rmc: 1,
           process_manufacturing: {
             $cond: {
               if: { $gt: [{ $size: '$process_manufacturing' }, 0] },
@@ -2002,6 +2174,31 @@ export class ProductRegistrationService {
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
         })),
+        raw_materials_additives: product.raw_materials_additives || [],
+        raw_materials_elimination_of_formaldehyde:
+          product.raw_materials_elimination_of_formaldehyde || [],
+        raw_materials_elimination_of_prohibited_flame:
+          product.raw_materials_elimination_of_prohibited_flame || [],
+        raw_materials_elimination_of_prohibited_flame_solvents:
+          product.raw_materials_elimination_of_prohibited_flame_solvents || [],
+        raw_materials_elimination_of_prohibited_flame_solvents_products:
+          product.raw_materials_elimination_of_prohibited_flame_solvents_products || [],
+        raw_materials_green_supply: product.raw_materials_green_supply || [],
+        raw_materials_hazardous: product.raw_materials_hazardous || [],
+        raw_materials_optimization_of_raw_mix:
+          product.raw_materials_optimization_of_raw_mix || [],
+        raw_materials_rapidly_renewable_materials:
+          product.raw_materials_rapidly_renewable_materials || [],
+        raw_materials_recovery: product.raw_materials_recovery || [],
+        raw_materials_recycled_content: product.raw_materials_recycled_content || [],
+        raw_materials_reduce_environmental:
+          product.raw_materials_reduce_environmental || [],
+        raw_materials_regional_materials:
+          product.raw_materials_regional_materials || [],
+        raw_materials_utilization: product.raw_materials_utilization || [],
+        raw_materials_utilization_manufacturing_units:
+          product.raw_materials_utilization_manufacturing_units || [],
+        raw_materials_utilization_rmc: product.raw_materials_utilization_rmc || [],
         process_manufacturing: product.process_manufacturing
           ? {
               _id: product.process_manufacturing._id,
@@ -2472,6 +2669,11 @@ export class ProductRegistrationService {
       { $sort: { [sortField]: sortOrder } },
     ];
 
+    const eoiLookupPipeline: any[] = [{ $match: { $expr: { $eq: ['$urnNo', '$$urnNo'] } } }];
+    if (statusMatch) {
+      eoiLookupPipeline.push({ $match: statusMatch });
+    }
+
     const urnDataPipeline = [
       ...urnSummaryPipeline,
       { $skip: skip },
@@ -2481,7 +2683,7 @@ export class ProductRegistrationService {
           from: 'products',
           let: { urnNo: '$urnNo' },
           pipeline: [
-            { $match: { $expr: { $eq: ['$urnNo', '$$urnNo'] } } },
+            ...eoiLookupPipeline,
             {
               $lookup: {
                 from: 'manufacturers',
@@ -2501,6 +2703,40 @@ export class ProductRegistrationService {
             },
             { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
             {
+              $lookup: {
+                from: 'product_plants',
+                let: { productId: '$_id' },
+                pipeline: [
+                  { $match: { $expr: { $eq: ['$productId', '$$productId'] } } },
+                  {
+                    $lookup: {
+                      from: 'states',
+                      localField: 'stateId',
+                      foreignField: '_id',
+                      as: 'state',
+                    },
+                  },
+                  { $unwind: { path: '$state', preserveNullAndEmptyArrays: true } },
+                  {
+                    $project: {
+                      _id: 1,
+                      productPlantId: 1,
+                      productId: 1,
+                      plantName: 1,
+                      plantLocation: 1,
+                      countryId: 1,
+                      stateId: 1,
+                      city: 1,
+                      plantStatus: 1,
+                      createdDate: 1,
+                      stateName: { $ifNull: ['$state.stateName', { $ifNull: ['$state.state_name', '$state.name'] }] },
+                    },
+                  },
+                ],
+                as: 'plants',
+              },
+            },
+            {
               $project: {
                 _id: 1,
                 productId: 1,
@@ -2511,6 +2747,7 @@ export class ProductRegistrationService {
                 manufacturerName: '$manufacturer.manufacturerName',
                 productStatus: 1,
                 createdDate: 1,
+                plants: 1,
               },
             },
             { $sort: { createdDate: -1 } },
@@ -2582,10 +2819,28 @@ export class ProductRegistrationService {
       urnStatus: deriveUrnStatus(Array.isArray(u.statusCodes) ? u.statusCodes : []),
       totalEoi: u.totalEoi ?? 0,
       eois: Array.isArray(u.eois)
-        ? u.eois.map((e: any) => ({
-            ...e,
-            statusLabel: mapProductStatusLabel(Number(e.productStatus ?? 0)),
-          }))
+        ? u.eois.map((e: any) => {
+            const { plants, ...eoi } = e ?? {};
+            return {
+              ...eoi,
+              plantDetails: Array.isArray(plants)
+                ? plants.map((p: any) => ({
+                    _id: p?._id,
+                    productPlantId: p?.productPlantId,
+                    productId: p?.productId,
+                    plantName: p?.plantName,
+                    plantLocation: p?.plantLocation,
+                    countryId: p?.countryId,
+                    stateId: p?.stateId,
+                    stateName: p?.stateName ?? null,
+                    city: p?.city,
+                    plantStatus: p?.plantStatus,
+                    createdDate: p?.createdDate,
+                  }))
+                : [],
+              statusLabel: mapProductStatusLabel(Number(e.productStatus ?? 0)),
+            };
+          })
         : [],
     }));
 

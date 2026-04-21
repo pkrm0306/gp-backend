@@ -9,6 +9,11 @@ export class UpdateSectorDto {
   @MinLength(1)
   name?: string;
 
+  @ApiPropertyOptional({ example: 'Includes modern and traditional agriculture.' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
   @ApiPropertyOptional({ enum: [0, 1] })
   @IsOptional()
   @Type(() => Number)

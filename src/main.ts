@@ -106,9 +106,10 @@ async function bootstrap() {
       'Accept',
       'X-Requested-With',
       'X-Access-Token',
+      'X-Request-Id',
       'Origin',
     ],
-    credentials: process.env.CORS_CREDENTIALS === 'false',
+    credentials: process.env.CORS_CREDENTIALS === 'true',
     optionsSuccessStatus: 204,
     preflightContinue: false,
   });

@@ -215,7 +215,7 @@ export class PaymentsController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'quoteAmount', 'quoteGstAmount', 'quoteTdsAmount', 'quoteTotal', 'adminGstNo', 'vendorGstNo'],
+      required: ['urnNo', 'quoteAmount', 'quoteGstAmount', 'quoteTdsAmount', 'quoteTotal'],
       properties: {
         urnNo: {
           type: 'string',
@@ -362,13 +362,6 @@ export class PaymentsController {
       if (createPaymentDto.quoteTotal === undefined || createPaymentDto.quoteTotal === null) {
         throw new BadRequestException('Total amount is required');
       }
-      if (!createPaymentDto.adminGstNo) {
-        throw new BadRequestException('Admin GST number is required');
-      }
-      if (!createPaymentDto.vendorGstNo) {
-        throw new BadRequestException('Vendor GST number is required');
-      }
-
       const payment = await this.paymentsService.createPayment(
         createPaymentDto,
         user.vendorId,
@@ -386,17 +379,17 @@ export class PaymentsController {
     }
   }
 
-  @Patch(':paymentId')
+  @Patch(':urnNo')
   @ApiOperation({
-    summary: 'Update payment details (and optionally update URN status + activity log)',
+    summary: 'Update payment details by URN (and optionally update URN status + activity log)',
     description:
       'Updates payment_details for the logged-in vendor. If `urnStatus` is provided in payload, it will also update `products.urnStatus` for that URN and insert an activity log entry.',
   })
   @ApiParam({
-    name: 'paymentId',
-    description: 'Payment ID (numeric)',
-    example: 1,
-    type: Number,
+    name: 'urnNo',
+    description: 'URN number',
+    example: 'URN-20260409142354',
+    type: String,
   })
   @ApiBody({ type: UpdatePaymentDto })
   @ApiResponse({
@@ -411,28 +404,24 @@ export class PaymentsController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Invalid paymentId or payload' })
+  @ApiResponse({ status: 400, description: 'Invalid urnNo or payload' })
   @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
   @ApiResponse({ status: 404, description: 'Payment not found' })
   async updatePayment(
     @CurrentUser() user: any,
-    @Param('paymentId') paymentIdParam: string,
+    @Param('urnNo') urnNoParam: string,
     @Body() updatePaymentDto: UpdatePaymentDto,
   ) {
     try {
-      if (!user?.vendorId) {
-        throw new BadRequestException('Vendor ID not found in token');
+      const urnNo = String(urnNoParam ?? '').trim();
+      if (!urnNo) {
+        throw new BadRequestException('Invalid urnNo');
       }
 
-      const paymentId = Number(paymentIdParam);
-      if (!Number.isFinite(paymentId) || paymentId <= 0) {
-        throw new BadRequestException('Invalid paymentId');
-      }
-
-      const payment = await this.paymentsService.updatePaymentDetails(
-        paymentId,
+      const payment = await this.paymentsService.updatePaymentDetailsByUrn(
+        urnNo,
         updatePaymentDto,
-        user.vendorId,
+        user?.vendorId,
       );
 
       return {

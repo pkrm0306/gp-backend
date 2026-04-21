@@ -1,0 +1,84 @@
+import {
+  Injectable,
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import {
+  RawMaterialsRecycledContent,
+  RawMaterialsRecycledContentDocument,
+} from './schemas/raw-materials-recycled-content.schema';
+import { CreateRawMaterialsRecycledContentDto } from './dto/create-raw-materials-recycled-content.dto';
+import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+
+@Injectable()
+export class RawMaterialsRecycledContentService {
+  constructor(
+    @InjectModel(RawMaterialsRecycledContent.name)
+    private model: Model<RawMaterialsRecycledContentDocument>,
+    private sequenceHelper: SequenceHelper,
+  ) {}
+
+  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+    if (id instanceof Types.ObjectId) return id;
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException(`Invalid ${fieldName} format: ${id}`);
+    }
+    return new Types.ObjectId(id);
+  }
+
+  async create(
+    dto: CreateRawMaterialsRecycledContentDto,
+    vendorId: string,
+  ): Promise<RawMaterialsRecycledContentDocument> {
+    try {
+      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+      const id = await this.sequenceHelper.getRawMaterialsRecycledContentId();
+      const now = new Date();
+
+      const doc = new this.model({
+        rawMaterialsRecycledContentId: id,
+        urnNo: dto.urnNo.trim(),
+        vendorId: vendorObjectId,
+        unitName: dto.unitName.trim(),
+        year: dto.year,
+        unit1: dto.unit1,
+        yeardata1: dto.yeardata1,
+        unit2: dto.unit2,
+        yeardata2: dto.yeardata2,
+        yeardata3: dto.yeardata3,
+        createdDate: now,
+        updatedDate: now,
+      });
+
+      return await doc.save();
+    } catch (error: any) {
+      console.error('[Raw Materials Recycled Content] Create error:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        error.message || 'Failed to create raw materials recycled content record.',
+      );
+    }
+  }
+
+  async listByUrn(urnNo: string, vendorId: string) {
+    try {
+      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+      return await this.model
+        .find({ urnNo: urnNo.trim(), vendorId: vendorObjectId })
+        .sort({ createdDate: 1 })
+        .exec();
+    } catch (error: any) {
+      console.error('[Raw Materials Recycled Content] List error:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        error.message || 'Failed to list raw materials recycled content records.',
+      );
+    }
+  }
+}

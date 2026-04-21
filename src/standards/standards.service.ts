@@ -115,6 +115,15 @@ export class StandardsService implements OnModuleInit {
     return { $and: parts };
   }
 
+  private ensureDescriptionField<T extends { description?: unknown }>(
+    doc: T,
+  ): Omit<T, 'description'> & { description: string } {
+    return {
+      ...doc,
+      description: typeof doc.description === 'string' ? doc.description : '',
+    };
+  }
+
   async findAllPaginated(query: ListStandardsQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -131,7 +140,7 @@ export class StandardsService implements OnModuleInit {
       this.standardModel.countDocuments(filter).exec(),
     ]);
 
-    const data = rows.map((d) => this.enrichStandardFileUrl(d));
+    const data = rows.map((d) => this.ensureDescriptionField(this.enrichStandardFileUrl(d)));
 
     return {
       message: 'Standards retrieved successfully',
@@ -147,7 +156,7 @@ export class StandardsService implements OnModuleInit {
     if (!doc) {
       throw new NotFoundException('Standard not found');
     }
-    return this.enrichStandardFileUrl(doc);
+    return this.ensureDescriptionField(this.enrichStandardFileUrl(doc));
   }
 
   /** Legacy rows may omit file_url; derive local URL from filename when needed. */
@@ -192,6 +201,7 @@ export class StandardsService implements OnModuleInit {
     const doc = await this.standardModel.create({
       id: numericId,
       name: dto.name.trim(),
+      description: dto.description?.trim() ?? '',
       resource_standard_type: dto.resource_standard_type.trim(),
       status: dto.status ?? 1,
       filename: upload.relativePath,
@@ -202,7 +212,7 @@ export class StandardsService implements OnModuleInit {
       created_at: now,
       updated_at: now,
     });
-    return this.enrichStandardFileUrl(doc.toObject());
+    return this.ensureDescriptionField(this.enrichStandardFileUrl(doc.toObject()));
   }
 
   async update(id: number, dto: UpdateStandardMultipartDto, file?: Express.Multer.File) {
@@ -213,6 +223,7 @@ export class StandardsService implements OnModuleInit {
 
     const hasText =
       (dto.name !== undefined && dto.name.trim() !== '') ||
+      dto.description !== undefined ||
       (dto.resource_standard_type !== undefined && dto.resource_standard_type.trim() !== '') ||
       dto.status !== undefined;
     if (!hasText && !file) {
@@ -223,6 +234,9 @@ export class StandardsService implements OnModuleInit {
 
     if (dto.name !== undefined && dto.name.trim() !== '') {
       set.name = dto.name.trim();
+    }
+    if (dto.description !== undefined) {
+      set.description = dto.description.trim();
     }
     if (dto.resource_standard_type !== undefined && dto.resource_standard_type.trim() !== '') {
       set.resource_standard_type = dto.resource_standard_type.trim();
@@ -248,7 +262,7 @@ export class StandardsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Standard not found');
     }
-    return this.enrichStandardFileUrl(updated);
+    return this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
   }
 
   async updateStatus(id: number, dto: UpdateStandardStatusDto) {
@@ -263,7 +277,7 @@ export class StandardsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Standard not found');
     }
-    return this.enrichStandardFileUrl(updated);
+    return this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
   }
 
   async remove(id: number) {
@@ -285,6 +299,7 @@ export class StandardsService implements OnModuleInit {
     const header = [
       'id',
       'name',
+      'description',
       'filename',
       'file_url',
       'storage_type',
@@ -301,6 +316,7 @@ export class StandardsService implements OnModuleInit {
         return [
           e.id,
           e.name,
+          e.description ?? '',
           e.filename,
           e.file_url ?? '',
           e.storage_type ?? 'local',

@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
   IsNotEmpty,
@@ -8,6 +8,7 @@ import {
   Min,
   IsDateString,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class CreatePaymentDto {
   @ApiProperty({
@@ -59,23 +60,21 @@ export class CreatePaymentDto {
   @IsNotEmpty()
   quoteTotal: number;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Admin GST number',
     example: '29ABCDE1234F1Z5',
-    required: true,
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  adminGstNo: string;
+  adminGstNo?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Vendor GST number',
     example: '27ABCDE1234F1Z5',
-    required: true,
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  vendorGstNo: string;
+  vendorGstNo?: string;
 
   @ApiProperty({
     description: 'Payment type',
@@ -122,6 +121,7 @@ export class CreatePaymentDto {
     example: '2026-03-15',
     required: false,
   })
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsOptional()
   @IsDateString()
   paymentChequeDate?: string;

@@ -15,6 +15,22 @@ import { ActivityLogModule } from './activity-log/activity-log.module';
 import { ProductDesignModule } from './product-design/product-design.module';
 import { ProductPerformanceModule } from './product-performance/product-performance.module';
 import { RawMaterialsHazardousProductsModule } from './raw-materials-hazardous-products/raw-materials-hazardous-products.module';
+import { RawMaterialsAdditivesModule } from './raw-materials-additives/raw-materials-additives.module';
+import { RawMaterialsEliminationOfFormaldehydeModule } from './raw-materials-elimination-of-formaldehyde/raw-materials-elimination-of-formaldehyde.module';
+import { RawMaterialsEliminationOfProhibitedFlameModule } from './raw-materials-elimination-of-prohibited-flame/raw-materials-elimination-of-prohibited-flame.module';
+import { RawMaterialsEliminationOfProhibitedFlameSolventsModule } from './raw-materials-elimination-of-prohibited-flame-solvents/raw-materials-elimination-of-prohibited-flame-solvents.module';
+import { RawMaterialsEliminationOfProhibitedFlameSolventsProductsModule } from './raw-materials-elimination-of-prohibited-flame-solvents-products/raw-materials-elimination-of-prohibited-flame-solvents-products.module';
+import { RawMaterialsGreenSupplyModule } from './raw-materials-green-supply/raw-materials-green-supply.module';
+import { RawMaterialsHazardousModule } from './raw-materials-hazardous/raw-materials-hazardous.module';
+import { RawMaterialsOptimizationOfRawMixModule } from './raw-materials-optimization-of-raw-mix/raw-materials-optimization-of-raw-mix.module';
+import { RawMaterialsRapidlyRenewableMaterialsModule } from './raw-materials-rapidly-renewable-materials/raw-materials-rapidly-renewable-materials.module';
+import { RawMaterialsRecoveryModule } from './raw-materials-recovery/raw-materials-recovery.module';
+import { RawMaterialsRecycledContentModule } from './raw-materials-recycled-content/raw-materials-recycled-content.module';
+import { RawMaterialsReduceEnvironmentalModule } from './raw-materials-reduce-environmental/raw-materials-reduce-environmental.module';
+import { RawMaterialsRegionalMaterialsModule } from './raw-materials-regional-materials/raw-materials-regional-materials.module';
+import { RawMaterialsUtilizationModule } from './raw-materials-utilization/raw-materials-utilization.module';
+import { RawMaterialsUtilizationManufacturingUnitsModule } from './raw-materials-utilization-manufacturing-units/raw-materials-utilization-manufacturing-units.module';
+import { RawMaterialsUtilizationRmcModule } from './raw-materials-utilization-rmc/raw-materials-utilization-rmc.module';
 import { ProcessManufacturingModule } from './process-manufacturing/process-manufacturing.module';
 import { ProcessMpManufacturingUnitsModule } from './process-mp-manufacturing-units/process-mp-manufacturing-units.module';
 import { ProcessWasteManagementModule } from './process-waste-management/process-waste-management.module';
@@ -28,6 +44,7 @@ import { SectorsModule } from './sectors/sectors.module';
 import { StandardsModule } from './standards/standards.module';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
 import { WebsiteModule } from './website/website.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -42,6 +59,7 @@ import { WebsiteModule } from './website/website.module';
       }),
       inject: [ConfigService],
     }),
+    AuditLogModule,
     AuthModule,
     ManufacturersModule,
     VendorUsersModule,
@@ -56,6 +74,22 @@ import { WebsiteModule } from './website/website.module';
     ProductDesignModule,
     ProductPerformanceModule,
     RawMaterialsHazardousProductsModule,
+    RawMaterialsAdditivesModule,
+    RawMaterialsEliminationOfFormaldehydeModule,
+    RawMaterialsEliminationOfProhibitedFlameModule,
+    RawMaterialsEliminationOfProhibitedFlameSolventsModule,
+    RawMaterialsEliminationOfProhibitedFlameSolventsProductsModule,
+    RawMaterialsGreenSupplyModule,
+    RawMaterialsHazardousModule,
+    RawMaterialsOptimizationOfRawMixModule,
+    RawMaterialsRapidlyRenewableMaterialsModule,
+    RawMaterialsRecoveryModule,
+    RawMaterialsRecycledContentModule,
+    RawMaterialsReduceEnvironmentalModule,
+    RawMaterialsRegionalMaterialsModule,
+    RawMaterialsUtilizationModule,
+    RawMaterialsUtilizationManufacturingUnitsModule,
+    RawMaterialsUtilizationRmcModule,
     ProcessManufacturingModule,
     ProcessMpManufacturingUnitsModule,
     ProcessWasteManagementModule,

@@ -9,7 +9,7 @@ import {
   IsInt,
   IsIn,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class UpdatePaymentDto {
   @ApiProperty({
@@ -96,6 +96,7 @@ export class UpdatePaymentDto {
     example: '2026-03-06T00:00:00.000Z',
     required: false,
   })
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsOptional()
   @IsDateString()
   paymentChequeDate?: string;

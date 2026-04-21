@@ -32,25 +32,140 @@ export class PaymentsService {
   private getActivityName(urnStatus: number): string {
     const activityMap: { [key: number]: string } = {
       0: 'Proposal Pending',
-      1: 'Registration Payment Pending',
-      2: 'Approve Registration Pending',
+      1: 'Registration Payment',
+      2: 'Approve Registration Fee',
       3: 'Process Form In Progress',
-      4: 'Check Process Forms',
-      5: 'Vendor Response Pending',
-      6: 'Final Verification Pending',
-      7: 'Certificate Payment Pending',
+      4: 'Process Form Submitted',
+      5: 'Vendor Response',
+      6: 'Final Verification',
+      7: 'Certificate Payment',
       8: 'Approve Certificate Fee',
       9: 'Payment Rejected',
-      10: 'Certification Fee Approved',
-      11: 'Publish Certificate',
+      10: 'Approved Certificate Fee',
+      11: 'Certificate Published',
     };
     return activityMap[urnStatus] || 'Unknown Activity';
   }
 
-  private getNextActivityName(urnStatus: number): string | undefined {
-    const nextStatus = urnStatus + 1;
-    if (nextStatus > 11) return undefined;
-    return this.getActivityName(nextStatus);
+  /** Next timeline step id: skips 5 after 4, and 9 after 8 (resend paths use 5 / 9). */
+  private getNextActivityIdForLog(currentStatus: number): number {
+    if (currentStatus >= 11) return 11;
+    if (currentStatus === 4) return 6;
+    if (currentStatus === 8) return 10;
+    return Math.min(currentStatus + 1, 11);
+  }
+
+  /** Responsibility owner by status for activity timeline rows. */
+  private getResponsibilityForStatus(status: number): 'Admin' | 'Vendor' {
+    switch (status) {
+      case 0:
+      case 2:
+      case 6:
+      case 8:
+      case 9:
+      case 10:
+      case 11:
+        return 'Admin';
+      default:
+        return 'Vendor';
+    }
+  }
+
+  /** Accepts case-insensitive textual payment types and normalizes for DB enum. */
+  private normalizePaymentType(value?: string): 'registration' | 'certification' | 'renew' {
+    const raw = String(value ?? 'registration').trim().toLowerCase();
+    if (raw === 'registration' || raw === 'register') return 'registration';
+    if (raw === 'certification' || raw === 'certificate') return 'certification';
+    if (raw === 'renew' || raw === 'renewal') return 'renew';
+    throw new BadRequestException(
+      'Invalid paymentType. Allowed values: registration, certification, renew',
+    );
+  }
+
+  /** Canonical URN form used by this service (trim + remove trailing slashes). */
+  private normalizeUrnNo(value?: string): string {
+    return String(value ?? '').trim().replace(/\/+$/g, '');
+  }
+
+  /** Query both canonical and legacy trailing-slash URN formats. */
+  private urnCandidates(urnNo: string): string[] {
+    const normalized = this.normalizeUrnNo(urnNo);
+    if (!normalized) return [];
+    return [normalized, `${normalized}/`];
+  }
+
+  /**
+   * Timeline row when payment_details is created (does not by itself change products.urnStatus).
+   */
+  /** Same lifecycle row shape as `ProductRegistrationService` when URN status advances via payment update. */
+  private async tryLogUrnLifecycleAfterPayment(
+    vendorId: string,
+    manufacturerIdStr: string,
+    urnNo: string,
+    newUrnStatus: number,
+  ): Promise<void> {
+    try {
+      const responsibility = this.getResponsibilityForStatus(newUrnStatus);
+      const nextActivityId = this.getNextActivityIdForLog(newUrnStatus);
+      const nextResponsibility = this.getResponsibilityForStatus(nextActivityId);
+      await this.activityLogService.logActivity({
+        vendor_id: vendorId,
+        manufacturer_id: manufacturerIdStr,
+        urn_no: urnNo,
+        activities_id: newUrnStatus,
+        activity: this.getActivityName(newUrnStatus),
+        activity_status: newUrnStatus,
+        responsibility,
+        next_responsibility: nextResponsibility,
+        next_acitivities_id: nextActivityId,
+        next_activity:
+          nextActivityId <= 11
+            ? this.getActivityName(nextActivityId)
+            : this.getActivityName(11),
+        status: 1,
+      });
+    } catch (err) {
+      console.error('[Payment] Activity log (URN status via payment) failed:', err);
+    }
+  }
+
+  private async tryLogPaymentCreated(
+    vendorId: string,
+    vendorObjectId: Types.ObjectId,
+    urnNo: string,
+    paymentType: string,
+  ): Promise<void> {
+    if (!urnNo) return;
+    try {
+      const product = await this.productModel
+        .findOne({ urnNo, vendorId: vendorObjectId })
+        .select('manufacturerId urnStatus')
+        .lean()
+        .exec();
+      if (!product) return;
+
+      const currentStatus = typeof product.urnStatus === 'number' ? product.urnStatus : 0;
+      const label =
+        paymentType === 'certification' ? 'Certificate fee payment' : 'Registration fee payment';
+      const nextId = this.getNextActivityIdForLog(currentStatus);
+      const nextResp = this.getResponsibilityForStatus(nextId);
+
+      await this.activityLogService.logActivity({
+        vendor_id: vendorId,
+        manufacturer_id: product.manufacturerId.toString(),
+        urn_no: urnNo,
+        activities_id: currentStatus,
+        activity: `${label} record created`,
+        activity_status: currentStatus,
+        responsibility: this.getResponsibilityForStatus(currentStatus),
+        next_responsibility: nextResp,
+        next_acitivities_id: nextId,
+        next_activity: this.getActivityName(nextId),
+        status: 1,
+      });
+    } catch (err) {
+      console.error('[Payment] Activity log (payment created) failed:', err);
+    }
   }
 
   /**
@@ -98,10 +213,16 @@ export class PaymentsService {
         proposalFilePath = `/uploads/payments/${proposalFile.filename}`;
       }
 
+      const normalizedPaymentType = this.normalizePaymentType(createPaymentDto.paymentType);
+      const normalizedUrnNo = this.normalizeUrnNo(createPaymentDto.urnNo);
+      if (!normalizedUrnNo) {
+        throw new BadRequestException('URN number is required');
+      }
+
       // Create payment data
       const paymentData = {
         paymentId,
-        urnNo: createPaymentDto.urnNo,
+        urnNo: normalizedUrnNo,
         vendorId: vendorObjectId,
         quoteAmount: createPaymentDto.quoteAmount,
         quoteGstAmount: createPaymentDto.quoteGstAmount,
@@ -110,7 +231,7 @@ export class PaymentsService {
         proposalFile: proposalFilePath,
         adminGstNo: createPaymentDto.adminGstNo,
         vendorGstNo: createPaymentDto.vendorGstNo,
-        paymentType: createPaymentDto.paymentType || 'registration',
+        paymentType: normalizedPaymentType,
         paymentMode: createPaymentDto.paymentMode,
         onlinePaymentId: createPaymentDto.onlinePaymentId || 0,
         paymentReferenceNo: createPaymentDto.paymentReferenceNo,
@@ -128,6 +249,13 @@ export class PaymentsService {
 
         await session.commitTransaction();
         session.endSession();
+
+        await this.tryLogPaymentCreated(
+          vendorId,
+          vendorObjectId,
+          normalizedUrnNo,
+          normalizedPaymentType,
+        );
 
         return savedPayment;
       } catch (error: any) {
@@ -185,37 +313,64 @@ export class PaymentsService {
    * Update payment details. If urnStatus is provided, also updates products.urnStatus for that URN
    * and creates an activity log entry.
    */
-  async updatePaymentDetails(
-    paymentId: number,
+  async updatePaymentDetailsByUrn(
+    urnNo: string,
     updatePaymentDto: UpdatePaymentDto,
-    vendorId: string,
+    vendorId?: string,
   ): Promise<PaymentDetailsDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
     try {
-      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+      const normalizedUrn = this.normalizeUrnNo(urnNo);
+      if (!normalizedUrn) {
+        throw new BadRequestException('URN number is required');
+      }
+      if (
+        updatePaymentDto.urnNo !== undefined &&
+        this.normalizeUrnNo(updatePaymentDto.urnNo) !== normalizedUrn
+      ) {
+        throw new BadRequestException(
+          'Body urnNo must match path urnNo when both are provided',
+        );
+      }
+      const urnOptions = this.urnCandidates(normalizedUrn);
 
-      const existingPayment = await this.paymentDetailsModel
-        .findOne({ paymentId, vendorId: vendorObjectId })
-        .session(session)
-        .exec();
+      let existingPayment: PaymentDetailsDocument | null = null;
+      if (vendorId) {
+        const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+        existingPayment = await this.paymentDetailsModel
+          .findOne({ urnNo: { $in: urnOptions }, vendorId: vendorObjectId })
+          .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
+          .session(session)
+          .exec();
+      }
+      if (!existingPayment) {
+        existingPayment = await this.paymentDetailsModel
+          .findOne({ urnNo: { $in: urnOptions } })
+          .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
+          .session(session)
+          .exec();
+      }
 
       if (!existingPayment) {
         throw new NotFoundException('Payment not found');
       }
+      const effectiveVendorObjectId = existingPayment.vendorId as Types.ObjectId;
+      const effectiveVendorId = effectiveVendorObjectId.toString();
 
       const now = new Date();
       const updateData: any = { updatedDate: now };
 
-      if (updatePaymentDto.urnNo !== undefined) updateData.urnNo = updatePaymentDto.urnNo;
       if (updatePaymentDto.quoteAmount !== undefined) updateData.quoteAmount = updatePaymentDto.quoteAmount;
       if (updatePaymentDto.quoteGstAmount !== undefined) updateData.quoteGstAmount = updatePaymentDto.quoteGstAmount;
       if (updatePaymentDto.quoteTdsAmount !== undefined) updateData.quoteTdsAmount = updatePaymentDto.quoteTdsAmount;
       if (updatePaymentDto.quoteTotal !== undefined) updateData.quoteTotal = updatePaymentDto.quoteTotal;
       if (updatePaymentDto.adminGstNo !== undefined) updateData.adminGstNo = updatePaymentDto.adminGstNo;
       if (updatePaymentDto.vendorGstNo !== undefined) updateData.vendorGstNo = updatePaymentDto.vendorGstNo;
-      if (updatePaymentDto.paymentType !== undefined) updateData.paymentType = updatePaymentDto.paymentType;
+      if (updatePaymentDto.paymentType !== undefined) {
+        updateData.paymentType = this.normalizePaymentType(updatePaymentDto.paymentType);
+      }
       if (updatePaymentDto.paymentMode !== undefined) updateData.paymentMode = updatePaymentDto.paymentMode;
       if (updatePaymentDto.onlinePaymentId !== undefined) updateData.onlinePaymentId = updatePaymentDto.onlinePaymentId;
       if (updatePaymentDto.paymentReferenceNo !== undefined) updateData.paymentReferenceNo = updatePaymentDto.paymentReferenceNo;
@@ -230,7 +385,7 @@ export class PaymentsService {
       if (updatePaymentDto.paymentStatus !== undefined) updateData.paymentStatus = updatePaymentDto.paymentStatus;
 
       const updatedPayment = await this.paymentDetailsModel
-        .findOneAndUpdate({ paymentId, vendorId: vendorObjectId }, updateData, {
+        .findOneAndUpdate({ _id: existingPayment._id }, updateData, {
           new: true,
           session,
         })
@@ -240,51 +395,56 @@ export class PaymentsService {
         throw new NotFoundException('Payment not found after update');
       }
 
-      // If urnStatus is provided, update products.urnStatus for this URN and log activity
+      let deferredUrnLog: {
+        urnNo: string;
+        newUrnStatus: number;
+        manufacturerId: string;
+      } | null = null;
+
+      // If urnStatus is provided, update products.urnStatus for this URN; activity log after commit
       if (updatePaymentDto.urnStatus !== undefined) {
-        const urnNoToUse = (updatePaymentDto.urnNo ?? existingPayment.urnNo)?.trim();
+        const urnNoToUse = normalizedUrn;
         if (!urnNoToUse) {
           throw new BadRequestException('URN number is required to update urnStatus');
         }
 
         // Find any one product to get manufacturerId for activity log
         const anyProduct = await this.productModel
-          .findOne({ urnNo: urnNoToUse, vendorId: vendorObjectId })
+          .findOne({ urnNo: { $in: urnOptions }, vendorId: effectiveVendorObjectId })
           .session(session)
           .exec();
 
         if (!anyProduct) {
-          throw new NotFoundException(`No product found for URN: ${urnNoToUse}`);
+          // Keep payment update successful even when product rows are missing for this URN.
+          console.warn(
+            `[Update Payment] No product found for URN ${urnNoToUse}; skipped products.urnStatus update.`,
+          );
+        } else {
+          await this.productModel.updateMany(
+            { urnNo: { $in: urnOptions }, vendorId: effectiveVendorObjectId },
+            { $set: { urnStatus: updatePaymentDto.urnStatus, updatedDate: now } },
+            { session },
+          );
+
+          deferredUrnLog = {
+            urnNo: urnNoToUse,
+            newUrnStatus: updatePaymentDto.urnStatus,
+            manufacturerId: anyProduct.manufacturerId.toString(),
+          };
         }
-
-        await this.productModel.updateMany(
-          { urnNo: urnNoToUse, vendorId: vendorObjectId },
-          { $set: { urnStatus: updatePaymentDto.urnStatus, updatedDate: now } },
-          { session },
-        );
-
-        const activity = this.getActivityName(updatePaymentDto.urnStatus);
-        const nextActivity = this.getNextActivityName(updatePaymentDto.urnStatus);
-        const nextActivitiesId =
-          updatePaymentDto.urnStatus < 11 ? updatePaymentDto.urnStatus + 1 : undefined;
-
-        await this.activityLogService.logActivity({
-          vendor_id: vendorId,
-          manufacturer_id: anyProduct.manufacturerId.toString(),
-          urn_no: urnNoToUse,
-          activities_id: updatePaymentDto.urnStatus,
-          activity,
-          activity_status: updatePaymentDto.urnStatus,
-          responsibility: 'Vendor',
-          next_responsibility: nextActivitiesId !== undefined ? 'Admin' : undefined,
-          next_acitivities_id: nextActivitiesId,
-          next_activity: nextActivity,
-          status: 1,
-        });
       }
 
       await session.commitTransaction();
       session.endSession();
+
+      if (deferredUrnLog) {
+        await this.tryLogUrnLifecycleAfterPayment(
+          effectiveVendorId,
+          deferredUrnLog.manufacturerId,
+          deferredUrnLog.urnNo,
+          deferredUrnLog.newUrnStatus,
+        );
+      }
 
       return updatedPayment;
     } catch (error: any) {

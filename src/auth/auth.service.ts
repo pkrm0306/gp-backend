@@ -145,6 +145,8 @@ export class AuthService {
       userId: user._id.toString(),
       manufacturerId: user.manufacturerId?.toString() || user.vendorId.toString(),
       role: user.type,
+      name: user.name,
+      email: user.email,
     };
 
     const accessToken = this.jwtService.sign(payload, {
@@ -208,15 +210,29 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    if (!payload?.userId || !(payload?.manufacturerId || payload?.vendorId) || !payload?.role) {
+    if (!payload?.userId || !payload?.role) {
+      throw new UnauthorizedException('Invalid refresh token payload');
+    }
+    const isPlatformAdmin =
+      payload.role === 'admin' || payload.role === 'super_admin';
+    if (!isPlatformAdmin && !(payload.manufacturerId || payload.vendorId)) {
       throw new UnauthorizedException('Invalid refresh token payload');
     }
 
-    const newPayload = {
+    const newPayload: Record<string, unknown> = {
       userId: payload.userId,
-      manufacturerId: payload.manufacturerId || payload.vendorId,
       role: payload.role,
     };
+    const mid = payload.manufacturerId || payload.vendorId;
+    if (mid) {
+      newPayload.manufacturerId = mid;
+    }
+    if (payload.name) {
+      newPayload.name = payload.name;
+    }
+    if (payload.email) {
+      newPayload.email = payload.email;
+    }
 
     const accessToken = this.jwtService.sign(newPayload, {
       expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '15m',

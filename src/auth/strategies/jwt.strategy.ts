@@ -30,15 +30,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
+    if (!payload.userId || !payload.role) {
+      throw new UnauthorizedException('Invalid token payload');
+    }
+    const isPlatformAdmin =
+      payload.role === 'admin' || payload.role === 'super_admin';
     const manufacturerId = payload.manufacturerId || payload.vendorId;
-    if (!payload.userId || !manufacturerId || !payload.role) {
+    if (!isPlatformAdmin && !manufacturerId) {
       throw new UnauthorizedException('Invalid token payload');
     }
     return {
       userId: payload.userId,
-      manufacturerId,
-      vendorId: manufacturerId,
+      manufacturerId: manufacturerId ?? undefined,
+      vendorId: manufacturerId ?? undefined,
       role: payload.role,
+      name: payload.name,
+      email: payload.email,
     };
   }
 }

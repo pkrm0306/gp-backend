@@ -82,7 +82,7 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Create standard (file upload)',
     description:
-      'Form: name, resource_standard_type, status (optional, default 1), file (required). PDF, JPG, or PNG, max 10MB. Uses S3 when AWS_* env vars are set, else local uploads/standards/.',
+      'Form: name, description (optional), resource_standard_type, status (optional, default 1), file (required). PDF, JPG, or PNG, max 10MB. Uses S3 when AWS_* env vars are set, else local uploads/standards/.',
   })
   @ApiBody({
     schema: {
@@ -90,6 +90,7 @@ export class StandardsController {
       required: ['name', 'resource_standard_type', 'file'],
       properties: {
         name: { type: 'string' },
+        description: { type: 'string' },
         resource_standard_type: { type: 'string' },
         status: { type: 'integer', enum: [0, 1] },
         file: { type: 'string', format: 'binary', description: 'PDF, JPG, or PNG' },
@@ -120,7 +121,7 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Update standard',
     description:
-      'Optional fields: name, resource_standard_type, status, file (replace attachment). At least one field or file required. PDF, JPG, or PNG, max 10MB.',
+      'Optional fields: name, description, resource_standard_type, status, file (replace attachment). At least one field or file required. PDF, JPG, or PNG, max 10MB.',
   })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiBody({
@@ -128,6 +129,7 @@ export class StandardsController {
       type: 'object',
       properties: {
         name: { type: 'string' },
+        description: { type: 'string' },
         resource_standard_type: { type: 'string' },
         status: { type: 'integer', enum: [0, 1] },
         file: { type: 'string', format: 'binary', description: 'Optional replacement (PDF, JPG, PNG)' },

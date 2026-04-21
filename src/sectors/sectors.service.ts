@@ -144,6 +144,7 @@ export class SectorsService implements OnModuleInit {
     const doc = await this.sectorModel.create({
       id: sectorId,
       name: dto.name.trim(),
+      description: dto.description?.trim() ?? '',
       status: dto.status ?? 1,
       created_at: now,
       updated_at: now,
@@ -153,12 +154,19 @@ export class SectorsService implements OnModuleInit {
   }
 
   async update(id: number, dto: UpdateSectorDto) {
-    if (dto.name === undefined && dto.status === undefined) {
-      throw new BadRequestException('Provide name and/or status to update');
+    if (
+      dto.name === undefined &&
+      dto.description === undefined &&
+      dto.status === undefined
+    ) {
+      throw new BadRequestException('Provide name, description and/or status to update');
     }
     const set: Record<string, unknown> = { updated_at: new Date() };
     if (dto.name !== undefined) {
       set.name = dto.name.trim();
+    }
+    if (dto.description !== undefined) {
+      set.description = dto.description.trim();
     }
     if (dto.status !== undefined) {
       set.status = dto.status;
@@ -212,11 +220,13 @@ export class SectorsService implements OnModuleInit {
     const filter = this.buildListFilter(query);
     const rows = await this.sectorModel.find(filter).sort(sort).lean().exec();
 
-    const header = ['id', 'name', 'status', 'created_at', 'updated_at'];
+    const header = ['id', 'name', 'description', 'status', 'created_at', 'updated_at'];
     const lines = [
       header.join(','),
       ...rows.map((r) =>
-        [r.id, r.name, r.status, r.created_at, r.updated_at].map(csvEscape).join(','),
+        [r.id, r.name, r.description, r.status, r.created_at, r.updated_at]
+          .map(csvEscape)
+          .join(','),
       ),
     ];
     return lines.join('\r\n');

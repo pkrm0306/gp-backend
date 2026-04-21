@@ -8,6 +8,10 @@ export class Banner {
   @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })
   vendorId: Types.ObjectId;
 
+  /** Relative path stored in DB (for example: banners/file.jpg) */
+  @Prop({ required: false, default: '' })
+  banner_image?: string;
+
   @Prop({ required: true })
   imageUrl: string;
 

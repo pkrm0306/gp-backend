@@ -12,6 +12,9 @@ export class Sector {
   @Prop({ required: true })
   name: string;
 
+  @Prop({ type: String, default: '' })
+  description: string;
+
   /** 1 = active, 0 = inactive */
   @Prop({ type: Number, default: 1 })
   status: number;

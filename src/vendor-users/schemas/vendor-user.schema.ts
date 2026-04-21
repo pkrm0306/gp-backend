@@ -39,7 +39,7 @@ export class VendorUser {
   @Prop({ required: true })
   password: string;
 
-  @Prop({ required: true, enum: ['vendor', 'partner'] })
+  @Prop({ required: true, enum: ['vendor', 'partner', 'admin', 'super_admin'] })
   type: string;
 
   @Prop({ default: 1 })

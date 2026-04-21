@@ -80,6 +80,30 @@ export class AdminService {
     private readonly emailService: EmailService,
   ) {}
 
+  private resolveEventImagePath(eventImage?: string | null): string {
+    const raw = String(eventImage ?? '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('/uploads/')) {
+      return raw.replace(/^\/uploads\//, '');
+    }
+    if (raw.startsWith('uploads/')) {
+      return raw.replace(/^uploads\//, '');
+    }
+    return raw;
+  }
+
+  private resolveBannerImagePath(imageUrl?: string | null): string {
+    const raw = String(imageUrl ?? '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('/uploads/')) {
+      return raw.replace(/^\/uploads\//, '');
+    }
+    if (raw.startsWith('uploads/')) {
+      return raw.replace(/^uploads\//, '');
+    }
+    return raw;
+  }
+
   private async createNotification(input: {
     title: string;
     message: string;
@@ -121,6 +145,7 @@ export class AdminService {
     const { _id, __v, ...rest } = obj ?? {};
     return {
       ...rest,
+      event_image: (rest as any)?.event_image ?? this.resolveEventImagePath((rest as any)?.eventImage),
       registrationLink:
         (rest as any)?.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
       brochureLink: (rest as any)?.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
@@ -150,6 +175,7 @@ export class AdminService {
       eventId,
       eventName: payload.eventName,
       eventImage: payload.eventImage,
+      event_image: this.resolveEventImagePath(payload.eventImage),
       eventDescription: payload.eventDescription,
       eventDate: payload.eventDate,
       eventStartTime: payload.eventStartTime,
@@ -222,7 +248,10 @@ export class AdminService {
       $set.contactPersonEmail = payload.contactPersonEmail;
     if (payload.contactPersonPhone !== undefined && String(payload.contactPersonPhone).trim() !== '')
       $set.contactPersonPhone = payload.contactPersonPhone;
-    if (payload.eventImage !== undefined) $set.eventImage = payload.eventImage;
+    if (payload.eventImage !== undefined) {
+      $set.eventImage = payload.eventImage;
+      $set.event_image = this.resolveEventImagePath(payload.eventImage);
+    }
     if (payload.registrationLink !== undefined && String(payload.registrationLink).trim() !== '')
       $set.registrationLink = payload.registrationLink;
     if (payload.brochureLink !== undefined && String(payload.brochureLink).trim() !== '')
@@ -266,7 +295,7 @@ export class AdminService {
       .find({})
       .sort({ createdDate: -1, _id: -1 })
       .select(
-        'eventName eventImage eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+        'eventName eventImage event_image eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
       )
       .lean()
       .exec();
@@ -285,6 +314,7 @@ export class AdminService {
         id: String(e._id),
         eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
         image: e.eventImage ?? null,
+        event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
         eventName: String(e.eventName ?? ''),
         dateTime: [datePart, timePart].filter(Boolean).join(' '),
         location: String(e.eventLocation ?? ''),
@@ -891,6 +921,7 @@ export class AdminService {
 
     const created = new this.bannerModel({
       vendorId: vendorObjectId,
+      banner_image: this.resolveBannerImagePath(dto.imageUrl),
       imageUrl: dto.imageUrl.trim(),
       targetUrl: (dto.targetUrl ?? '').trim(),
       heading: dto.heading.trim(),
@@ -901,6 +932,7 @@ export class AdminService {
     const st = o.status ?? 1;
     return {
       id: String(o._id),
+      banner_image: o.banner_image ?? this.resolveBannerImagePath(o.imageUrl),
       imageUrl: o.imageUrl,
       targetUrl: o.targetUrl,
       heading: o.heading,
@@ -927,7 +959,7 @@ export class AdminService {
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
       .sort({ createdAt: -1, _id: -1 })
-      .select('imageUrl targetUrl heading description status')
+      .select('banner_image imageUrl targetUrl heading description status')
       .lean()
       .exec();
 
@@ -936,6 +968,7 @@ export class AdminService {
       return {
         s_no: index + 1,
         id: String(b._id),
+        banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
         imageUrl: b.imageUrl,
         targetUrl: b.targetUrl,
         heading: b.heading,
@@ -943,6 +976,27 @@ export class AdminService {
         is_active: st === 1,
       };
     });
+  }
+
+  /** Public banner list for website (active only, newest first). */
+  async listPublicBanners() {
+    const rows = await this.bannerModel
+      .find({ status: 1 })
+      .sort({ createdAt: -1, _id: -1 })
+      .select('banner_image imageUrl targetUrl heading description status')
+      .lean()
+      .exec();
+
+    return rows.map((b, index) => ({
+      s_no: index + 1,
+      id: String(b._id),
+      banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
+      imageUrl: b.imageUrl,
+      targetUrl: b.targetUrl,
+      heading: b.heading,
+      description: b.description,
+      is_active: (b.status ?? 1) === 1,
+    }));
   }
 
   /** Single banner for the View modal (image URL, heading, description). */
@@ -961,7 +1015,7 @@ export class AdminService {
         _id: bannerObjectId,
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .select('imageUrl targetUrl heading description')
+      .select('banner_image imageUrl targetUrl heading description')
       .lean()
       .exec();
 
@@ -971,6 +1025,7 @@ export class AdminService {
 
     return {
       id: String(b._id),
+      banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
       imageUrl: b.imageUrl,
       targetUrl: b.targetUrl ?? '',
       heading: b.heading,
@@ -1013,6 +1068,7 @@ export class AdminService {
     };
     if (payload.imageUrl !== undefined) {
       $set.imageUrl = payload.imageUrl.trim();
+      $set.banner_image = this.resolveBannerImagePath(payload.imageUrl);
     }
     if (payload.targetUrl !== undefined) {
       $set.targetUrl = payload.targetUrl.trim();
@@ -1030,6 +1086,7 @@ export class AdminService {
     const st = updated.status ?? 1;
     return {
       id: String(updated._id),
+      banner_image: (updated as any).banner_image ?? this.resolveBannerImagePath(updated.imageUrl),
       imageUrl: updated.imageUrl,
       targetUrl: updated.targetUrl ?? '',
       heading: updated.heading,

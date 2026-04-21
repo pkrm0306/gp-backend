@@ -8,6 +8,11 @@ export class CreateStandardMultipartDto {
   @IsNotEmpty()
   name: string;
 
+  @ApiPropertyOptional({ example: 'Benchmark details and applicability scope.' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
   @ApiProperty({ example: 'Energy' })
   @IsString()
   @IsNotEmpty()

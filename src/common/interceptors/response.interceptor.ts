@@ -59,6 +59,10 @@ export class ResponseInterceptor implements NestInterceptor {
         if (typeof payload?.totalPages === 'number') {
           response.totalPages = payload.totalPages;
         }
+        const withUrn = data as { urnStatus?: number };
+        if (typeof withUrn.urnStatus === 'number' && !Number.isNaN(withUrn.urnStatus)) {
+          response.urnStatus = withUrn.urnStatus;
+        }
         return response as unknown as ApiResponse;
       }),
     );

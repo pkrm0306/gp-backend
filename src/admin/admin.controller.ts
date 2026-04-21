@@ -184,10 +184,11 @@ export class AdminController {
 
   @Get('banner/list')
   @HttpCode(HttpStatus.OK)
+  @Public()
   @ApiOperation({
     summary: 'List banners',
     description:
-      'Returns all banners for the logged-in vendor (newest first): **imageUrl**, **heading**, **description** (full text — use CSS **line-clamp: 3** in the card), **is_active** for the status toggle, **targetUrl** for preview, **id** for actions.',
+      'Returns active banners for website display (newest first): **imageUrl**, **heading**, **description** (full text — use CSS **line-clamp: 3** in the card), **is_active**, **targetUrl**, and **id**.',
   })
   @ApiResponse({
     status: 200,
@@ -214,11 +215,8 @@ export class AdminController {
       },
     },
   })
-  async listBanners(@CurrentUser() user: { vendorId: string }, @Req() req: Request) {
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
-    const data = await this.adminService.listBanners(user.vendorId);
+  async listBanners(@Req() req: Request) {
+    const data = await this.adminService.listPublicBanners();
 
     const origin = `${req.protocol}://${req.get('host')}`;
     const normalizeImageUrl = (raw: unknown) => {

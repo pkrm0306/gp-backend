@@ -15,6 +15,10 @@ export class Event {
   @Prop()
   eventImage?: string;
 
+  /** Relative path stored in DB (for example: events/file.png) */
+  @Prop()
+  event_image?: string;
+
   @Prop()
   eventDescription?: string;
 

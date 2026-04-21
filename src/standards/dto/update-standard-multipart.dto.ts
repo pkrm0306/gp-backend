@@ -12,6 +12,11 @@ export class UpdateStandardMultipartDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  description?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   @MinLength(1)
   resource_standard_type?: string;
 

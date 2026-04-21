@@ -82,7 +82,7 @@ export class SectorsController {
   }
 
   @Put(':id')
-  @ApiOperation({ summary: 'Update sector name and/or status' })
+  @ApiOperation({ summary: 'Update sector name, description and/or status' })
   @ApiParam({ name: 'id', description: 'Numeric sector id' })
   @ApiResponse({ status: 404, description: 'Not found' })
   async update(@Param('id') id: string, @Body() dto: UpdateSectorDto) {

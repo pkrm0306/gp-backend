@@ -29,11 +29,11 @@ export class PaymentDetails {
   @Prop()
   proposalFile?: string;
 
-  @Prop({ required: true })
-  adminGstNo: string;
+  @Prop()
+  adminGstNo?: string;
 
-  @Prop({ required: true })
-  vendorGstNo: string;
+  @Prop()
+  vendorGstNo?: string;
 
   @Prop({
     required: true,
