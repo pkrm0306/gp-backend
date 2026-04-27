@@ -32,6 +32,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
     }
 
+    // Always log server-side details for production debugging (Render logs),
+    // while still returning sanitized client responses.
+    const method = request?.method ?? 'UNKNOWN_METHOD';
+    const path = request?.path ?? 'UNKNOWN_PATH';
+    const errorForLog =
+      exception instanceof Error
+        ? {
+            name: exception.name,
+            message: exception.message,
+            stack: exception.stack,
+          }
+        : exception;
+    console.error(`[HttpExceptionFilter] ${method} ${path} -> ${status}`, errorForLog);
+
     if (
       status === HttpStatus.BAD_REQUEST &&
       request.method === 'POST' &&
