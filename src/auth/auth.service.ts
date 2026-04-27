@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  HttpException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -97,6 +98,20 @@ export class AuthService {
         message: 'Registration successful. Please verify your email.',
       };
     } catch (error) {
+      // Keep known HTTP errors intact for client-friendly responses.
+      if (error instanceof HttpException) {
+        await session.abortTransaction();
+        throw error;
+      }
+
+      // Convert duplicate key DB errors into a stable 409 response.
+      if ((error as any)?.code === 11000) {
+        await session.abortTransaction();
+        throw new ConflictException(
+          'Email already exists. Please use a different email.',
+        );
+      }
+
       await session.abortTransaction();
       throw error;
     } finally {
@@ -147,10 +162,16 @@ export class AuthService {
       throw new UnauthorizedException('Account is inactive');
     }
 
+    const manufacturerId =
+      user.manufacturerId?.toString() || user.vendorId?.toString();
+    if (!manufacturerId && user.type !== 'admin' && user.type !== 'super_admin') {
+      // Legacy/broken mapping in DB should not crash login with 500.
+      throw new UnauthorizedException('Account mapping is incomplete');
+    }
+
     const payload = {
       userId: user._id.toString(),
-      manufacturerId:
-        user.manufacturerId?.toString() || user.vendorId.toString(),
+      ...(manufacturerId ? { manufacturerId } : {}),
       role: user.type,
       name: user.name,
       email: user.email,
