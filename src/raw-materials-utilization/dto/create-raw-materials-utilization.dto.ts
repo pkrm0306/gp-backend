@@ -19,4 +19,13 @@ export class CreateRawMaterialsUtilizationDto {
   @IsString()
   @IsOptional()
   details?: string;
+
+  @ApiProperty({
+    description: 'Display name for uploaded supporting file',
+    example: 'Raw Materials Utilization Supporting Document - 2026',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  utilizationFileName?: string;
 }

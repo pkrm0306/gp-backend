@@ -38,14 +38,16 @@ export class QueryAuditLogDto {
   module?: string;
 
   @ApiPropertyOptional({
-    description: 'User-facing action (create, update, delete, approve, reject, login)',
+    description:
+      'User-facing action (create, update, delete, approve, reject, login)',
   })
   @IsOptional()
   @IsString()
   action_type?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter by user id (matches actor.user_id or performed_by.user_id)',
+    description:
+      'Filter by user id (matches actor.user_id or performed_by.user_id)',
   })
   @IsOptional()
   @IsString()

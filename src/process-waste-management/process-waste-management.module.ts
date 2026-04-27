@@ -17,7 +17,10 @@ import { AuthModule } from '../auth/auth.module';
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: ProcessWasteManagement.name, schema: ProcessWasteManagementSchema },
+      {
+        name: ProcessWasteManagement.name,
+        schema: ProcessWasteManagementSchema,
+      },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),
     ProductRegistrationModule, // for SequenceHelper

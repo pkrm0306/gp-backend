@@ -14,5 +14,5 @@ export class EventIdCounter {
   seq: number;
 }
 
-export const EventIdCounterSchema = SchemaFactory.createForClass(EventIdCounter);
-
+export const EventIdCounterSchema =
+  SchemaFactory.createForClass(EventIdCounter);

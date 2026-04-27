@@ -15,6 +15,7 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { CreateProcessManufacturingDto } from './dto/create-process-manufacturing.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -32,7 +33,10 @@ export class ProcessManufacturingService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -84,7 +88,9 @@ export class ProcessManufacturingService {
       if (file.buffer) {
         fs.writeFileSync(filePath, file.buffer);
       } else {
-        throw new BadRequestException(`File data not available for ${fileType}`);
+        throw new BadRequestException(
+          `File data not available for ${fileType}`,
+        );
       }
     }
 
@@ -113,7 +119,8 @@ export class ProcessManufacturingService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
       // Get next process manufacturing ID
-      const processManufacturingId = await this.sequenceHelper.getProcessManufacturingId();
+      const processManufacturingId =
+        await this.sequenceHelper.getProcessManufacturingId();
 
       // Get current date
       const now = new Date();
@@ -129,7 +136,10 @@ export class ProcessManufacturingService {
           createProcessManufacturingDto.urnNo,
           'energy_conservation',
         );
-        energyConservationFullPath = path.join('uploads', energyConservationFilePath);
+        energyConservationFullPath = path.join(
+          'uploads',
+          energyConservationFilePath,
+        );
         energyConservationSupportingDocuments = 1;
         energyConservationFileName =
           createProcessManufacturingDto.energyConservationSupportingDocumentsFileName ||
@@ -146,7 +156,10 @@ export class ProcessManufacturingService {
           createProcessManufacturingDto.urnNo,
           'energy_consumption',
         );
-        energyConsumptionFullPath = path.join('uploads', energyConsumptionFilePath);
+        energyConsumptionFullPath = path.join(
+          'uploads',
+          energyConsumptionFilePath,
+        );
         energyConsumptionDocuments = 1;
         energyConsumptionFileName =
           createProcessManufacturingDto.energyConsumptionDocumentsFileName ||
@@ -159,22 +172,35 @@ export class ProcessManufacturingService {
         vendorId: vendorObjectId,
         urnNo: createProcessManufacturingDto.urnNo,
         energyConservationSupportingDocuments,
-        portableWaterDemand: createProcessManufacturingDto.portableWaterDemand || '',
-        rainWaterHarvesting: createProcessManufacturingDto.rainWaterHarvesting || '',
-        beyondTheFenceInitiatives: createProcessManufacturingDto.beyondTheFenceInitiatives || '',
-        totalEnergyConsumption: createProcessManufacturingDto.totalEnergyConsumption || null,
+        portableWaterDemand:
+          createProcessManufacturingDto.portableWaterDemand || '',
+        rainWaterHarvesting:
+          createProcessManufacturingDto.rainWaterHarvesting || '',
+        beyondTheFenceInitiatives:
+          createProcessManufacturingDto.beyondTheFenceInitiatives || '',
+        totalEnergyConsumption:
+          createProcessManufacturingDto.totalEnergyConsumption || null,
         energyConsumptionDocuments,
-        processManufacturingStatus: createProcessManufacturingDto.processManufacturingStatus || 0,
+        processManufacturingStatus:
+          createProcessManufacturingDto.processManufacturingStatus || 0,
         createdDate: now,
         updatedDate: now,
       };
 
-      const processManufacturing = new this.processManufacturingModel(processManufacturingData);
-      const savedProcessManufacturing = await processManufacturing.save({ session });
+      const processManufacturing = new this.processManufacturingModel(
+        processManufacturingData,
+      );
+      const savedProcessManufacturing = await processManufacturing.save({
+        session,
+      });
 
       // Insert uploaded documents into all_product_documents (master table)
-      if (energyConservationFilePath && energyConservationSupportingDocumentsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+      if (
+        energyConservationFilePath &&
+        energyConservationSupportingDocumentsFile
+      ) {
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${energyConservationFilePath}`;
 
         const documentData = {
@@ -182,11 +208,12 @@ export class ProcessManufacturingService {
           vendorId: vendorObjectId,
           urnNo: createProcessManufacturingDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_manufacturing',
+          documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
           documentFormSubsection: 'energy_conservation_supporting_documents',
           formPrimaryId: processManufacturingId,
           documentName: path.basename(energyConservationFilePath),
-          documentOriginalName: energyConservationSupportingDocumentsFile.originalname,
+          documentOriginalName:
+            energyConservationSupportingDocumentsFile.originalname,
           documentLink,
           createdDate: now,
           updatedDate: now,
@@ -196,7 +223,8 @@ export class ProcessManufacturingService {
       }
 
       if (energyConsumptionFilePath && energyConsumptionDocumentsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${energyConsumptionFilePath}`;
 
         const documentData = {
@@ -204,7 +232,7 @@ export class ProcessManufacturingService {
           vendorId: vendorObjectId,
           urnNo: createProcessManufacturingDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_manufacturing',
+          documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
           documentFormSubsection: 'energy_consumption_documents',
           formPrimaryId: processManufacturingId,
           documentName: path.basename(energyConsumptionFilePath),
@@ -227,14 +255,23 @@ export class ProcessManufacturingService {
 
       // Clean up uploaded files if transaction fails (files were moved to URN folder)
       try {
-        if (energyConservationFullPath && fs.existsSync(energyConservationFullPath)) {
+        if (
+          energyConservationFullPath &&
+          fs.existsSync(energyConservationFullPath)
+        ) {
           fs.unlinkSync(energyConservationFullPath);
         }
-        if (energyConsumptionFullPath && fs.existsSync(energyConsumptionFullPath)) {
+        if (
+          energyConsumptionFullPath &&
+          fs.existsSync(energyConsumptionFullPath)
+        ) {
           fs.unlinkSync(energyConsumptionFullPath);
         }
       } catch (cleanupError: any) {
-        console.error('[Process Manufacturing] File cleanup error:', cleanupError);
+        console.error(
+          '[Process Manufacturing] File cleanup error:',
+          cleanupError,
+        );
       }
 
       console.error('[Process Manufacturing] Create error:', error);

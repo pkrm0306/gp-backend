@@ -1,6 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class UpdateSectorDto {
   @ApiPropertyOptional({ example: 'Agriculture' })
@@ -9,7 +15,9 @@ export class UpdateSectorDto {
   @MinLength(1)
   name?: string;
 
-  @ApiPropertyOptional({ example: 'Includes modern and traditional agriculture.' })
+  @ApiPropertyOptional({
+    example: 'Includes modern and traditional agriculture.',
+  })
   @IsOptional()
   @IsString()
   description?: string;

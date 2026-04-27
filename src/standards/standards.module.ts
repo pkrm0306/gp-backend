@@ -3,7 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { StandardsController } from './standards.controller';
 import { StandardsService } from './standards.service';
 import { Standard, StandardSchema } from './schemas/standard.schema';
-import { StandardIdCounter, StandardIdCounterSchema } from './schemas/standard-id-counter.schema';
+import {
+  StandardIdCounter,
+  StandardIdCounterSchema,
+} from './schemas/standard-id-counter.schema';
 
 @Module({
   imports: [

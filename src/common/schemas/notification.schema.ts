@@ -32,4 +32,3 @@ export class Notification {
 
 export const NotificationSchema = SchemaFactory.createForClass(Notification);
 NotificationSchema.index({ createdAt: -1 });
-

@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type ProcessLifeCycleApproachDocument = ProcessLifeCycleApproach & Document;
+export type ProcessLifeCycleApproachDocument = ProcessLifeCycleApproach &
+  Document;
 
 @Schema({ collection: 'process_life_cycle_approach', timestamps: false })
 export class ProcessLifeCycleApproach {
@@ -33,4 +34,6 @@ export class ProcessLifeCycleApproach {
   updatedDate: Date;
 }
 
-export const ProcessLifeCycleApproachSchema = SchemaFactory.createForClass(ProcessLifeCycleApproach);
+export const ProcessLifeCycleApproachSchema = SchemaFactory.createForClass(
+  ProcessLifeCycleApproach,
+);

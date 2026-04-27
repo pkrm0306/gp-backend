@@ -3,10 +3,17 @@ import { Transform } from 'class-transformer';
 import { IsEmail, IsNotEmpty, IsString, Length } from 'class-validator';
 
 export class ManufacturerReplyDto {
-  @ApiProperty({ description: 'Customer email address', example: 'customer@example.com' })
+  @ApiProperty({
+    description: 'Customer email address',
+    example: 'customer@example.com',
+  })
   @IsEmail()
   @IsNotEmpty()
-  @Transform(({ value }) => String(value ?? '').trim().toLowerCase())
+  @Transform(({ value }) =>
+    String(value ?? '')
+      .trim()
+      .toLowerCase(),
+  )
   email: string;
 
   @ApiProperty({
@@ -29,4 +36,3 @@ export class ManufacturerReplyDto {
   @Length(1, 4000)
   replyMessage: string;
 }
-

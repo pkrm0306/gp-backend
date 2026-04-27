@@ -47,7 +47,9 @@ const storage = diskStorage({
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class ProductPerformanceController {
-  constructor(private readonly productPerformanceService: ProductPerformanceService) {}
+  constructor(
+    private readonly productPerformanceService: ProductPerformanceService,
+  ) {}
 
   @Post()
   @UseInterceptors(
@@ -69,7 +71,16 @@ export class ProductPerformanceController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
           'application/vnd.ms-excel', // .xls
         ];
-        const allowedExtensions = ['.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+        const allowedExtensions = [
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.pdf',
+          '.doc',
+          '.docx',
+          '.xls',
+          '.xlsx',
+        ];
         const fileExt = extname(file.originalname).toLowerCase();
 
         if (
@@ -150,7 +161,10 @@ export class ProductPerformanceController {
       type: 'object',
       properties: {
         success: { type: 'boolean', example: true },
-        message: { type: 'string', example: 'Product performance created successfully' },
+        message: {
+          type: 'string',
+          example: 'Product performance created successfully',
+        },
         data: {
           type: 'object',
           properties: {
@@ -159,7 +173,10 @@ export class ProductPerformanceController {
             urnNo: { type: 'string' },
             eoiNo: { type: 'string' },
             productName: { type: 'string' },
-            testReportFileName: { type: 'string', description: 'Stored test report file name' },
+            testReportFileName: {
+              type: 'string',
+              description: 'Stored test report file name',
+            },
             testReportFiles: { type: 'number', example: 1 },
             renewalType: { type: 'number', example: 0 },
             productPerformanceStatus: { type: 'number', example: 0 },
@@ -197,15 +214,22 @@ export class ProductPerformanceController {
       }
 
       // If file is uploaded, require a display name
-      if (testReportFile && (!createProductPerformanceDto.testReportFileName || createProductPerformanceDto.testReportFileName.trim() === '')) {
-        throw new BadRequestException('testReportFileName is required when uploading testReportFile');
+      if (
+        testReportFile &&
+        (!createProductPerformanceDto.testReportFileName ||
+          createProductPerformanceDto.testReportFileName.trim() === '')
+      ) {
+        throw new BadRequestException(
+          'testReportFileName is required when uploading testReportFile',
+        );
       }
 
-      const productPerformance = await this.productPerformanceService.createProductPerformance(
-        createProductPerformanceDto,
-        user.vendorId,
-        testReportFile,
-      );
+      const productPerformance =
+        await this.productPerformanceService.createProductPerformance(
+          createProductPerformanceDto,
+          user.vendorId,
+          testReportFile,
+        );
 
       return {
         success: true,

@@ -28,7 +28,8 @@ export class ListProductsDto {
   limit?: number = 10;
 
   @ApiProperty({
-    description: 'Global search term (searches in product_name, eoi_no, urn_no, category.category_name)',
+    description:
+      'Global search term (searches in product_name, eoi_no, urn_no, category.category_name)',
     example: 'Solar Panel',
     required: false,
   })

@@ -18,4 +18,3 @@ export class UpdateBannerStatusDto {
   @IsIn(['active', 'inactive', '1', '0'])
   status?: 'active' | 'inactive' | '1' | '0';
 }
-

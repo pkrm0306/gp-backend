@@ -60,7 +60,10 @@ export class ResponseInterceptor implements NestInterceptor {
           response.totalPages = payload.totalPages;
         }
         const withUrn = data as { urnStatus?: number };
-        if (typeof withUrn.urnStatus === 'number' && !Number.isNaN(withUrn.urnStatus)) {
+        if (
+          typeof withUrn.urnStatus === 'number' &&
+          !Number.isNaN(withUrn.urnStatus)
+        ) {
           response.urnStatus = withUrn.urnStatus;
         }
         return response as unknown as ApiResponse;

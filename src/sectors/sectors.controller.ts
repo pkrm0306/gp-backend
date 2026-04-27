@@ -12,12 +12,7 @@ import {
   Query,
   StreamableFile,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiParam,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { SectorsService } from './sectors.service';
 import { ListSectorsQueryDto } from './dto/list-sectors-query.dto';
 import { CreateSectorDto } from './dto/create-sector.dto';
@@ -35,7 +30,10 @@ export class SectorsController {
     description:
       'Pagination, search on name (case-insensitive), filter by status, sort by id or name. Example: ?page=1&limit=10&search=IT&status=1&sortBy=id&order=desc',
   })
-  @ApiResponse({ status: 200, description: 'Paginated list with total, page, limit' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated list with total, page, limit',
+  })
   async findAll(@Query() query: ListSectorsQueryDto) {
     return this.sectorsService.findAllPaginated(query);
   }
@@ -44,7 +42,8 @@ export class SectorsController {
   @Get('export')
   @ApiOperation({
     summary: 'Export sectors as CSV',
-    description: 'Applies same search and status filters as the list (no pagination).',
+    description:
+      'Applies same search and status filters as the list (no pagination).',
   })
   @ApiResponse({ status: 200, description: 'CSV file download' })
   async exportCsv(@Query() query: ListSectorsQueryDto) {
@@ -98,7 +97,10 @@ export class SectorsController {
   @ApiOperation({ summary: 'Set sector status (active/inactive)' })
   @ApiParam({ name: 'id', description: 'Numeric sector id' })
   @ApiResponse({ status: 404, description: 'Not found' })
-  async patchStatus(@Param('id') id: string, @Body() dto: UpdateSectorStatusDto) {
+  async patchStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateSectorStatusDto,
+  ) {
     const numericId = this.sectorsService.parseSectorId(id);
     const data = await this.sectorsService.updateStatus(numericId, dto);
     return {

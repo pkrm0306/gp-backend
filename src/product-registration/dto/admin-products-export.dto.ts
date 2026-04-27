@@ -22,4 +22,3 @@ export class AdminProductsExportDto extends AdminListProductsDto {
   @IsIn(['urn_summary', 'eoi_details'], { each: true })
   includeSheets?: Array<'urn_summary' | 'eoi_details'>;
 }
-

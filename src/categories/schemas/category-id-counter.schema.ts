@@ -15,4 +15,5 @@ export class CategoryIdCounter {
   seq: number;
 }
 
-export const CategoryIdCounterSchema = SchemaFactory.createForClass(CategoryIdCounter);
+export const CategoryIdCounterSchema =
+  SchemaFactory.createForClass(CategoryIdCounter);

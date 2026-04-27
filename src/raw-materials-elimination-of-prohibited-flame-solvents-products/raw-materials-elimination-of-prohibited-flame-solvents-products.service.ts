@@ -20,7 +20,10 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsService {
     private sequenceHelper: SequenceHelper,
   ) {}
 
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) return id;
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException(`Invalid ${fieldName} format: ${id}`);

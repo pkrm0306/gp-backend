@@ -1,5 +1,15 @@
-import { Controller, Get, UseGuards, UnauthorizedException } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  UseGuards,
+  UnauthorizedException,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
 import { DashboardService } from './dashboard.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -14,7 +24,8 @@ export class DashboardController {
   @Get()
   @ApiOperation({
     summary: 'Get vendor dashboard statistics',
-    description: 'Retrieves comprehensive dashboard data including product counts, payment information, partners, events, and latest URN/EOI records',
+    description:
+      'Retrieves comprehensive dashboard data including product counts, payment information, partners, events, and latest URN/EOI records',
   })
   @ApiResponse({
     status: 200,
@@ -41,7 +52,11 @@ export class DashboardController {
             paymentPendingAmount: {
               type: 'object',
               properties: {
-                payment_pending_amount: { type: 'number', nullable: true, example: 50000 },
+                payment_pending_amount: {
+                  type: 'number',
+                  nullable: true,
+                  example: 50000,
+                },
               },
             },
             partners: {
@@ -73,7 +88,10 @@ export class DashboardController {
                 type: 'object',
                 properties: {
                   eoi_no: { type: 'string', example: 'EOI-20260305124230' },
-                  product_name: { type: 'string', example: 'Green Product XYZ' },
+                  product_name: {
+                    type: 'string',
+                    example: 'Green Product XYZ',
+                  },
                   product_status: { type: 'number', example: 1 },
                 },
               },
@@ -103,7 +121,10 @@ export class DashboardController {
       type: 'object',
       properties: {
         success: { type: 'boolean', example: false },
-        message: { type: 'string', example: 'Please enter your account details to access all options!' },
+        message: {
+          type: 'string',
+          example: 'Please enter your account details to access all options!',
+        },
         error: { type: 'string', example: 'Forbidden' },
         statusCode: { type: 'number', example: 403 },
       },

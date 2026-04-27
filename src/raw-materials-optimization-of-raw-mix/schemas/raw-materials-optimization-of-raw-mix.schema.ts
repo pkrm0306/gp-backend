@@ -4,7 +4,10 @@ import { Document, Types } from 'mongoose';
 export type RawMaterialsOptimizationOfRawMixDocument =
   RawMaterialsOptimizationOfRawMix & Document;
 
-@Schema({ collection: 'raw_materials_optimization_of_raw_mix', timestamps: false })
+@Schema({
+  collection: 'raw_materials_optimization_of_raw_mix',
+  timestamps: false,
+})
 export class RawMaterialsOptimizationOfRawMix {
   @Prop({ required: true, unique: true })
   rawMaterialsOptimizationOfRawMixId: number;
@@ -37,6 +40,5 @@ export class RawMaterialsOptimizationOfRawMix {
   updatedDate: Date;
 }
 
-export const RawMaterialsOptimizationOfRawMixSchema = SchemaFactory.createForClass(
-  RawMaterialsOptimizationOfRawMix,
-);
+export const RawMaterialsOptimizationOfRawMixSchema =
+  SchemaFactory.createForClass(RawMaterialsOptimizationOfRawMix);

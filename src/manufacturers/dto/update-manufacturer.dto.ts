@@ -1,6 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
 
 export class UpdateManufacturerDto {
   @ApiProperty({ description: 'Manufacturer name' })
@@ -10,15 +16,15 @@ export class UpdateManufacturerDto {
   manufacturerName: string;
 
   @ApiProperty({
-    description: 'GP Internal ID (format: 4 alphanumeric + "-" + 3 digits, e.g., GPSC-312)',
+    description:
+      'GP Internal ID (format: 4 alphanumeric + "-" + 3 digits, e.g., GPSC-312)',
     example: 'GPSC-312',
   })
   @Transform(({ value, obj }) => value ?? obj?.gp_internal_id)
   @IsString()
   @IsNotEmpty({ message: 'gp_internal_id is required' })
   @Matches(/^[A-Za-z0-9]{4}-\d{3}$/, {
-    message:
-      'gp_internal_id must match format XXXX-999 (example: GPSC-312)',
+    message: 'gp_internal_id must match format XXXX-999 (example: GPSC-312)',
   })
   gpInternalId: string;
 

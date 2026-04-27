@@ -40,7 +40,12 @@ async function run() {
     const cursor = vendorUsersCol.find(
       {
         $and: [
-          { $or: [{ manufacturerId: { $exists: false } }, { manufacturerId: null }] },
+          {
+            $or: [
+              { manufacturerId: { $exists: false } },
+              { manufacturerId: null },
+            ],
+          },
           { vendorId: { $exists: true, $ne: null } },
         ],
       },
@@ -86,7 +91,13 @@ async function run() {
       }
 
       await vendorUsersCol.updateOne(
-        { _id: row._id, $or: [{ manufacturerId: { $exists: false } }, { manufacturerId: null }] },
+        {
+          _id: row._id,
+          $or: [
+            { manufacturerId: { $exists: false } },
+            { manufacturerId: null },
+          ],
+        },
         { $set: { manufacturerId } },
       );
       counters.updated += 1;

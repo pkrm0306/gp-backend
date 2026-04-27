@@ -54,30 +54,36 @@ export class AuthService {
     session.startTransaction();
 
     try {
-      const manufacturer = await this.manufacturersService.create({
-        manufacturerName: registerDto.companyName,
-        gpInternalId: null,
-        manufacturerInitial: null,
-        manufacturerStatus: 0,
-        vendor_name: registerDto.companyName,
-        vendor_email: registerDto.email,
-        vendor_phone: registerDto.phone,
-        vendor_status: 0,
-      }, session);
+      const manufacturer = await this.manufacturersService.create(
+        {
+          manufacturerName: registerDto.companyName,
+          gpInternalId: null,
+          manufacturerInitial: null,
+          manufacturerStatus: 0,
+          vendor_name: registerDto.companyName,
+          vendor_email: registerDto.email,
+          vendor_phone: registerDto.phone,
+          vendor_status: 0,
+        },
+        session,
+      );
 
       const otp = '123456';
-      const vendorUser = await this.vendorUsersService.create({
-        manufacturerId: manufacturer._id,
-        vendorId: manufacturer._id,
-        name: registerDto.companyName,
-        email: registerDto.email,
-        phone: registerDto.phone,
-        password: registerDto.password,
-        type: 'vendor',
-        status: 1,
-        otp,
-        isVerified: false,
-      }, session);
+      await this.vendorUsersService.create(
+        {
+          manufacturerId: manufacturer._id,
+          vendorId: manufacturer._id,
+          name: registerDto.companyName,
+          email: registerDto.email,
+          phone: registerDto.phone,
+          password: registerDto.password,
+          type: 'vendor',
+          status: 1,
+          otp,
+          isVerified: false,
+        },
+        session,
+      );
 
       await session.commitTransaction();
 
@@ -143,14 +149,15 @@ export class AuthService {
 
     const payload = {
       userId: user._id.toString(),
-      manufacturerId: user.manufacturerId?.toString() || user.vendorId.toString(),
+      manufacturerId:
+        user.manufacturerId?.toString() || user.vendorId.toString(),
       role: user.type,
       name: user.name,
       email: user.email,
     };
 
     const accessToken = this.jwtService.sign(payload, {
-      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '15m',
+      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '10h',
     });
 
     const refreshToken = this.jwtService.sign(payload, {
@@ -205,7 +212,9 @@ export class AuthService {
 
     let payload: any;
     try {
-      payload = this.jwtService.verify(refreshTokenDto.refreshToken, { secret });
+      payload = this.jwtService.verify(refreshTokenDto.refreshToken, {
+        secret,
+      });
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
@@ -235,7 +244,7 @@ export class AuthService {
     }
 
     const accessToken = this.jwtService.sign(newPayload, {
-      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '15m',
+      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '10h',
     });
 
     const refreshToken = this.jwtService.sign(newPayload, {

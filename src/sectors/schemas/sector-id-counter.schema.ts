@@ -14,4 +14,5 @@ export class SectorIdCounter {
   seq: number;
 }
 
-export const SectorIdCounterSchema = SchemaFactory.createForClass(SectorIdCounter);
+export const SectorIdCounterSchema =
+  SchemaFactory.createForClass(SectorIdCounter);

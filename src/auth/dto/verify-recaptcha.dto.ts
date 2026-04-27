@@ -10,4 +10,3 @@ export class VerifyRecaptchaDto {
   @IsNotEmpty()
   captchaToken: string;
 }
-

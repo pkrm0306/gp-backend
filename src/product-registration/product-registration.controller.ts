@@ -64,14 +64,16 @@ export class ProductRegistrationController {
     name: 'search',
     required: false,
     type: String,
-    description: 'Global search term (searches in product_name, eoi_no, urn_no, category.category_name)',
+    description:
+      'Global search term (searches in product_name, eoi_no, urn_no, category.category_name)',
     example: 'Solar Panel',
   })
   @ApiQuery({
     name: 'status',
     required: false,
     type: Number,
-    description: 'Filter by product status (0=Pending, 1=Active, 2=Certified, 3=Rejected)',
+    description:
+      'Filter by product status (0=Pending, 1=Active, 2=Certified, 3=Rejected)',
     example: 0,
     enum: [0, 1, 2, 3],
   })
@@ -102,12 +104,22 @@ export class ProductRegistrationController {
                   eoiNo: { type: 'string', example: 'GPMN012001' },
                   urnNo: { type: 'string', example: 'URN-20240302120000' },
                   productName: { type: 'string', example: 'Solar Panel 100W' },
-                  productDetails: { type: 'string', example: 'Product description details' },
-                  addedOn: { type: 'string', format: 'date-time', example: '2024-03-02T12:00:00.000Z' },
+                  productDetails: {
+                    type: 'string',
+                    example: 'Product description details',
+                  },
+                  addedOn: {
+                    type: 'string',
+                    format: 'date-time',
+                    example: '2024-03-02T12:00:00.000Z',
+                  },
                   category: {
                     type: 'object',
                     properties: {
-                      _id: { type: 'string', example: '507f1f77bcf86cd799439011' },
+                      _id: {
+                        type: 'string',
+                        example: '507f1f77bcf86cd799439011',
+                      },
                       categoryName: { type: 'string', example: 'Solar Panels' },
                       categoryCode: { type: 'string', example: 'SOLAR' },
                     },
@@ -168,7 +180,10 @@ export class ProductRegistrationController {
       type: 'object',
       properties: {
         status: { type: 'string', example: 'success' },
-        message: { type: 'string', example: 'Product(s) registered successfully' },
+        message: {
+          type: 'string',
+          example: 'Product(s) registered successfully',
+        },
         data: {
           type: 'object',
           properties: {
@@ -223,7 +238,10 @@ export class ProductRegistrationController {
       type: 'object',
       properties: {
         status: { type: 'string', example: 'success' },
-        message: { type: 'string', example: 'Product(s) registered successfully' },
+        message: {
+          type: 'string',
+          example: 'Product(s) registered successfully',
+        },
         data: {
           type: 'array',
           items: {
@@ -257,15 +275,21 @@ export class ProductRegistrationController {
 
       // Optional guard for backward compatibility: if manufacturerId is sent in payload, it must match JWT
       for (const product of bulkRegisterProductDto.products) {
-        if (product.manufacturerId && product.manufacturerId !== manufacturerId) {
-          throw new BadRequestException('Payload manufacturerId must match logged-in manufacturer');
+        if (
+          product.manufacturerId &&
+          product.manufacturerId !== manufacturerId
+        ) {
+          throw new BadRequestException(
+            'Payload manufacturerId must match logged-in manufacturer',
+          );
         }
       }
 
-      const results = await this.productRegistrationService.registerBulkProducts(
-        bulkRegisterProductDto,
-        manufacturerId,
-      );
+      const results =
+        await this.productRegistrationService.registerBulkProducts(
+          bulkRegisterProductDto,
+          manufacturerId,
+        );
 
       return {
         status: 'success',
@@ -284,7 +308,11 @@ export class ProductRegistrationController {
     description:
       'Updates a product with all updatable fields. If productName changes, a new URN and EOI will be generated automatically. Otherwise, existing URN and EOI are preserved. All fields are optional - only provided fields will be updated.',
   })
-  @ApiParam({ name: 'id', description: 'Product ID', example: '507f1f77bcf86cd799439011' })
+  @ApiParam({
+    name: 'id',
+    description: 'Product ID',
+    example: '507f1f77bcf86cd799439011',
+  })
   @ApiBody({ type: UpdateProductDto })
   @ApiResponse({
     status: 200,
@@ -324,7 +352,10 @@ export class ProductRegistrationController {
     },
   })
   @ApiResponse({ status: 404, description: 'Product not found' })
-  @ApiResponse({ status: 400, description: 'Invalid product ID or duplicate URN/EOI' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid product ID or duplicate URN/EOI',
+  })
   async updateProduct(
     @CurrentUser() user: any,
     @Param('id') productId: string,

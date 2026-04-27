@@ -1,6 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class CreateSectorDto {
   @ApiProperty({ example: 'Agriculture' })
@@ -8,12 +14,18 @@ export class CreateSectorDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiPropertyOptional({ example: 'Covers farming, irrigation, and agri-tech segments.' })
+  @ApiPropertyOptional({
+    example: 'Covers farming, irrigation, and agri-tech segments.',
+  })
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ enum: [0, 1], default: 1, description: '1 active, 0 inactive' })
+  @ApiPropertyOptional({
+    enum: [0, 1],
+    default: 1,
+    description: '1 active, 0 inactive',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type ProcessWmManufacturingUnitDocument = ProcessWmManufacturingUnit & Document;
+export type ProcessWmManufacturingUnitDocument = ProcessWmManufacturingUnit &
+  Document;
 
 @Schema({ collection: 'process_wm_manufacturing_units', timestamps: false })
 export class ProcessWmManufacturingUnit {

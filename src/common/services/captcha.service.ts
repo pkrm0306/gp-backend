@@ -6,16 +6,20 @@ import axios from 'axios';
 export class CaptchaService {
   private readonly secretKey: string;
   private readonly isDevelopment: boolean;
-  private readonly verifyUrl = 'https://www.google.com/recaptcha/api/siteverify';
+  private readonly verifyUrl =
+    'https://www.google.com/recaptcha/api/siteverify';
 
   constructor(private configService: ConfigService) {
     this.secretKey = this.configService.get<string>('RECAPTCHA_SECRET_KEY');
-    this.isDevelopment = this.configService.get<string>('NODE_ENV') !== 'production';
+    this.isDevelopment =
+      this.configService.get<string>('NODE_ENV') !== 'production';
   }
 
   async verifyCaptcha(token: string): Promise<boolean> {
     if (this.isDevelopment && !this.secretKey) {
-      console.warn('⚠️  reCAPTCHA bypassed in development mode. Set RECAPTCHA_SECRET_KEY for production.');
+      console.warn(
+        '⚠️  reCAPTCHA bypassed in development mode. Set RECAPTCHA_SECRET_KEY for production.',
+      );
       if (token === 'test-token' || token === 'bypass') {
         return true;
       }
@@ -29,7 +33,9 @@ export class CaptchaService {
     }
 
     if (this.isDevelopment && (token === 'test-token' || token === 'bypass')) {
-      console.warn('⚠️  reCAPTCHA bypassed with test token in development mode');
+      console.warn(
+        '⚠️  reCAPTCHA bypassed with test token in development mode',
+      );
       return true;
     }
 

@@ -15,6 +15,7 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { CreateProcessInnovationDto } from './dto/create-process-innovation.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -32,7 +33,10 @@ export class ProcessInnovationService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -84,7 +88,9 @@ export class ProcessInnovationService {
       if (file.buffer) {
         fs.writeFileSync(filePath, file.buffer);
       } else {
-        throw new BadRequestException(`File data not available for ${fileType}`);
+        throw new BadRequestException(
+          `File data not available for ${fileType}`,
+        );
       }
     }
 
@@ -111,7 +117,8 @@ export class ProcessInnovationService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
       // Get next process innovation ID
-      const processInnovationId = await this.sequenceHelper.getProcessInnovationId();
+      const processInnovationId =
+        await this.sequenceHelper.getProcessInnovationId();
 
       // Get current date
       const now = new Date();
@@ -126,7 +133,10 @@ export class ProcessInnovationService {
           createProcessInnovationDto.urnNo,
           'innovation_implementation',
         );
-        innovationImplementationDocumentsFullPath = path.join('uploads', innovationImplementationDocumentsFilePath);
+        innovationImplementationDocumentsFullPath = path.join(
+          'uploads',
+          innovationImplementationDocumentsFilePath,
+        );
         innovationImplementationDocuments = 1;
       }
 
@@ -135,19 +145,27 @@ export class ProcessInnovationService {
         processInnovationId,
         vendorId: vendorObjectId,
         urnNo: createProcessInnovationDto.urnNo,
-        innovationImplementationDetails: createProcessInnovationDto.innovationImplementationDetails || '',
+        innovationImplementationDetails:
+          createProcessInnovationDto.innovationImplementationDetails || '',
         innovationImplementationDocuments,
-        processInnovationStatus: createProcessInnovationDto.processInnovationStatus || 0,
+        processInnovationStatus:
+          createProcessInnovationDto.processInnovationStatus || 0,
         createdDate: now,
         updatedDate: now,
       };
 
-      const processInnovation = new this.processInnovationModel(processInnovationData);
+      const processInnovation = new this.processInnovationModel(
+        processInnovationData,
+      );
       const savedProcessInnovation = await processInnovation.save({ session });
 
       // Insert uploaded document into all_product_documents (master table)
-      if (innovationImplementationDocumentsFilePath && innovationImplementationDocumentsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+      if (
+        innovationImplementationDocumentsFilePath &&
+        innovationImplementationDocumentsFile
+      ) {
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${innovationImplementationDocumentsFilePath}`;
 
         const documentData = {
@@ -155,11 +173,14 @@ export class ProcessInnovationService {
           vendorId: vendorObjectId,
           urnNo: createProcessInnovationDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_innovation',
+          documentForm: DocumentSectionKey.PROCESS_INNOVATION,
           documentFormSubsection: 'innovation_implementation_documents',
           formPrimaryId: processInnovationId,
-          documentName: path.basename(innovationImplementationDocumentsFilePath),
-          documentOriginalName: innovationImplementationDocumentsFile.originalname,
+          documentName: path.basename(
+            innovationImplementationDocumentsFilePath,
+          ),
+          documentOriginalName:
+            innovationImplementationDocumentsFile.originalname,
           documentLink,
           createdDate: now,
           updatedDate: now,
@@ -178,7 +199,10 @@ export class ProcessInnovationService {
 
       // Clean up uploaded file if transaction fails (file was moved to URN folder)
       try {
-        if (innovationImplementationDocumentsFullPath && fs.existsSync(innovationImplementationDocumentsFullPath)) {
+        if (
+          innovationImplementationDocumentsFullPath &&
+          fs.existsSync(innovationImplementationDocumentsFullPath)
+        ) {
           fs.unlinkSync(innovationImplementationDocumentsFullPath);
         }
       } catch (cleanupError: any) {

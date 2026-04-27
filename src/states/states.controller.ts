@@ -20,7 +20,10 @@ export class StatesController {
     description: 'Filter states by country ID (MongoDB ObjectId)',
     example: '6998547b14999ba875c7d70c',
   })
-  @ApiResponse({ status: 200, description: 'List of states retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of states retrieved successfully',
+  })
   async findAll(@Query('countryId') countryId?: string) {
     const states = await this.statesService.findAll(countryId);
     return {
@@ -32,7 +35,8 @@ export class StatesController {
   @Get('search')
   @ApiOperation({
     summary: 'Search state by name',
-    description: 'Searches for states by name (case-insensitive partial match, like SQL LIKE %term%) and returns matching states with their IDs. Optionally filter by countryId.',
+    description:
+      'Searches for states by name (case-insensitive partial match, like SQL LIKE %term%) and returns matching states with their IDs. Optionally filter by countryId.',
   })
   @ApiQuery({
     name: 'name',
@@ -64,14 +68,20 @@ export class StatesController {
               _id: { type: 'string', example: '6996dcda14999ba875c7d646' },
               stateName: { type: 'string', example: 'Maharashtra' },
               stateCode: { type: 'string', example: 'MH' },
-              countryId: { type: 'string', example: '6998547b14999ba875c7d70c' },
+              countryId: {
+                type: 'string',
+                example: '6998547b14999ba875c7d70c',
+              },
             },
           },
         },
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'No states found (returns empty array)' })
+  @ApiResponse({
+    status: 200,
+    description: 'No states found (returns empty array)',
+  })
   async searchByName(
     @Query('name') name: string,
     @Query('countryId') countryId?: string,
@@ -81,7 +91,7 @@ export class StatesController {
     }
 
     const states = await this.statesService.searchByName(name, countryId);
-    
+
     if (states.length === 0) {
       const message = countryId
         ? `No states found matching "${name}" in the specified country`

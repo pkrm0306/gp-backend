@@ -1,13 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  IsString,
-  IsOptional,
-  IsNumber,
-  IsDateString,
-} from 'class-validator';
+import { IsString, IsOptional, IsNumber, IsDateString } from 'class-validator';
 
 export class UpdateProductDto {
-  @ApiProperty({ description: 'Product name', example: 'Solar Panel 100W Updated', required: false })
+  @ApiProperty({
+    description: 'Product name',
+    example: 'Solar Panel 100W Updated',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   productName?: string;
@@ -32,7 +31,11 @@ export class UpdateProductDto {
   @IsOptional()
   productStatus?: number;
 
-  @ApiProperty({ description: 'Product renew status', example: 0, required: false })
+  @ApiProperty({
+    description: 'Product renew status',
+    example: 0,
+    required: false,
+  })
   @IsNumber()
   @IsOptional()
   productRenewStatus?: number;
@@ -52,32 +55,62 @@ export class UpdateProductDto {
   @IsOptional()
   rejectedDetails?: string;
 
-  @ApiProperty({ description: 'Certified date', required: false, type: String, format: 'date-time' })
+  @ApiProperty({
+    description: 'Certified date',
+    required: false,
+    type: String,
+    format: 'date-time',
+  })
   @IsOptional()
   @IsDateString()
   certifiedDate?: string;
 
-  @ApiProperty({ description: 'Valid till date', required: false, type: String, format: 'date-time' })
+  @ApiProperty({
+    description: 'Valid till date',
+    required: false,
+    type: String,
+    format: 'date-time',
+  })
   @IsOptional()
   @IsDateString()
   validtillDate?: string;
 
-  @ApiProperty({ description: 'First notify date', required: false, type: String, format: 'date-time' })
+  @ApiProperty({
+    description: 'First notify date',
+    required: false,
+    type: String,
+    format: 'date-time',
+  })
   @IsOptional()
   @IsDateString()
   firstNotifyDate?: string;
 
-  @ApiProperty({ description: 'Second notify date', required: false, type: String, format: 'date-time' })
+  @ApiProperty({
+    description: 'Second notify date',
+    required: false,
+    type: String,
+    format: 'date-time',
+  })
   @IsOptional()
   @IsDateString()
   secondNotifyDate?: string;
 
-  @ApiProperty({ description: 'Third notify date', required: false, type: String, format: 'date-time' })
+  @ApiProperty({
+    description: 'Third notify date',
+    required: false,
+    type: String,
+    format: 'date-time',
+  })
   @IsOptional()
   @IsDateString()
   thirdNotifyDate?: string;
 
-  @ApiProperty({ description: 'Renewed date', required: false, type: String, format: 'date-time' })
+  @ApiProperty({
+    description: 'Renewed date',
+    required: false,
+    type: String,
+    format: 'date-time',
+  })
   @IsOptional()
   @IsDateString()
   renewedDate?: string;

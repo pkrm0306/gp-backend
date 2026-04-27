@@ -9,7 +9,11 @@ export class ListNotificationsQueryDto {
     default: 'all',
   })
   @IsOptional()
-  @Transform(({ value }) => String(value ?? 'all').trim().toLowerCase())
+  @Transform(({ value }) =>
+    String(value ?? 'all')
+      .trim()
+      .toLowerCase(),
+  )
   @IsIn(['all', 'today', 'week', '30d', '90d'])
   range?: 'all' | 'today' | 'week' | '30d' | '90d' = 'all';
 
@@ -33,4 +37,3 @@ export class ListNotificationsQueryDto {
   @Min(1)
   limit?: number = 20;
 }
-

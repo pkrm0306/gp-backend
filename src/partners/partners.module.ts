@@ -2,7 +2,10 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PartnersController } from './partners.controller';
 import { PartnersService } from './partners.service';
-import { VendorUser, VendorUserSchema } from '../vendor-users/schemas/vendor-user.schema';
+import {
+  VendorUser,
+  VendorUserSchema,
+} from '../vendor-users/schemas/vendor-user.schema';
 
 @Module({
   imports: [

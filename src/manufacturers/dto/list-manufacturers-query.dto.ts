@@ -48,7 +48,8 @@ export class ListManufacturersQueryDto {
   manufacturerInitial?: string;
 
   @ApiPropertyOptional({
-    description: '0 deleted / pending, 1 active, 2 unverified (per manufacturer_status semantics)',
+    description:
+      '0 deleted / pending, 1 active, 2 unverified (per manufacturer_status semantics)',
     enum: [0, 1, 2],
   })
   @IsOptional()
@@ -67,7 +68,10 @@ export class ListManufacturersQueryDto {
   @IsEnum([0, 1, 2])
   vendor_status?: 0 | 1 | 2;
 
-  @ApiPropertyOptional({ enum: ['createdAt', 'manufacturerName'], default: 'createdAt' })
+  @ApiPropertyOptional({
+    enum: ['createdAt', 'manufacturerName'],
+    default: 'createdAt',
+  })
   @IsOptional()
   @IsEnum(['createdAt', 'manufacturerName'])
   sortBy?: 'createdAt' | 'manufacturerName' = 'createdAt';

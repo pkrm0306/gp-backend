@@ -16,8 +16,14 @@ import {
   formatCategoryDisplayName,
   normalizeCategoryNameKey,
 } from './category-name-normalize';
-import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
-import { ProductPlant, ProductPlantDocument } from '../product-registration/schemas/product-plant.schema';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
+import {
+  ProductPlant,
+  ProductPlantDocument,
+} from '../product-registration/schemas/product-plant.schema';
 import {
   CategoryIdCounter,
   CategoryIdCounterDocument,
@@ -40,7 +46,11 @@ function pad2(n: number): string {
 function numericFromMax(value: unknown): number {
   if (value == null) return NaN;
   if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
-  if (typeof value === 'object' && value !== null && typeof (value as { toNumber?: () => number }).toNumber === 'function') {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { toNumber?: () => number }).toNumber === 'function'
+  ) {
     try {
       return (value as { toNumber: () => number }).toNumber();
     } catch {
@@ -171,7 +181,9 @@ export class CategoriesService implements OnModuleInit {
     const ops: AnyBulkWriteOperation<CategoryDocument>[] = [];
 
     for await (const doc of cursor) {
-      const display = formatCategoryDisplayName(String(doc.category_name ?? ''));
+      const display = formatCategoryDisplayName(
+        String(doc.category_name ?? ''),
+      );
       const key = normalizeCategoryNameKey(display);
       if (!key) continue;
       ops.push({
@@ -188,11 +200,20 @@ export class CategoriesService implements OnModuleInit {
   }
 
   private rethrowIfDuplicateCategoryName(err: unknown): void {
-    if (err instanceof MongoServerError && (err as MongoServerError).code === 11000) {
+    if (
+      err instanceof MongoServerError &&
+      (err as MongoServerError).code === 11000
+    ) {
       const pattern = (err as MongoServerError).keyPattern as
         | Record<string, unknown>
         | undefined;
-      if (pattern && Object.prototype.hasOwnProperty.call(pattern, 'category_name_normalized')) {
+      if (
+        pattern &&
+        Object.prototype.hasOwnProperty.call(
+          pattern,
+          'category_name_normalized',
+        )
+      ) {
         throw new ConflictException('A category with this name already exists');
       }
     }
@@ -202,11 +223,17 @@ export class CategoriesService implements OnModuleInit {
     normalized: string,
     excludeId?: Types.ObjectId,
   ): Promise<void> {
-    const filter: Record<string, unknown> = { category_name_normalized: normalized };
+    const filter: Record<string, unknown> = {
+      category_name_normalized: normalized,
+    };
     if (excludeId) {
       filter._id = { $ne: excludeId };
     }
-    const existing = await this.categoryModel.findOne(filter).select('_id').lean().exec();
+    const existing = await this.categoryModel
+      .findOne(filter)
+      .select('_id')
+      .lean()
+      .exec();
     if (existing) {
       throw new ConflictException('A category with this name already exists');
     }
@@ -224,7 +251,8 @@ export class CategoriesService implements OnModuleInit {
   private getApiBaseUrl(): string {
     const fromEnv = this.configService.get<string>('API_BASE_URL')?.trim();
     if (fromEnv) return fromEnv.replace(/\/$/, '');
-    const port = this.configService.get<string>('PORT') || process.env.PORT || '3000';
+    const port =
+      this.configService.get<string>('PORT') || process.env.PORT || '3000';
     return `http://localhost:${port}`;
   }
 
@@ -233,7 +261,9 @@ export class CategoriesService implements OnModuleInit {
    * If category_image is already an http(s) URL, returns it unchanged.
    * The file must exist on disk under project/uploads/ or the browser will get 404.
    */
-  resolveCategoryImageUrl(categoryImage: string | undefined | null): string | null {
+  resolveCategoryImageUrl(
+    categoryImage: string | undefined | null,
+  ): string | null {
     if (categoryImage == null || String(categoryImage).trim() === '') {
       return null;
     }
@@ -242,7 +272,9 @@ export class CategoriesService implements OnModuleInit {
       return raw;
     }
     const pathPart = raw.replace(/^\/+/, '');
-    const underUploads = pathPart.startsWith('uploads/') ? pathPart : `uploads/${pathPart}`;
+    const underUploads = pathPart.startsWith('uploads/')
+      ? pathPart
+      : `uploads/${pathPart}`;
     const segments = underUploads.split('/').map((s) => encodeURIComponent(s));
     return `${this.getApiBaseUrl()}/${segments.join('/')}`;
   }
@@ -374,7 +406,10 @@ export class CategoriesService implements OnModuleInit {
   /** Ensure counter seq is at least max(existing category_id) so the next $inc is unique. */
   private async syncCategoryIdCounterFromCategories(): Promise<void> {
     const maxFromDocs = await this.getMaxCategoryIdFromCollection();
-    const existing = await this.counterModel.findOne({ _id: CATEGORY_ID_COUNTER_KEY }).lean().exec();
+    const existing = await this.counterModel
+      .findOne({ _id: CATEGORY_ID_COUNTER_KEY })
+      .lean()
+      .exec();
     const currentSeq = existing?.seq ?? 0;
     const seed = Math.max(currentSeq, maxFromDocs);
     await this.counterModel
@@ -459,7 +494,9 @@ export class CategoriesService implements OnModuleInit {
   private toCategoryResponse(plain: Record<string, unknown>) {
     return {
       ...plain,
-      category_image_url: this.resolveCategoryImageUrl(plain.category_image as string | undefined),
+      category_image_url: this.resolveCategoryImageUrl(
+        plain.category_image as string | undefined,
+      ),
     };
   }
 
@@ -480,10 +517,16 @@ export class CategoriesService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Category not found');
     }
-    return this.toCategoryResponse(updated.toObject() as unknown as Record<string, unknown>);
+    return this.toCategoryResponse(
+      updated.toObject() as unknown as Record<string, unknown>,
+    );
   }
 
-  async update(id: string, dto: UpdateCategoryMultipartDto, image?: { filename: string }) {
+  async update(
+    id: string,
+    dto: UpdateCategoryMultipartDto,
+    image?: { filename: string },
+  ) {
     const oid = this.parseCategoryObjectId(id);
     const existing = await this.categoryModel.findById(oid).exec();
     if (!existing) {
@@ -491,7 +534,8 @@ export class CategoriesService implements OnModuleInit {
     }
 
     const hasFieldUpdate =
-      (dto.category_name !== undefined && String(dto.category_name).trim() !== '') ||
+      (dto.category_name !== undefined &&
+        String(dto.category_name).trim() !== '') ||
       dto.category_raw_material_forms !== undefined ||
       dto.category_status !== undefined ||
       dto.sector !== undefined ||
@@ -501,9 +545,14 @@ export class CategoriesService implements OnModuleInit {
       throw new BadRequestException('No fields to update');
     }
 
-    const set: Record<string, unknown> = { updated_date: this.formatUpdatedDate() };
+    const set: Record<string, unknown> = {
+      updated_date: this.formatUpdatedDate(),
+    };
 
-    if (dto.category_name !== undefined && String(dto.category_name).trim() !== '') {
+    if (
+      dto.category_name !== undefined &&
+      String(dto.category_name).trim() !== ''
+    ) {
       const displayName = formatCategoryDisplayName(dto.category_name);
       if (!displayName) {
         throw new BadRequestException('Category name cannot be empty');
@@ -538,7 +587,9 @@ export class CategoriesService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Category not found');
     }
-    return this.toCategoryResponse(updated.toObject() as unknown as Record<string, unknown>);
+    return this.toCategoryResponse(
+      updated.toObject() as unknown as Record<string, unknown>,
+    );
   }
 
   async remove(id: string) {

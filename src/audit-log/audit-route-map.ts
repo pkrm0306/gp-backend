@@ -82,7 +82,9 @@ function isProductFamilyPath(p: string): boolean {
   );
 }
 
-function urnFromBody(body: Record<string, unknown> | undefined): string | undefined {
+function urnFromBody(
+  body: Record<string, unknown> | undefined,
+): string | undefined {
   return firstStringField(body, ['urn_no', 'urnNo', 'urn']);
 }
 
@@ -104,9 +106,7 @@ export function buildPerformedBy(
 ): { user_id?: string; name?: string; email?: string } | undefined {
   if (user && typeof user === 'object') {
     const uid =
-      user['userId'] !== undefined
-        ? String(user['userId'])
-        : actor?.user_id;
+      user['userId'] !== undefined ? String(user['userId']) : actor?.user_id;
     const name =
       user['name'] !== undefined
         ? String(user['name']).slice(0, 200)
@@ -280,10 +280,7 @@ export function mapFriendlyAudit(
     };
   }
 
-  if (
-    m === 'PATCH' &&
-    pathNorm.endsWith('/api/admin/products/urn-status')
-  ) {
+  if (m === 'PATCH' && pathNorm.endsWith('/api/admin/products/urn-status')) {
     const urn = firstStringField(body, ['urnNo']);
     const typeStr = body?.['updateStatusType'];
     const toVal = body?.['updateStatusTo'];
@@ -306,7 +303,9 @@ export function mapFriendlyAudit(
       new_values:
         typeof typeStr === 'string' || !Number.isNaN(toNum)
           ? {
-              ...(typeof typeStr === 'string' ? { updateStatusType: typeStr } : {}),
+              ...(typeof typeStr === 'string'
+                ? { updateStatusType: typeStr }
+                : {}),
               ...(!Number.isNaN(toNum) ? { updateStatusTo: toNum } : {}),
             }
           : undefined,

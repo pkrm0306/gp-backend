@@ -13,7 +13,8 @@ import { Transform, Type } from 'class-transformer';
 
 export class UpdatePaymentDto {
   @ApiProperty({
-    description: 'URN number (optional: only needed if you want to change the URN on the payment record)',
+    description:
+      'URN number (optional: only needed if you want to change the URN on the payment record)',
     example: 'URN-20260305124230',
     required: false,
   })
@@ -21,7 +22,11 @@ export class UpdatePaymentDto {
   @IsString()
   urnNo?: string;
 
-  @ApiProperty({ description: 'Quote amount', example: 10000.0, required: false })
+  @ApiProperty({
+    description: 'Quote amount',
+    example: 10000.0,
+    required: false,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -42,19 +47,31 @@ export class UpdatePaymentDto {
   @Min(0)
   quoteTdsAmount?: number;
 
-  @ApiProperty({ description: 'Total amount', example: 10800.0, required: false })
+  @ApiProperty({
+    description: 'Total amount',
+    example: 10800.0,
+    required: false,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
   quoteTotal?: number;
 
-  @ApiProperty({ description: 'Admin GST number', example: '29ABCDE1234F1Z9', required: false })
+  @ApiProperty({
+    description: 'Admin GST number',
+    example: '29ABCDE1234F1Z9',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   adminGstNo?: string;
 
-  @ApiProperty({ description: 'Vendor GST number', example: '27ABCDE1234F1Z9', required: false })
+  @ApiProperty({
+    description: 'Vendor GST number',
+    example: '27ABCDE1234F1Z9',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   vendorGstNo?: string;
@@ -79,14 +96,22 @@ export class UpdatePaymentDto {
   @IsEnum(['online', 'cheque_or_dd', 'neft_or_rtgs'])
   paymentMode?: string;
 
-  @ApiProperty({ description: 'Online payment ID', example: 0, required: false })
+  @ApiProperty({
+    description: 'Online payment ID',
+    example: 0,
+    required: false,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
   onlinePaymentId?: number;
 
-  @ApiProperty({ description: 'Payment reference number', example: 'REF123456', required: false })
+  @ApiProperty({
+    description: 'Payment reference number',
+    example: 'REF123456',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   paymentReferenceNo?: string;
@@ -111,7 +136,8 @@ export class UpdatePaymentDto {
   productsToBeCertified?: string;
 
   @ApiProperty({
-    description: 'Payment status (0=Created, 1=Pending, 2=Completed, 3=Cancelled)',
+    description:
+      'Payment status (0=Created, 1=Pending, 2=Completed, 3=Cancelled)',
     example: 0,
     required: false,
     enum: [0, 1, 2, 3],
@@ -135,4 +161,3 @@ export class UpdatePaymentDto {
   @IsIn([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
   urnStatus?: number;
 }
-

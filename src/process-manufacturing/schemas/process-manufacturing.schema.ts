@@ -42,4 +42,5 @@ export class ProcessManufacturing {
   updatedDate: Date;
 }
 
-export const ProcessManufacturingSchema = SchemaFactory.createForClass(ProcessManufacturing);
+export const ProcessManufacturingSchema =
+  SchemaFactory.createForClass(ProcessManufacturing);

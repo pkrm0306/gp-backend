@@ -15,6 +15,7 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { CreateProcessWasteManagementDto } from './dto/create-process-waste-management.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -32,7 +33,10 @@ export class ProcessWasteManagementService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -84,7 +88,9 @@ export class ProcessWasteManagementService {
       if (file.buffer) {
         fs.writeFileSync(filePath, file.buffer);
       } else {
-        throw new BadRequestException(`File data not available for ${fileType}`);
+        throw new BadRequestException(
+          `File data not available for ${fileType}`,
+        );
       }
     }
 
@@ -111,7 +117,8 @@ export class ProcessWasteManagementService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
       // Get next process waste management ID
-      const processWasteManagementId = await this.sequenceHelper.getProcessWasteManagementId();
+      const processWasteManagementId =
+        await this.sequenceHelper.getProcessWasteManagementId();
 
       // Get current date
       const now = new Date();
@@ -126,7 +133,10 @@ export class ProcessWasteManagementService {
           createProcessWasteManagementDto.urnNo,
           'waste_management_supporting',
         );
-        wmSupportingDocumentsFullPath = path.join('uploads', wmSupportingDocumentsFilePath);
+        wmSupportingDocumentsFullPath = path.join(
+          'uploads',
+          wmSupportingDocumentsFilePath,
+        );
         wmSupportingDocuments = 1;
       }
 
@@ -135,19 +145,26 @@ export class ProcessWasteManagementService {
         processWasteManagementId,
         vendorId: vendorObjectId,
         urnNo: createProcessWasteManagementDto.urnNo,
-        wmImplementationDetails: createProcessWasteManagementDto.wmImplementationDetails || '',
+        wmImplementationDetails:
+          createProcessWasteManagementDto.wmImplementationDetails || '',
         wmSupportingDocuments,
-        processWasteManagementStatus: createProcessWasteManagementDto.processWasteManagementStatus || 0,
+        processWasteManagementStatus:
+          createProcessWasteManagementDto.processWasteManagementStatus || 0,
         createdDate: now,
         updatedDate: now,
       };
 
-      const processWasteManagement = new this.processWasteManagementModel(processWasteManagementData);
-      const savedProcessWasteManagement = await processWasteManagement.save({ session });
+      const processWasteManagement = new this.processWasteManagementModel(
+        processWasteManagementData,
+      );
+      const savedProcessWasteManagement = await processWasteManagement.save({
+        session,
+      });
 
       // Insert uploaded document into all_product_documents (master table)
       if (wmSupportingDocumentsFilePath && wmSupportingDocumentsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${wmSupportingDocumentsFilePath}`;
 
         const documentData = {
@@ -155,7 +172,7 @@ export class ProcessWasteManagementService {
           vendorId: vendorObjectId,
           urnNo: createProcessWasteManagementDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_waste_management',
+          documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
           documentFormSubsection: 'wm_supporting_documents',
           formPrimaryId: processWasteManagementId,
           documentName: path.basename(wmSupportingDocumentsFilePath),
@@ -178,11 +195,17 @@ export class ProcessWasteManagementService {
 
       // Clean up uploaded file if transaction fails (file was moved to URN folder)
       try {
-        if (wmSupportingDocumentsFullPath && fs.existsSync(wmSupportingDocumentsFullPath)) {
+        if (
+          wmSupportingDocumentsFullPath &&
+          fs.existsSync(wmSupportingDocumentsFullPath)
+        ) {
           fs.unlinkSync(wmSupportingDocumentsFullPath);
         }
       } catch (cleanupError: any) {
-        console.error('[Process Waste Management] File cleanup error:', cleanupError);
+        console.error(
+          '[Process Waste Management] File cleanup error:',
+          cleanupError,
+        );
       }
 
       console.error('[Process Waste Management] Create error:', error);

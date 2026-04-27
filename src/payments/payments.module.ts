@@ -2,12 +2,18 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
-import { PaymentDetails, PaymentDetailsSchema } from './schemas/payment-details.schema';
+import {
+  PaymentDetails,
+  PaymentDetailsSchema,
+} from './schemas/payment-details.schema';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
-import { Product, ProductSchema } from '../product-registration/schemas/product.schema';
+import {
+  Product,
+  ProductSchema,
+} from '../product-registration/schemas/product.schema';
 
 @Module({
   imports: [

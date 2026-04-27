@@ -43,5 +43,6 @@ export class RawMaterialsRegionalMaterials {
   updatedDate: Date;
 }
 
-export const RawMaterialsRegionalMaterialsSchema =
-  SchemaFactory.createForClass(RawMaterialsRegionalMaterials);
+export const RawMaterialsRegionalMaterialsSchema = SchemaFactory.createForClass(
+  RawMaterialsRegionalMaterials,
+);

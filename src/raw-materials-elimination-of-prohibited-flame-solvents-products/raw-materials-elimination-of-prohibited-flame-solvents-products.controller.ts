@@ -40,7 +40,8 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
   @ApiResponse({ status: 201, description: 'Created successfully' })
   async create(
     @CurrentUser() user: any,
-    @Body() dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto,
+    @Body()
+    dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');

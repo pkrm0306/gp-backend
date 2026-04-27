@@ -10,9 +10,13 @@ export class CountriesController {
   @Get()
   @ApiOperation({
     summary: 'Get all countries',
-    description: 'Returns all countries from the countries collection, sorted by country name ascending',
+    description:
+      'Returns all countries from the countries collection, sorted by country name ascending',
   })
-  @ApiResponse({ status: 200, description: 'List of countries retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of countries retrieved successfully',
+  })
   async findAll() {
     const countries = await this.countriesService.findAll();
     return {
@@ -24,7 +28,8 @@ export class CountriesController {
   @Get('search')
   @ApiOperation({
     summary: 'Search country by name',
-    description: 'Searches for countries by name (case-insensitive partial match, like SQL LIKE %term%) and returns matching countries with their IDs',
+    description:
+      'Searches for countries by name (case-insensitive partial match, like SQL LIKE %term%) and returns matching countries with their IDs',
   })
   @ApiQuery({
     name: 'name',
@@ -56,14 +61,17 @@ export class CountriesController {
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'No countries found (returns empty array)' })
+  @ApiResponse({
+    status: 200,
+    description: 'No countries found (returns empty array)',
+  })
   async searchByName(@Query('name') name: string) {
     if (!name || name.trim() === '') {
       throw new NotFoundException('Country name is required');
     }
 
     const countries = await this.countriesService.searchByName(name);
-    
+
     if (countries.length === 0) {
       return {
         message: `No countries found matching "${name}"`,

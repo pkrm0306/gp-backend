@@ -6,12 +6,18 @@ import {
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types, ClientSession } from 'mongoose';
-import { PaymentDetails, PaymentDetailsDocument } from './schemas/payment-details.schema';
+import {
+  PaymentDetails,
+  PaymentDetailsDocument,
+} from './schemas/payment-details.schema';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ListPaymentsDto } from './dto/list-payments.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
-import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 
 @Injectable()
@@ -72,10 +78,15 @@ export class PaymentsService {
   }
 
   /** Accepts case-insensitive textual payment types and normalizes for DB enum. */
-  private normalizePaymentType(value?: string): 'registration' | 'certification' | 'renew' {
-    const raw = String(value ?? 'registration').trim().toLowerCase();
+  private normalizePaymentType(
+    value?: string,
+  ): 'registration' | 'certification' | 'renew' {
+    const raw = String(value ?? 'registration')
+      .trim()
+      .toLowerCase();
     if (raw === 'registration' || raw === 'register') return 'registration';
-    if (raw === 'certification' || raw === 'certificate') return 'certification';
+    if (raw === 'certification' || raw === 'certificate')
+      return 'certification';
     if (raw === 'renew' || raw === 'renewal') return 'renew';
     throw new BadRequestException(
       'Invalid paymentType. Allowed values: registration, certification, renew',
@@ -84,7 +95,9 @@ export class PaymentsService {
 
   /** Canonical URN form used by this service (trim + remove trailing slashes). */
   private normalizeUrnNo(value?: string): string {
-    return String(value ?? '').trim().replace(/\/+$/g, '');
+    return String(value ?? '')
+      .trim()
+      .replace(/\/+$/g, '');
   }
 
   /** Query both canonical and legacy trailing-slash URN formats. */
@@ -107,7 +120,8 @@ export class PaymentsService {
     try {
       const responsibility = this.getResponsibilityForStatus(newUrnStatus);
       const nextActivityId = this.getNextActivityIdForLog(newUrnStatus);
-      const nextResponsibility = this.getResponsibilityForStatus(nextActivityId);
+      const nextResponsibility =
+        this.getResponsibilityForStatus(nextActivityId);
       await this.activityLogService.logActivity({
         vendor_id: vendorId,
         manufacturer_id: manufacturerIdStr,
@@ -125,7 +139,10 @@ export class PaymentsService {
         status: 1,
       });
     } catch (err) {
-      console.error('[Payment] Activity log (URN status via payment) failed:', err);
+      console.error(
+        '[Payment] Activity log (URN status via payment) failed:',
+        err,
+      );
     }
   }
 
@@ -144,9 +161,12 @@ export class PaymentsService {
         .exec();
       if (!product) return;
 
-      const currentStatus = typeof product.urnStatus === 'number' ? product.urnStatus : 0;
+      const currentStatus =
+        typeof product.urnStatus === 'number' ? product.urnStatus : 0;
       const label =
-        paymentType === 'certification' ? 'Certificate fee payment' : 'Registration fee payment';
+        paymentType === 'certification'
+          ? 'Certificate fee payment'
+          : 'Registration fee payment';
       const nextId = this.getNextActivityIdForLog(currentStatus);
       const nextResp = this.getResponsibilityForStatus(nextId);
 
@@ -171,7 +191,10 @@ export class PaymentsService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -202,47 +225,51 @@ export class PaymentsService {
 
         // Get next payment ID
         const paymentId = await this.sequenceHelper.getPaymentId();
-        console.log(`[Payment Creation] Generated paymentId: ${paymentId} (attempt ${retryCount + 1})`);
+        console.log(
+          `[Payment Creation] Generated paymentId: ${paymentId} (attempt ${retryCount + 1})`,
+        );
 
-      // Get current date
-      const now = new Date();
+        // Get current date
+        const now = new Date();
 
-      // Prepare proposal file path
-      let proposalFilePath: string | undefined;
-      if (proposalFile) {
-        proposalFilePath = `/uploads/payments/${proposalFile.filename}`;
-      }
+        // Prepare proposal file path
+        let proposalFilePath: string | undefined;
+        if (proposalFile) {
+          proposalFilePath = `/uploads/payments/${proposalFile.filename}`;
+        }
 
-      const normalizedPaymentType = this.normalizePaymentType(createPaymentDto.paymentType);
-      const normalizedUrnNo = this.normalizeUrnNo(createPaymentDto.urnNo);
-      if (!normalizedUrnNo) {
-        throw new BadRequestException('URN number is required');
-      }
+        const normalizedPaymentType = this.normalizePaymentType(
+          createPaymentDto.paymentType,
+        );
+        const normalizedUrnNo = this.normalizeUrnNo(createPaymentDto.urnNo);
+        if (!normalizedUrnNo) {
+          throw new BadRequestException('URN number is required');
+        }
 
-      // Create payment data
-      const paymentData = {
-        paymentId,
-        urnNo: normalizedUrnNo,
-        vendorId: vendorObjectId,
-        quoteAmount: createPaymentDto.quoteAmount,
-        quoteGstAmount: createPaymentDto.quoteGstAmount,
-        quoteTdsAmount: createPaymentDto.quoteTdsAmount,
-        quoteTotal: createPaymentDto.quoteTotal,
-        proposalFile: proposalFilePath,
-        adminGstNo: createPaymentDto.adminGstNo,
-        vendorGstNo: createPaymentDto.vendorGstNo,
-        paymentType: normalizedPaymentType,
-        paymentMode: createPaymentDto.paymentMode,
-        onlinePaymentId: createPaymentDto.onlinePaymentId || 0,
-        paymentReferenceNo: createPaymentDto.paymentReferenceNo,
-        paymentChequeDate: createPaymentDto.paymentChequeDate
-          ? new Date(createPaymentDto.paymentChequeDate)
-          : undefined,
-        productsToBeCertified: createPaymentDto.productsToBeCertified,
-        paymentStatus: 0, // Default: 0=Created
-        createdDate: now,
-        updatedDate: now,
-      };
+        // Create payment data
+        const paymentData = {
+          paymentId,
+          urnNo: normalizedUrnNo,
+          vendorId: vendorObjectId,
+          quoteAmount: createPaymentDto.quoteAmount,
+          quoteGstAmount: createPaymentDto.quoteGstAmount,
+          quoteTdsAmount: createPaymentDto.quoteTdsAmount,
+          quoteTotal: createPaymentDto.quoteTotal,
+          proposalFile: proposalFilePath,
+          adminGstNo: createPaymentDto.adminGstNo,
+          vendorGstNo: createPaymentDto.vendorGstNo,
+          paymentType: normalizedPaymentType,
+          paymentMode: createPaymentDto.paymentMode,
+          onlinePaymentId: createPaymentDto.onlinePaymentId || 0,
+          paymentReferenceNo: createPaymentDto.paymentReferenceNo,
+          paymentChequeDate: createPaymentDto.paymentChequeDate
+            ? new Date(createPaymentDto.paymentChequeDate)
+            : undefined,
+          productsToBeCertified: createPaymentDto.productsToBeCertified,
+          paymentStatus: 0, // Default: 0=Created
+          createdDate: now,
+          updatedDate: now,
+        };
 
         const payment = new this.paymentDetailsModel(paymentData);
         const savedPayment = await payment.save({ session });
@@ -263,22 +290,37 @@ export class PaymentsService {
         session.endSession();
 
         // For validation errors, throw immediately
-        if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        if (
+          error instanceof NotFoundException ||
+          error instanceof BadRequestException
+        ) {
           console.error('Validation error:', error.message);
           throw error;
         }
 
         // Check for duplicate key error (11000) - retry with new paymentId
-        if (error.code === 11000 || (error.name === 'MongoServerError' && error.message?.includes('duplicate'))) {
+        if (
+          error.code === 11000 ||
+          (error.name === 'MongoServerError' &&
+            error.message?.includes('duplicate'))
+        ) {
           retryCount++;
-          console.error(`[Payment Creation] Duplicate paymentId error detected. Error code: ${error.code}, Message: ${error.message}`);
+          console.error(
+            `[Payment Creation] Duplicate paymentId error detected. Error code: ${error.code}, Message: ${error.message}`,
+          );
           if (retryCount < maxRetries) {
-            console.warn(`[Payment Creation] Retrying payment creation. Attempt ${retryCount + 1}/${maxRetries}...`);
+            console.warn(
+              `[Payment Creation] Retrying payment creation. Attempt ${retryCount + 1}/${maxRetries}...`,
+            );
             // Wait a bit before retry (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 200 * retryCount));
+            await new Promise((resolve) =>
+              setTimeout(resolve, 200 * retryCount),
+            );
             continue; // Retry the while loop
           } else {
-            console.error(`[Payment Creation] Failed after ${maxRetries} attempts due to duplicate paymentId`);
+            console.error(
+              `[Payment Creation] Failed after ${maxRetries} attempts due to duplicate paymentId`,
+            );
             throw new InternalServerErrorException(
               'Failed to create payment after multiple attempts due to duplicate paymentId. Please try again.',
             );
@@ -293,8 +335,13 @@ export class PaymentsService {
         console.error('Error stack:', error.stack);
 
         // Check for specific error types
-        if (error.name === 'CastError' || error.message?.includes('Cast to ObjectId')) {
-          throw new BadRequestException(`Invalid ID format provided: ${error.message}`);
+        if (
+          error.name === 'CastError' ||
+          error.message?.includes('Cast to ObjectId')
+        ) {
+          throw new BadRequestException(
+            `Invalid ID format provided: ${error.message}`,
+          );
         }
 
         // Return more detailed error message
@@ -306,7 +353,9 @@ export class PaymentsService {
     }
 
     // Should never reach here, but just in case
-    throw new InternalServerErrorException('Failed to create payment after all retry attempts.');
+    throw new InternalServerErrorException(
+      'Failed to create payment after all retry attempts.',
+    );
   }
 
   /**
@@ -317,6 +366,8 @@ export class PaymentsService {
     urnNo: string,
     updatePaymentDto: UpdatePaymentDto,
     vendorId?: string,
+    chequeOrDdFile?: Express.Multer.File,
+    tdsFile?: Express.Multer.File,
   ): Promise<PaymentDetailsDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -356,11 +407,18 @@ export class PaymentsService {
       if (!existingPayment) {
         throw new NotFoundException('Payment not found');
       }
-      const effectiveVendorObjectId = existingPayment.vendorId as Types.ObjectId;
+      const effectiveVendorObjectId =
+        existingPayment.vendorId as Types.ObjectId;
       const effectiveVendorId = effectiveVendorObjectId.toString();
 
       const now = new Date();
       const updateData: any = { updatedDate: now };
+
+      if (updatePaymentDto.paymentMode === 'cheque_or_dd' && (!chequeOrDdFile || !tdsFile)) {
+        throw new BadRequestException(
+          'For paymentMode=cheque_or_dd, both cheque_or_dd_file and tds_file are required',
+        );
+      }
 
       if (updatePaymentDto.quoteAmount !== undefined) updateData.quoteAmount = updatePaymentDto.quoteAmount;
       if (updatePaymentDto.quoteGstAmount !== undefined) updateData.quoteGstAmount = updatePaymentDto.quoteGstAmount;
@@ -369,20 +427,33 @@ export class PaymentsService {
       if (updatePaymentDto.adminGstNo !== undefined) updateData.adminGstNo = updatePaymentDto.adminGstNo;
       if (updatePaymentDto.vendorGstNo !== undefined) updateData.vendorGstNo = updatePaymentDto.vendorGstNo;
       if (updatePaymentDto.paymentType !== undefined) {
-        updateData.paymentType = this.normalizePaymentType(updatePaymentDto.paymentType);
+        updateData.paymentType = this.normalizePaymentType(
+          updatePaymentDto.paymentType,
+        );
       }
-      if (updatePaymentDto.paymentMode !== undefined) updateData.paymentMode = updatePaymentDto.paymentMode;
-      if (updatePaymentDto.onlinePaymentId !== undefined) updateData.onlinePaymentId = updatePaymentDto.onlinePaymentId;
-      if (updatePaymentDto.paymentReferenceNo !== undefined) updateData.paymentReferenceNo = updatePaymentDto.paymentReferenceNo;
+      if (updatePaymentDto.paymentMode !== undefined)
+        updateData.paymentMode = updatePaymentDto.paymentMode;
+      if (updatePaymentDto.onlinePaymentId !== undefined)
+        updateData.onlinePaymentId = updatePaymentDto.onlinePaymentId;
+      if (updatePaymentDto.paymentReferenceNo !== undefined)
+        updateData.paymentReferenceNo = updatePaymentDto.paymentReferenceNo;
       if (updatePaymentDto.paymentChequeDate !== undefined) {
         updateData.paymentChequeDate = updatePaymentDto.paymentChequeDate
           ? new Date(updatePaymentDto.paymentChequeDate)
           : undefined;
       }
-      if (updatePaymentDto.productsToBeCertified !== undefined) {
-        updateData.productsToBeCertified = updatePaymentDto.productsToBeCertified;
+      if (chequeOrDdFile) {
+        updateData.chequeOrDdFile = `/uploads/payments/${chequeOrDdFile.filename}`;
       }
-      if (updatePaymentDto.paymentStatus !== undefined) updateData.paymentStatus = updatePaymentDto.paymentStatus;
+      if (tdsFile) {
+        updateData.tdsFile = `/uploads/payments/${tdsFile.filename}`;
+      }
+      if (updatePaymentDto.productsToBeCertified !== undefined) {
+        updateData.productsToBeCertified =
+          updatePaymentDto.productsToBeCertified;
+      }
+      if (updatePaymentDto.paymentStatus !== undefined)
+        updateData.paymentStatus = updatePaymentDto.paymentStatus;
 
       const updatedPayment = await this.paymentDetailsModel
         .findOneAndUpdate({ _id: existingPayment._id }, updateData, {
@@ -405,12 +476,17 @@ export class PaymentsService {
       if (updatePaymentDto.urnStatus !== undefined) {
         const urnNoToUse = normalizedUrn;
         if (!urnNoToUse) {
-          throw new BadRequestException('URN number is required to update urnStatus');
+          throw new BadRequestException(
+            'URN number is required to update urnStatus',
+          );
         }
 
         // Find any one product to get manufacturerId for activity log
         const anyProduct = await this.productModel
-          .findOne({ urnNo: { $in: urnOptions }, vendorId: effectiveVendorObjectId })
+          .findOne({
+            urnNo: { $in: urnOptions },
+            vendorId: effectiveVendorObjectId,
+          })
           .session(session)
           .exec();
 
@@ -422,7 +498,9 @@ export class PaymentsService {
         } else {
           await this.productModel.updateMany(
             { urnNo: { $in: urnOptions }, vendorId: effectiveVendorObjectId },
-            { $set: { urnStatus: updatePaymentDto.urnStatus, updatedDate: now } },
+            {
+              $set: { urnStatus: updatePaymentDto.urnStatus, updatedDate: now },
+            },
             { session },
           );
 
@@ -451,7 +529,10 @@ export class PaymentsService {
       await session.abortTransaction();
       session.endSession();
 
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
 
@@ -459,7 +540,8 @@ export class PaymentsService {
       console.error('[Update Payment] Error stack:', error.stack);
 
       throw new InternalServerErrorException(
-        error.message || 'Failed to update payment. Please check the logs for details.',
+        error.message ||
+          'Failed to update payment. Please check the logs for details.',
       );
     }
   }
@@ -510,13 +592,13 @@ export class PaymentsService {
 
       // Stage 2: $match for global search (searches in urnNo and paymentReferenceNo)
       if (search && search.trim() !== '') {
-        const searchRegex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        const searchRegex = new RegExp(
+          search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i',
+        );
         pipeline.push({
           $match: {
-            $or: [
-              { urnNo: searchRegex },
-              { paymentReferenceNo: searchRegex },
-            ],
+            $or: [{ urnNo: searchRegex }, { paymentReferenceNo: searchRegex }],
           },
         });
       }
@@ -556,13 +638,8 @@ export class PaymentsService {
       // Stage 5: Use $facet for pagination and total count
       pipeline.push({
         $facet: {
-          data: [
-            { $skip: skip },
-            { $limit: limit },
-          ],
-          totalCount: [
-            { $count: 'count' },
-          ],
+          data: [{ $skip: skip }, { $limit: limit }],
+          totalCount: [{ $count: 'count' }],
         },
       });
 
@@ -587,7 +664,8 @@ export class PaymentsService {
       console.error('[Get Payments] Error:', error);
       console.error('[Get Payments] Error stack:', error.stack);
       throw new InternalServerErrorException(
-        error.message || 'Failed to get payments. Please check the logs for details.',
+        error.message ||
+          'Failed to get payments. Please check the logs for details.',
       );
     }
   }

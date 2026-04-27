@@ -47,7 +47,8 @@ export class CreateProductDesignDto {
     example: [
       {
         measuresImplemented: 'Use of renewable energy sources in manufacturing',
-        benefitsAchieved: 'Reduced carbon footprint by 30% and lower operational costs',
+        benefitsAchieved:
+          'Reduced carbon footprint by 30% and lower operational costs',
       },
       {
         measuresImplemented: 'Implementation of waste reduction programs',

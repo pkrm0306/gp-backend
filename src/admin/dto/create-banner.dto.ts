@@ -36,7 +36,10 @@ export class CreateBannerDto {
   @IsNotEmpty()
   heading: string;
 
-  @ApiProperty({ example: 'Up to 50% off selected items.', description: 'Banner description' })
+  @ApiProperty({
+    example: 'Up to 50% off selected items.',
+    description: 'Banner description',
+  })
   @IsString()
   @IsNotEmpty()
   description: string;

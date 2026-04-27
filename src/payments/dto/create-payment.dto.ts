@@ -22,7 +22,7 @@ export class CreatePaymentDto {
 
   @ApiProperty({
     description: 'Quote amount (mandatory)',
-    example: 10000.00,
+    example: 10000.0,
     required: true,
   })
   @IsNumber()
@@ -32,7 +32,7 @@ export class CreatePaymentDto {
 
   @ApiProperty({
     description: 'GST amount (mandatory)',
-    example: 1800.00,
+    example: 1800.0,
     required: true,
   })
   @IsNumber()
@@ -52,7 +52,7 @@ export class CreatePaymentDto {
 
   @ApiProperty({
     description: 'Total amount (mandatory)',
-    example: 10800.00,
+    example: 10800.0,
     required: true,
   })
   @IsNumber()

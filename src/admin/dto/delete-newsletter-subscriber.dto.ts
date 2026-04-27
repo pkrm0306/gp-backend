@@ -11,4 +11,3 @@ export class DeleteNewsletterSubscriberDto {
   @IsString()
   id: string;
 }
-

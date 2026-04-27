@@ -11,4 +11,3 @@ export class PublicCategoryManufacturersDto {
   @IsMongoId()
   categoryId: string;
 }
-

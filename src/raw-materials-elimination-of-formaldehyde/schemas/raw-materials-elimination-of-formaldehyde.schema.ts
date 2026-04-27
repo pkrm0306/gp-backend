@@ -31,6 +31,5 @@ export class RawMaterialsEliminationOfFormaldehyde {
   updatedDate: Date;
 }
 
-export const RawMaterialsEliminationOfFormaldehydeSchema = SchemaFactory.createForClass(
-  RawMaterialsEliminationOfFormaldehyde,
-);
+export const RawMaterialsEliminationOfFormaldehydeSchema =
+  SchemaFactory.createForClass(RawMaterialsEliminationOfFormaldehyde);

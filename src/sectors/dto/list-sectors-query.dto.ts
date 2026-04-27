@@ -18,7 +18,9 @@ export class ListSectorsQueryDto {
   @Max(100)
   limit?: number = 10;
 
-  @ApiPropertyOptional({ description: 'Case-insensitive partial match on name' })
+  @ApiPropertyOptional({
+    description: 'Case-insensitive partial match on name',
+  })
   @IsOptional()
   @IsString()
   search?: string;

@@ -65,9 +65,18 @@ export class RawMaterialsHazardousProductsController {
       required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
-        productsName: { type: 'string', example: 'Hazardous chemical / raw material name' },
-        productsTestReport: { type: 'string', example: 'Test report reference or summary' },
-        productsTestReportFileName: { type: 'string', example: 'Hazardous Test Report - March 2026' },
+        productsName: {
+          type: 'string',
+          example: 'Hazardous chemical / raw material name',
+        },
+        productsTestReport: {
+          type: 'string',
+          example: 'Test report reference or summary',
+        },
+        productsTestReportFileName: {
+          type: 'string',
+          example: 'Hazardous Test Report - March 2026',
+        },
         productsTestReportFile: { type: 'string', format: 'binary' },
       },
     },
@@ -78,7 +87,8 @@ export class RawMaterialsHazardousProductsController {
     @Body() body: any,
     @UploadedFile() productsTestReportFile?: Express.Multer.File,
   ) {
-    if (!user?.vendorId) throw new BadRequestException('Vendor ID not found in token');
+    if (!user?.vendorId)
+      throw new BadRequestException('Vendor ID not found in token');
 
     const dto: CreateRawMaterialsHazardousProductsDto = {
       urnNo: body.urnNo,
@@ -87,11 +97,21 @@ export class RawMaterialsHazardousProductsController {
       productsTestReportFileName: body.productsTestReportFileName,
     };
 
-    if (productsTestReportFile && (!dto.productsTestReportFileName || dto.productsTestReportFileName.trim() === '')) {
-      throw new BadRequestException('productsTestReportFileName is required when uploading productsTestReportFile');
+    if (
+      productsTestReportFile &&
+      (!dto.productsTestReportFileName ||
+        dto.productsTestReportFileName.trim() === '')
+    ) {
+      throw new BadRequestException(
+        'productsTestReportFileName is required when uploading productsTestReportFile',
+      );
     }
 
-    const data = await this.service.create(dto, user.vendorId, productsTestReportFile);
+    const data = await this.service.create(
+      dto,
+      user.vendorId,
+      productsTestReportFile,
+    );
     return { success: true, data };
   }
 
@@ -100,10 +120,11 @@ export class RawMaterialsHazardousProductsController {
   @ApiParam({ name: 'urn_no', example: 'URN-20260305124230' })
   @ApiResponse({ status: 200, description: 'Retrieved successfully' })
   async listByUrn(@CurrentUser() user: any, @Param('urn_no') urnNo: string) {
-    if (!user?.vendorId) throw new BadRequestException('Vendor ID not found in token');
-    if (!urnNo || urnNo.trim() === '') throw new BadRequestException('URN number is required');
+    if (!user?.vendorId)
+      throw new BadRequestException('Vendor ID not found in token');
+    if (!urnNo || urnNo.trim() === '')
+      throw new BadRequestException('URN number is required');
     const data = await this.service.listByUrn(urnNo.trim(), user.vendorId);
     return { success: true, data };
   }
 }
-

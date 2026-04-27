@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsString, MaxLength, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class CreateRawMaterialsUtilizationRmcDto {
   @ApiProperty({ example: 'URN-20260305124230' })
@@ -8,6 +8,15 @@ export class CreateRawMaterialsUtilizationRmcDto {
   @IsNotEmpty()
   @MaxLength(20)
   urnNo: string;
+
+  @ApiProperty({
+    description: 'Display name for uploaded supporting file',
+    example: 'RMC Utilization Supporting Document - 2026',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  utilizationRmcFileName?: string;
 
   @ApiProperty({ example: 1000 })
   @Type(() => Number)

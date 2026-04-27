@@ -15,6 +15,7 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { CreateProcessLifeCycleApproachDto } from './dto/create-process-life-cycle-approach.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -32,7 +33,10 @@ export class ProcessLifeCycleApproachService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -84,7 +88,9 @@ export class ProcessLifeCycleApproachService {
       if (file.buffer) {
         fs.writeFileSync(filePath, file.buffer);
       } else {
-        throw new BadRequestException(`File data not available for ${fileType}`);
+        throw new BadRequestException(
+          `File data not available for ${fileType}`,
+        );
       }
     }
 
@@ -113,7 +119,8 @@ export class ProcessLifeCycleApproachService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
       // Get next process life cycle approach ID
-      const processLifeCycleApproachId = await this.sequenceHelper.getProcessLifeCycleApproachId();
+      const processLifeCycleApproachId =
+        await this.sequenceHelper.getProcessLifeCycleApproachId();
 
       // Get current date
       const now = new Date();
@@ -141,7 +148,10 @@ export class ProcessLifeCycleApproachService {
           createProcessLifeCycleApproachDto.urnNo,
           'lca_implementation',
         );
-        lcaImplementationFullPath = path.join('uploads', lcaImplementationFilePath);
+        lcaImplementationFullPath = path.join(
+          'uploads',
+          lcaImplementationFilePath,
+        );
         lifeCycleImplementationDocuments = 1;
       }
 
@@ -151,19 +161,27 @@ export class ProcessLifeCycleApproachService {
         vendorId: vendorObjectId,
         urnNo: createProcessLifeCycleApproachDto.urnNo,
         lifeCycleAssesmentReports,
-        lifeCycleImplementationDetails: createProcessLifeCycleApproachDto.lifeCycleImplementationDetails || '',
+        lifeCycleImplementationDetails:
+          createProcessLifeCycleApproachDto.lifeCycleImplementationDetails ||
+          '',
         lifeCycleImplementationDocuments,
-        processLifeCycleApproachStatus: createProcessLifeCycleApproachDto.processLifeCycleApproachStatus || 0,
+        processLifeCycleApproachStatus:
+          createProcessLifeCycleApproachDto.processLifeCycleApproachStatus || 0,
         createdDate: now,
         updatedDate: now,
       };
 
-      const processLifeCycleApproach = new this.processLifeCycleApproachModel(processLifeCycleApproachData);
-      const savedProcessLifeCycleApproach = await processLifeCycleApproach.save({ session });
+      const processLifeCycleApproach = new this.processLifeCycleApproachModel(
+        processLifeCycleApproachData,
+      );
+      const savedProcessLifeCycleApproach = await processLifeCycleApproach.save(
+        { session },
+      );
 
       // Insert uploaded documents into all_product_documents (master table)
       if (lcaReportsFilePath && lifeCycleAssesmentReportsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${lcaReportsFilePath}`;
 
         const documentData = {
@@ -171,7 +189,7 @@ export class ProcessLifeCycleApproachService {
           vendorId: vendorObjectId,
           urnNo: createProcessLifeCycleApproachDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_life_cycle_approach',
+          documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
           documentFormSubsection: 'life_cycle_assesment_reports',
           formPrimaryId: processLifeCycleApproachId,
           documentName: path.basename(lcaReportsFilePath),
@@ -185,7 +203,8 @@ export class ProcessLifeCycleApproachService {
       }
 
       if (lcaImplementationFilePath && lifeCycleImplementationDocumentsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${lcaImplementationFilePath}`;
 
         const documentData = {
@@ -193,11 +212,12 @@ export class ProcessLifeCycleApproachService {
           vendorId: vendorObjectId,
           urnNo: createProcessLifeCycleApproachDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_life_cycle_approach',
+          documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
           documentFormSubsection: 'life_cycle_implementation_documents',
           formPrimaryId: processLifeCycleApproachId,
           documentName: path.basename(lcaImplementationFilePath),
-          documentOriginalName: lifeCycleImplementationDocumentsFile.originalname,
+          documentOriginalName:
+            lifeCycleImplementationDocumentsFile.originalname,
           documentLink,
           createdDate: now,
           updatedDate: now,
@@ -219,11 +239,17 @@ export class ProcessLifeCycleApproachService {
         if (lcaReportsFullPath && fs.existsSync(lcaReportsFullPath)) {
           fs.unlinkSync(lcaReportsFullPath);
         }
-        if (lcaImplementationFullPath && fs.existsSync(lcaImplementationFullPath)) {
+        if (
+          lcaImplementationFullPath &&
+          fs.existsSync(lcaImplementationFullPath)
+        ) {
           fs.unlinkSync(lcaImplementationFullPath);
         }
       } catch (cleanupError: any) {
-        console.error('[Process Life Cycle Approach] File cleanup error:', cleanupError);
+        console.error(
+          '[Process Life Cycle Approach] File cleanup error:',
+          cleanupError,
+        );
       }
 
       console.error('[Process Life Cycle Approach] Create error:', error);

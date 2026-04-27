@@ -15,6 +15,7 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { CreateProcessProductStewardshipDto } from './dto/create-process-product-stewardship.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -32,7 +33,10 @@ export class ProcessProductStewardshipService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -84,7 +88,9 @@ export class ProcessProductStewardshipService {
       if (file.buffer) {
         fs.writeFileSync(filePath, file.buffer);
       } else {
-        throw new BadRequestException(`File data not available for ${fileType}`);
+        throw new BadRequestException(
+          `File data not available for ${fileType}`,
+        );
       }
     }
 
@@ -115,7 +121,8 @@ export class ProcessProductStewardshipService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
       // Get next process product stewardship ID
-      const processProductStewardshipId = await this.sequenceHelper.getProcessProductStewardshipId();
+      const processProductStewardshipId =
+        await this.sequenceHelper.getProcessProductStewardshipId();
 
       // Get current date
       const now = new Date();
@@ -166,22 +173,30 @@ export class ProcessProductStewardshipService {
         vendorId: vendorObjectId,
         urnNo: createProcessProductStewardshipDto.urnNo,
         seaSupportingDocuments,
-        qualityManagementDetails: createProcessProductStewardshipDto.qualityManagementDetails || '',
+        qualityManagementDetails:
+          createProcessProductStewardshipDto.qualityManagementDetails || '',
         qmSupportingDocuments,
-        eprImplementedDetails: createProcessProductStewardshipDto.eprImplementedDetails || '',
-        eprGreenPackagingDetails: createProcessProductStewardshipDto.eprGreenPackagingDetails || '',
+        eprImplementedDetails:
+          createProcessProductStewardshipDto.eprImplementedDetails || '',
+        eprGreenPackagingDetails:
+          createProcessProductStewardshipDto.eprGreenPackagingDetails || '',
         eprSupportingDocuments,
-        productStewardshipStatus: createProcessProductStewardshipDto.productStewardshipStatus || 0,
+        productStewardshipStatus:
+          createProcessProductStewardshipDto.productStewardshipStatus || 0,
         createdDate: now,
         updatedDate: now,
       };
 
-      const processProductStewardship = new this.processProductStewardshipModel(processProductStewardshipData);
-      const savedProcessProductStewardship = await processProductStewardship.save({ session });
+      const processProductStewardship = new this.processProductStewardshipModel(
+        processProductStewardshipData,
+      );
+      const savedProcessProductStewardship =
+        await processProductStewardship.save({ session });
 
       // Insert uploaded documents into all_product_documents (master table)
       if (seaFilePath && seaSupportingDocumentsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${seaFilePath}`;
 
         const documentData = {
@@ -189,7 +204,7 @@ export class ProcessProductStewardshipService {
           vendorId: vendorObjectId,
           urnNo: createProcessProductStewardshipDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_product_stewardship',
+          documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
           documentFormSubsection: 'sea_supporting_documents',
           formPrimaryId: processProductStewardshipId,
           documentName: path.basename(seaFilePath),
@@ -203,7 +218,8 @@ export class ProcessProductStewardshipService {
       }
 
       if (qmFilePath && qmSupportingDocumentsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${qmFilePath}`;
 
         const documentData = {
@@ -211,7 +227,7 @@ export class ProcessProductStewardshipService {
           vendorId: vendorObjectId,
           urnNo: createProcessProductStewardshipDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_product_stewardship',
+          documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
           documentFormSubsection: 'qm_supporting_documents',
           formPrimaryId: processProductStewardshipId,
           documentName: path.basename(qmFilePath),
@@ -225,7 +241,8 @@ export class ProcessProductStewardshipService {
       }
 
       if (eprFilePath && eprSupportingDocumentsFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${eprFilePath}`;
 
         const documentData = {
@@ -233,7 +250,7 @@ export class ProcessProductStewardshipService {
           vendorId: vendorObjectId,
           urnNo: createProcessProductStewardshipDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_product_stewardship',
+          documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
           documentFormSubsection: 'epr_supporting_documents',
           formPrimaryId: processProductStewardshipId,
           documentName: path.basename(eprFilePath),
@@ -266,7 +283,10 @@ export class ProcessProductStewardshipService {
           fs.unlinkSync(eprFullPath);
         }
       } catch (cleanupError: any) {
-        console.error('[Process Product Stewardship] File cleanup error:', cleanupError);
+        console.error(
+          '[Process Product Stewardship] File cleanup error:',
+          cleanupError,
+        );
       }
 
       console.error('[Process Product Stewardship] Create error:', error);

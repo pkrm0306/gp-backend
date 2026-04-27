@@ -39,4 +39,3 @@ export class CreateRawMaterialsHazardousProductsDto {
   @IsOptional()
   productsTestReportFileName?: string;
 }
-

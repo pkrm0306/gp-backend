@@ -18,7 +18,9 @@ export class ListStandardsQueryDto {
   @Max(100)
   limit?: number = 10;
 
-  @ApiPropertyOptional({ description: 'Case-insensitive partial match on name' })
+  @ApiPropertyOptional({
+    description: 'Case-insensitive partial match on name',
+  })
   @IsOptional()
   @IsString()
   search?: string;
@@ -35,7 +37,10 @@ export class ListStandardsQueryDto {
   @IsEnum([0, 1])
   status?: 0 | 1;
 
-  @ApiPropertyOptional({ enum: ['id', 'name', 'resource_standard_type', 'created_at'], default: 'id' })
+  @ApiPropertyOptional({
+    enum: ['id', 'name', 'resource_standard_type', 'created_at'],
+    default: 'id',
+  })
   @IsOptional()
   @IsEnum(['id', 'name', 'resource_standard_type', 'created_at'])
   sortBy?: 'id' | 'name' | 'resource_standard_type' | 'created_at' = 'id';

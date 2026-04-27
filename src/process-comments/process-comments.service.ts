@@ -23,7 +23,10 @@ export class ProcessCommentsService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -72,22 +75,27 @@ export class ProcessCommentsService {
           updateData.productDesign = createProcessCommentsDto.productDesign;
         }
         if (createProcessCommentsDto.productPerformance !== undefined) {
-          updateData.productPerformance = createProcessCommentsDto.productPerformance;
+          updateData.productPerformance =
+            createProcessCommentsDto.productPerformance;
         }
         if (createProcessCommentsDto.manfacturingProcess !== undefined) {
-          updateData.manfacturingProcess = createProcessCommentsDto.manfacturingProcess;
+          updateData.manfacturingProcess =
+            createProcessCommentsDto.manfacturingProcess;
         }
         if (createProcessCommentsDto.wasteManagement !== undefined) {
           updateData.wasteManagement = createProcessCommentsDto.wasteManagement;
         }
         if (createProcessCommentsDto.lifeCycleApproach !== undefined) {
-          updateData.lifeCycleApproach = createProcessCommentsDto.lifeCycleApproach;
+          updateData.lifeCycleApproach =
+            createProcessCommentsDto.lifeCycleApproach;
         }
         if (createProcessCommentsDto.productStewardship !== undefined) {
-          updateData.productStewardship = createProcessCommentsDto.productStewardship;
+          updateData.productStewardship =
+            createProcessCommentsDto.productStewardship;
         }
         if (createProcessCommentsDto.productInnovation !== undefined) {
-          updateData.productInnovation = createProcessCommentsDto.productInnovation;
+          updateData.productInnovation =
+            createProcessCommentsDto.productInnovation;
         }
         if (createProcessCommentsDto.rawMaterials31 !== undefined) {
           updateData.rawMaterials31 = createProcessCommentsDto.rawMaterials31;
@@ -147,7 +155,9 @@ export class ProcessCommentsService {
           .exec();
 
         if (!updatedRecord) {
-          throw new InternalServerErrorException('Failed to update process comments');
+          throw new InternalServerErrorException(
+            'Failed to update process comments',
+          );
         }
 
         return updatedRecord;
@@ -161,7 +171,8 @@ export class ProcessCommentsService {
           vendorId: vendorObjectId,
           productDesign: createProcessCommentsDto.productDesign || '',
           productPerformance: createProcessCommentsDto.productPerformance || '',
-          manfacturingProcess: createProcessCommentsDto.manfacturingProcess || '',
+          manfacturingProcess:
+            createProcessCommentsDto.manfacturingProcess || '',
           wasteManagement: createProcessCommentsDto.wasteManagement || '',
           lifeCycleApproach: createProcessCommentsDto.lifeCycleApproach || '',
           productStewardship: createProcessCommentsDto.productStewardship || '',
@@ -201,7 +212,10 @@ export class ProcessCommentsService {
   /**
    * Get process comments by URN and vendor ID
    */
-  async getByUrnAndVendor(urnNo: string, vendorId: string): Promise<ProcessCommentsDocument | null> {
+  async getByUrnAndVendor(
+    urnNo: string,
+    vendorId: string,
+  ): Promise<ProcessCommentsDocument | null> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 

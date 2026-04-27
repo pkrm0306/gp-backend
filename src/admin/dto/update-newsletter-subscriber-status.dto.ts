@@ -20,4 +20,3 @@ export class UpdateNewsletterSubscriberStatusDto {
   @IsString()
   status?: string;
 }
-

@@ -3,7 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { SectorsController } from './sectors.controller';
 import { SectorsService } from './sectors.service';
 import { Sector, SectorSchema } from './schemas/sector.schema';
-import { SectorIdCounter, SectorIdCounterSchema } from './schemas/sector-id-counter.schema';
+import {
+  SectorIdCounter,
+  SectorIdCounterSchema,
+} from './schemas/sector-id-counter.schema';
 
 @Module({
   imports: [

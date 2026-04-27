@@ -22,7 +22,9 @@ import { AuthModule } from '../auth/auth.module';
     PassportModule,
     AuthModule,
   ],
-  controllers: [RawMaterialsEliminationOfProhibitedFlameSolventsProductsController],
+  controllers: [
+    RawMaterialsEliminationOfProhibitedFlameSolventsProductsController,
+  ],
   providers: [RawMaterialsEliminationOfProhibitedFlameSolventsProductsService],
   exports: [RawMaterialsEliminationOfProhibitedFlameSolventsProductsService],
 })

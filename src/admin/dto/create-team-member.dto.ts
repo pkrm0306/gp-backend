@@ -37,4 +37,3 @@ export class CreateTeamMemberDto {
   @IsString()
   linkedinUrl?: string;
 }
-

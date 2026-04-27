@@ -96,4 +96,3 @@ export class UpdateEventDto {
   @Transform(({ value }) => emptyToUndefined(value))
   brochureLink?: string;
 }
-

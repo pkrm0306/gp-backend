@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
+import {
+  VendorUser,
+  VendorUserDocument,
+} from '../vendor-users/schemas/vendor-user.schema';
 import { CreatePartnerDto } from './dto/create-partner.dto';
 import { UpdatePartnerDto } from './dto/update-partner.dto';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
@@ -30,10 +33,7 @@ export class PartnersService {
 
       const partners = await this.vendorUserModel
         .find({
-          $or: [
-            { vendorId: vendorObjectId },
-            { vendorId: vendorId },
-          ],
+          $or: [{ vendorId: vendorObjectId }, { vendorId: vendorId }],
           type: 'partner',
           status: { $ne: 2 },
         })
@@ -45,15 +45,20 @@ export class PartnersService {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException(error.message || 'Error retrieving partners');
+      throw new BadRequestException(
+        error.message || 'Error retrieving partners',
+      );
     }
   }
 
-  async findOne(id: string, vendorId: string): Promise<VendorUserDocument | null> {
+  async findOne(
+    id: string,
+    vendorId: string,
+  ): Promise<VendorUserDocument | null> {
     try {
       let vendorObjectId: Types.ObjectId;
       let partnerId: Types.ObjectId;
-      
+
       try {
         vendorObjectId = new Types.ObjectId(vendorId);
         partnerId = new Types.ObjectId(id);
@@ -64,10 +69,7 @@ export class PartnersService {
       const partner = await this.vendorUserModel
         .findOne({
           _id: partnerId,
-          $or: [
-            { vendorId: vendorObjectId },
-            { vendorId: vendorId },
-          ],
+          $or: [{ vendorId: vendorObjectId }, { vendorId: vendorId }],
           type: 'partner',
         })
         .exec();
@@ -78,7 +80,10 @@ export class PartnersService {
 
       return partner;
     } catch (error: any) {
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
       throw new BadRequestException('Invalid ID format');
@@ -88,12 +93,15 @@ export class PartnersService {
   async create(vendorId: string, createPartnerDto: CreatePartnerDto) {
     try {
       const vendorObjectId = new Types.ObjectId(vendorId);
-      
+
       const existingActivePartner = await this.vendorUserModel
         .findOne({
           vendorId: vendorObjectId,
           status: { $ne: 2 },
-          $or: [{ email: createPartnerDto.email }, { phone: createPartnerDto.phone }],
+          $or: [
+            { email: createPartnerDto.email },
+            { phone: createPartnerDto.phone },
+          ],
         })
         .exec();
 
@@ -102,7 +110,9 @@ export class PartnersService {
           throw new ConflictException('Email already exists for this vendor');
         }
         if (existingActivePartner.phone === createPartnerDto.phone) {
-          throw new ConflictException('Phone number already exists for this vendor');
+          throw new ConflictException(
+            'Phone number already exists for this vendor',
+          );
         }
       }
 
@@ -116,7 +126,9 @@ export class PartnersService {
 
       if (softDeletedPartner) {
         if (softDeletedPartner.vendorId.toString() !== vendorId) {
-          throw new ConflictException('Email already exists for another vendor');
+          throw new ConflictException(
+            'Email already exists for another vendor',
+          );
         }
         const hashedPassword = await bcrypt.hash(createPartnerDto.password, 10);
         softDeletedPartner.name = createPartnerDto.name;
@@ -156,8 +168,14 @@ export class PartnersService {
           })
           .exec();
 
-        if (softDeletedPartner && softDeletedPartner.vendorId.toString() === vendorId) {
-          const hashedPassword = await bcrypt.hash(createPartnerDto.password, 10);
+        if (
+          softDeletedPartner &&
+          softDeletedPartner.vendorId.toString() === vendorId
+        ) {
+          const hashedPassword = await bcrypt.hash(
+            createPartnerDto.password,
+            10,
+          );
           softDeletedPartner.name = createPartnerDto.name;
           softDeletedPartner.email = createPartnerDto.email;
           softDeletedPartner.phone = createPartnerDto.phone;
@@ -178,14 +196,18 @@ export class PartnersService {
     }
   }
 
-  async update(id: string, vendorId: string, updatePartnerDto: UpdatePartnerDto) {
+  async update(
+    id: string,
+    vendorId: string,
+    updatePartnerDto: UpdatePartnerDto,
+  ) {
     const partner = await this.findOne(id, vendorId);
 
     if (updatePartnerDto.email || updatePartnerDto.phone) {
       try {
         let vendorObjectId: Types.ObjectId;
         let partnerId: Types.ObjectId;
-        
+
         try {
           vendorObjectId = new Types.ObjectId(vendorId);
           partnerId = new Types.ObjectId(id);
@@ -205,10 +227,7 @@ export class PartnersService {
           .findOne({
             $and: [
               {
-                $or: [
-                  { vendorId: vendorObjectId },
-                  { vendorId: vendorId },
-                ],
+                $or: [{ vendorId: vendorObjectId }, { vendorId: vendorId }],
               },
               {
                 _id: { $ne: partnerId },
@@ -216,21 +235,34 @@ export class PartnersService {
               {
                 status: { $ne: 2 },
               },
-              ...(emailPhoneConditions.length > 0 ? [{ $or: emailPhoneConditions }] : []),
+              ...(emailPhoneConditions.length > 0
+                ? [{ $or: emailPhoneConditions }]
+                : []),
             ],
           })
           .exec();
 
         if (existingPartner) {
-          if (updatePartnerDto.email && existingPartner.email === updatePartnerDto.email) {
+          if (
+            updatePartnerDto.email &&
+            existingPartner.email === updatePartnerDto.email
+          ) {
             throw new ConflictException('Email already exists for this vendor');
           }
-          if (updatePartnerDto.phone && existingPartner.phone === updatePartnerDto.phone) {
-            throw new ConflictException('Phone number already exists for this vendor');
+          if (
+            updatePartnerDto.phone &&
+            existingPartner.phone === updatePartnerDto.phone
+          ) {
+            throw new ConflictException(
+              'Phone number already exists for this vendor',
+            );
           }
         }
       } catch (error: any) {
-        if (error instanceof ConflictException || error instanceof BadRequestException) {
+        if (
+          error instanceof ConflictException ||
+          error instanceof BadRequestException
+        ) {
           throw error;
         }
         throw new BadRequestException('Invalid ID format');
@@ -262,11 +294,11 @@ export class PartnersService {
       const updatedPartner = await this.vendorUserModel
         .findByIdAndUpdate(partnerId, updateData, { new: true })
         .exec();
-      
+
       if (!updatedPartner) {
         throw new NotFoundException('Partner not found');
       }
-      
+
       return updatedPartner;
     } catch (error: any) {
       if (error instanceof NotFoundException) {
@@ -276,7 +308,10 @@ export class PartnersService {
     }
   }
 
-  async updateStatus(vendorId: string, updateStatusDto: UpdatePartnerStatusDto) {
+  async updateStatus(
+    vendorId: string,
+    updateStatusDto: UpdatePartnerStatusDto,
+  ) {
     const partner = await this.findOne(updateStatusDto.partnerId, vendorId);
 
     if (partner.status !== updateStatusDto.currentStatus) {

@@ -30,4 +30,6 @@ export class ProcessWasteManagement {
   updatedDate: Date;
 }
 
-export const ProcessWasteManagementSchema = SchemaFactory.createForClass(ProcessWasteManagement);
+export const ProcessWasteManagementSchema = SchemaFactory.createForClass(
+  ProcessWasteManagement,
+);

@@ -31,4 +31,3 @@ export class ContactReplyThread {
 
 export const ContactReplyThreadSchema =
   SchemaFactory.createForClass(ContactReplyThread);
-

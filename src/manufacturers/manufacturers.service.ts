@@ -7,9 +7,18 @@ import {
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Model, ClientSession, Connection, Types } from 'mongoose';
-import { Manufacturer, ManufacturerDocument } from './schemas/manufacturer.schema';
-import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
-import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
+import {
+  Manufacturer,
+  ManufacturerDocument,
+} from './schemas/manufacturer.schema';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
+import {
+  VendorUser,
+  VendorUserDocument,
+} from '../vendor-users/schemas/vendor-user.schema';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
 import { UpdateProfileDto } from './dto/update-manufacturer-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -33,7 +42,10 @@ export class ManufacturersService {
     private vendorUsersService: VendorUsersService,
   ) {}
 
-  async create(data: Partial<Manufacturer>, session?: ClientSession): Promise<ManufacturerDocument> {
+  async create(
+    data: Partial<Manufacturer>,
+    session?: ClientSession,
+  ): Promise<ManufacturerDocument> {
     const manufacturer = new this.manufacturerModel(data);
     if (session) {
       return manufacturer.save({ session });
@@ -77,7 +89,10 @@ export class ManufacturersService {
       throw new NotFoundException('Manufacturer mapping not found for user');
     }
 
-    const manufacturer = await this.manufacturerModel.findById(manufacturerId).lean().exec();
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerId)
+      .lean()
+      .exec();
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
     }
@@ -186,7 +201,9 @@ export class ManufacturersService {
 
   async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
     if (changePasswordDto.newPassword !== changePasswordDto.confirmPassword) {
-      throw new BadRequestException('New password and confirm password do not match');
+      throw new BadRequestException(
+        'New password and confirm password do not match',
+      );
     }
 
     const user = await this.vendorUsersService.findById(userId);
@@ -194,10 +211,11 @@ export class ManufacturersService {
       throw new BadRequestException('User not found');
     }
 
-    const isCurrentPasswordValid = await this.vendorUsersService.comparePassword(
-      changePasswordDto.currentPassword,
-      user.password,
-    );
+    const isCurrentPasswordValid =
+      await this.vendorUsersService.comparePassword(
+        changePasswordDto.currentPassword,
+        user.password,
+      );
 
     if (!isCurrentPasswordValid) {
       throw new UnauthorizedException('Current password is incorrect');
@@ -224,9 +242,15 @@ export class ManufacturersService {
         manufacturerName: dto.manufacturerName,
         gpInternalId: dto.gpInternalId,
         manufacturerInitial: dto.manufacturerInitial,
-        ...(dto.vendor_name !== undefined ? { vendor_name: dto.vendor_name } : {}),
-        ...(dto.vendor_email !== undefined ? { vendor_email: dto.vendor_email } : {}),
-        ...(dto.vendor_phone !== undefined ? { vendor_phone: dto.vendor_phone } : {}),
+        ...(dto.vendor_name !== undefined
+          ? { vendor_name: dto.vendor_name }
+          : {}),
+        ...(dto.vendor_email !== undefined
+          ? { vendor_email: dto.vendor_email }
+          : {}),
+        ...(dto.vendor_phone !== undefined
+          ? { vendor_phone: dto.vendor_phone }
+          : {}),
         ...(imagePath ? { manufacturerImage: imagePath } : {}),
         updatedAt: new Date(),
       };
@@ -247,14 +271,18 @@ export class ManufacturersService {
       if (error.name === 'CastError') {
         throw new BadRequestException('Invalid manufacturer ID format');
       }
-      throw new BadRequestException(error.message || 'Failed to update manufacturer');
+      throw new BadRequestException(
+        error.message || 'Failed to update manufacturer',
+      );
     }
   }
 
   /** Verifies an unverified manufacturer (confirm action). */
   async verifyManufacturer(id: string) {
     const manufacturerId = new Types.ObjectId(id);
-    const manufacturer = await this.manufacturerModel.findById(manufacturerId).exec();
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerId)
+      .exec();
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
     }
@@ -273,9 +301,13 @@ export class ManufacturersService {
     return updated;
   }
 
-  private assertCoreFieldsPresentForActivation(manufacturer: ManufacturerDocument) {
+  private assertCoreFieldsPresentForActivation(
+    manufacturer: ManufacturerDocument,
+  ) {
     const gpInternalId = (manufacturer.gpInternalId ?? '').toString().trim();
-    const manufacturerInitial = (manufacturer.manufacturerInitial ?? '').toString().trim();
+    const manufacturerInitial = (manufacturer.manufacturerInitial ?? '')
+      .toString()
+      .trim();
     if (!gpInternalId || !manufacturerInitial) {
       throw new ConflictException(
         'Cannot activate manufacturer. Please fill gpInternalId and manufacturerInitial first.',
@@ -290,7 +322,9 @@ export class ManufacturersService {
   async toggleManufacturerStatus(id: string) {
     try {
       const manufacturerId = new Types.ObjectId(id);
-      const manufacturer = await this.manufacturerModel.findById(manufacturerId).exec();
+      const manufacturer = await this.manufacturerModel
+        .findById(manufacturerId)
+        .exec();
 
       if (!manufacturer) {
         throw new NotFoundException('Manufacturer not found');
@@ -321,7 +355,9 @@ export class ManufacturersService {
       if (error.name === 'CastError') {
         throw new BadRequestException('Invalid manufacturer ID format');
       }
-      throw new BadRequestException(error.message || 'Failed to update manufacturer status');
+      throw new BadRequestException(
+        error.message || 'Failed to update manufacturer status',
+      );
     }
   }
 
@@ -332,13 +368,17 @@ export class ManufacturersService {
   async setVendorStatusForVerified(id: string, vendor_status: 0 | 1) {
     try {
       const manufacturerId = new Types.ObjectId(id);
-      const manufacturer = await this.manufacturerModel.findById(manufacturerId).exec();
+      const manufacturer = await this.manufacturerModel
+        .findById(manufacturerId)
+        .exec();
 
       if (!manufacturer) {
         throw new NotFoundException('Manufacturer not found');
       }
       if ((manufacturer.manufacturerStatus ?? 0) !== 1) {
-        throw new ConflictException('Only verified manufacturers can be toggled');
+        throw new ConflictException(
+          'Only verified manufacturers can be toggled',
+        );
       }
       if (vendor_status === 1) {
         this.assertCoreFieldsPresentForActivation(manufacturer);
@@ -358,31 +398,39 @@ export class ManufacturersService {
 
       return updated;
     } catch (error: any) {
-      if (error instanceof NotFoundException || error instanceof ConflictException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
         throw error;
       }
       if (error.name === 'CastError') {
         throw new BadRequestException('Invalid manufacturer ID format');
       }
-      throw new BadRequestException(error.message || 'Failed to update vendor status');
+      throw new BadRequestException(
+        error.message || 'Failed to update vendor status',
+      );
     }
   }
 
   private async countForManufacturer(manufacturerId: Types.ObjectId) {
-    const [manufacturer_product_count, manufacturer_vendor_count] = await Promise.all([
-      this.productModel.countDocuments({ manufacturerId }).exec(),
-      this.vendorUserModel
-        .countDocuments({
-          manufacturerId,
-          type: 'vendor',
-          status: { $ne: 2 },
-        })
-        .exec(),
-    ]);
+    const [manufacturer_product_count, manufacturer_vendor_count] =
+      await Promise.all([
+        this.productModel.countDocuments({ manufacturerId }).exec(),
+        this.vendorUserModel
+          .countDocuments({
+            manufacturerId,
+            type: 'vendor',
+            status: { $ne: 2 },
+          })
+          .exec(),
+      ]);
     return { manufacturer_product_count, manufacturer_vendor_count };
   }
 
-  private buildListFilter(query: ListManufacturersQueryDto): Record<string, unknown> {
+  private buildListFilter(
+    query: ListManufacturersQueryDto,
+  ): Record<string, unknown> {
     const parts: Record<string, unknown>[] = [];
 
     if (query.search !== undefined && query.search.trim() !== '') {
@@ -402,9 +450,15 @@ export class ManufacturersService {
     if (query.vendor_status !== undefined) {
       parts.push({ vendor_status: query.vendor_status });
     }
-    if (query.manufacturerName !== undefined && query.manufacturerName.trim() !== '') {
+    if (
+      query.manufacturerName !== undefined &&
+      query.manufacturerName.trim() !== ''
+    ) {
       parts.push({
-        manufacturerName: new RegExp(escapeRegex(query.manufacturerName.trim()), 'i'),
+        manufacturerName: new RegExp(
+          escapeRegex(query.manufacturerName.trim()),
+          'i',
+        ),
       });
     }
     if (query.gpInternalId !== undefined && query.gpInternalId.trim() !== '') {
@@ -412,9 +466,15 @@ export class ManufacturersService {
         gpInternalId: new RegExp(escapeRegex(query.gpInternalId.trim()), 'i'),
       });
     }
-    if (query.manufacturerInitial !== undefined && query.manufacturerInitial.trim() !== '') {
+    if (
+      query.manufacturerInitial !== undefined &&
+      query.manufacturerInitial.trim() !== ''
+    ) {
       parts.push({
-        manufacturerInitial: new RegExp(escapeRegex(query.manufacturerInitial.trim()), 'i'),
+        manufacturerInitial: new RegExp(
+          escapeRegex(query.manufacturerInitial.trim()),
+          'i',
+        ),
       });
     }
 
@@ -439,7 +499,13 @@ export class ManufacturersService {
     const skip = (page - 1) * limit;
 
     const [rows, total] = await Promise.all([
-      this.manufacturerModel.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
+      this.manufacturerModel
+        .find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
       this.manufacturerModel.countDocuments(filter).exec(),
     ]);
 
@@ -478,7 +544,9 @@ export class ManufacturersService {
   /** Delete verified manufacturer only when both counts are zero. */
   async deleteManufacturerWithConstraint(id: string) {
     const manufacturerId = new Types.ObjectId(id);
-    const manufacturer = await this.manufacturerModel.findById(manufacturerId).exec();
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerId)
+      .exec();
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
     }
@@ -503,12 +571,16 @@ export class ManufacturersService {
   /** Dedicated endpoint: delete only if unverified. */
   async deleteUnverifiedById(id: string) {
     const manufacturerId = new Types.ObjectId(id);
-    const manufacturer = await this.manufacturerModel.findById(manufacturerId).exec();
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerId)
+      .exec();
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
     }
     if (manufacturer.manufacturerStatus === 1) {
-      throw new BadRequestException('Only unverified manufacturer can be deleted from this endpoint');
+      throw new BadRequestException(
+        'Only unverified manufacturer can be deleted from this endpoint',
+      );
     }
     await this.manufacturerModel.deleteOne({ _id: manufacturerId }).exec();
     return { _id: id };

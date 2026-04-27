@@ -6,9 +6,15 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Manufacturer, ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
+import {
+  Manufacturer,
+  ManufacturerDocument,
+} from '../manufacturers/schemas/manufacturer.schema';
 import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
-import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
+import {
+  VendorUser,
+  VendorUserDocument,
+} from '../vendor-users/schemas/vendor-user.schema';
 import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
@@ -141,11 +147,17 @@ export class AdminService {
   private formatEventResponse(event: any) {
     if (!event) return event;
     const obj = typeof event.toObject === 'function' ? event.toObject() : event;
-    const id = obj?._id ? String(obj._id) : obj?.id ? String(obj.id) : undefined;
+    const id = obj?._id
+      ? String(obj._id)
+      : obj?.id
+        ? String(obj.id)
+        : undefined;
     const { _id, __v, ...rest } = obj ?? {};
     return {
       ...rest,
-      event_image: (rest as any)?.event_image ?? this.resolveEventImagePath((rest as any)?.eventImage),
+      event_image:
+        (rest as any)?.event_image ??
+        this.resolveEventImagePath((rest as any)?.eventImage),
       registrationLink:
         (rest as any)?.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
       brochureLink: (rest as any)?.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
@@ -226,35 +238,65 @@ export class AdminService {
     if (!raw) throw new BadRequestException('Event id is required');
 
     const $set: Record<string, unknown> = { updatedDate: new Date() };
-    if (payload.eventName !== undefined && String(payload.eventName).trim() !== '')
+    if (
+      payload.eventName !== undefined &&
+      String(payload.eventName).trim() !== ''
+    )
       $set.eventName = payload.eventName;
     if (payload.eventDate !== undefined) $set.eventDate = payload.eventDate;
-    if (payload.eventStartTime !== undefined && String(payload.eventStartTime).trim() !== '')
+    if (
+      payload.eventStartTime !== undefined &&
+      String(payload.eventStartTime).trim() !== ''
+    )
       $set.eventStartTime = payload.eventStartTime;
-    if (payload.eventEndTime !== undefined && String(payload.eventEndTime).trim() !== '')
+    if (
+      payload.eventEndTime !== undefined &&
+      String(payload.eventEndTime).trim() !== ''
+    )
       $set.eventEndTime = payload.eventEndTime;
-    if (payload.eventLocation !== undefined && String(payload.eventLocation).trim() !== '')
+    if (
+      payload.eventLocation !== undefined &&
+      String(payload.eventLocation).trim() !== ''
+    )
       $set.eventLocation = payload.eventLocation;
-    if (payload.eventDescription !== undefined && String(payload.eventDescription).trim() !== '')
+    if (
+      payload.eventDescription !== undefined &&
+      String(payload.eventDescription).trim() !== ''
+    )
       $set.eventDescription = payload.eventDescription;
-    if (payload.contactPersonName !== undefined && String(payload.contactPersonName).trim() !== '')
+    if (
+      payload.contactPersonName !== undefined &&
+      String(payload.contactPersonName).trim() !== ''
+    )
       $set.contactPersonName = payload.contactPersonName;
     if (
       payload.contactPersonDesignation !== undefined &&
       String(payload.contactPersonDesignation).trim() !== ''
     )
       $set.contactPersonDesignation = payload.contactPersonDesignation;
-    if (payload.contactPersonEmail !== undefined && String(payload.contactPersonEmail).trim() !== '')
+    if (
+      payload.contactPersonEmail !== undefined &&
+      String(payload.contactPersonEmail).trim() !== ''
+    )
       $set.contactPersonEmail = payload.contactPersonEmail;
-    if (payload.contactPersonPhone !== undefined && String(payload.contactPersonPhone).trim() !== '')
+    if (
+      payload.contactPersonPhone !== undefined &&
+      String(payload.contactPersonPhone).trim() !== ''
+    )
       $set.contactPersonPhone = payload.contactPersonPhone;
     if (payload.eventImage !== undefined) {
       $set.eventImage = payload.eventImage;
       $set.event_image = this.resolveEventImagePath(payload.eventImage);
     }
-    if (payload.registrationLink !== undefined && String(payload.registrationLink).trim() !== '')
+    if (
+      payload.registrationLink !== undefined &&
+      String(payload.registrationLink).trim() !== ''
+    )
       $set.registrationLink = payload.registrationLink;
-    if (payload.brochureLink !== undefined && String(payload.brochureLink).trim() !== '')
+    if (
+      payload.brochureLink !== undefined &&
+      String(payload.brochureLink).trim() !== ''
+    )
       $set.brochureLink = payload.brochureLink;
 
     let updated: any = null;
@@ -266,7 +308,9 @@ export class AdminService {
     } else {
       const asNumber = Number.parseInt(raw, 10);
       if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException('Invalid event id (expected Mongo _id or numeric eventId)');
+        throw new BadRequestException(
+          'Invalid event id (expected Mongo _id or numeric eventId)',
+        );
       }
       updated = await this.eventModel
         .findOneAndUpdate({ eventId: asNumber }, { $set }, { new: true })
@@ -331,13 +375,21 @@ export class AdminService {
 
     let event: any = null;
     if (Types.ObjectId.isValid(raw)) {
-      event = await this.eventModel.findById(new Types.ObjectId(raw)).lean().exec();
+      event = await this.eventModel
+        .findById(new Types.ObjectId(raw))
+        .lean()
+        .exec();
     } else {
       const asNumber = Number.parseInt(raw, 10);
       if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException('Invalid event id (expected Mongo _id or numeric eventId)');
+        throw new BadRequestException(
+          'Invalid event id (expected Mongo _id or numeric eventId)',
+        );
       }
-      event = await this.eventModel.findOne({ eventId: asNumber }).lean().exec();
+      event = await this.eventModel
+        .findOne({ eventId: asNumber })
+        .lean()
+        .exec();
     }
 
     if (!event) {
@@ -359,7 +411,9 @@ export class AdminService {
     } else {
       const asNumber = Number.parseInt(raw, 10);
       if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException('Invalid event id (expected Mongo _id or numeric eventId)');
+        throw new BadRequestException(
+          'Invalid event id (expected Mongo _id or numeric eventId)',
+        );
       }
       res = await this.eventModel.deleteOne({ eventId: asNumber }).exec();
     }
@@ -387,6 +441,14 @@ export class AdminService {
   }) {
     const brand = 'GreenPro';
     const subject = `Reply from ${brand}`;
+    const cleanReply = String(payload.replyMessage ?? '').trim();
+    const apiBase = String(process.env.API_BASE_URL ?? '')
+      .trim()
+      .replace(/\/+$/, '');
+    const logoUrl = String(
+      process.env.GREENPRO_LOGO_URL ??
+        (apiBase ? `${apiBase}/uploads/greenpro-logo.svg` : ''),
+    ).trim();
     const htmlBody = `
       <!DOCTYPE html>
       <html>
@@ -396,37 +458,37 @@ export class AdminService {
           <title>${subject}</title>
         </head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827; max-width: 640px; margin: 0 auto; padding: 20px;">
-          <div style="background-color:#16a34a; color:#fff; padding:16px 20px; border-radius:8px 8px 0 0;">
-            <div style="display:flex; align-items:center; gap:12px;">
-              <div>
-                <div style="font-size:18px; font-weight:700;">${brand}</div>
-                <div style="font-size:12px; opacity:.9;">GreenPro Support</div>
-              </div>
-            </div>
+          <div style="padding: 0 0 14px 0; border-bottom: 1px solid #e5e7eb;">
+            ${
+              logoUrl
+                ? `<img src="${escapeHtml(logoUrl)}" alt="${brand}" style="display:block; max-height:48px; width:auto; margin:0 0 10px 0;" />`
+                : `<div style="font-size: 20px; font-weight: 800; color: #16a34a;">${brand}</div>`
+            }
+            <div style="font-size: 14px; font-weight: 600; color: #111827;">Support</div>
           </div>
 
-          <div style="background:#f9fafb; padding:20px; border-radius:0 0 8px 8px; border:1px solid #e5e7eb; border-top:0;">
-            <p style="margin:0 0 12px 0;">Hello,</p>
+          <div style="padding: 16px 0 0 0;">
+            <p style="margin: 0 0 12px 0;">Hello,</p>
+            <p style="margin: 0 0 12px 0;">Please find our response below.</p>
+            <div style="white-space: pre-wrap; margin: 0 0 16px 0;">${escapeHtml(cleanReply)}</div>
 
-            <div style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid #16a34a; padding:14px; border-radius:6px; margin:12px 0;">
-              <div style="font-size:13px; color:#6b7280; margin-bottom:6px;">Your message</div>
-              <div style="white-space:pre-wrap;">${escapeHtml(payload.userMessage)}</div>
-            </div>
-
-            <div style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid #7c3aed; padding:14px; border-radius:6px; margin:12px 0;">
-              <div style="font-size:13px; color:#6b7280; margin-bottom:6px;">Our reply</div>
-              <div style="white-space:pre-wrap;">${escapeHtml(payload.replyMessage)}</div>
-            </div>
-
-            <p style="margin:18px 0 0 0;">Thanks,<br/>${brand}</p>
+            <p style="margin: 0;">Regards,<br />${brand} Support Team</p>
+            <p style="margin: 12px 0 0 0; font-size: 12px; color: #6b7280;">
+              This is an automated email. Please do not reply to this message.
+            </p>
           </div>
         </body>
       </html>
     `;
 
-    const textBody = `Your message:\n${payload.userMessage}\n\nOur reply:\n${payload.replyMessage}\n\nThanks,\n${brand}`;
+    const textBody = `Hello,\n\nPlease find our response below.\n\n${cleanReply}\n\nRegards,\n${brand} Support Team`;
 
-    await this.emailService.sendEmail(payload.email, subject, htmlBody, textBody);
+    await this.emailService.sendEmail(
+      payload.email,
+      subject,
+      htmlBody,
+      textBody,
+    );
 
     return { to: payload.email, subject };
   }
@@ -449,13 +511,24 @@ export class AdminService {
       throw new NotFoundException('Contact message not found');
     }
 
-    const to = String((contact as any).email ?? '').trim().toLowerCase();
+    const to = String((contact as any).email ?? '')
+      .trim()
+      .toLowerCase();
     if (!to) {
       throw new BadRequestException('Contact message has no email');
     }
 
-    const userMessage = String((contact as any).message ?? '').trim();
     const subject = `Reply to your inquiry${(contact as any).subject ? `: ${String((contact as any).subject).trim()}` : ''}`;
+    const name = String((contact as any).name ?? '').trim();
+    const greeting = name ? `Hi ${name},` : 'Hello,';
+    const cleanReply = String(replyMessage ?? '').trim();
+    const apiBase = String(process.env.API_BASE_URL ?? '')
+      .trim()
+      .replace(/\/+$/, '');
+    const logoUrl = String(
+      process.env.GREENPRO_LOGO_URL ??
+        (apiBase ? `${apiBase}/uploads/greenpro-logo.svg` : ''),
+    ).trim();
 
     const htmlBody = `
       <!doctype html>
@@ -466,29 +539,30 @@ export class AdminService {
           <title>${escapeHtml(subject)}</title>
         </head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827; max-width: 640px; margin: 0 auto; padding: 20px;">
-          <div style="background:#16a34a; color:#fff; padding:16px 20px; border-radius:8px 8px 0 0;">
-            <h2 style="margin:0;">GreenPro Support Reply</h2>
+          <div style="padding: 0 0 14px 0; border-bottom: 1px solid #e5e7eb;">
+            ${
+              logoUrl
+                ? `<img src="${escapeHtml(logoUrl)}" alt="GreenPro" style="display:block; max-height:48px; width:auto; margin:0 0 10px 0;" />`
+                : `<div style="font-size: 20px; font-weight: 800; color: #16a34a;">GreenPro</div>`
+            }
+            <div style="font-size: 14px; font-weight: 600; color: #111827;">Support</div>
           </div>
-          <div style="border:1px solid #e5e7eb; border-top:0; padding:20px; border-radius:0 0 8px 8px;">
-            <p style="margin-top:0;">Hi ${escapeHtml(String((contact as any).name ?? ''))},</p>
 
-            <div style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid #16a34a; padding:14px; border-radius:6px; margin:12px 0;">
-              <div style="font-size:13px; color:#6b7280; margin-bottom:6px;">Your message</div>
-              <div style="white-space:pre-wrap;">${escapeHtml(userMessage)}</div>
-            </div>
+          <div style="padding: 16px 0 0 0;">
+            <p style="margin: 0 0 12px 0;">${escapeHtml(greeting)}</p>
+            <p style="margin: 0 0 12px 0;">Thank you for contacting us. Please find our response below.</p>
+            <div style="white-space: pre-wrap; margin: 0 0 16px 0;">${escapeHtml(cleanReply)}</div>
 
-            <div style="background:#ffffff; border:1px solid #e5e7eb; border-left:4px solid #7c3aed; padding:14px; border-radius:6px; margin:12px 0;">
-              <div style="font-size:13px; color:#6b7280; margin-bottom:6px;">Our reply</div>
-              <div style="white-space:pre-wrap;">${escapeHtml(replyMessage)}</div>
-            </div>
-
-            <p style="margin:18px 0 0 0;">Thanks,<br/>GreenPro</p>
+            <p style="margin: 0;">Regards,<br />GreenPro Support Team</p>
+            <p style="margin: 12px 0 0 0; font-size: 12px; color: #6b7280;">
+              This is an automated email. Please do not reply to this message.
+            </p>
           </div>
         </body>
       </html>
     `;
 
-    const textBody = `Your message:\n${userMessage}\n\nOur reply:\n${replyMessage}\n\nThanks,\nGreenPro`;
+    const textBody = `${greeting}\n\nThank you for contacting us. Please find our response below.\n\n${cleanReply}\n\nRegards,\nGreenPro Support Team`;
 
     await this.emailService.sendEmail(to, subject, htmlBody, textBody);
 
@@ -638,7 +712,12 @@ export class AdminService {
       .findOne({
         $and: [
           // Support both the new canonical field (`manufacturerId`) and legacy alias (`vendorId`)
-          { $or: [{ manufacturerId: vendorObjectId }, { vendorId: vendorObjectId }] },
+          {
+            $or: [
+              { manufacturerId: vendorObjectId },
+              { vendorId: vendorObjectId },
+            ],
+          },
           { status: { $ne: 2 } },
           { type: 'partner' },
           { $or: [{ email: data.email }, { phone: data.mobile }] },
@@ -653,7 +732,9 @@ export class AdminService {
         throw new ConflictException('Email already exists for this vendor');
       }
       if (existingActive.phone === data.mobile) {
-        throw new ConflictException('Phone number already exists for this vendor');
+        throw new ConflictException(
+          'Phone number already exists for this vendor',
+        );
       }
       throw new ConflictException('Team member already exists');
     }
@@ -745,7 +826,10 @@ export class AdminService {
     }));
   }
 
-  async listTeamMembersPaginated(vendorId: string, query: ListTeamMembersQueryDto) {
+  async listTeamMembersPaginated(
+    vendorId: string,
+    query: ListTeamMembersQueryDto,
+  ) {
     const page = Number(query?.page ?? 1);
     const limit = Number(query?.limit ?? 10);
     const currentPage = Number.isFinite(page) && page > 0 ? page : 1;
@@ -888,7 +972,9 @@ export class AdminService {
         type: 'partner',
         status: { $ne: 2 },
       })
-      .select('name designation email phone status image facebookUrl twitterUrl linkedinUrl')
+      .select(
+        'name designation email phone status image facebookUrl twitterUrl linkedinUrl',
+      )
       .lean()
       .exec();
 
@@ -1037,7 +1123,12 @@ export class AdminService {
   async updateBanner(
     vendorId: string,
     bannerId: string,
-    payload: { imageUrl?: string; targetUrl?: string; heading: string; description: string },
+    payload: {
+      imageUrl?: string;
+      targetUrl?: string;
+      heading: string;
+      description: string;
+    },
   ) {
     let vendorObjectId: Types.ObjectId;
     let bannerObjectId: Types.ObjectId;
@@ -1086,7 +1177,9 @@ export class AdminService {
     const st = updated.status ?? 1;
     return {
       id: String(updated._id),
-      banner_image: (updated as any).banner_image ?? this.resolveBannerImagePath(updated.imageUrl),
+      banner_image:
+        (updated as any).banner_image ??
+        this.resolveBannerImagePath(updated.imageUrl),
       imageUrl: updated.imageUrl,
       targetUrl: updated.targetUrl ?? '',
       heading: updated.heading,
@@ -1128,7 +1221,11 @@ export class AdminService {
    * - When `status` is provided: sets explicitly (active/inactive)
    * - When `status` is omitted: toggles (1 ↔ 0)
    */
-  async setOrToggleBannerStatus(vendorId: string, bannerId: string, status?: string) {
+  async setOrToggleBannerStatus(
+    vendorId: string,
+    bannerId: string,
+    status?: string,
+  ) {
     let vendorObjectId: Types.ObjectId;
     let bannerObjectId: Types.ObjectId;
     try {
@@ -1151,7 +1248,8 @@ export class AdminService {
       throw new NotFoundException('Banner not found');
     }
 
-    const desired = status !== undefined ? String(status).trim().toLowerCase() : undefined;
+    const desired =
+      status !== undefined ? String(status).trim().toLowerCase() : undefined;
     let newStatus: number | null = null;
 
     if (desired === undefined || desired === '') {
@@ -1161,7 +1259,9 @@ export class AdminService {
       if (desired === 'active' || desired === '1') newStatus = 1;
       if (desired === 'inactive' || desired === '0') newStatus = 0;
       if (newStatus === null) {
-        throw new BadRequestException('Invalid status. Use "active" or "inactive"');
+        throw new BadRequestException(
+          'Invalid status. Use "active" or "inactive"',
+        );
       }
     }
 
@@ -1250,7 +1350,9 @@ export class AdminService {
         throw new ConflictException('Email already exists for this vendor');
       }
       if (existingOther.phone === data.mobile) {
-        throw new ConflictException('Phone number already exists for this vendor');
+        throw new ConflictException(
+          'Phone number already exists for this vendor',
+        );
       }
       throw new ConflictException('Team member already exists');
     }
@@ -1395,7 +1497,9 @@ export class AdminService {
     return { id: target };
   }
 
-  private async resolveNewsletterSubscriberId(identifier: string): Promise<string> {
+  private async resolveNewsletterSubscriberId(
+    identifier: string,
+  ): Promise<string> {
     const raw = String(identifier ?? '').trim();
     if (!raw) throw new BadRequestException('Subscriber id is required');
 
@@ -1426,10 +1530,14 @@ export class AdminService {
    * - When `status` is provided: sets explicitly (active/inactive)
    * - When `status` is omitted: toggles (1 ↔ 0)
    */
-  async setOrToggleNewsletterSubscriberStatus(identifier: string, status?: string) {
+  async setOrToggleNewsletterSubscriberStatus(
+    identifier: string,
+    status?: string,
+  ) {
     const targetId = await this.resolveNewsletterSubscriberId(identifier);
 
-    const desired = status !== undefined ? String(status).trim().toLowerCase() : undefined;
+    const desired =
+      status !== undefined ? String(status).trim().toLowerCase() : undefined;
     let newStatus: number | null = null;
 
     if (desired === undefined || desired === '') {
@@ -1446,7 +1554,9 @@ export class AdminService {
       if (desired === 'active' || desired === '1') newStatus = 1;
       if (desired === 'inactive' || desired === '0') newStatus = 0;
       if (newStatus === null) {
-        throw new BadRequestException('Invalid status. Use "active" or "inactive"');
+        throw new BadRequestException(
+          'Invalid status. Use "active" or "inactive"',
+        );
       }
     }
 
@@ -1535,7 +1645,9 @@ export class AdminService {
       throw new BadRequestException('Invalid contact id');
     }
 
-    const res = await this.contactMessageModel.deleteOne({ _id: objectId }).exec();
+    const res = await this.contactMessageModel
+      .deleteOne({ _id: objectId })
+      .exec();
     if (res.deletedCount === 0) {
       throw new NotFoundException('Contact message not found');
     }
@@ -1635,14 +1747,18 @@ export class AdminService {
       if (error.name === 'CastError') {
         throw new BadRequestException('Invalid manufacturer ID format');
       }
-      throw new BadRequestException(error.message || 'Failed to update manufacturer');
+      throw new BadRequestException(
+        error.message || 'Failed to update manufacturer',
+      );
     }
   }
 
   async updateManufacturerStatus(id: string) {
     try {
       const manufacturerId = new Types.ObjectId(id);
-      const manufacturer = await this.manufacturerModel.findById(manufacturerId).exec();
+      const manufacturer = await this.manufacturerModel
+        .findById(manufacturerId)
+        .exec();
 
       if (!manufacturer) {
         throw new NotFoundException('Manufacturer not found');
@@ -1670,14 +1786,18 @@ export class AdminService {
       if (error.name === 'CastError') {
         throw new BadRequestException('Invalid manufacturer ID format');
       }
-      throw new BadRequestException(error.message || 'Failed to update manufacturer status');
+      throw new BadRequestException(
+        error.message || 'Failed to update manufacturer status',
+      );
     }
   }
 
   async updateVendorStatus(id: string) {
     try {
       const manufacturerId = new Types.ObjectId(id);
-      const manufacturer = await this.manufacturerModel.findById(manufacturerId).exec();
+      const manufacturer = await this.manufacturerModel
+        .findById(manufacturerId)
+        .exec();
 
       if (!manufacturer) {
         throw new NotFoundException('Manufacturer not found');
@@ -1691,7 +1811,9 @@ export class AdminService {
       } else if (currentStatus === 1) {
         newStatus = 0;
       } else {
-        throw new BadRequestException(`Invalid vendor status: ${currentStatus}`);
+        throw new BadRequestException(
+          `Invalid vendor status: ${currentStatus}`,
+        );
       }
 
       const updatedVendor = await this.manufacturerModel
@@ -1713,7 +1835,9 @@ export class AdminService {
       if (error.name === 'CastError') {
         throw new BadRequestException('Invalid manufacturer ID format');
       }
-      throw new BadRequestException(error.message || 'Failed to update vendor status');
+      throw new BadRequestException(
+        error.message || 'Failed to update vendor status',
+      );
     }
   }
 }

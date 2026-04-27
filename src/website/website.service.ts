@@ -12,9 +12,15 @@ import {
 } from './schemas/newsletter-subscriber.schema';
 import { NewsletterSubscribeDto } from './dto/newsletter-subscribe.dto';
 import { ContactSubmitDto } from './dto/contact-submit.dto';
-import { ContactMessage, ContactMessageDocument } from './schemas/contact-message.schema';
+import {
+  ContactMessage,
+  ContactMessageDocument,
+} from './schemas/contact-message.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
-import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
+import {
+  VendorUser,
+  VendorUserDocument,
+} from '../vendor-users/schemas/vendor-user.schema';
 import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { EmailService } from '../common/services/email.service';
@@ -32,7 +38,8 @@ function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
 }
 
 function formatDateYYYYMMDD(value: unknown): string {
-  const d = value instanceof Date ? value : value ? new Date(value as any) : new Date();
+  const d =
+    value instanceof Date ? value : value ? new Date(value as any) : new Date();
   if (Number.isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
   return d.toISOString().slice(0, 10);
 }
@@ -98,7 +105,7 @@ export class WebsiteService {
             createdAt: new Date(),
           },
         },
-        { upsert: true, new: true }
+        { upsert: true, new: true },
       )
       .lean()
       .exec();
@@ -154,9 +161,10 @@ export class WebsiteService {
       const data = (rows ?? []).map((r, idx) => ({
         id: idx + 1, // S.No for the table
         email: String(r.email ?? ''),
-        subscribedFor: Array.isArray(r.subscribedFor) && r.subscribedFor.length > 0
-          ? r.subscribedFor.join(', ')
-          : 'Newsletter',
+        subscribedFor:
+          Array.isArray(r.subscribedFor) && r.subscribedFor.length > 0
+            ? r.subscribedFor.join(', ')
+            : 'Newsletter',
         createdAt: formatDateYYYYMMDD(r.createdAt),
         status: Number(r.status) === 1 ? 'active' : 'inactive',
       }));
@@ -276,7 +284,8 @@ export class WebsiteService {
     return {
       id: String((updated as any)._id),
       eventId: (updated as any).eventId,
-      status: Number((updated as any).eventStatus) === 1 ? 'active' : 'inactive',
+      status:
+        Number((updated as any).eventStatus) === 1 ? 'active' : 'inactive',
     };
   }
 
@@ -288,7 +297,9 @@ export class WebsiteService {
     const rows = await this.vendorUserModel
       .find({ type: 'partner', status: 1 })
       .sort({ createdAt: -1, _id: -1 })
-      .select('name designation email phone image facebookUrl twitterUrl linkedinUrl')
+      .select(
+        'name designation email phone image facebookUrl twitterUrl linkedinUrl',
+      )
       .lean()
       .exec();
 
@@ -311,12 +322,16 @@ export class WebsiteService {
    * Uses `manufacturerId` to fetch manufacturer details.
    */
   async submitManufacturerInquiry(dto: ManufacturerInquiryDto) {
-    const manufacturer = await this.manufacturersService.findById(dto.manufacturerId);
+    const manufacturer = await this.manufacturersService.findById(
+      dto.manufacturerId,
+    );
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
     }
 
-    const manufacturerName = (manufacturer.manufacturerName ?? '').toString().trim();
+    const manufacturerName = (manufacturer.manufacturerName ?? '')
+      .toString()
+      .trim();
     const vendorName = (manufacturer.vendor_name ?? '').toString().trim();
     let vendorEmail = (manufacturer.vendor_email ?? '').toString().trim();
     let vendorPhone = (manufacturer.vendor_phone ?? '').toString().trim();
@@ -333,8 +348,10 @@ export class WebsiteService {
         .select('email phone')
         .lean()
         .exec();
-      if (!vendorEmail) vendorEmail = String((vendorUser as any)?.email ?? '').trim();
-      if (!vendorPhone) vendorPhone = String((vendorUser as any)?.phone ?? '').trim();
+      if (!vendorEmail)
+        vendorEmail = String((vendorUser as any)?.email ?? '').trim();
+      if (!vendorPhone)
+        vendorPhone = String((vendorUser as any)?.phone ?? '').trim();
     }
 
     const subject =
@@ -402,4 +419,3 @@ export class WebsiteService {
     return { sent: true, subject };
   }
 }
-

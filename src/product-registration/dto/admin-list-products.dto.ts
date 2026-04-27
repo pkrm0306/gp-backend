@@ -40,7 +40,8 @@ function normalizeOptionalNumber(value: unknown): number | undefined {
 
 export class AdminListProductsDto {
   @ApiPropertyOptional({
-    description: 'Lifecycle status filter. Supports single value or array. Example: [0,1]',
+    description:
+      'Lifecycle status filter. Supports single value or array. Example: [0,1]',
     type: [Number],
     example: [0, 1],
   })
@@ -60,13 +61,19 @@ export class AdminListProductsDto {
   @IsIn([0, 1])
   product_type?: 0 | 1;
 
-  @ApiPropertyOptional({ description: 'Category ID', example: '507f1f77bcf86cd799439011' })
+  @ApiPropertyOptional({
+    description: 'Category ID',
+    example: '507f1f77bcf86cd799439011',
+  })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsMongoId()
   categoryId?: string;
 
-  @ApiPropertyOptional({ description: 'Manufacturer ID', example: '507f1f77bcf86cd799439012' })
+  @ApiPropertyOptional({
+    description: 'Manufacturer ID',
+    example: '507f1f77bcf86cd799439012',
+  })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsMongoId()
@@ -113,7 +120,10 @@ export class AdminListProductsDto {
   @IsInt()
   validTillYear?: number;
 
-  @ApiPropertyOptional({ description: 'Plant state ID', example: '507f1f77bcf86cd799439013' })
+  @ApiPropertyOptional({
+    description: 'Plant state ID',
+    example: '507f1f77bcf86cd799439013',
+  })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsMongoId()
@@ -125,7 +135,8 @@ export class AdminListProductsDto {
   city?: string;
 
   @ApiPropertyOptional({
-    description: 'Global search on eoiNo, urnNo, productName, manufacturerName, email, phone',
+    description:
+      'Global search on eoiNo, urnNo, productName, manufacturerName, email, phone',
   })
   @IsOptional()
   @IsString()
@@ -147,13 +158,32 @@ export class AdminListProductsDto {
   limit?: number = 10;
 
   @ApiPropertyOptional({
-    enum: ['createdDate', 'createdAt', 'validTill', 'productName', 'eoiNo', 'urnNo'],
+    enum: [
+      'createdDate',
+      'createdAt',
+      'validTill',
+      'productName',
+      'eoiNo',
+      'urnNo',
+    ],
     default: 'createdDate',
   })
   @IsOptional()
-  @IsIn(['createdDate', 'createdAt', 'validTill', 'productName', 'eoiNo', 'urnNo'])
-  sortBy?: 'createdDate' | 'createdAt' | 'validTill' | 'productName' | 'eoiNo' | 'urnNo' =
-    'createdDate';
+  @IsIn([
+    'createdDate',
+    'createdAt',
+    'validTill',
+    'productName',
+    'eoiNo',
+    'urnNo',
+  ])
+  sortBy?:
+    | 'createdDate'
+    | 'createdAt'
+    | 'validTill'
+    | 'productName'
+    | 'eoiNo'
+    | 'urnNo' = 'createdDate';
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'desc' })
   @IsOptional()
@@ -168,4 +198,3 @@ export class AdminListProductsDto {
   @IsIn(['asc', 'desc'])
   order?: 'asc' | 'desc';
 }
-

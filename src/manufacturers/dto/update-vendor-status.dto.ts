@@ -17,7 +17,8 @@ export class UpdateVendorStatusDto {
   manufacturerStatus?: 1;
 
   @ApiProperty({
-    description: 'Vendor active status for verified manufacturer (0=inactive, 1=active)',
+    description:
+      'Vendor active status for verified manufacturer (0=inactive, 1=active)',
     enum: [0, 1],
     required: false,
     example: 1,
@@ -28,4 +29,3 @@ export class UpdateVendorStatusDto {
   @IsIn([0, 1], { message: 'vendor_status must be 0 or 1' })
   vendor_status?: 0 | 1;
 }
-

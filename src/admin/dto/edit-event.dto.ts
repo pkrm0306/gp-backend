@@ -121,4 +121,3 @@ export class EditEventDto {
   })
   contactPersonPhone?: string;
 }
-

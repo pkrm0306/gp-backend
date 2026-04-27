@@ -6,10 +6,17 @@ import {
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types } from 'mongoose';
-import { ProductPerformance, ProductPerformanceDocument } from './schemas/product-performance.schema';
-import { AllProductDocument, AllProductDocumentDocument } from '../product-design/schemas/all-product-document.schema';
+import {
+  ProductPerformance,
+  ProductPerformanceDocument,
+} from './schemas/product-performance.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentDocument,
+} from '../product-design/schemas/all-product-document.schema';
 import { CreateProductPerformanceDto } from './dto/create-product-performance.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -27,7 +34,10 @@ export class ProductPerformanceService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -42,11 +52,11 @@ export class ProductPerformanceService {
    */
   private ensureUrnFolder(urnNo: string): string {
     const urnFolderPath = path.join('uploads', 'urns', urnNo);
-    
+
     if (!fs.existsSync(urnFolderPath)) {
       fs.mkdirSync(urnFolderPath, { recursive: true });
     }
-    
+
     return urnFolderPath;
   }
 
@@ -64,7 +74,7 @@ export class ProductPerformanceService {
     const randomSuffix = Math.round(Math.random() * 1e9);
     const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
     const filePath = path.join(urnFolderPath, fileName);
-    
+
     // Copy file from temp location to URN folder (file.path is the temp location)
     if (file.path && fs.existsSync(file.path)) {
       fs.copyFileSync(file.path, filePath);
@@ -79,10 +89,12 @@ export class ProductPerformanceService {
       if (file.buffer) {
         fs.writeFileSync(filePath, file.buffer);
       } else {
-        throw new BadRequestException(`File data not available for ${fileType}`);
+        throw new BadRequestException(
+          `File data not available for ${fileType}`,
+        );
       }
     }
-    
+
     // Return relative path from uploads folder
     return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
   }
@@ -106,7 +118,8 @@ export class ProductPerformanceService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
       // Get next product performance ID
-      const processProductPerformanceId = await this.sequenceHelper.getProductPerformanceId();
+      const processProductPerformanceId =
+        await this.sequenceHelper.getProductPerformanceId();
 
       // Get current date
       const now = new Date();
@@ -115,9 +128,13 @@ export class ProductPerformanceService {
       let testReportFiles = 0;
       let testReportFilePath: string | undefined;
       let storedFileName = '';
-      
+
       if (testReportFile) {
-        testReportFilePath = this.saveFileToUrnFolder(testReportFile, createProductPerformanceDto.urnNo, 'test_report');
+        testReportFilePath = this.saveFileToUrnFolder(
+          testReportFile,
+          createProductPerformanceDto.urnNo,
+          'test_report',
+        );
         testReportFullPath = path.join('uploads', testReportFilePath);
         testReportFiles = 1;
         storedFileName = path.basename(testReportFilePath);
@@ -132,29 +149,37 @@ export class ProductPerformanceService {
         productName: createProductPerformanceDto.productName || '',
         // Store user-provided display name when present; fallback to stored filename if file exists
         testReportFileName:
-          (createProductPerformanceDto.testReportFileName?.trim() || '') ||
-          (storedFileName || ''),
+          createProductPerformanceDto.testReportFileName?.trim() ||
+          '' ||
+          storedFileName ||
+          '',
         testReportFiles,
         renewalType: createProductPerformanceDto.renewalType || 0,
-        productPerformanceStatus: createProductPerformanceDto.productPerformanceStatus || 0,
+        productPerformanceStatus:
+          createProductPerformanceDto.productPerformanceStatus || 0,
         createdDate: now,
         updatedDate: now,
       };
 
-      const productPerformance = new this.productPerformanceModel(productPerformanceData);
-      const savedProductPerformance = await productPerformance.save({ session });
+      const productPerformance = new this.productPerformanceModel(
+        productPerformanceData,
+      );
+      const savedProductPerformance = await productPerformance.save({
+        session,
+      });
 
       // Insert uploaded document into all_product_documents (master table)
       if (testReportFilePath && testReportFile) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         const documentLink = `uploads/${testReportFilePath}`;
-        
+
         const documentData = {
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo: createProductPerformanceDto.urnNo,
           eoiNo: createProductPerformanceDto.eoiNo || '',
-          documentForm: 'product_performance',
+          documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE,
           documentFormSubsection: 'test_report_files',
           formPrimaryId: processProductPerformanceId,
           documentName: path.basename(testReportFilePath),
@@ -185,7 +210,10 @@ export class ProductPerformanceService {
         console.warn('File cleanup error:', cleanupError);
       }
 
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         console.error('Validation error:', error.message);
         throw error;
       }
@@ -198,12 +226,18 @@ export class ProductPerformanceService {
       console.error('Error stack:', error.stack);
 
       // Check for specific error types
-      if (error.name === 'CastError' || error.message?.includes('Cast to ObjectId')) {
-        throw new BadRequestException(`Invalid ID format provided: ${error.message}`);
+      if (
+        error.name === 'CastError' ||
+        error.message?.includes('Cast to ObjectId')
+      ) {
+        throw new BadRequestException(
+          `Invalid ID format provided: ${error.message}`,
+        );
       }
 
       throw new InternalServerErrorException(
-        error.message || 'Failed to create product performance. Please check the logs for details.',
+        error.message ||
+          'Failed to create product performance. Please check the logs for details.',
       );
     }
   }

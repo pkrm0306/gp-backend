@@ -11,7 +11,10 @@ import {
 import { Transform } from 'class-transformer';
 
 export class ManufacturerInquiryDto {
-  @ApiProperty({ description: 'Manufacturer MongoDB id', example: '661157aa2b2d2b2d2b2d2b2d' })
+  @ApiProperty({
+    description: 'Manufacturer MongoDB id',
+    example: '661157aa2b2d2b2d2b2d2b2d',
+  })
   @IsMongoId()
   @IsNotEmpty()
   manufacturerId: string;
@@ -26,7 +29,11 @@ export class ManufacturerInquiryDto {
   @ApiProperty({ example: 'you@example.com' })
   @IsEmail()
   @IsNotEmpty()
-  @Transform(({ value }) => String(value ?? '').trim().toLowerCase())
+  @Transform(({ value }) =>
+    String(value ?? '')
+      .trim()
+      .toLowerCase(),
+  )
   email: string;
 
   @ApiProperty({ example: '9876543210' })
@@ -34,7 +41,9 @@ export class ManufacturerInquiryDto {
   @IsNotEmpty()
   @Transform(({ value }) => String(value ?? '').trim())
   @Length(7, 20)
-  @Matches(/^[0-9+\-\s()]+$/, { message: 'contact contains invalid characters' })
+  @Matches(/^[0-9+\-\s()]+$/, {
+    message: 'contact contains invalid characters',
+  })
   contact: string;
 
   @ApiPropertyOptional({
@@ -65,4 +74,3 @@ export class ManufacturerInquiryDto {
   @Length(0, 2000)
   message?: string;
 }
-

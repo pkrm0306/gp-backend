@@ -5,7 +5,13 @@ export type NewsletterSubscriberDocument = NewsletterSubscriber & Document;
 
 @Schema({ timestamps: true })
 export class NewsletterSubscriber {
-  @Prop({ required: true, unique: true, index: true, lowercase: true, trim: true })
+  @Prop({
+    required: true,
+    unique: true,
+    index: true,
+    lowercase: true,
+    trim: true,
+  })
   email: string;
 
   /**
@@ -25,4 +31,3 @@ export class NewsletterSubscriber {
 
 export const NewsletterSubscriberSchema =
   SchemaFactory.createForClass(NewsletterSubscriber);
-

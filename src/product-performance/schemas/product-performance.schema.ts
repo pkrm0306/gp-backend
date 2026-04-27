@@ -39,4 +39,5 @@ export class ProductPerformance {
   updatedDate: Date;
 }
 
-export const ProductPerformanceSchema = SchemaFactory.createForClass(ProductPerformance);
+export const ProductPerformanceSchema =
+  SchemaFactory.createForClass(ProductPerformance);

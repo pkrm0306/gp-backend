@@ -1,6 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, Length } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Length,
+} from 'class-validator';
 
 export class CreateEventDto {
   @ApiProperty({ example: 'Green Summit 2026' })
@@ -22,19 +28,25 @@ export class CreateEventDto {
   @ApiPropertyOptional({ example: '10:00 AM' })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   eventStartTime?: string;
 
   @ApiPropertyOptional({ example: '05:00 PM' })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   eventEndTime?: string;
 
   @ApiPropertyOptional({ example: 'Chennai' })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   eventLocation?: string;
 
   @ApiPropertyOptional({ example: '<p>Eco-labelled products summit</p>' })
@@ -45,25 +57,35 @@ export class CreateEventDto {
   @ApiPropertyOptional({ example: 'Priya' })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   contactPersonName?: string;
 
   @ApiPropertyOptional({ example: 'Manager' })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   contactPersonDesignation?: string;
 
   @ApiPropertyOptional({ example: 'priya@example.com' })
   @IsOptional()
   @IsEmail()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim().toLowerCase()))
+  @Transform(({ value }) =>
+    value === undefined || value === null
+      ? undefined
+      : String(value).trim().toLowerCase(),
+  )
   contactPersonEmail?: string;
 
   @ApiPropertyOptional({ example: '9876543210' })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   contactPersonPhone?: string;
 
   @ApiPropertyOptional({
@@ -73,7 +95,9 @@ export class CreateEventDto {
   })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   registrationLink?: string;
 
   @ApiPropertyOptional({
@@ -83,7 +107,8 @@ export class CreateEventDto {
   })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   brochureLink?: string;
 }
-

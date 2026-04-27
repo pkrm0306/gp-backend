@@ -6,11 +6,18 @@ import {
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types, ClientSession } from 'mongoose';
-import { ProductDesign, ProductDesignDocument } from './schemas/product-design.schema';
+import {
+  ProductDesign,
+  ProductDesignDocument,
+} from './schemas/product-design.schema';
 import { PdMeasure, PdMeasureDocument } from './schemas/pd-measure.schema';
-import { AllProductDocument, AllProductDocumentDocument } from './schemas/all-product-document.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentDocument,
+} from './schemas/all-product-document.schema';
 import { CreateProductDesignDto } from './dto/create-product-design.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -30,7 +37,10 @@ export class ProductDesignService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -45,11 +55,11 @@ export class ProductDesignService {
    */
   private ensureUrnFolder(urnNo: string): string {
     const urnFolderPath = path.join('uploads', 'urns', urnNo);
-    
+
     if (!fs.existsSync(urnFolderPath)) {
       fs.mkdirSync(urnFolderPath, { recursive: true });
     }
-    
+
     return urnFolderPath;
   }
 
@@ -67,7 +77,7 @@ export class ProductDesignService {
     const randomSuffix = Math.round(Math.random() * 1e9);
     const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
     const filePath = path.join(urnFolderPath, fileName);
-    
+
     // Copy file from temp location to URN folder (file.path is the temp location)
     if (file.path && fs.existsSync(file.path)) {
       fs.copyFileSync(file.path, filePath);
@@ -82,10 +92,12 @@ export class ProductDesignService {
       if (file.buffer) {
         fs.writeFileSync(filePath, file.buffer);
       } else {
-        throw new BadRequestException(`File data not available for ${fileType}`);
+        throw new BadRequestException(
+          `File data not available for ${fileType}`,
+        );
       }
     }
-    
+
     // Return relative path from uploads folder
     return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
   }
@@ -117,17 +129,23 @@ export class ProductDesignService {
       const now = new Date();
 
       // Fetch EOI no (optional) for master document table
-      const productRow = await this.connection.collection('products').findOne(
-        { urnNo: createProductDesignDto.urnNo, vendorId: vendorObjectId },
-        { projection: { eoiNo: 1 } },
-      );
+      const productRow = await this.connection
+        .collection('products')
+        .findOne(
+          { urnNo: createProductDesignDto.urnNo, vendorId: vendorObjectId },
+          { projection: { eoiNo: 1 } },
+        );
       const eoiNo: string | undefined = productRow?.eoiNo;
 
       // Handle file uploads and set flags
       let ecoVisionUpload = 0;
       let ecoVisionFilePath: string | undefined;
       if (ecoVisionFile) {
-        ecoVisionFilePath = this.saveFileToUrnFolder(ecoVisionFile, createProductDesignDto.urnNo, 'eco_vision');
+        ecoVisionFilePath = this.saveFileToUrnFolder(
+          ecoVisionFile,
+          createProductDesignDto.urnNo,
+          'eco_vision',
+        );
         ecoVisionFullPath = path.join('uploads', ecoVisionFilePath);
         ecoVisionUpload = 1;
       }
@@ -140,7 +158,10 @@ export class ProductDesignService {
           createProductDesignDto.urnNo,
           'supporting_document',
         );
-        supportingDocumentFullPath = path.join('uploads', supportingDocumentFilePath);
+        supportingDocumentFullPath = path.join(
+          'uploads',
+          supportingDocumentFilePath,
+        );
         productDesignSupportingDocument = 1;
       }
 
@@ -165,7 +186,8 @@ export class ProductDesignService {
       if (createProductDesignDto.measuresAndBenefits?.length) {
         const measureDocs = [];
         for (const row of createProductDesignDto.measuresAndBenefits) {
-          const productDesignMeasureId = await this.sequenceHelper.getProductDesignMeasureId();
+          const productDesignMeasureId =
+            await this.sequenceHelper.getProductDesignMeasureId();
           measureDocs.push({
             productDesignMeasureId,
             urnNo: createProductDesignDto.urnNo,
@@ -207,13 +229,14 @@ export class ProductDesignService {
       if (docRows.length) {
         const docsToInsert = [];
         for (const d of docRows) {
-          const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+          const productDocumentId =
+            await this.sequenceHelper.getProductDocumentId();
           docsToInsert.push({
             productDocumentId,
             vendorId: vendorObjectId,
             urnNo: createProductDesignDto.urnNo,
             eoiNo,
-            documentForm: 'product_design',
+            documentForm: DocumentSectionKey.PRODUCT_DESIGN,
             documentFormSubsection: d.subsection,
             formPrimaryId: productDesignId,
             documentName: path.basename(d.filePath),
@@ -223,7 +246,9 @@ export class ProductDesignService {
             updatedDate: now,
           });
         }
-        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
+        await this.allProductDocumentModel.insertMany(docsToInsert, {
+          session,
+        });
       }
 
       await session.commitTransaction();
@@ -239,7 +264,10 @@ export class ProductDesignService {
         if (ecoVisionFullPath && fs.existsSync(ecoVisionFullPath)) {
           fs.unlinkSync(ecoVisionFullPath);
         }
-        if (supportingDocumentFullPath && fs.existsSync(supportingDocumentFullPath)) {
+        if (
+          supportingDocumentFullPath &&
+          fs.existsSync(supportingDocumentFullPath)
+        ) {
           fs.unlinkSync(supportingDocumentFullPath);
         }
       } catch (cleanupError) {
@@ -247,7 +275,10 @@ export class ProductDesignService {
         console.warn('File cleanup error:', cleanupError);
       }
 
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         console.error('Validation error:', error.message);
         throw error;
       }
@@ -260,12 +291,18 @@ export class ProductDesignService {
       console.error('Error stack:', error.stack);
 
       // Check for specific error types
-      if (error.name === 'CastError' || error.message?.includes('Cast to ObjectId')) {
-        throw new BadRequestException(`Invalid ID format provided: ${error.message}`);
+      if (
+        error.name === 'CastError' ||
+        error.message?.includes('Cast to ObjectId')
+      ) {
+        throw new BadRequestException(
+          `Invalid ID format provided: ${error.message}`,
+        );
       }
 
       throw new InternalServerErrorException(
-        error.message || 'Failed to create product design. Please check the logs for details.',
+        error.message ||
+          'Failed to create product design. Please check the logs for details.',
       );
     }
   }

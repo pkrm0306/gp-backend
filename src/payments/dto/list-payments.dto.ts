@@ -28,7 +28,8 @@ export class ListPaymentsDto {
   limit?: number = 10;
 
   @ApiProperty({
-    description: 'Global search term (searches in urn_no, payment_reference_no)',
+    description:
+      'Global search term (searches in urn_no, payment_reference_no)',
     example: 'URN-20260303142815',
     required: false,
   })
@@ -37,7 +38,8 @@ export class ListPaymentsDto {
   search?: string;
 
   @ApiProperty({
-    description: 'Filter by payment status (0=Created, 1=Pending, 2=Completed, 3=Cancelled)',
+    description:
+      'Filter by payment status (0=Created, 1=Pending, 2=Completed, 3=Cancelled)',
     example: 0,
     required: false,
     enum: [0, 1, 2, 3],

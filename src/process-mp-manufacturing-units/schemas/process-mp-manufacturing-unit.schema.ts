@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type ProcessMpManufacturingUnitDocument = ProcessMpManufacturingUnit & Document;
+export type ProcessMpManufacturingUnitDocument = ProcessMpManufacturingUnit &
+  Document;
 
 @Schema({ collection: 'process_mp_manufacturing_units', timestamps: false })
 export class ProcessMpManufacturingUnit {
@@ -207,4 +208,3 @@ export class ProcessMpManufacturingUnit {
 export const ProcessMpManufacturingUnitSchema = SchemaFactory.createForClass(
   ProcessMpManufacturingUnit,
 );
-

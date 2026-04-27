@@ -1,11 +1,27 @@
-import { Injectable, InternalServerErrorException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
-import { PaymentDetails, PaymentDetailsDocument } from '../payments/schemas/payment-details.schema';
-import { VendorUser, VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
+import {
+  PaymentDetails,
+  PaymentDetailsDocument,
+} from '../payments/schemas/payment-details.schema';
+import {
+  VendorUser,
+  VendorUserDocument,
+} from '../vendor-users/schemas/vendor-user.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
-import { Manufacturer, ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
+import {
+  Manufacturer,
+  ManufacturerDocument,
+} from '../manufacturers/schemas/manufacturer.schema';
 
 @Injectable()
 export class DashboardService {
@@ -27,7 +43,9 @@ export class DashboardService {
       const vendorObjectId = new Types.ObjectId(vendorId);
 
       // Check if vendor profile is complete
-      const manufacturer = await this.manufacturerModel.findById(vendorObjectId).exec();
+      const manufacturer = await this.manufacturerModel
+        .findById(vendorObjectId)
+        .exec();
       if (!manufacturer) {
         throw new ForbiddenException('Manufacturer not found');
       }
@@ -38,7 +56,9 @@ export class DashboardService {
         !manufacturer.vendor_designation ||
         !manufacturer.vendor_phone
       ) {
-        throw new ForbiddenException('Please enter your account details to access all options!');
+        throw new ForbiddenException(
+          'Please enter your account details to access all options!',
+        );
       }
 
       // Execute all queries in parallel for better performance
@@ -65,7 +85,9 @@ export class DashboardService {
         data: {
           products: { product_count: productCount },
           certifiedProducts: { certified_product_count: certifiedProductCount },
-          paymentPendingAmount: { payment_pending_amount: paymentPendingAmount },
+          paymentPendingAmount: {
+            payment_pending_amount: paymentPendingAmount,
+          },
           partners: { partner_count: partnerCount },
           upcomingEventsCount: { upcoming_events_count: upcomingEventsCount },
           latestUrn: latestUrn,
@@ -92,34 +114,46 @@ export class DashboardService {
   /**
    * Query 2: Get count of certified products (product_status = 2)
    */
-  private async getCertifiedProductsCount(vendorId: Types.ObjectId): Promise<number> {
-    const count = await this.productModel.countDocuments({
-      vendorId,
-      productStatus: 2,
-    }).exec();
+  private async getCertifiedProductsCount(
+    vendorId: Types.ObjectId,
+  ): Promise<number> {
+    const count = await this.productModel
+      .countDocuments({
+        vendorId,
+        productStatus: 2,
+      })
+      .exec();
     return count || 0;
   }
 
   /**
    * Query 3: Get sum of pending payment amounts (payment_status = 0)
    */
-  private async getPaymentPendingAmount(vendorId: Types.ObjectId): Promise<number | null> {
-    const result = await this.paymentDetailsModel.aggregate([
-      {
-        $match: {
-          vendorId: vendorId,
-          paymentStatus: 0,
+  private async getPaymentPendingAmount(
+    vendorId: Types.ObjectId,
+  ): Promise<number | null> {
+    const result = await this.paymentDetailsModel
+      .aggregate([
+        {
+          $match: {
+            vendorId: vendorId,
+            paymentStatus: 0,
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$quoteTotal' },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$quoteTotal' },
+          },
         },
-      },
-    ]).exec();
+      ])
+      .exec();
 
-    if (result.length === 0 || result[0].total === null || result[0].total === undefined) {
+    if (
+      result.length === 0 ||
+      result[0].total === null ||
+      result[0].total === undefined
+    ) {
       return null;
     }
 
@@ -130,11 +164,13 @@ export class DashboardService {
    * Query 4: Get count of partners (type = 'partner', status IN (0, 1))
    */
   private async getPartnersCount(vendorId: Types.ObjectId): Promise<number> {
-    const count = await this.vendorUserModel.countDocuments({
-      vendorId,
-      type: 'partner',
-      status: { $in: [0, 1] },
-    }).exec();
+    const count = await this.vendorUserModel
+      .countDocuments({
+        vendorId,
+        type: 'partner',
+        status: { $in: [0, 1] },
+      })
+      .exec();
     return count || 0;
   }
 
@@ -146,21 +182,25 @@ export class DashboardService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const count = await this.eventModel.countDocuments({
-      eventDate: { $gte: today },
-      eventStatus: 1,
-    }).exec();
+    const count = await this.eventModel
+      .countDocuments({
+        eventDate: { $gte: today },
+        eventStatus: 1,
+      })
+      .exec();
     return count || 0;
   }
 
   /**
    * Query 6: Get latest 4 URN records (product_type = 0), ordered by urn_no DESC
    */
-  private async getLatestUrn(vendorId: Types.ObjectId): Promise<Array<{
-    urn_no: string;
-    urn_status: number | string;
-    product_status: number;
-  }>> {
+  private async getLatestUrn(vendorId: Types.ObjectId): Promise<
+    Array<{
+      urn_no: string;
+      urn_status: number | string;
+      product_status: number;
+    }>
+  > {
     const results = await this.productModel
       .find({
         vendorId,
@@ -181,11 +221,13 @@ export class DashboardService {
   /**
    * Query 7: Get latest 10 EOI records (product_type = 0), ordered by created_date DESC
    */
-  private async getLatestEoi(vendorId: Types.ObjectId): Promise<Array<{
-    eoi_no: string;
-    product_name: string;
-    product_status: number;
-  }>> {
+  private async getLatestEoi(vendorId: Types.ObjectId): Promise<
+    Array<{
+      eoi_no: string;
+      product_name: string;
+      product_status: number;
+    }>
+  > {
     const results = await this.productModel
       .find({
         vendorId,

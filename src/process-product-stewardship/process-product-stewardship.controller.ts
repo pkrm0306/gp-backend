@@ -48,7 +48,9 @@ const storage = diskStorage({
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class ProcessProductStewardshipController {
-  constructor(private readonly processProductStewardshipService: ProcessProductStewardshipService) {}
+  constructor(
+    private readonly processProductStewardshipService: ProcessProductStewardshipService,
+  ) {}
 
   @Post()
   @UseInterceptors(
@@ -70,7 +72,16 @@ export class ProcessProductStewardshipController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
           'application/vnd.ms-excel', // .xls
         ];
-        const allowedExtensions = ['.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+        const allowedExtensions = [
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.pdf',
+          '.doc',
+          '.docx',
+          '.xls',
+          '.xlsx',
+        ];
         const fileExt = extname(file.originalname).toLowerCase();
 
         if (
@@ -199,7 +210,8 @@ export class ProcessProductStewardshipController {
     @UploadedFiles() files?: Express.Multer.File[],
     @Req() req?: any,
   ) {
-    if (!user?.vendorId) throw new BadRequestException('Vendor ID not found in token');
+    if (!user?.vendorId)
+      throw new BadRequestException('Vendor ID not found in token');
 
     // Parse body to get DTO
     const dto: CreateProcessProductStewardshipDto = {
@@ -228,31 +240,44 @@ export class ProcessProductStewardshipController {
     );
 
     // Validate file names if files are uploaded
-    if (seaSupportingDocumentsFile && (!dto.seaSupportingDocumentsFileName || dto.seaSupportingDocumentsFileName.trim() === '')) {
+    if (
+      seaSupportingDocumentsFile &&
+      (!dto.seaSupportingDocumentsFileName ||
+        dto.seaSupportingDocumentsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'seaSupportingDocumentsFileName is required when uploading seaSupportingDocumentsFile',
       );
     }
 
-    if (qmSupportingDocumentsFile && (!dto.qmSupportingDocumentsFileName || dto.qmSupportingDocumentsFileName.trim() === '')) {
+    if (
+      qmSupportingDocumentsFile &&
+      (!dto.qmSupportingDocumentsFileName ||
+        dto.qmSupportingDocumentsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'qmSupportingDocumentsFileName is required when uploading qmSupportingDocumentsFile',
       );
     }
 
-    if (eprSupportingDocumentsFile && (!dto.eprSupportingDocumentsFileName || dto.eprSupportingDocumentsFileName.trim() === '')) {
+    if (
+      eprSupportingDocumentsFile &&
+      (!dto.eprSupportingDocumentsFileName ||
+        dto.eprSupportingDocumentsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'eprSupportingDocumentsFileName is required when uploading eprSupportingDocumentsFile',
       );
     }
 
-    const data = await this.processProductStewardshipService.createProcessProductStewardship(
-      dto,
-      user.vendorId,
-      seaSupportingDocumentsFile,
-      qmSupportingDocumentsFile,
-      eprSupportingDocumentsFile,
-    );
+    const data =
+      await this.processProductStewardshipService.createProcessProductStewardship(
+        dto,
+        user.vendorId,
+        seaSupportingDocumentsFile,
+        qmSupportingDocumentsFile,
+        eprSupportingDocumentsFile,
+      );
     return { success: true, data };
   }
 }

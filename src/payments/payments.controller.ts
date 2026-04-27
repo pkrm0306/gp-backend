@@ -9,9 +9,10 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -72,14 +73,16 @@ export class PaymentsController {
     name: 'search',
     required: false,
     type: String,
-    description: 'Global search term (searches in urn_no, payment_reference_no)',
+    description:
+      'Global search term (searches in urn_no, payment_reference_no)',
     example: 'URN-20260303142815',
   })
   @ApiQuery({
     name: 'status',
     required: false,
     type: Number,
-    description: 'Filter by payment status (0=Created, 1=Pending, 2=Completed, 3=Cancelled)',
+    description:
+      'Filter by payment status (0=Created, 1=Pending, 2=Completed, 3=Cancelled)',
     example: 0,
     enum: [0, 1, 2, 3],
   })
@@ -140,8 +143,14 @@ export class PaymentsController {
       },
     },
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
-  @ApiResponse({ status: 400, description: 'Bad request - Invalid query parameters' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid query parameters',
+  })
   async getPayments(
     @CurrentUser() user: any,
     @Query() listPaymentsDto: ListPaymentsDto,
@@ -215,7 +224,13 @@ export class PaymentsController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'quoteAmount', 'quoteGstAmount', 'quoteTdsAmount', 'quoteTotal'],
+      required: [
+        'urnNo',
+        'quoteAmount',
+        'quoteGstAmount',
+        'quoteTdsAmount',
+        'quoteTotal',
+      ],
       properties: {
         urnNo: {
           type: 'string',
@@ -225,12 +240,12 @@ export class PaymentsController {
         quoteAmount: {
           type: 'number',
           description: 'Quote amount (mandatory)',
-          example: 10000.00,
+          example: 10000.0,
         },
         quoteGstAmount: {
           type: 'number',
           description: 'GST amount (mandatory)',
-          example: 1800.00,
+          example: 1800.0,
         },
         quoteTdsAmount: {
           type: 'number',
@@ -240,7 +255,7 @@ export class PaymentsController {
         quoteTotal: {
           type: 'number',
           description: 'Total amount (mandatory)',
-          example: 10800.00,
+          example: 10800.0,
         },
         adminGstNo: {
           type: 'string',
@@ -300,7 +315,10 @@ export class PaymentsController {
       type: 'object',
       properties: {
         success: { type: 'boolean', example: true },
-        message: { type: 'string', example: 'Payment details created successfully' },
+        message: {
+          type: 'string',
+          example: 'Payment details created successfully',
+        },
         data: {
           type: 'object',
           properties: {
@@ -340,7 +358,9 @@ export class PaymentsController {
         vendorGstNo: body.vendorGstNo,
         paymentType: body.paymentType,
         paymentMode: body.paymentMode,
-        onlinePaymentId: body.onlinePaymentId ? parseInt(body.onlinePaymentId) : undefined,
+        onlinePaymentId: body.onlinePaymentId
+          ? parseInt(body.onlinePaymentId)
+          : undefined,
         paymentReferenceNo: body.paymentReferenceNo,
         paymentChequeDate: body.paymentChequeDate,
         productsToBeCertified: body.productsToBeCertified,
@@ -350,16 +370,28 @@ export class PaymentsController {
       if (!createPaymentDto.urnNo) {
         throw new BadRequestException('URN number is required');
       }
-      if (createPaymentDto.quoteAmount === undefined || createPaymentDto.quoteAmount === null) {
+      if (
+        createPaymentDto.quoteAmount === undefined ||
+        createPaymentDto.quoteAmount === null
+      ) {
         throw new BadRequestException('Quote amount is required');
       }
-      if (createPaymentDto.quoteGstAmount === undefined || createPaymentDto.quoteGstAmount === null) {
+      if (
+        createPaymentDto.quoteGstAmount === undefined ||
+        createPaymentDto.quoteGstAmount === null
+      ) {
         throw new BadRequestException('GST amount is required');
       }
-      if (createPaymentDto.quoteTdsAmount === undefined || createPaymentDto.quoteTdsAmount === null) {
+      if (
+        createPaymentDto.quoteTdsAmount === undefined ||
+        createPaymentDto.quoteTdsAmount === null
+      ) {
         throw new BadRequestException('TDS amount is required');
       }
-      if (createPaymentDto.quoteTotal === undefined || createPaymentDto.quoteTotal === null) {
+      if (
+        createPaymentDto.quoteTotal === undefined ||
+        createPaymentDto.quoteTotal === null
+      ) {
         throw new BadRequestException('Total amount is required');
       }
       const payment = await this.paymentsService.createPayment(
@@ -381,7 +413,8 @@ export class PaymentsController {
 
   @Patch(':urnNo')
   @ApiOperation({
-    summary: 'Update payment details by URN (and optionally update URN status + activity log)',
+    summary:
+      'Update payment details by URN (and optionally update URN status + activity log)',
     description:
       'Updates payment_details for the logged-in vendor. If `urnStatus` is provided in payload, it will also update `products.urnStatus` for that URN and insert an activity log entry.',
   })
@@ -391,7 +424,87 @@ export class PaymentsController {
     example: 'URN-20260409142354',
     type: String,
   })
-  @ApiBody({ type: UpdatePaymentDto })
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'cheque_or_dd_file', maxCount: 1 },
+        { name: 'tds_file', maxCount: 1 },
+      ],
+      {
+        storage,
+        fileFilter: (req, file, cb) => {
+          if (!file) {
+            cb(null, true);
+            return;
+          }
+          const allowedMimes = [
+            'image/png',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel',
+          ];
+          const allowedExtensions = ['.png', '.doc', '.docx', '.xls', '.xlsx'];
+          const fileExt = extname(file.originalname).toLowerCase();
+
+          if (allowedMimes.includes(file.mimetype) || allowedExtensions.includes(fileExt)) {
+            cb(null, true);
+          } else {
+            cb(
+              new BadRequestException(
+                'Invalid file type. Only PNG, Word (.doc, .docx), and Excel (.xls, .xlsx) files are allowed.',
+              ),
+              false,
+            );
+          }
+        },
+        limits: {
+          fileSize: 10 * 1024 * 1024,
+        },
+      },
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        urnNo: { type: 'string', example: 'URN-20260305124230' },
+        quoteAmount: { type: 'number', example: 10000.0 },
+        quoteGstAmount: { type: 'number', example: 1800.0 },
+        quoteTdsAmount: { type: 'number', example: 1000.0 },
+        quoteTotal: { type: 'number', example: 10800.0 },
+        adminGstNo: { type: 'string', example: '29ABCDE1234F1Z9' },
+        vendorGstNo: { type: 'string', example: '27ABCDE1234F1Z9' },
+        paymentType: {
+          type: 'string',
+          enum: ['registration', 'certification', 'renew'],
+          example: 'registration',
+        },
+        paymentMode: {
+          type: 'string',
+          enum: ['online', 'cheque_or_dd', 'neft_or_rtgs'],
+          example: 'cheque_or_dd',
+        },
+        onlinePaymentId: { type: 'number', example: 0 },
+        paymentReferenceNo: { type: 'string', example: 'REF123456' },
+        paymentChequeDate: { type: 'string', format: 'date-time', example: '2026-03-06T00:00:00.000Z' },
+        productsToBeCertified: { type: 'string', example: '["product1","product2"]' },
+        paymentStatus: { type: 'number', enum: [0, 1, 2, 3], example: 0 },
+        urnStatus: { type: 'number', enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], example: 1 },
+        cheque_or_dd_file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Required when paymentMode is cheque_or_dd',
+        },
+        tds_file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Required when paymentMode is cheque_or_dd',
+        },
+      },
+    },
+  })
   @ApiResponse({
     status: 200,
     description: 'Payment updated successfully',
@@ -405,12 +518,20 @@ export class PaymentsController {
     },
   })
   @ApiResponse({ status: 400, description: 'Invalid urnNo or payload' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
   @ApiResponse({ status: 404, description: 'Payment not found' })
   async updatePayment(
     @CurrentUser() user: any,
     @Param('urnNo') urnNoParam: string,
-    @Body() updatePaymentDto: UpdatePaymentDto,
+    @Body() body: any,
+    @UploadedFiles()
+    files?: {
+      cheque_or_dd_file?: Express.Multer.File[];
+      tds_file?: Express.Multer.File[];
+    },
   ) {
     try {
       const urnNo = String(urnNoParam ?? '').trim();
@@ -418,10 +539,35 @@ export class PaymentsController {
         throw new BadRequestException('Invalid urnNo');
       }
 
+      const updatePaymentDto: UpdatePaymentDto = {
+        urnNo: body.urnNo,
+        quoteAmount: body.quoteAmount !== undefined ? parseFloat(body.quoteAmount) : undefined,
+        quoteGstAmount: body.quoteGstAmount !== undefined ? parseFloat(body.quoteGstAmount) : undefined,
+        quoteTdsAmount: body.quoteTdsAmount !== undefined ? parseFloat(body.quoteTdsAmount) : undefined,
+        quoteTotal: body.quoteTotal !== undefined ? parseFloat(body.quoteTotal) : undefined,
+        adminGstNo: body.adminGstNo,
+        vendorGstNo: body.vendorGstNo,
+        paymentType: body.paymentType,
+        paymentMode: body.paymentMode,
+        onlinePaymentId:
+          body.onlinePaymentId !== undefined ? parseInt(body.onlinePaymentId, 10) : undefined,
+        paymentReferenceNo: body.paymentReferenceNo,
+        paymentChequeDate: body.paymentChequeDate,
+        productsToBeCertified: body.productsToBeCertified,
+        paymentStatus:
+          body.paymentStatus !== undefined ? parseInt(body.paymentStatus, 10) : undefined,
+        urnStatus: body.urnStatus !== undefined ? parseInt(body.urnStatus, 10) : undefined,
+      };
+
+      const chequeOrDdFile = files?.cheque_or_dd_file?.[0];
+      const tdsFile = files?.tds_file?.[0];
+
       const payment = await this.paymentsService.updatePaymentDetailsByUrn(
         urnNo,
         updatePaymentDto,
         user?.vendorId,
+        chequeOrDdFile,
+        tdsFile,
       );
 
       return {

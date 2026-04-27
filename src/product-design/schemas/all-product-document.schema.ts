@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import {
+  DOCUMENT_SECTION_KEY_VALUES,
+  DocumentSectionKey,
+} from '../../common/constants/document-section-key.constants';
 
 export type AllProductDocumentDocument = AllProductDocument & Document;
 
@@ -17,8 +21,8 @@ export class AllProductDocument {
   @Prop()
   eoiNo?: string;
 
-  @Prop({ required: true })
-  documentForm: string; // e.g. 'product_design'
+  @Prop({ required: true, enum: DOCUMENT_SECTION_KEY_VALUES })
+  documentForm: DocumentSectionKey;
 
   @Prop()
   documentFormSubsection?: string; // e.g. 'eco_vision_upload', 'supporting_documents'
@@ -40,7 +44,16 @@ export class AllProductDocument {
 
   @Prop({ required: true })
   updatedDate: Date;
+
+  @Prop({ default: false })
+  isDeleted: boolean;
+
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'Vendor' })
+  deletedBy?: Types.ObjectId;
 }
 
-export const AllProductDocumentSchema = SchemaFactory.createForClass(AllProductDocument);
-
+export const AllProductDocumentSchema =
+  SchemaFactory.createForClass(AllProductDocument);

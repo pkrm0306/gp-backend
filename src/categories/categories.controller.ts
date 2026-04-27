@@ -42,7 +42,10 @@ export class CategoriesController {
     description:
       'Returns categories from the categories collection. Optional filters: sector (single), sectors (multi-select comma-separated, listing only), status (category_status). Sort by category_name: sort=asc (A–Z, default) or sort=desc (Z–A).',
   })
-  @ApiResponse({ status: 200, description: 'List of categories retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of categories retrieved successfully',
+  })
   async findAll(@Query() query: ListCategoriesQueryDto) {
     const categories = await this.categoriesService.findAll(query);
     return {
@@ -77,7 +80,10 @@ export class CategoriesController {
   @ApiBody({ type: UpdateCategoryStatusDto })
   @ApiResponse({ status: 200, description: 'Status updated' })
   @ApiResponse({ status: 404, description: 'Category not found' })
-  async updateStatus(@Param('id') id: string, @Body() dto: UpdateCategoryStatusDto) {
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateCategoryStatusDto,
+  ) {
     const data = await this.categoriesService.updateStatus(id, dto);
     return {
       message: 'Category status updated successfully',
@@ -103,7 +109,11 @@ export class CategoriesController {
         category_raw_material_forms: { type: 'string' },
         category_status: { type: 'integer' },
         sector: { type: 'integer' },
-        image: { type: 'string', format: 'binary', description: 'New category image (optional)' },
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'New category image (optional)',
+        },
       },
     },
   })
@@ -139,7 +149,11 @@ export class CategoriesController {
         category_raw_material_forms: { type: 'string' },
         category_status: { type: 'integer' },
         sector: { type: 'integer' },
-        image: { type: 'string', format: 'binary', description: 'New category image (optional)' },
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'New category image (optional)',
+        },
       },
     },
   })
@@ -205,21 +219,26 @@ export class CategoriesController {
     schema: {
       type: 'object',
       required: ['file'],
-      properties: { file: { type: 'string', format: 'binary', description: 'Image file' } },
+      properties: {
+        file: { type: 'string', format: 'binary', description: 'Image file' },
+      },
     },
   })
   @ApiResponse({ status: 200, description: 'File saved' })
   @ApiResponse({ status: 400, description: 'Missing file or invalid type' })
   async uploadCategoryImage(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
-      throw new BadRequestException('file is required (multipart field name: file)');
+      throw new BadRequestException(
+        'file is required (multipart field name: file)',
+      );
     }
     const relative = `categories/${file.filename}`;
     return {
       message: 'Image uploaded successfully',
       data: {
         category_image: relative,
-        category_image_url: this.categoriesService.resolveCategoryImageUrl(relative),
+        category_image_url:
+          this.categoriesService.resolveCategoryImageUrl(relative),
       },
     };
   }
@@ -251,7 +270,10 @@ export class CategoriesController {
     },
   })
   @ApiResponse({ status: 201, description: 'Category created successfully' })
-  @ApiResponse({ status: 400, description: 'Validation error or invalid image type' })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation error or invalid image type',
+  })
   @ApiResponse({
     status: 409,
     description: 'A category with this name already exists (case-insensitive)',
@@ -273,4 +295,3 @@ export class CategoriesController {
     };
   }
 }
-

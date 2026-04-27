@@ -5,7 +5,10 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { ActivityLog, ActivityLogDocument } from './schemas/activity-log.schema';
+import {
+  ActivityLog,
+  ActivityLogDocument,
+} from './schemas/activity-log.schema';
 
 export interface LogActivityInput {
   vendor_id: string | Types.ObjectId;
@@ -32,7 +35,10 @@ export class ActivityLogService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) {
       return id;
     }
@@ -50,7 +56,10 @@ export class ActivityLogService {
     try {
       // Convert IDs to ObjectId
       const vendorObjectId = this.toObjectId(data.vendor_id, 'vendor_id');
-      const manufacturerObjectId = this.toObjectId(data.manufacturer_id, 'manufacturer_id');
+      const manufacturerObjectId = this.toObjectId(
+        data.manufacturer_id,
+        'manufacturer_id',
+      );
 
       // Prepare activity log data
       const activityLogData = {
@@ -82,7 +91,8 @@ export class ActivityLogService {
       }
 
       throw new InternalServerErrorException(
-        error.message || 'Failed to log activity. Please check the logs for details.',
+        error.message ||
+          'Failed to log activity. Please check the logs for details.',
       );
     }
   }
@@ -100,11 +110,15 @@ export class ActivityLogService {
 
       return activityLogs;
     } catch (error: any) {
-      console.error('[Activity Log] Error getting activity logs by URN:', error);
+      console.error(
+        '[Activity Log] Error getting activity logs by URN:',
+        error,
+      );
       console.error('[Activity Log] Error stack:', error.stack);
 
       throw new InternalServerErrorException(
-        error.message || 'Failed to get activity logs. Please check the logs for details.',
+        error.message ||
+          'Failed to get activity logs. Please check the logs for details.',
       );
     }
   }

@@ -37,7 +37,10 @@ export class ActivityLogController {
   })
   @ApiBody({ type: CreateActivityLogDto })
   @ApiResponse({ status: 201, description: 'Activity log created' })
-  @ApiResponse({ status: 400, description: 'Validation error or invalid ObjectId' })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation error or invalid ObjectId',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 500, description: 'Failed to save activity log' })
   async createActivityLog(@Body() dto: CreateActivityLogDto) {
@@ -96,7 +99,10 @@ export class ActivityLogController {
               responsibility: { type: 'string', example: 'Vendor' },
               next_responsibility: { type: 'string', example: 'Admin' },
               next_acitivities_id: { type: 'number', example: 2 },
-              next_activity: { type: 'string', example: 'Approve Registration Fee' },
+              next_activity: {
+                type: 'string',
+                example: 'Approve Registration Fee',
+              },
               status: { type: 'number', example: 1 },
               created_at: { type: 'string', format: 'date-time' },
               updated_at: { type: 'string', format: 'date-time' },
@@ -106,7 +112,10 @@ export class ActivityLogController {
       },
     },
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid URN number' })
   async getActivityLogsByUrn(@Param('urn_no') urnNo: string) {
     try {
@@ -114,7 +123,9 @@ export class ActivityLogController {
         throw new BadRequestException('URN number is required');
       }
 
-      const data = await this.activityLogService.getActivityLogsByUrn(urnNo.trim());
+      const data = await this.activityLogService.getActivityLogsByUrn(
+        urnNo.trim(),
+      );
 
       return {
         success: true,

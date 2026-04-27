@@ -13,7 +13,8 @@ import { PlantDto } from './plant.dto';
 
 export class RegisterProductDto {
   @ApiProperty({
-    description: 'Manufacturer ID (optional; backend uses JWT manufacturerId for vendor APIs)',
+    description:
+      'Manufacturer ID (optional; backend uses JWT manufacturerId for vendor APIs)',
     example: '507f1f77bcf86cd799439011',
     required: false,
   })
@@ -22,7 +23,10 @@ export class RegisterProductDto {
   @IsMongoId()
   manufacturerId: string;
 
-  @ApiProperty({ description: 'Category ID', example: '507f1f77bcf86cd799439011' })
+  @ApiProperty({
+    description: 'Category ID',
+    example: '507f1f77bcf86cd799439011',
+  })
   @IsString()
   @IsNotEmpty()
   @IsMongoId()

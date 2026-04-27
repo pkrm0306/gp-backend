@@ -1,8 +1,14 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ProductDesign, ProductDesignSchema } from './schemas/product-design.schema';
+import {
+  ProductDesign,
+  ProductDesignSchema,
+} from './schemas/product-design.schema';
 import { PdMeasure, PdMeasureSchema } from './schemas/pd-measure.schema';
-import { AllProductDocument, AllProductDocumentSchema } from './schemas/all-product-document.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentSchema,
+} from './schemas/all-product-document.schema';
 import { ProductDesignService } from './product-design.service';
 import { ProductDesignController } from './product-design.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';

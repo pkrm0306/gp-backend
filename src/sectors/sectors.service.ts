@@ -53,17 +53,28 @@ export class SectorsService implements OnModuleInit {
 
   private async syncSectorIdCounter(): Promise<void> {
     const maxFromDocs = await this.getMaxSectorIdFromCollection();
-    const existing = await this.counterModel.findOne({ _id: SECTOR_ID_COUNTER_KEY }).lean().exec();
+    const existing = await this.counterModel
+      .findOne({ _id: SECTOR_ID_COUNTER_KEY })
+      .lean()
+      .exec();
     const currentSeq = existing?.seq ?? 0;
     const seed = Math.max(currentSeq, maxFromDocs);
     await this.counterModel
-      .updateOne({ _id: SECTOR_ID_COUNTER_KEY }, { $set: { seq: seed } }, { upsert: true })
+      .updateOne(
+        { _id: SECTOR_ID_COUNTER_KEY },
+        { $set: { seq: seed } },
+        { upsert: true },
+      )
       .exec();
   }
 
   private async nextSectorId(): Promise<number> {
     const doc = await this.counterModel
-      .findOneAndUpdate({ _id: SECTOR_ID_COUNTER_KEY }, { $inc: { seq: 1 } }, { new: true, upsert: true })
+      .findOneAndUpdate(
+        { _id: SECTOR_ID_COUNTER_KEY },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true },
+      )
       .exec();
     if (!doc || typeof doc.seq !== 'number' || !Number.isFinite(doc.seq)) {
       throw new Error('Failed to allocate sector id');
@@ -90,7 +101,9 @@ export class SectorsService implements OnModuleInit {
     const and: Record<string, unknown>[] = [base];
 
     if (query.search !== undefined && query.search.trim() !== '') {
-      and.push({ name: { $regex: new RegExp(escapeRegex(query.search.trim()), 'i') } });
+      and.push({
+        name: { $regex: new RegExp(escapeRegex(query.search.trim()), 'i') },
+      });
     }
     if (query.status !== undefined) {
       and.push({ status: query.status });
@@ -114,7 +127,13 @@ export class SectorsService implements OnModuleInit {
     const skip = (page - 1) * limit;
 
     const [data, total] = await Promise.all([
-      this.sectorModel.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
+      this.sectorModel
+        .find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
       this.sectorModel.countDocuments(filter).exec(),
     ]);
 
@@ -159,7 +178,9 @@ export class SectorsService implements OnModuleInit {
       dto.description === undefined &&
       dto.status === undefined
     ) {
-      throw new BadRequestException('Provide name, description and/or status to update');
+      throw new BadRequestException(
+        'Provide name, description and/or status to update',
+      );
     }
     const set: Record<string, unknown> = { updated_at: new Date() };
     if (dto.name !== undefined) {
@@ -173,7 +194,11 @@ export class SectorsService implements OnModuleInit {
     }
 
     const updated = await this.sectorModel
-      .findOneAndUpdate({ id, ...this.notDeletedFilter() }, { $set: set }, { new: true })
+      .findOneAndUpdate(
+        { id, ...this.notDeletedFilter() },
+        { $set: set },
+        { new: true },
+      )
       .lean()
       .exec();
     if (!updated) {
@@ -216,11 +241,20 @@ export class SectorsService implements OnModuleInit {
   async buildCsvExport(query: ListSectorsQueryDto): Promise<string> {
     const sortBy = query.sortBy ?? 'id';
     const order = query.order ?? 'asc';
-    const sort: Record<string, 1 | -1> = { [sortBy]: order === 'desc' ? -1 : 1 };
+    const sort: Record<string, 1 | -1> = {
+      [sortBy]: order === 'desc' ? -1 : 1,
+    };
     const filter = this.buildListFilter(query);
     const rows = await this.sectorModel.find(filter).sort(sort).lean().exec();
 
-    const header = ['id', 'name', 'description', 'status', 'created_at', 'updated_at'];
+    const header = [
+      'id',
+      'name',
+      'description',
+      'status',
+      'created_at',
+      'updated_at',
+    ];
     const lines = [
       header.join(','),
       ...rows.map((r) =>

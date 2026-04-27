@@ -4,7 +4,13 @@ import { existsSync, mkdirSync } from 'fs';
 import { extname, join } from 'path';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const ALLOWED_MIMES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']);
+const ALLOWED_MIMES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+]);
 
 function ensureManufacturerUploadDir(): string {
   const dir = join(process.cwd(), 'uploads', 'manufacturers');

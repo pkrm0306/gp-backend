@@ -20,7 +20,10 @@ export class ProcessWmManufacturingUnitsService {
     private sequenceHelper: SequenceHelper,
   ) {}
 
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) return id;
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException(`Invalid ${fieldName} format: ${id}`);
@@ -75,7 +78,8 @@ export class ProcessWmManufacturingUnitsService {
     } catch (error: any) {
       console.error('[Process WM Manufacturing Units] Create error:', error);
       throw new InternalServerErrorException(
-        error.message || 'Failed to create waste management manufacturing unit record.',
+        error.message ||
+          'Failed to create waste management manufacturing unit record.',
       );
     }
   }
@@ -90,7 +94,8 @@ export class ProcessWmManufacturingUnitsService {
     } catch (error: any) {
       console.error('[Process WM Manufacturing Units] List error:', error);
       throw new InternalServerErrorException(
-        error.message || 'Failed to list waste management manufacturing unit records.',
+        error.message ||
+          'Failed to list waste management manufacturing unit records.',
       );
     }
   }

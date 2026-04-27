@@ -7,8 +7,14 @@ import {
   CategoryIdCounter,
   CategoryIdCounterSchema,
 } from './schemas/category-id-counter.schema';
-import { Product, ProductSchema } from '../product-registration/schemas/product.schema';
-import { ProductPlant, ProductPlantSchema } from '../product-registration/schemas/product-plant.schema';
+import {
+  Product,
+  ProductSchema,
+} from '../product-registration/schemas/product.schema';
+import {
+  ProductPlant,
+  ProductPlantSchema,
+} from '../product-registration/schemas/product-plant.schema';
 
 @Module({
   imports: [

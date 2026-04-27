@@ -20,6 +20,7 @@ import { RawMaterialsEliminationOfFormaldehydeModule } from './raw-materials-eli
 import { RawMaterialsEliminationOfProhibitedFlameModule } from './raw-materials-elimination-of-prohibited-flame/raw-materials-elimination-of-prohibited-flame.module';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsModule } from './raw-materials-elimination-of-prohibited-flame-solvents/raw-materials-elimination-of-prohibited-flame-solvents.module';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsProductsModule } from './raw-materials-elimination-of-prohibited-flame-solvents-products/raw-materials-elimination-of-prohibited-flame-solvents-products.module';
+import { RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesModule } from './raw-materials-elimination-of-ozone-depleting-global-warming-substances/raw-materials-elimination-of-ozone-depleting-global-warming-substances.module';
 import { RawMaterialsGreenSupplyModule } from './raw-materials-green-supply/raw-materials-green-supply.module';
 import { RawMaterialsHazardousModule } from './raw-materials-hazardous/raw-materials-hazardous.module';
 import { RawMaterialsOptimizationOfRawMixModule } from './raw-materials-optimization-of-raw-mix/raw-materials-optimization-of-raw-mix.module';
@@ -45,6 +46,7 @@ import { StandardsModule } from './standards/standards.module';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
 import { WebsiteModule } from './website/website.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
+import { DocumentsModule } from './documents/documents.module';
 
 @Module({
   imports: [
@@ -79,6 +81,7 @@ import { AuditLogModule } from './audit-log/audit-log.module';
     RawMaterialsEliminationOfProhibitedFlameModule,
     RawMaterialsEliminationOfProhibitedFlameSolventsModule,
     RawMaterialsEliminationOfProhibitedFlameSolventsProductsModule,
+    RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesModule,
     RawMaterialsGreenSupplyModule,
     RawMaterialsHazardousModule,
     RawMaterialsOptimizationOfRawMixModule,
@@ -102,6 +105,7 @@ import { AuditLogModule } from './audit-log/audit-log.module';
     DashboardModule,
     SectorsModule,
     StandardsModule,
+    DocumentsModule,
   ],
 })
 export class AppModule implements NestModule {

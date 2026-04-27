@@ -22,7 +22,9 @@ export class SequenceHelper {
       return typeof seqValue === 'number' ? seqValue : 1;
     } catch (error: any) {
       console.error(`Sequence error for ${sequenceName}:`, error);
-      throw new Error(`Failed to get next sequence value for ${sequenceName}: ${error.message}`);
+      throw new Error(
+        `Failed to get next sequence value for ${sequenceName}: ${error.message}`,
+      );
     }
   }
 
@@ -37,68 +39,80 @@ export class SequenceHelper {
   async getPaymentId(): Promise<number> {
     const sequenceCollection = this.connection.collection('sequences');
     const sequenceName = 'payment_id';
-    
+
     try {
       // First, check if sequence exists
-      const existingSequence = await sequenceCollection.findOne({ _id: sequenceName as any });
-      
+      const existingSequence = await sequenceCollection.findOne({
+        _id: sequenceName as any,
+      });
+
       if (!existingSequence) {
         // Initialize sequence from max existing paymentId
         const paymentCollection = this.connection.collection('payment_details');
-        const maxPayment = await paymentCollection
-          .findOne({}, { sort: { paymentId: -1 }, projection: { paymentId: 1 } });
-        
+        const maxPayment = await paymentCollection.findOne(
+          {},
+          { sort: { paymentId: -1 }, projection: { paymentId: 1 } },
+        );
+
         const maxPaymentId = maxPayment?.paymentId || 0;
-        
+
         // Initialize sequence to maxPaymentId (next increment will give maxPaymentId + 1)
         await sequenceCollection.insertOne({
           _id: sequenceName as any,
           sequenceValue: maxPaymentId,
         });
       }
-      
+
       // Atomically increment and get next value
       const result: any = await sequenceCollection.findOneAndUpdate(
         { _id: sequenceName as any },
         { $inc: { sequenceValue: 1 } },
-        { returnDocument: 'after' }
+        { returnDocument: 'after' },
       );
-      
+
       const nextValue = result?.value?.sequenceValue ?? result?.sequenceValue;
-      
+
       if (!nextValue) {
         throw new Error('Failed to get next payment ID from sequence');
       }
-      
+
       // Double-check: if the generated ID already exists, get max and use max + 1
       const paymentCollection = this.connection.collection('payment_details');
-      const existingPayment = await paymentCollection.findOne({ paymentId: nextValue });
-      
+      const existingPayment = await paymentCollection.findOne({
+        paymentId: nextValue,
+      });
+
       if (existingPayment) {
         // ID already exists, get max and return max + 1
-        const maxPayment = await paymentCollection
-          .findOne({}, { sort: { paymentId: -1 }, projection: { paymentId: 1 } });
+        const maxPayment = await paymentCollection.findOne(
+          {},
+          { sort: { paymentId: -1 }, projection: { paymentId: 1 } },
+        );
         const maxPaymentId = maxPayment?.paymentId || 0;
-        
+
         // Update sequence to maxPaymentId + 1
         await sequenceCollection.updateOne(
           { _id: sequenceName as any },
-          { $set: { sequenceValue: maxPaymentId + 1 } }
+          { $set: { sequenceValue: maxPaymentId + 1 } },
         );
-        
+
         return maxPaymentId + 1;
       }
-      
+
       return nextValue;
     } catch (error: any) {
       console.error('Payment ID sequence error:', error);
       // Fallback: get max paymentId and return max + 1
       try {
         const paymentCollection = this.connection.collection('payment_details');
-        const maxPayment = await paymentCollection
-          .findOne({}, { sort: { paymentId: -1 }, projection: { paymentId: 1 } });
+        const maxPayment = await paymentCollection.findOne(
+          {},
+          { sort: { paymentId: -1 }, projection: { paymentId: 1 } },
+        );
         const maxPaymentId = maxPayment?.paymentId || 0;
-        console.log(`[Payment ID] Using fallback: maxPaymentId=${maxPaymentId}, returning ${maxPaymentId + 1}`);
+        console.log(
+          `[Payment ID] Using fallback: maxPaymentId=${maxPaymentId}, returning ${maxPaymentId + 1}`,
+        );
         return maxPaymentId + 1;
       } catch (fallbackError: any) {
         console.error('Fallback payment ID generation error:', fallbackError);
@@ -118,7 +132,9 @@ export class SequenceHelper {
       const sequenceName = 'product_design_id';
 
       // Find max existing productDesignId
-      const designCollection = this.connection.collection('process_product_design');
+      const designCollection = this.connection.collection(
+        'process_product_design',
+      );
       const maxDesign = await designCollection.findOne(
         {},
         { sort: { productDesignId: -1 }, projection: { productDesignId: 1 } },
@@ -152,7 +168,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'product_design_measure_id';
 
-      const measuresCollection = this.connection.collection('process_pd_measures');
+      const measuresCollection = this.connection.collection(
+        'process_pd_measures',
+      );
       const maxRow = await measuresCollection.findOne(
         {},
         {
@@ -184,10 +202,15 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'product_document_id';
 
-      const docsCollection = this.connection.collection('all_product_documents');
+      const docsCollection = this.connection.collection(
+        'all_product_documents',
+      );
       const maxRow = await docsCollection.findOne(
         {},
-        { sort: { productDocumentId: -1 }, projection: { productDocumentId: 1 } },
+        {
+          sort: { productDocumentId: -1 },
+          projection: { productDocumentId: 1 },
+        },
       );
       const maxId = maxRow?.productDocumentId || 0;
 
@@ -214,10 +237,15 @@ export class SequenceHelper {
       const sequenceName = 'product_performance_id';
 
       // Find max existing processProductPerformanceId
-      const performanceCollection = this.connection.collection('process_product_performance');
+      const performanceCollection = this.connection.collection(
+        'process_product_performance',
+      );
       const maxPerformance = await performanceCollection.findOne(
         {},
-        { sort: { processProductPerformanceId: -1 }, projection: { processProductPerformanceId: 1 } },
+        {
+          sort: { processProductPerformanceId: -1 },
+          projection: { processProductPerformanceId: 1 },
+        },
       );
       const maxPerformanceId = maxPerformance?.processProductPerformanceId || 0;
 
@@ -248,7 +276,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'raw_materials_hazardous_products_id';
 
-      const collection = this.connection.collection('raw_materials_hazardous_products');
+      const collection = this.connection.collection(
+        'raw_materials_hazardous_products',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -266,7 +296,10 @@ export class SequenceHelper {
 
       return this.getNextSequenceValue(sequenceName);
     } catch (error: any) {
-      console.error('Raw materials hazardous products ID sequence error:', error);
+      console.error(
+        'Raw materials hazardous products ID sequence error:',
+        error,
+      );
       return this.getNextSequenceValue('raw_materials_hazardous_products_id');
     }
   }
@@ -404,7 +437,8 @@ export class SequenceHelper {
           projection: { rawMaterialsEliminationOfProhibitedFlameSolventsId: 1 },
         },
       );
-      const maxId = maxRow?.rawMaterialsEliminationOfProhibitedFlameSolventsId || 0;
+      const maxId =
+        maxRow?.rawMaterialsEliminationOfProhibitedFlameSolventsId || 0;
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
@@ -481,7 +515,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'raw_materials_green_supply_id';
 
-      const collection = this.connection.collection('raw_materials_green_supply');
+      const collection = this.connection.collection(
+        'raw_materials_green_supply',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -567,8 +603,13 @@ export class SequenceHelper {
 
       return this.getNextSequenceValue(sequenceName);
     } catch (error: any) {
-      console.error('Raw materials optimization of raw mix ID sequence error:', error);
-      return this.getNextSequenceValue('raw_materials_optimization_of_raw_mix_id');
+      console.error(
+        'Raw materials optimization of raw mix ID sequence error:',
+        error,
+      );
+      return this.getNextSequenceValue(
+        'raw_materials_optimization_of_raw_mix_id',
+      );
     }
   }
 
@@ -655,7 +696,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'raw_materials_recycled_content_id';
 
-      const collection = this.connection.collection('raw_materials_recycled_content');
+      const collection = this.connection.collection(
+        'raw_materials_recycled_content',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -688,7 +731,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'raw_materials_reduce_environmental_id';
 
-      const collection = this.connection.collection('raw_materials_reduce_environmental');
+      const collection = this.connection.collection(
+        'raw_materials_reduce_environmental',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -706,7 +751,10 @@ export class SequenceHelper {
 
       return this.getNextSequenceValue(sequenceName);
     } catch (error: any) {
-      console.error('Raw materials reduce environmental ID sequence error:', error);
+      console.error(
+        'Raw materials reduce environmental ID sequence error:',
+        error,
+      );
       return this.getNextSequenceValue('raw_materials_reduce_environmental_id');
     }
   }
@@ -721,7 +769,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'raw_materials_regional_materials_id';
 
-      const collection = this.connection.collection('raw_materials_regional_materials');
+      const collection = this.connection.collection(
+        'raw_materials_regional_materials',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -739,7 +789,10 @@ export class SequenceHelper {
 
       return this.getNextSequenceValue(sequenceName);
     } catch (error: any) {
-      console.error('Raw materials regional materials ID sequence error:', error);
+      console.error(
+        'Raw materials regional materials ID sequence error:',
+        error,
+      );
       return this.getNextSequenceValue('raw_materials_regional_materials_id');
     }
   }
@@ -754,7 +807,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'raw_materials_utilization_id';
 
-      const collection = this.connection.collection('raw_materials_utilization');
+      const collection = this.connection.collection(
+        'raw_materials_utilization',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -827,7 +882,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'raw_materials_utilization_rmc_id';
 
-      const collection = this.connection.collection('raw_materials_utilization_rmc');
+      const collection = this.connection.collection(
+        'raw_materials_utilization_rmc',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -891,7 +948,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'process_mp_manufacturing_unit_id';
 
-      const collection = this.connection.collection('process_mp_manufacturing_units');
+      const collection = this.connection.collection(
+        'process_mp_manufacturing_units',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -955,7 +1014,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'process_wm_manufacturing_unit_id';
 
-      const collection = this.connection.collection('process_wm_manufacturing_units');
+      const collection = this.connection.collection(
+        'process_wm_manufacturing_units',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -987,7 +1048,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'process_life_cycle_approach_id';
 
-      const collection = this.connection.collection('process_life_cycle_approach');
+      const collection = this.connection.collection(
+        'process_life_cycle_approach',
+      );
       const maxRow = await collection.findOne(
         {},
         {
@@ -1019,7 +1082,9 @@ export class SequenceHelper {
       const sequenceCollection = this.connection.collection('sequences');
       const sequenceName = 'process_product_stewardship_id';
 
-      const collection = this.connection.collection('process_product_stewardship');
+      const collection = this.connection.collection(
+        'process_product_stewardship',
+      );
       const maxRow = await collection.findOne(
         {},
         {

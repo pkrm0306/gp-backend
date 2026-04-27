@@ -70,7 +70,16 @@ export class ProductDesignController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
           'application/vnd.ms-excel', // .xls
         ];
-        const allowedExtensions = ['.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+        const allowedExtensions = [
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.pdf',
+          '.doc',
+          '.docx',
+          '.xls',
+          '.xlsx',
+        ];
         const fileExt = extname(file.originalname).toLowerCase();
 
         if (
@@ -121,8 +130,10 @@ export class ProductDesignController {
         },
         measuresAndBenefits: {
           type: 'string',
-          description: 'JSON array of measures and benefits. Format: [{"measuresImplemented":"...","benefitsAchieved":"..."}]',
-          example: '[{"measuresImplemented":"Use of renewable energy","benefitsAchieved":"Reduced carbon footprint"}]',
+          description:
+            'JSON array of measures and benefits. Format: [{"measuresImplemented":"...","benefitsAchieved":"..."}]',
+          example:
+            '[{"measuresImplemented":"Use of renewable energy","benefitsAchieved":"Reduced carbon footprint"}]',
         },
         files: {
           type: 'array',
@@ -130,7 +141,8 @@ export class ProductDesignController {
             type: 'string',
             format: 'binary',
           },
-          description: 'Files: First file is eco_vision_upload, second file is product_design_supporting_document',
+          description:
+            'Files: First file is eco_vision_upload, second file is product_design_supporting_document',
         },
       },
     },
@@ -142,7 +154,10 @@ export class ProductDesignController {
       type: 'object',
       properties: {
         success: { type: 'boolean', example: true },
-        message: { type: 'string', example: 'Product design created successfully' },
+        message: {
+          type: 'string',
+          example: 'Product design created successfully',
+        },
         data: {
           type: 'object',
           properties: {
@@ -189,7 +204,9 @@ export class ProductDesignController {
             measuresAndBenefits = body.measuresAndBenefits;
           }
         } catch (parseError) {
-          throw new BadRequestException('Invalid measuresAndBenefits format. Expected JSON array.');
+          throw new BadRequestException(
+            'Invalid measuresAndBenefits format. Expected JSON array.',
+          );
         }
       }
 
@@ -210,7 +227,8 @@ export class ProductDesignController {
 
       // Extract files (first file = eco_vision, second file = supporting_document)
       const ecoVisionFile = files && files.length > 0 ? files[0] : undefined;
-      const supportingDocumentFile = files && files.length > 1 ? files[1] : undefined;
+      const supportingDocumentFile =
+        files && files.length > 1 ? files[1] : undefined;
 
       const productDesign = await this.productDesignService.createProductDesign(
         createProductDesignDto,

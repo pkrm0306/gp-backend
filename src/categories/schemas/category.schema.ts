@@ -38,6 +38,9 @@ export class Category {
 
 export const CategorySchema = SchemaFactory.createForClass(Category);
 
-CategorySchema.index({ category_name_normalized: 1 }, { unique: true, sparse: true });
+CategorySchema.index(
+  { category_name_normalized: 1 },
+  { unique: true, sparse: true },
+);
 /** Backfill + syncIndexes in CategoriesService.onModuleInit — avoid building unique index before backfill */
 CategorySchema.set('autoIndex', false);

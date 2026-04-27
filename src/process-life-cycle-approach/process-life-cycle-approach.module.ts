@@ -17,7 +17,10 @@ import { AuthModule } from '../auth/auth.module';
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: ProcessLifeCycleApproach.name, schema: ProcessLifeCycleApproachSchema },
+      {
+        name: ProcessLifeCycleApproach.name,
+        schema: ProcessLifeCycleApproachSchema,
+      },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),
     ProductRegistrationModule, // for SequenceHelper

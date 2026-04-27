@@ -44,7 +44,10 @@ export class ManufacturersController {
     description:
       'Pagination, optional search on name / vendor name / email / GP internal ID, dedicated filters for manufacturerName/gpInternalId/manufacturerInitial, filters for manufacturerStatus and vendor_status, sort by createdAt or manufacturerName. Requires JWT.',
   })
-  @ApiResponse({ status: 200, description: 'Paginated list with total, page, limit' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated list with total, page, limit',
+  })
   async findAll(@Query() query: ListManufacturersQueryDto) {
     return this.manufacturersService.findAllPaginated(query);
   }
@@ -78,7 +81,11 @@ export class ManufacturersController {
         vendor_name: { type: 'string' },
         vendor_email: { type: 'string' },
         vendor_phone: { type: 'string' },
-        image: { type: 'string', format: 'binary', description: 'Manufacturer image (optional)' },
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'Manufacturer image (optional)',
+        },
         manufacturer_image: {
           type: 'string',
           format: 'binary',
@@ -100,8 +107,14 @@ export class ManufacturersController {
     },
   ) {
     const image = files?.image?.[0] ?? files?.manufacturer_image?.[0];
-    const imagePath = image ? `/uploads/manufacturers/${image.filename}` : undefined;
-    const data = await this.manufacturersService.updateManufacturerDetails(id, dto, imagePath);
+    const imagePath = image
+      ? `/uploads/manufacturers/${image.filename}`
+      : undefined;
+    const data = await this.manufacturersService.updateManufacturerDetails(
+      id,
+      dto,
+      imagePath,
+    );
     return { message: 'Manufacturer updated successfully', data };
   }
 
@@ -145,7 +158,10 @@ export class ManufacturersController {
 
     const data =
       dto?.vendor_status === 0 || dto?.vendor_status === 1
-        ? await this.manufacturersService.setVendorStatusForVerified(id, dto.vendor_status)
+        ? await this.manufacturersService.setVendorStatusForVerified(
+            id,
+            dto.vendor_status,
+          )
         : await this.manufacturersService.toggleManufacturerStatus(id);
     return { message: 'Manufacturer status updated successfully', data };
   }
@@ -166,8 +182,14 @@ export class ManufacturersController {
     @Param('id') id: string,
     @Body() dto: UpdateVendorStatusDto,
   ) {
-    const data = await this.manufacturersService.setVendorStatusForVerified(id, dto.vendor_status);
-    return { message: 'Vendor status updated', data: { _id: data._id, vendor_status: data.vendor_status } };
+    const data = await this.manufacturersService.setVendorStatusForVerified(
+      id,
+      dto.vendor_status,
+    );
+    return {
+      message: 'Vendor status updated',
+      data: { _id: data._id, vendor_status: data.vendor_status },
+    };
   }
 
   @Delete(':id')
@@ -179,7 +201,8 @@ export class ManufacturersController {
   })
   @ApiParam({ name: 'id', description: 'Manufacturer MongoDB id' })
   async remove(@Param('id') id: string) {
-    const data = await this.manufacturersService.deleteManufacturerWithConstraint(id);
+    const data =
+      await this.manufacturersService.deleteManufacturerWithConstraint(id);
     return { message: 'Manufacturer deleted successfully', data };
   }
 }

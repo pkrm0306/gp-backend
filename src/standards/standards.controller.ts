@@ -50,7 +50,8 @@ export class StandardsController {
   @Get('export')
   @ApiOperation({
     summary: 'Export standards as CSV',
-    description: 'Applies search, resource_standard_type, and status filters (no pagination).',
+    description:
+      'Applies search, resource_standard_type, and status filters (no pagination).',
   })
   @ApiResponse({ status: 200, description: 'CSV download' })
   async exportCsv(@Query() query: ListStandardsQueryDto) {
@@ -93,7 +94,11 @@ export class StandardsController {
         description: { type: 'string' },
         resource_standard_type: { type: 'string' },
         status: { type: 'integer', enum: [0, 1] },
-        file: { type: 'string', format: 'binary', description: 'PDF, JPG, or PNG' },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'PDF, JPG, or PNG',
+        },
       },
     },
   })
@@ -132,7 +137,11 @@ export class StandardsController {
         description: { type: 'string' },
         resource_standard_type: { type: 'string' },
         status: { type: 'integer', enum: [0, 1] },
-        file: { type: 'string', format: 'binary', description: 'Optional replacement (PDF, JPG, PNG)' },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Optional replacement (PDF, JPG, PNG)',
+        },
       },
     },
   })
@@ -153,7 +162,10 @@ export class StandardsController {
   @ApiOperation({ summary: 'Set standard status' })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiResponse({ status: 404, description: 'Not found' })
-  async patchStatus(@Param('id') id: string, @Body() dto: UpdateStandardStatusDto) {
+  async patchStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateStandardStatusDto,
+  ) {
     const numericId = this.standardsService.parseStandardId(id);
     const data = await this.standardsService.updateStatus(numericId, dto);
     return {

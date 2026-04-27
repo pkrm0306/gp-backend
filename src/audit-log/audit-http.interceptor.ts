@@ -151,7 +151,10 @@ function mergeResource(
   return Object.values(out).some((v) => v !== undefined) ? out : undefined;
 }
 
-function truncateMessage(msg: string | undefined, max = 400): string | undefined {
+function truncateMessage(
+  msg: string | undefined,
+  max = 400,
+): string | undefined {
   if (!msg) {
     return undefined;
   }
@@ -207,10 +210,12 @@ export class AuditHttpInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap(() => {
-        (req as { __auditOutcome?: string; __auditStatus?: number }).__auditOutcome =
-          'success';
-        (req as { __auditOutcome?: string; __auditStatus?: number }).__auditStatus =
-          res.statusCode || 200;
+        (
+          req as { __auditOutcome?: string; __auditStatus?: number }
+        ).__auditOutcome = 'success';
+        (
+          req as { __auditOutcome?: string; __auditStatus?: number }
+        ).__auditStatus = res.statusCode || 200;
       }),
       catchError((err: unknown) => {
         const status =
@@ -240,11 +245,9 @@ export class AuditHttpInterceptor implements NestInterceptor {
           __auditStatus?: number;
           __auditErr?: string;
         };
-        const outcome =
-          r.__auditOutcome === 'failure' ? 'failure' : 'success';
+        const outcome = r.__auditOutcome === 'failure' ? 'failure' : 'success';
         const statusCode = r.__auditStatus ?? res.statusCode ?? 500;
-        const action =
-          auditMeta?.action ?? resolveAction(method, pathNorm);
+        const action = auditMeta?.action ?? resolveAction(method, pathNorm);
         const inferred = inferResource(method, pathNorm, req);
         const resource = mergeResource(inferred, auditMeta, req);
         const user = (req as Request & { user?: Record<string, unknown> }).user;
@@ -256,9 +259,7 @@ export class AuditHttpInterceptor implements NestInterceptor {
                     ? String(user['userId'])
                     : undefined,
                 role:
-                  user['role'] !== undefined
-                    ? String(user['role'])
-                    : undefined,
+                  user['role'] !== undefined ? String(user['role']) : undefined,
                 vendor_id:
                   user['vendorId'] !== undefined
                     ? String(user['vendorId'])
@@ -272,12 +273,15 @@ export class AuditHttpInterceptor implements NestInterceptor {
 
         const friendly = mapFriendlyAudit(method, pathNorm, req, outcome);
         const bodyRecord =
-          req.body &&
-          typeof req.body === 'object' &&
-          !Array.isArray(req.body)
+          req.body && typeof req.body === 'object' && !Array.isArray(req.body)
             ? (req.body as Record<string, unknown>)
             : undefined;
-        const performed_by = buildPerformedBy(user, actor, pathNorm, bodyRecord);
+        const performed_by = buildPerformedBy(
+          user,
+          actor,
+          pathNorm,
+          bodyRecord,
+        );
 
         const bodyFields = safeBodyFieldKeys(req);
         const metadata: Record<string, unknown> = {
@@ -306,12 +310,15 @@ export class AuditHttpInterceptor implements NestInterceptor {
           http_method: method,
           route: resolvedPath,
           status_code: statusCode,
-          actor: actor && Object.values(actor).some((v) => v) ? actor : undefined,
+          actor:
+            actor && Object.values(actor).some((v) => v) ? actor : undefined,
           resource,
           request: {
             correlation_id: correlationId,
             ip: clientIp(req),
-            user_agent: truncateUa(req.headers['user-agent'] as string | undefined),
+            user_agent: truncateUa(
+              req.headers['user-agent'] as string | undefined,
+            ),
           },
           metadata,
         });

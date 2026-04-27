@@ -1,7 +1,12 @@
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
-import { getS3Bucket, getS3Client, getS3Region, isS3Configured } from '../config/s3.config';
+import {
+  getS3Bucket,
+  getS3Client,
+  getS3Region,
+  isS3Configured,
+} from '../config/s3.config';
 
 export type UploadResult = {
   storage: 'local' | 's3';
@@ -16,7 +21,9 @@ export type UploadResult = {
 };
 
 function safeBaseName(original: string): string {
-  return basename(original || 'file').replace(/[^a-zA-Z0-9._-]/g, '_') || 'file';
+  return (
+    basename(original || 'file').replace(/[^a-zA-Z0-9._-]/g, '_') || 'file'
+  );
 }
 
 function normalizeFolder(folderName: string): string {

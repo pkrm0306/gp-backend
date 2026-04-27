@@ -11,7 +11,10 @@ export class VendorUsersService {
     private vendorUserModel: Model<VendorUserDocument>,
   ) {}
 
-  async create(data: Partial<VendorUser>, session?: ClientSession): Promise<VendorUserDocument> {
+  async create(
+    data: Partial<VendorUser>,
+    session?: ClientSession,
+  ): Promise<VendorUserDocument> {
     if (data.password) {
       data.password = await bcrypt.hash(data.password, 10);
     }
@@ -30,14 +33,22 @@ export class VendorUsersService {
     return this.vendorUserModel.findById(id).exec();
   }
 
-  async update(id: string, data: Partial<VendorUser>): Promise<VendorUserDocument | null> {
+  async update(
+    id: string,
+    data: Partial<VendorUser>,
+  ): Promise<VendorUserDocument | null> {
     if (data.password) {
       data.password = await bcrypt.hash(data.password, 10);
     }
-    return this.vendorUserModel.findByIdAndUpdate(id, data, { new: true }).exec();
+    return this.vendorUserModel
+      .findByIdAndUpdate(id, data, { new: true })
+      .exec();
   }
 
-  async verifyOtp(email: string, otp: string): Promise<VendorUserDocument | null> {
+  async verifyOtp(
+    email: string,
+    otp: string,
+  ): Promise<VendorUserDocument | null> {
     const user = await this.findByEmail(email);
     if (!user || user.otp !== otp) {
       return null;
@@ -47,7 +58,10 @@ export class VendorUsersService {
     return user.save();
   }
 
-  async comparePassword(password: string, hashedPassword: string): Promise<boolean> {
+  async comparePassword(
+    password: string,
+    hashedPassword: string,
+  ): Promise<boolean> {
     return bcrypt.compare(password, hashedPassword);
   }
 }

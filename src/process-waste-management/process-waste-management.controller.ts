@@ -47,7 +47,9 @@ const storage = diskStorage({
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class ProcessWasteManagementController {
-  constructor(private readonly processWasteManagementService: ProcessWasteManagementService) {}
+  constructor(
+    private readonly processWasteManagementService: ProcessWasteManagementService,
+  ) {}
 
   @Post()
   @UseInterceptors(
@@ -69,7 +71,16 @@ export class ProcessWasteManagementController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
           'application/vnd.ms-excel', // .xls
         ];
-        const allowedExtensions = ['.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+        const allowedExtensions = [
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.pdf',
+          '.doc',
+          '.docx',
+          '.xls',
+          '.xlsx',
+        ];
         const fileExt = extname(file.originalname).toLowerCase();
 
         if (
@@ -114,7 +125,8 @@ export class ProcessWasteManagementController {
         },
         processWasteManagementStatus: {
           type: 'number',
-          description: 'Process waste management status (0=Pending, 1=Completed)',
+          description:
+            'Process waste management status (0=Pending, 1=Completed)',
           example: 0,
           enum: [0, 1],
         },
@@ -161,7 +173,8 @@ export class ProcessWasteManagementController {
     @Body() body: any,
     @UploadedFile() wmSupportingDocumentsFile?: Express.Multer.File,
   ) {
-    if (!user?.vendorId) throw new BadRequestException('Vendor ID not found in token');
+    if (!user?.vendorId)
+      throw new BadRequestException('Vendor ID not found in token');
 
     const dto: CreateProcessWasteManagementDto = {
       urnNo: body.urnNo,
@@ -173,17 +186,22 @@ export class ProcessWasteManagementController {
     };
 
     // Validate file name if file is uploaded
-    if (wmSupportingDocumentsFile && (!dto.wmSupportingDocumentsFileName || dto.wmSupportingDocumentsFileName.trim() === '')) {
+    if (
+      wmSupportingDocumentsFile &&
+      (!dto.wmSupportingDocumentsFileName ||
+        dto.wmSupportingDocumentsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'wmSupportingDocumentsFileName is required when uploading wmSupportingDocumentsFile',
       );
     }
 
-    const data = await this.processWasteManagementService.createProcessWasteManagement(
-      dto,
-      user.vendorId,
-      wmSupportingDocumentsFile,
-    );
+    const data =
+      await this.processWasteManagementService.createProcessWasteManagement(
+        dto,
+        user.vendorId,
+        wmSupportingDocumentsFile,
+      );
     return { success: true, data };
   }
 }

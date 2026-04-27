@@ -48,7 +48,9 @@ const storage = diskStorage({
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class ProcessManufacturingController {
-  constructor(private readonly processManufacturingService: ProcessManufacturingService) {}
+  constructor(
+    private readonly processManufacturingService: ProcessManufacturingService,
+  ) {}
 
   @Post()
   @UseInterceptors(
@@ -70,7 +72,16 @@ export class ProcessManufacturingController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
           'application/vnd.ms-excel', // .xls
         ];
-        const allowedExtensions = ['.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+        const allowedExtensions = [
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.pdf',
+          '.doc',
+          '.docx',
+          '.xls',
+          '.xlsx',
+        ];
         const fileExt = extname(file.originalname).toLowerCase();
 
         if (
@@ -193,7 +204,8 @@ export class ProcessManufacturingController {
     @UploadedFiles() files?: Express.Multer.File[],
     @Req() req?: any,
   ) {
-    if (!user?.vendorId) throw new BadRequestException('Vendor ID not found in token');
+    if (!user?.vendorId)
+      throw new BadRequestException('Vendor ID not found in token');
 
     // Parse body to get DTO
     const dto: CreateProcessManufacturingDto = {
@@ -207,8 +219,10 @@ export class ProcessManufacturingController {
       processManufacturingStatus: body.processManufacturingStatus
         ? parseInt(body.processManufacturingStatus, 10)
         : undefined,
-      energyConservationSupportingDocumentsFileName: body.energyConservationSupportingDocumentsFileName,
-      energyConsumptionDocumentsFileName: body.energyConsumptionDocumentsFileName,
+      energyConservationSupportingDocumentsFileName:
+        body.energyConservationSupportingDocumentsFileName,
+      energyConsumptionDocumentsFileName:
+        body.energyConsumptionDocumentsFileName,
     };
 
     // Extract files by fieldname from the files array
@@ -221,24 +235,33 @@ export class ProcessManufacturingController {
     );
 
     // Validate file names if files are uploaded
-    if (energyConservationFile && (!dto.energyConservationSupportingDocumentsFileName || dto.energyConservationSupportingDocumentsFileName.trim() === '')) {
+    if (
+      energyConservationFile &&
+      (!dto.energyConservationSupportingDocumentsFileName ||
+        dto.energyConservationSupportingDocumentsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'energyConservationSupportingDocumentsFileName is required when uploading energyConservationSupportingDocumentsFile',
       );
     }
 
-    if (energyConsumptionFile && (!dto.energyConsumptionDocumentsFileName || dto.energyConsumptionDocumentsFileName.trim() === '')) {
+    if (
+      energyConsumptionFile &&
+      (!dto.energyConsumptionDocumentsFileName ||
+        dto.energyConsumptionDocumentsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'energyConsumptionDocumentsFileName is required when uploading energyConsumptionDocumentsFile',
       );
     }
 
-    const data = await this.processManufacturingService.createProcessManufacturing(
-      dto,
-      user.vendorId,
-      energyConservationFile,
-      energyConsumptionFile,
-    );
+    const data =
+      await this.processManufacturingService.createProcessManufacturing(
+        dto,
+        user.vendorId,
+        energyConservationFile,
+        energyConsumptionFile,
+      );
     return { success: true, data };
   }
 }

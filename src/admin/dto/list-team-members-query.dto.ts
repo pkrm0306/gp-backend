@@ -5,14 +5,21 @@ import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 export class ListTeamMembersQueryDto {
   @ApiPropertyOptional({ example: 'active', description: 'active | inactive' })
   @IsOptional()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   @IsString()
   @IsIn(['active', 'inactive', '1', '0'])
   status?: string;
 
-  @ApiPropertyOptional({ example: 'tester', description: 'Filter by designation' })
+  @ApiPropertyOptional({
+    example: 'tester',
+    description: 'Filter by designation',
+  })
   @IsOptional()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   @IsString()
   designation?: string;
 
@@ -36,4 +43,3 @@ export class ListTeamMembersQueryDto {
   @Min(1)
   limit?: number = 10;
 }
-

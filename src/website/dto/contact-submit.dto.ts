@@ -62,4 +62,3 @@ export class ContactSubmitDto {
   @Length(5, 2000)
   message: string;
 }
-

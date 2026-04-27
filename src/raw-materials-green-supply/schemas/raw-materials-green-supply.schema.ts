@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type RawMaterialsGreenSupplyDocument = RawMaterialsGreenSupply & Document;
+export type RawMaterialsGreenSupplyDocument = RawMaterialsGreenSupply &
+  Document;
 
 @Schema({ collection: 'raw_materials_green_supply', timestamps: false })
 export class RawMaterialsGreenSupply {
@@ -27,5 +28,6 @@ export class RawMaterialsGreenSupply {
   updatedDate: Date;
 }
 
-export const RawMaterialsGreenSupplySchema =
-  SchemaFactory.createForClass(RawMaterialsGreenSupply);
+export const RawMaterialsGreenSupplySchema = SchemaFactory.createForClass(
+  RawMaterialsGreenSupply,
+);

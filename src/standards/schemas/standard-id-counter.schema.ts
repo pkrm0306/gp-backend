@@ -14,4 +14,5 @@ export class StandardIdCounter {
   seq: number;
 }
 
-export const StandardIdCounterSchema = SchemaFactory.createForClass(StandardIdCounter);
+export const StandardIdCounterSchema =
+  SchemaFactory.createForClass(StandardIdCounter);

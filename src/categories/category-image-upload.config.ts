@@ -2,7 +2,13 @@ import { mkdirSync } from 'fs';
 import { join, extname } from 'path';
 import { diskStorage, Options } from 'multer';
 
-const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+const allowedMimes = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+];
 
 export function categoryImageMulterOptions(): Options {
   return {

@@ -40,6 +40,5 @@ export class RawMaterialsReduceEnvironmental {
   updatedDate: Date;
 }
 
-export const RawMaterialsReduceEnvironmentalSchema = SchemaFactory.createForClass(
-  RawMaterialsReduceEnvironmental,
-);
+export const RawMaterialsReduceEnvironmentalSchema =
+  SchemaFactory.createForClass(RawMaterialsReduceEnvironmental);

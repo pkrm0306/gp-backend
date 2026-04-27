@@ -3,9 +3,9 @@ import { Document, Types } from 'mongoose';
 
 export type ActivityLogDocument = ActivityLog & Document;
 
-@Schema({ 
+@Schema({
   collection: 'activity_log',
-  timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' }
+  timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
 })
 export class ActivityLog {
   @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })

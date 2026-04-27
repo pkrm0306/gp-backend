@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, Length, Matches } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class EditBannerDto {
@@ -24,7 +30,9 @@ export class EditBannerDto {
   })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (value === undefined || value === null ? undefined : String(value).trim()))
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
   @Matches(/^https?:\/\/.+/i, {
     message: 'targetUrl must be a full http(s) URL',
   })
@@ -37,10 +45,12 @@ export class EditBannerDto {
   @Length(2, 120)
   heading: string;
 
-  @ApiProperty({ example: 'Up to 50% off selected items.', description: 'Banner description' })
+  @ApiProperty({
+    example: 'Up to 50% off selected items.',
+    description: 'Banner description',
+  })
   @IsString()
   @IsNotEmpty()
   @Transform(({ value }) => String(value ?? '').trim())
   description: string;
 }
-

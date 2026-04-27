@@ -47,7 +47,9 @@ const storage = diskStorage({
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class ProcessInnovationController {
-  constructor(private readonly processInnovationService: ProcessInnovationService) {}
+  constructor(
+    private readonly processInnovationService: ProcessInnovationService,
+  ) {}
 
   @Post()
   @UseInterceptors(
@@ -69,7 +71,16 @@ export class ProcessInnovationController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
           'application/vnd.ms-excel', // .xls
         ];
-        const allowedExtensions = ['.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+        const allowedExtensions = [
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.pdf',
+          '.doc',
+          '.docx',
+          '.xls',
+          '.xlsx',
+        ];
         const fileExt = extname(file.originalname).toLowerCase();
 
         if (
@@ -161,7 +172,8 @@ export class ProcessInnovationController {
     @Body() body: any,
     @UploadedFile() innovationImplementationDocumentsFile?: Express.Multer.File,
   ) {
-    if (!user?.vendorId) throw new BadRequestException('Vendor ID not found in token');
+    if (!user?.vendorId)
+      throw new BadRequestException('Vendor ID not found in token');
 
     const dto: CreateProcessInnovationDto = {
       urnNo: body.urnNo,
@@ -169,11 +181,16 @@ export class ProcessInnovationController {
       processInnovationStatus: body.processInnovationStatus
         ? parseInt(body.processInnovationStatus, 10)
         : undefined,
-      innovationImplementationDocumentsFileName: body.innovationImplementationDocumentsFileName,
+      innovationImplementationDocumentsFileName:
+        body.innovationImplementationDocumentsFileName,
     };
 
     // Validate file name if file is uploaded
-    if (innovationImplementationDocumentsFile && (!dto.innovationImplementationDocumentsFileName || dto.innovationImplementationDocumentsFileName.trim() === '')) {
+    if (
+      innovationImplementationDocumentsFile &&
+      (!dto.innovationImplementationDocumentsFileName ||
+        dto.innovationImplementationDocumentsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'innovationImplementationDocumentsFileName is required when uploading innovationImplementationDocumentsFile',
       );

@@ -13,7 +13,10 @@ import { AuthModule } from '../auth/auth.module';
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: ProcessMpManufacturingUnit.name, schema: ProcessMpManufacturingUnitSchema },
+      {
+        name: ProcessMpManufacturingUnit.name,
+        schema: ProcessMpManufacturingUnitSchema,
+      },
     ]),
     ProductRegistrationModule, // for SequenceHelper
     PassportModule,
@@ -24,4 +27,3 @@ import { AuthModule } from '../auth/auth.module';
   exports: [ProcessMpManufacturingUnitsService],
 })
 export class ProcessMpManufacturingUnitsModule {}
-

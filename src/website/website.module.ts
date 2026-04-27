@@ -6,9 +6,15 @@ import {
   NewsletterSubscriber,
   NewsletterSubscriberSchema,
 } from './schemas/newsletter-subscriber.schema';
-import { ContactMessage, ContactMessageSchema } from './schemas/contact-message.schema';
+import {
+  ContactMessage,
+  ContactMessageSchema,
+} from './schemas/contact-message.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
-import { VendorUser, VendorUserSchema } from '../vendor-users/schemas/vendor-user.schema';
+import {
+  VendorUser,
+  VendorUserSchema,
+} from '../vendor-users/schemas/vendor-user.schema';
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -35,4 +41,3 @@ import {
   providers: [WebsiteService, EmailService],
 })
 export class WebsiteModule {}
-

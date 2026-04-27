@@ -40,7 +40,10 @@ export class PartnersController {
     description:
       'Returns all partners / team members for the logged-in vendor where type is "partner" and status is not 2, newest first (by createdAt)',
   })
-  @ApiResponse({ status: 200, description: 'List of partners retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of partners retrieved successfully',
+  })
   async findAll(@CurrentUser() user: any) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
@@ -62,11 +65,17 @@ export class PartnersController {
   @ApiBody({ type: CreatePartnerDto })
   @ApiResponse({ status: 201, description: 'Partner created successfully' })
   @ApiResponse({ status: 409, description: 'Email or phone already exists' })
-  async create(@CurrentUser() user: any, @Body() createPartnerDto: CreatePartnerDto) {
+  async create(
+    @CurrentUser() user: any,
+    @Body() createPartnerDto: CreatePartnerDto,
+  ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
-    const partner = await this.partnersService.create(user.vendorId, createPartnerDto);
+    const partner = await this.partnersService.create(
+      user.vendorId,
+      createPartnerDto,
+    );
     return {
       message: 'Partner created successfully',
       data: partner,
@@ -92,7 +101,11 @@ export class PartnersController {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
-    const partner = await this.partnersService.update(id, user.vendorId, updatePartnerDto);
+    const partner = await this.partnersService.update(
+      id,
+      user.vendorId,
+      updatePartnerDto,
+    );
     return {
       message: 'Partner updated successfully',
       data: partner,
@@ -102,11 +115,18 @@ export class PartnersController {
   @Patch('status')
   @ApiOperation({
     summary: 'Toggle partner status',
-    description: 'Toggles partner status: if current status is 1, sets to 0; if 0, sets to 1',
+    description:
+      'Toggles partner status: if current status is 1, sets to 0; if 0, sets to 1',
   })
   @ApiBody({ type: UpdatePartnerStatusDto })
-  @ApiResponse({ status: 200, description: 'Partner status updated successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid status or status mismatch' })
+  @ApiResponse({
+    status: 200,
+    description: 'Partner status updated successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid status or status mismatch',
+  })
   @ApiResponse({ status: 404, description: 'Partner not found' })
   async updateStatus(
     @CurrentUser() user: any,
@@ -115,7 +135,10 @@ export class PartnersController {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
-    const partner = await this.partnersService.updateStatus(user.vendorId, updateStatusDto);
+    const partner = await this.partnersService.updateStatus(
+      user.vendorId,
+      updateStatusDto,
+    );
     return {
       message: 'Partner status updated successfully',
       data: partner,
@@ -126,7 +149,8 @@ export class PartnersController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete a partner (soft delete)',
-    description: 'Soft deletes a partner by setting status to 2 and updating updatedAt',
+    description:
+      'Soft deletes a partner by setting status to 2 and updating updatedAt',
   })
   @ApiParam({ name: 'id', description: 'Partner ID' })
   @ApiResponse({ status: 200, description: 'Partner deleted successfully' })

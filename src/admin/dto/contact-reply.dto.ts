@@ -13,4 +13,3 @@ export class ContactReplyDto {
   @Length(1, 4000)
   replyMessage: string;
 }
-

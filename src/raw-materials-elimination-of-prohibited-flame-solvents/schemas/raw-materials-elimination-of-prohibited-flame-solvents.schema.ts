@@ -29,4 +29,6 @@ export class RawMaterialsEliminationOfProhibitedFlameSolvents {
 }
 
 export const RawMaterialsEliminationOfProhibitedFlameSolventsSchema =
-  SchemaFactory.createForClass(RawMaterialsEliminationOfProhibitedFlameSolvents);
+  SchemaFactory.createForClass(
+    RawMaterialsEliminationOfProhibitedFlameSolvents,
+  );

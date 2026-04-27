@@ -75,4 +75,5 @@ export class PaymentDetails {
   updatedDate: Date;
 }
 
-export const PaymentDetailsSchema = SchemaFactory.createForClass(PaymentDetails);
+export const PaymentDetailsSchema =
+  SchemaFactory.createForClass(PaymentDetails);

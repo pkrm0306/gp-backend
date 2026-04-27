@@ -50,7 +50,8 @@ export class EmailService {
     textBody?: string,
   ): Promise<void> {
     try {
-      const disabledRaw = this.configService.get<string>('EMAIL_DISABLED') || 'false';
+      const disabledRaw =
+        this.configService.get<string>('EMAIL_DISABLED') || 'false';
       const disabled = String(disabledRaw).toLowerCase() === 'true';
       if (disabled) {
         this.logger.warn(`EMAIL_DISABLED=true, skipping email send to ${to}`);
@@ -69,7 +70,9 @@ export class EmailService {
       };
 
       const info = await this.transporter.sendMail(mailOptions);
-      this.logger.log(`Email sent successfully to ${to}. Message ID: ${info.messageId}`);
+      this.logger.log(
+        `Email sent successfully to ${to}. Message ID: ${info.messageId}`,
+      );
     } catch (error) {
       this.logger.error(`Failed to send email to ${to}:`, error);
       throw error;

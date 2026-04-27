@@ -12,6 +12,7 @@ import {
 import { CreateRawMaterialsHazardousProductsDto } from './dto/create-raw-materials-hazardous-products.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
 import { AllProductDocument, AllProductDocumentDocument } from '../product-design/schemas/all-product-document.schema';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -25,7 +26,10 @@ export class RawMaterialsHazardousProductsService {
     private sequenceHelper: SequenceHelper,
   ) {}
 
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (id instanceof Types.ObjectId) return id;
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException(`Invalid ${fieldName} format: ${id}`);
@@ -41,7 +45,11 @@ export class RawMaterialsHazardousProductsService {
     return urnFolderPath;
   }
 
-  private saveFileToUrnFolder(file: Express.Multer.File, urnNo: string, fileType: string): string {
+  private saveFileToUrnFolder(
+    file: Express.Multer.File,
+    urnNo: string,
+    fileType: string,
+  ): string {
     const urnFolderPath = this.ensureUrnFolder(urnNo);
     const fileExt = path.extname(file.originalname);
     const timestamp = Date.now();
@@ -99,13 +107,14 @@ export class RawMaterialsHazardousProductsService {
 
       // Insert document metadata into master table if file uploaded
       if (productsTestReportFile && storedRelativePath) {
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         await this.allProductDocumentModel.create({
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo: dto.urnNo,
           eoiNo: '',
-          documentForm: 'raw_materials_hazardous_products',
+          documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
           documentFormSubsection: 'products_test_report',
           formPrimaryId: id,
           documentName: storedFileName,
@@ -140,4 +149,3 @@ export class RawMaterialsHazardousProductsService {
     }
   }
 }
-

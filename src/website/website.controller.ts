@@ -1,4 +1,14 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { WebsiteService } from './website.service';
 import { NewsletterSubscribeDto } from './dto/newsletter-subscribe.dto';
@@ -30,7 +40,10 @@ export class WebsiteController {
     summary: 'Public manufacturers listing',
     description: 'Public API to list manufacturers with optional list filters.',
   })
-  @ApiResponse({ status: 200, description: 'Manufacturers retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Manufacturers retrieved successfully',
+  })
   async listPublicManufacturers(@Query() query: ListManufacturersQueryDto) {
     return this.manufacturersService.findAllPaginated(query);
   }
@@ -41,7 +54,10 @@ export class WebsiteController {
     summary: 'Public categories listing',
     description: 'Public API to list categories with optional list filters.',
   })
-  @ApiResponse({ status: 200, description: 'Categories retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Categories retrieved successfully',
+  })
   async listPublicCategories(@Query() query: ListCategoriesQueryDto) {
     const data = await this.categoriesService.findAll(query);
     return {
@@ -58,7 +74,10 @@ export class WebsiteController {
       'Public API for certified products only. Accepts the same filters as POST /api/admin/products/list, with status forced to [2].',
   })
   @ApiBody({ type: AdminListProductsDto })
-  @ApiResponse({ status: 200, description: 'Certified products retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Certified products retrieved successfully',
+  })
   async listPublicCertifiedProducts(@Body() dto: AdminListProductsDto) {
     const result = await this.productRegistrationService.adminListProducts({
       ...dto,
@@ -78,9 +97,17 @@ export class WebsiteController {
       'Accepts categoryId and returns distinct manufacturers mapped through products (products.categoryId -> products.manufacturerId).',
   })
   @ApiBody({ type: PublicCategoryManufacturersDto })
-  @ApiResponse({ status: 200, description: 'Manufacturers retrieved successfully' })
-  async listManufacturersByCategory(@Body() dto: PublicCategoryManufacturersDto) {
-    const data = await this.productRegistrationService.getManufacturersByCategory(dto.categoryId);
+  @ApiResponse({
+    status: 200,
+    description: 'Manufacturers retrieved successfully',
+  })
+  async listManufacturersByCategory(
+    @Body() dto: PublicCategoryManufacturersDto,
+  ) {
+    const data =
+      await this.productRegistrationService.getManufacturersByCategory(
+        dto.categoryId,
+      );
     return {
       message: 'Manufacturers retrieved successfully',
       ...data,
@@ -95,11 +122,17 @@ export class WebsiteController {
       'Accepts manufacturerId and returns distinct categories mapped through products (products.manufacturerId -> products.categoryId).',
   })
   @ApiBody({ type: PublicManufacturerCategoriesDto })
-  @ApiResponse({ status: 200, description: 'Categories retrieved successfully' })
-  async listCategoriesByManufacturer(@Body() dto: PublicManufacturerCategoriesDto) {
-    const data = await this.productRegistrationService.getCategoriesByManufacturer(
-      dto.manufacturerId,
-    );
+  @ApiResponse({
+    status: 200,
+    description: 'Categories retrieved successfully',
+  })
+  async listCategoriesByManufacturer(
+    @Body() dto: PublicManufacturerCategoriesDto,
+  ) {
+    const data =
+      await this.productRegistrationService.getCategoriesByManufacturer(
+        dto.manufacturerId,
+      );
     return {
       message: 'Categories retrieved successfully',
       ...data,
@@ -162,7 +195,10 @@ export class WebsiteController {
     description:
       'Toggles event status for the website events page. Default is active if status is missing/invalid. Accepts Mongo `_id` or numeric `eventId`.',
   })
-  @ApiResponse({ status: 200, description: 'Event status updated successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Event status updated successfully',
+  })
   @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Event not found' })
   async toggleEventStatus(@Param('id') id: string) {
@@ -201,4 +237,3 @@ export class WebsiteController {
     return { message: 'Email sent successfully', data };
   }
 }
-

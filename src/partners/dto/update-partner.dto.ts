@@ -17,7 +17,10 @@ export class UpdatePartnerDto {
   @IsString()
   phone?: string;
 
-  @ApiProperty({ description: 'Partner password (optional, only updates if provided)', required: false })
+  @ApiProperty({
+    description: 'Partner password (optional, only updates if provided)',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   @MinLength(6)

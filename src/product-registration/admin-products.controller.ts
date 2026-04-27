@@ -1,5 +1,6 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Get,
   HttpCode,
@@ -29,7 +30,9 @@ import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AdminProductsController {
-  constructor(private readonly productRegistrationService: ProductRegistrationService) {}
+  constructor(
+    private readonly productRegistrationService: ProductRegistrationService,
+  ) {}
 
   @Get('details/:urn')
   @ApiOperation({
@@ -39,19 +42,21 @@ export class AdminProductsController {
       'Each row includes **product_details.urnStatus** (number). Response may also include top-level **urnStatus** for timeline highlighting. ' +
       'Requires a valid Bearer token (any authenticated user).',
   })
-  @ApiParam({ name: 'urn', description: 'Full URN (e.g. URN-20260303140911)', example: 'URN-20260303140911' })
+  @ApiParam({
+    name: 'urn',
+    description: 'Full URN (e.g. URN-20260303140911)',
+    example: 'URN-20260303140911',
+  })
   @ApiResponse({ status: 200, description: 'Product details for the URN' })
   @ApiResponse({ status: 404, description: 'No products for this URN' })
   async adminGetProductDetailsByUrn(@Param('urn') urn: string) {
+    if (!urn || urn.trim() === '') {
+      throw new BadRequestException('URN number is required');
+    }
     const data = await this.productRegistrationService.getProductDetailsByUrn(urn.trim());
-    const urnStatus =
-      Array.isArray(data) && data[0]?.product_details?.urnStatus !== undefined
-        ? Number(data[0].product_details.urnStatus)
-        : undefined;
     return {
-      message: 'Product details retrieved successfully',
+      success: true,
       data,
-      ...(urnStatus !== undefined ? { urnStatus } : {}),
     };
   }
 
@@ -66,10 +71,14 @@ export class AdminProductsController {
   })
   @ApiBody({ type: AdminUpdateUrnStatusDto })
   @ApiResponse({ status: 200, description: 'Status updated' })
-  @ApiResponse({ status: 400, description: 'Invalid updateStatusType/updateStatusTo' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid updateStatusType/updateStatusTo',
+  })
   @ApiResponse({ status: 404, description: 'Unknown URN' })
   async adminPatchUrnStatus(@Body() dto: AdminUpdateUrnStatusDto) {
-    const data = await this.productRegistrationService.adminUpdateUrnStatus(dto);
+    const data =
+      await this.productRegistrationService.adminUpdateUrnStatus(dto);
     return {
       message: 'URN status updated',
       data,
@@ -100,11 +109,11 @@ export class AdminProductsController {
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Excel file download' })
   async export(@Body() dto: AdminListProductsDto): Promise<StreamableFile> {
-    const file = await this.productRegistrationService.exportAdminProductsXlsx(dto);
+    const file =
+      await this.productRegistrationService.exportAdminProductsXlsx(dto);
     return new StreamableFile(file.buffer, {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       disposition: `attachment; filename="${file.fileName}"`,
     });
   }
 }
-

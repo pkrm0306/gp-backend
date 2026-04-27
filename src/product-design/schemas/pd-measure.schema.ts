@@ -31,4 +31,3 @@ export class PdMeasure {
 }
 
 export const PdMeasureSchema = SchemaFactory.createForClass(PdMeasure);
-

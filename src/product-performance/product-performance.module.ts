@@ -1,7 +1,13 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ProductPerformance, ProductPerformanceSchema } from './schemas/product-performance.schema';
-import { AllProductDocument, AllProductDocumentSchema } from '../product-design/schemas/all-product-document.schema';
+import {
+  ProductPerformance,
+  ProductPerformanceSchema,
+} from './schemas/product-performance.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentSchema,
+} from '../product-design/schemas/all-product-document.schema';
 import { ProductPerformanceService } from './product-performance.service';
 import { ProductPerformanceController } from './product-performance.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';

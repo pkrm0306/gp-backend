@@ -11,8 +11,14 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import ExcelJS from 'exceljs';
 import { Product, ProductDocument } from './schemas/product.schema';
-import { ProductPlant, ProductPlantDocument } from './schemas/product-plant.schema';
-import { RegisterProductDto, BulkRegisterProductDto } from './dto/register-product.dto';
+import {
+  ProductPlant,
+  ProductPlantDocument,
+} from './schemas/product-plant.schema';
+import {
+  RegisterProductDto,
+  BulkRegisterProductDto,
+} from './dto/register-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateUrnStatusDto } from './dto/update-urn-status.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
@@ -24,6 +30,7 @@ import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
@@ -87,26 +94,29 @@ export class ProductRegistrationService {
   /**
    * Safely convert string to ObjectId with validation
    */
-  private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
+  private toObjectId(
+    id: string | Types.ObjectId,
+    fieldName: string,
+  ): Types.ObjectId {
     if (!id) {
       throw new BadRequestException(`${fieldName} is required`);
     }
-    
+
     // If already an ObjectId, return it
     if (id instanceof Types.ObjectId) {
       return id;
     }
-    
+
     // Convert to string and validate
     const idString = String(id).trim();
-    
+
     // Check if it's a valid 24-character hex string
     if (!/^[0-9a-fA-F]{24}$/.test(idString)) {
       throw new BadRequestException(
         `Invalid ${fieldName} format. Must be a valid 24-character MongoDB ObjectId.`,
       );
     }
-    
+
     try {
       return new Types.ObjectId(idString);
     } catch (error) {
@@ -127,7 +137,10 @@ export class ProductRegistrationService {
   /**
    * Validate state exists and belongs to country
    */
-  private async validateState(stateId: string, countryId: string): Promise<void> {
+  private async validateState(
+    stateId: string,
+    countryId: string,
+  ): Promise<void> {
     const state = await this.statesService.findById(stateId);
     if (!state) {
       throw new NotFoundException(`State with ID ${stateId} not found`);
@@ -243,9 +256,11 @@ export class ProductRegistrationService {
     try {
       const responsibility = this.getResponsibilityForStatus(newUrnStatus);
       const nextActivityId = this.getNextActivityIdForLog(newUrnStatus);
-      const nextResponsibility = this.getResponsibilityForStatus(nextActivityId);
+      const nextResponsibility =
+        this.getResponsibilityForStatus(nextActivityId);
       await this.activityLogService.logActivity({
-        vendor_id: vendorId instanceof Types.ObjectId ? vendorId.toString() : vendorId,
+        vendor_id:
+          vendorId instanceof Types.ObjectId ? vendorId.toString() : vendorId,
         manufacturer_id:
           manufacturerId instanceof Types.ObjectId
             ? manufacturerId.toString()
@@ -281,7 +296,7 @@ export class ProductRegistrationService {
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
-    
+
     return `URN-${year}${month}${day}${hours}${minutes}${seconds}`;
   }
 
@@ -298,9 +313,12 @@ export class ProductRegistrationService {
     session?: ClientSession,
   ): Promise<string> {
     const useSession = session && session.inTransaction() ? session : undefined;
-    
+
     // Count existing products for THIS manufacturer only (not global)
-    const manufacturerObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
     const existingProductCount = await this.productModel
       .countDocuments(
         { manufacturerId: manufacturerObjectId },
@@ -310,8 +328,12 @@ export class ProductRegistrationService {
 
     // Calculate next sequence number (existing count + 1)
     const manufacturerProductCount = existingProductCount + 1;
-    
-    return await this.generateEOIWithCount(manufacturerId, manufacturerProductCount, session);
+
+    return await this.generateEOIWithCount(
+      manufacturerId,
+      manufacturerProductCount,
+      session,
+    );
   }
 
   /**
@@ -326,7 +348,8 @@ export class ProductRegistrationService {
     session?: ClientSession,
   ): Promise<string> {
     // Get manufacturer details
-    const manufacturer = await this.manufacturersService.findById(manufacturerId);
+    const manufacturer =
+      await this.manufacturersService.findById(manufacturerId);
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
     }
@@ -347,22 +370,26 @@ export class ProductRegistrationService {
         `Manufacturer ${manufacturerId} does not have gpInternalId set. Please update the manufacturer record with gpInternalId field (format: "GP-12" or "GPSC-312").`,
       );
     }
-    
+
     const internalIdMatch = gpInternalId.match(/-(\d+)$/);
     let internalId: string;
-    
+
     if (internalIdMatch) {
       // Extract the number after the hyphen and pad to 3 digits
       const internalIdNum = internalIdMatch[1];
       internalId = internalIdNum.padStart(3, '0');
     } else {
       // Fallback if no match found
-      console.warn(`No internal ID pattern found in gpInternalId: ${gpInternalId}, using '000'`);
+      console.warn(
+        `No internal ID pattern found in gpInternalId: ${gpInternalId}, using '000'`,
+      );
       internalId = '000';
     }
 
     // Pad manufacturer_product_count to 3 digits
-    const paddedManufacturerProductCount = manufacturerProductCount.toString().padStart(3, '0');
+    const paddedManufacturerProductCount = manufacturerProductCount
+      .toString()
+      .padStart(3, '0');
 
     // Generate EOI: GP + manufacturer_initial + 3-digit internal_id + 3-digit manufacturer_product_count
     // Example: GPAB012006
@@ -387,13 +414,26 @@ export class ProductRegistrationService {
       session.startTransaction();
 
       try {
-        console.log('[Product Registration] Starting registration (attempt ' + (retryCount + 1) + ')...');
+        console.log(
+          '[Product Registration] Starting registration (attempt ' +
+            (retryCount + 1) +
+            ')...',
+        );
         console.log('[Product Registration] Manufacturer ID:', manufacturerId);
-        console.log('[Product Registration] Auth manufacturer ID:', manufacturerId);
-        
+        console.log(
+          '[Product Registration] Auth manufacturer ID:',
+          manufacturerId,
+        );
+
         // Validate manufacturer ID
-        const manufacturerObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
-        const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+        const manufacturerObjectId = this.toObjectId(
+          manufacturerId,
+          'manufacturerId',
+        );
+        const vendorObjectId = this.toObjectId(
+          manufacturerId,
+          'manufacturerId',
+        );
 
         // Generate URN: "URN-" + YmdHis format
         const urnNo = this.generateURN();
@@ -405,205 +445,6 @@ export class ProductRegistrationService {
         const eoiNo = await this.generateEOI(manufacturerId, session);
         console.log('[Product Registration] Generated EOI:', eoiNo);
 
-      // Get next product ID
-      const productId = await this.sequenceHelper.getProductId();
-
-      // Get current date
-      const now = new Date();
-
-      // Validate and convert category ID
-      const categoryObjectId = this.toObjectId(registerProductDto.categoryId, 'categoryId');
-
-      // Create product data with URN and EOI
-      const productData = {
-        productId,
-        categoryId: categoryObjectId,
-        vendorId: vendorObjectId,
-        manufacturerId: manufacturerObjectId,
-        eoiNo,
-        urnNo,
-        productName: registerProductDto.productName,
-        productImage: registerProductDto.productImage,
-        plantCount: registerProductDto.plants.length,
-        productDetails: registerProductDto.productDetails,
-        productType: registerProductDto.productType || 0,
-        productStatus: 0,
-        productRenewStatus: 0,
-        urnStatus: 0,
-        createdDate: now,
-        updatedDate: now,
-      };
-
-      const product = new this.productModel(productData);
-      const savedProduct = await product.save({ session });
-
-      // Insert plants
-      const plants = [];
-      for (const plantDto of registerProductDto.plants) {
-        const productPlantId = await this.sequenceHelper.getProductPlantId();
-        
-        // Validate and convert plant country ID
-        const plantCountryObjectId = this.toObjectId(plantDto.countryId, 'countryId');
-        await this.validateCountry(plantDto.countryId);
-
-        // Validate and convert plant state ID
-        const plantStateObjectId = this.toObjectId(plantDto.stateId, 'stateId');
-        await this.validateState(plantDto.stateId, plantDto.countryId);
-        
-        const plantData = {
-          productPlantId,
-          productId: savedProduct._id,
-          vendorId: vendorObjectId,
-          categoryId: categoryObjectId,
-          manufacturerId: manufacturerObjectId,
-          countryId: plantCountryObjectId,
-          stateId: plantStateObjectId,
-          urnNo,
-          eoiNo,
-          plantName: plantDto.plantName,
-          plantLocation: plantDto.plantLocation,
-          city: plantDto.city,
-          plantStatus: 1,
-          createdDate: now,
-        };
-
-        const plant = new this.productPlantModel(plantData);
-        const savedPlant = await plant.save({ session });
-        plants.push(savedPlant);
-      }
-
-        await session.commitTransaction();
-        session.endSession();
-
-        // Log activity after successful product registration
-        // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment)
-        try {
-          await this.activityLogService.logActivity({
-            vendor_id: manufacturerId,
-            manufacturer_id: manufacturerId,
-            urn_no: urnNo,
-            activities_id: 0, // Current urnStatus
-            activity: this.getActivityName(0), // "Proposal Pending"
-            activity_status: 0,
-            responsibility: this.getResponsibilityForStatus(0),
-            next_responsibility: this.getResponsibilityForStatus(1),
-            next_acitivities_id: 1,
-            next_activity: this.getNextActivityName(0),
-            status: 1,
-          });
-        } catch (activityLogError: any) {
-          // Log error but don't fail the product registration
-          console.error('[Product Registration] Failed to log activity:', activityLogError);
-        }
-
-        return {
-          ...savedProduct.toObject(),
-          plants: plants.map((p) => p.toObject()),
-        };
-      } catch (error: any) {
-        await session.abortTransaction();
-        session.endSession();
-
-        // For validation errors, throw immediately with detailed message
-        if (error instanceof NotFoundException || error instanceof BadRequestException) {
-          console.error('Validation error:', error.message);
-          throw error;
-        }
-        
-        // Check for duplicate key error (11000) - retry with new URN/EOI
-        if (error.code === 11000 || (error.name === 'MongoServerError' && error.message?.includes('duplicate'))) {
-          retryCount++;
-          if (retryCount < maxRetries) {
-            console.warn(`[Product Registration] Duplicate URN/EOI detected. Retry ${retryCount}/${maxRetries}...`);
-            // Wait a bit before retry (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
-            continue; // Retry the while loop
-          } else {
-            throw new InternalServerErrorException(
-              'Failed to register product after multiple attempts due to duplicate URN or EOI. Please try again.',
-            );
-          }
-        }
-        
-        // Log the actual error for debugging
-        console.error('Product registration error:', error);
-        console.error('Error name:', error.name);
-        console.error('Error message:', error.message);
-        console.error('Error code:', error.code);
-        console.error('Error stack:', error.stack);
-        
-        // Check for specific error types
-        if (error.name === 'CastError' || error.message?.includes('Cast to ObjectId')) {
-          throw new BadRequestException(`Invalid ID format provided: ${error.message}`);
-        }
-        
-        // Return more detailed error message
-        const errorMessage = error.message || 'Failed to register product';
-        console.error('Throwing InternalServerErrorException with message:', errorMessage);
-        throw new InternalServerErrorException(
-          `${errorMessage}. Check server logs for details.`,
-        );
-      }
-    }
-
-    // Should never reach here, but just in case
-    throw new InternalServerErrorException('Failed to register product after all retry attempts.');
-  }
-
-  /**
-   * Register multiple products (bulk)
-   * - ONE URN for all products in the bulk upload
-   * - Individual EOI per product based on manufacturer-specific count
-   */
-  async registerBulkProducts(
-    bulkRegisterProductDto: BulkRegisterProductDto,
-    manufacturerId: string,
-  ) {
-    const maxRetries = 3;
-    let retryCount = 0;
-
-    while (retryCount < maxRetries) {
-      const session = await this.connection.startSession();
-      session.startTransaction();
-
-      try {
-        console.log('[Bulk Product Registration] Starting bulk registration (attempt ' + (retryCount + 1) + ')...');
-        console.log('[Bulk Product Registration] Manufacturer ID:', manufacturerId);
-        console.log('[Bulk Product Registration] Auth manufacturer ID:', manufacturerId);
-        console.log('[Bulk Product Registration] Number of products:', bulkRegisterProductDto.products.length);
-
-        // Validate manufacturer ID
-        const manufacturerObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
-        const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
-
-        // Generate ONE URN for all products in bulk
-        const urnNo = this.generateURN();
-        console.log('[Bulk Product Registration] Generated single URN for all products:', urnNo);
-
-        // Get initial manufacturer-specific product count (before inserting any products)
-        const initialManufacturerProductCount = await this.productModel
-          .countDocuments(
-            { manufacturerId: manufacturerObjectId },
-            { session },
-          )
-          .exec();
-
-        console.log('[Bulk Product Registration] Initial manufacturer product count:', initialManufacturerProductCount);
-
-        const results = [];
-
-        // Process each product in the bulk upload
-        for (let i = 0; i < bulkRegisterProductDto.products.length; i++) {
-          const registerProductDto = bulkRegisterProductDto.products[i];
-          
-          // Calculate manufacturer_product_count for this product
-          // Start from initial count + 1, then increment for each subsequent product
-          const manufacturerProductCount = initialManufacturerProductCount + i + 1;
-
-          // Generate EOI: Individual EOI per product using manufacturer-specific count
-          const eoiNo = await this.generateEOIWithCount(manufacturerId, manufacturerProductCount, session);
-          console.log(`[Bulk Product Registration] Product ${i + 1}/${bulkRegisterProductDto.products.length} - EOI: ${eoiNo}, Manufacturer Product Count: ${manufacturerProductCount}`);
-
         // Get next product ID
         const productId = await this.sequenceHelper.getProductId();
 
@@ -611,7 +452,10 @@ export class ProductRegistrationService {
         const now = new Date();
 
         // Validate and convert category ID
-        const categoryObjectId = this.toObjectId(registerProductDto.categoryId, 'categoryId');
+        const categoryObjectId = this.toObjectId(
+          registerProductDto.categoryId,
+          'categoryId',
+        );
 
         // Create product data with URN and EOI
         const productData = {
@@ -640,15 +484,21 @@ export class ProductRegistrationService {
         const plants = [];
         for (const plantDto of registerProductDto.plants) {
           const productPlantId = await this.sequenceHelper.getProductPlantId();
-          
+
           // Validate and convert plant country ID
-          const plantCountryObjectId = this.toObjectId(plantDto.countryId, 'countryId');
+          const plantCountryObjectId = this.toObjectId(
+            plantDto.countryId,
+            'countryId',
+          );
           await this.validateCountry(plantDto.countryId);
 
           // Validate and convert plant state ID
-          const plantStateObjectId = this.toObjectId(plantDto.stateId, 'stateId');
+          const plantStateObjectId = this.toObjectId(
+            plantDto.stateId,
+            'stateId',
+          );
           await this.validateState(plantDto.stateId, plantDto.countryId);
-          
+
           const plantData = {
             productPlantId,
             productId: savedProduct._id,
@@ -670,6 +520,268 @@ export class ProductRegistrationService {
           const savedPlant = await plant.save({ session });
           plants.push(savedPlant);
         }
+
+        await session.commitTransaction();
+        session.endSession();
+
+        // Log activity after successful product registration
+        // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment)
+        try {
+          await this.activityLogService.logActivity({
+            vendor_id: manufacturerId,
+            manufacturer_id: manufacturerId,
+            urn_no: urnNo,
+            activities_id: 0, // Current urnStatus
+            activity: this.getActivityName(0), // "Proposal Pending"
+            activity_status: 0,
+            responsibility: this.getResponsibilityForStatus(0),
+            next_responsibility: this.getResponsibilityForStatus(1),
+            next_acitivities_id: 1,
+            next_activity: this.getNextActivityName(0),
+            status: 1,
+          });
+        } catch (activityLogError: any) {
+          // Log error but don't fail the product registration
+          console.error(
+            '[Product Registration] Failed to log activity:',
+            activityLogError,
+          );
+        }
+
+        return {
+          ...savedProduct.toObject(),
+          plants: plants.map((p) => p.toObject()),
+        };
+      } catch (error: any) {
+        await session.abortTransaction();
+        session.endSession();
+
+        // For validation errors, throw immediately with detailed message
+        if (
+          error instanceof NotFoundException ||
+          error instanceof BadRequestException
+        ) {
+          console.error('Validation error:', error.message);
+          throw error;
+        }
+
+        // Check for duplicate key error (11000) - retry with new URN/EOI
+        if (
+          error.code === 11000 ||
+          (error.name === 'MongoServerError' &&
+            error.message?.includes('duplicate'))
+        ) {
+          retryCount++;
+          if (retryCount < maxRetries) {
+            console.warn(
+              `[Product Registration] Duplicate URN/EOI detected. Retry ${retryCount}/${maxRetries}...`,
+            );
+            // Wait a bit before retry (exponential backoff)
+            await new Promise((resolve) =>
+              setTimeout(resolve, 100 * retryCount),
+            );
+            continue; // Retry the while loop
+          } else {
+            throw new InternalServerErrorException(
+              'Failed to register product after multiple attempts due to duplicate URN or EOI. Please try again.',
+            );
+          }
+        }
+
+        // Log the actual error for debugging
+        console.error('Product registration error:', error);
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error stack:', error.stack);
+
+        // Check for specific error types
+        if (
+          error.name === 'CastError' ||
+          error.message?.includes('Cast to ObjectId')
+        ) {
+          throw new BadRequestException(
+            `Invalid ID format provided: ${error.message}`,
+          );
+        }
+
+        // Return more detailed error message
+        const errorMessage = error.message || 'Failed to register product';
+        console.error(
+          'Throwing InternalServerErrorException with message:',
+          errorMessage,
+        );
+        throw new InternalServerErrorException(
+          `${errorMessage}. Check server logs for details.`,
+        );
+      }
+    }
+
+    // Should never reach here, but just in case
+    throw new InternalServerErrorException(
+      'Failed to register product after all retry attempts.',
+    );
+  }
+
+  /**
+   * Register multiple products (bulk)
+   * - ONE URN for all products in the bulk upload
+   * - Individual EOI per product based on manufacturer-specific count
+   */
+  async registerBulkProducts(
+    bulkRegisterProductDto: BulkRegisterProductDto,
+    manufacturerId: string,
+  ) {
+    const maxRetries = 3;
+    let retryCount = 0;
+
+    while (retryCount < maxRetries) {
+      const session = await this.connection.startSession();
+      session.startTransaction();
+
+      try {
+        console.log(
+          '[Bulk Product Registration] Starting bulk registration (attempt ' +
+            (retryCount + 1) +
+            ')...',
+        );
+        console.log(
+          '[Bulk Product Registration] Manufacturer ID:',
+          manufacturerId,
+        );
+        console.log(
+          '[Bulk Product Registration] Auth manufacturer ID:',
+          manufacturerId,
+        );
+        console.log(
+          '[Bulk Product Registration] Number of products:',
+          bulkRegisterProductDto.products.length,
+        );
+
+        // Validate manufacturer ID
+        const manufacturerObjectId = this.toObjectId(
+          manufacturerId,
+          'manufacturerId',
+        );
+        const vendorObjectId = this.toObjectId(
+          manufacturerId,
+          'manufacturerId',
+        );
+
+        // Generate ONE URN for all products in bulk
+        const urnNo = this.generateURN();
+        console.log(
+          '[Bulk Product Registration] Generated single URN for all products:',
+          urnNo,
+        );
+
+        // Get initial manufacturer-specific product count (before inserting any products)
+        const initialManufacturerProductCount = await this.productModel
+          .countDocuments({ manufacturerId: manufacturerObjectId }, { session })
+          .exec();
+
+        console.log(
+          '[Bulk Product Registration] Initial manufacturer product count:',
+          initialManufacturerProductCount,
+        );
+
+        const results = [];
+
+        // Process each product in the bulk upload
+        for (let i = 0; i < bulkRegisterProductDto.products.length; i++) {
+          const registerProductDto = bulkRegisterProductDto.products[i];
+
+          // Calculate manufacturer_product_count for this product
+          // Start from initial count + 1, then increment for each subsequent product
+          const manufacturerProductCount =
+            initialManufacturerProductCount + i + 1;
+
+          // Generate EOI: Individual EOI per product using manufacturer-specific count
+          const eoiNo = await this.generateEOIWithCount(
+            manufacturerId,
+            manufacturerProductCount,
+            session,
+          );
+          console.log(
+            `[Bulk Product Registration] Product ${i + 1}/${bulkRegisterProductDto.products.length} - EOI: ${eoiNo}, Manufacturer Product Count: ${manufacturerProductCount}`,
+          );
+
+          // Get next product ID
+          const productId = await this.sequenceHelper.getProductId();
+
+          // Get current date
+          const now = new Date();
+
+          // Validate and convert category ID
+          const categoryObjectId = this.toObjectId(
+            registerProductDto.categoryId,
+            'categoryId',
+          );
+
+          // Create product data with URN and EOI
+          const productData = {
+            productId,
+            categoryId: categoryObjectId,
+            vendorId: vendorObjectId,
+            manufacturerId: manufacturerObjectId,
+            eoiNo,
+            urnNo,
+            productName: registerProductDto.productName,
+            productImage: registerProductDto.productImage,
+            plantCount: registerProductDto.plants.length,
+            productDetails: registerProductDto.productDetails,
+            productType: registerProductDto.productType || 0,
+            productStatus: 0,
+            productRenewStatus: 0,
+            urnStatus: 0,
+            createdDate: now,
+            updatedDate: now,
+          };
+
+          const product = new this.productModel(productData);
+          const savedProduct = await product.save({ session });
+
+          // Insert plants
+          const plants = [];
+          for (const plantDto of registerProductDto.plants) {
+            const productPlantId =
+              await this.sequenceHelper.getProductPlantId();
+
+            // Validate and convert plant country ID
+            const plantCountryObjectId = this.toObjectId(
+              plantDto.countryId,
+              'countryId',
+            );
+            await this.validateCountry(plantDto.countryId);
+
+            // Validate and convert plant state ID
+            const plantStateObjectId = this.toObjectId(
+              plantDto.stateId,
+              'stateId',
+            );
+            await this.validateState(plantDto.stateId, plantDto.countryId);
+
+            const plantData = {
+              productPlantId,
+              productId: savedProduct._id,
+              vendorId: vendorObjectId,
+              categoryId: categoryObjectId,
+              manufacturerId: manufacturerObjectId,
+              countryId: plantCountryObjectId,
+              stateId: plantStateObjectId,
+              urnNo,
+              eoiNo,
+              plantName: plantDto.plantName,
+              plantLocation: plantDto.plantLocation,
+              city: plantDto.city,
+              plantStatus: 1,
+              createdDate: now,
+            };
+
+            const plant = new this.productPlantModel(plantData);
+            const savedPlant = await plant.save({ session });
+            plants.push(savedPlant);
+          }
 
           results.push({
             ...savedProduct.toObject(),
@@ -698,28 +810,46 @@ export class ProductRegistrationService {
           });
         } catch (activityLogError: any) {
           // Log error but don't fail the bulk product registration
-          console.error('[Bulk Product Registration] Failed to log activity:', activityLogError);
+          console.error(
+            '[Bulk Product Registration] Failed to log activity:',
+            activityLogError,
+          );
         }
 
-        console.log('[Bulk Product Registration] Successfully registered', results.length, 'products');
+        console.log(
+          '[Bulk Product Registration] Successfully registered',
+          results.length,
+          'products',
+        );
         return results;
       } catch (error: any) {
         await session.abortTransaction();
         session.endSession();
 
         // For validation errors, throw immediately
-        if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        if (
+          error instanceof NotFoundException ||
+          error instanceof BadRequestException
+        ) {
           console.error('Validation error:', error.message);
           throw error;
         }
-        
+
         // Check for duplicate key error (11000) - retry with new URN/EOI
-        if (error.code === 11000 || (error.name === 'MongoServerError' && error.message?.includes('duplicate'))) {
+        if (
+          error.code === 11000 ||
+          (error.name === 'MongoServerError' &&
+            error.message?.includes('duplicate'))
+        ) {
           retryCount++;
           if (retryCount < maxRetries) {
-            console.warn(`[Bulk Product Registration] Duplicate URN/EOI detected. Retry ${retryCount}/${maxRetries}...`);
+            console.warn(
+              `[Bulk Product Registration] Duplicate URN/EOI detected. Retry ${retryCount}/${maxRetries}...`,
+            );
             // Wait a bit before retry (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+            await new Promise((resolve) =>
+              setTimeout(resolve, 100 * retryCount),
+            );
             continue; // Retry the while loop
           } else {
             throw new InternalServerErrorException(
@@ -727,22 +857,31 @@ export class ProductRegistrationService {
             );
           }
         }
-        
+
         // Log the actual error for debugging
         console.error('Bulk product registration error:', error);
         console.error('Error name:', error.name);
         console.error('Error message:', error.message);
         console.error('Error code:', error.code);
         console.error('Error stack:', error.stack);
-        
+
         // Check for specific error types
-        if (error.name === 'CastError' || error.message?.includes('Cast to ObjectId')) {
-          throw new BadRequestException(`Invalid ID format provided: ${error.message}`);
+        if (
+          error.name === 'CastError' ||
+          error.message?.includes('Cast to ObjectId')
+        ) {
+          throw new BadRequestException(
+            `Invalid ID format provided: ${error.message}`,
+          );
         }
-        
+
         // Return more detailed error message
-        const errorMessage = error.message || 'Failed to register bulk products';
-        console.error('Throwing InternalServerErrorException with message:', errorMessage);
+        const errorMessage =
+          error.message || 'Failed to register bulk products';
+        console.error(
+          'Throwing InternalServerErrorException with message:',
+          errorMessage,
+        );
         throw new InternalServerErrorException(
           `${errorMessage}. Check server logs for details.`,
         );
@@ -750,17 +889,16 @@ export class ProductRegistrationService {
     }
 
     // Should never reach here, but just in case
-    throw new InternalServerErrorException('Failed to register bulk products after all retry attempts.');
+    throw new InternalServerErrorException(
+      'Failed to register bulk products after all retry attempts.',
+    );
   }
 
   /**
    * Update a product
    * If productName changes, regenerate URN and EOI
    */
-  async updateProduct(
-    productId: string,
-    updateProductDto: UpdateProductDto,
-  ) {
+  async updateProduct(productId: string, updateProductDto: UpdateProductDto) {
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -781,7 +919,7 @@ export class ProductRegistrationService {
       const previousUrnStatus = existingProduct.urnStatus;
 
       // Check if productName has changed
-      const productNameChanged = 
+      const productNameChanged =
         updateProductDto.productName !== undefined &&
         updateProductDto.productName !== existingProduct.productName;
 
@@ -854,7 +992,9 @@ export class ProductRegistrationService {
       }
 
       if (updateProductDto.secondNotifyDate !== undefined) {
-        updateData.secondNotifyDate = new Date(updateProductDto.secondNotifyDate);
+        updateData.secondNotifyDate = new Date(
+          updateProductDto.secondNotifyDate,
+        );
       }
 
       if (updateProductDto.thirdNotifyDate !== undefined) {
@@ -867,11 +1007,7 @@ export class ProductRegistrationService {
 
       // Update product
       const updatedProduct = await this.productModel
-        .findByIdAndUpdate(
-          productObjectId,
-          updateData,
-          { new: true, session },
-        )
+        .findByIdAndUpdate(productObjectId, updateData, { new: true, session })
         .exec();
 
       if (!updatedProduct) {
@@ -898,7 +1034,10 @@ export class ProductRegistrationService {
       await session.abortTransaction();
       session.endSession();
 
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
 
@@ -907,12 +1046,16 @@ export class ProductRegistrationService {
       console.error('Error stack:', error.stack);
 
       // Check for specific error types
-      if (error.name === 'CastError' || error.message?.includes('Cast to ObjectId')) {
+      if (
+        error.name === 'CastError' ||
+        error.message?.includes('Cast to ObjectId')
+      ) {
         throw new BadRequestException('Invalid product ID format');
       }
 
       throw new InternalServerErrorException(
-        error.message || 'Failed to update product. Please check the logs for details.',
+        error.message ||
+          'Failed to update product. Please check the logs for details.',
       );
     }
   }
@@ -984,7 +1127,10 @@ export class ProductRegistrationService {
       await session.abortTransaction();
       session.endSession();
 
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
 
@@ -1013,11 +1159,15 @@ export class ProductRegistrationService {
     }
     if (dto.updateStatusType === 'urn_status') {
       if (dto.updateStatusTo < 0 || dto.updateStatusTo > 11) {
-        throw new BadRequestException('updateStatusTo must be between 0 and 11 for urn_status');
+        throw new BadRequestException(
+          'updateStatusTo must be between 0 and 11 for urn_status',
+        );
       }
     } else if (dto.updateStatusType === 'product_status') {
       if (dto.updateStatusTo < 0 || dto.updateStatusTo > 3) {
-        throw new BadRequestException('updateStatusTo must be between 0 and 3 for product_status');
+        throw new BadRequestException(
+          'updateStatusTo must be between 0 and 3 for product_status',
+        );
       }
     }
 
@@ -1047,7 +1197,12 @@ export class ProductRegistrationService {
     }
 
     if (dto.updateStatusType === 'urn_status') {
-      await this.tryLogUrnLifecycleStep(vendorId, manufacturerId, urnNo, dto.updateStatusTo);
+      await this.tryLogUrnLifecycleStep(
+        vendorId,
+        manufacturerId,
+        urnNo,
+        dto.updateStatusTo,
+      );
       return { urnNo, urnStatus: dto.updateStatusTo };
     }
     return { urnNo, productStatus: dto.updateStatusTo };
@@ -1120,7 +1275,10 @@ export class ProductRegistrationService {
 
       // Stage 4: $match for global search (after lookup to include category name)
       if (search && search.trim() !== '') {
-        const searchRegex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        const searchRegex = new RegExp(
+          search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i',
+        );
         pipeline.push({
           $match: {
             $or: [
@@ -1183,13 +1341,8 @@ export class ProductRegistrationService {
       // Stage 7: Use $facet for pagination and total count
       pipeline.push({
         $facet: {
-          data: [
-            { $skip: skip },
-            { $limit: limit },
-          ],
-          totalCount: [
-            { $count: 'count' },
-          ],
+          data: [{ $skip: skip }, { $limit: limit }],
+          totalCount: [{ $count: 'count' }],
         },
       });
 
@@ -1203,8 +1356,14 @@ export class ProductRegistrationService {
 
       // Debug: Log first result to check category data
       if (data.length > 0 && !data[0].category?.categoryName) {
-        console.log('[List Products] Category lookup debug - First product category:', JSON.stringify(data[0].category, null, 2));
-        console.log('[List Products] Category ID from product:', data[0].category?._id);
+        console.log(
+          '[List Products] Category lookup debug - First product category:',
+          JSON.stringify(data[0].category, null, 2),
+        );
+        console.log(
+          '[List Products] Category ID from product:',
+          data[0].category?._id,
+        );
       }
 
       return {
@@ -1220,7 +1379,8 @@ export class ProductRegistrationService {
       console.error('[List Products] Error:', error);
       console.error('[List Products] Error stack:', error.stack);
       throw new InternalServerErrorException(
-        error.message || 'Failed to list products. Please check the logs for details.',
+        error.message ||
+          'Failed to list products. Please check the logs for details.',
       );
     }
   }
@@ -1323,7 +1483,8 @@ export class ProductRegistrationService {
       console.error('[Get Renew List] Error:', error);
       console.error('[Get Renew List] Error stack:', error.stack);
       throw new InternalServerErrorException(
-        error.message || 'Failed to get renew list. Please check the logs for details.',
+        error.message ||
+          'Failed to get renew list. Please check the logs for details.',
       );
     }
   }
@@ -1486,7 +1647,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'product_design'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PRODUCT_DESIGN] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1526,7 +1688,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'product_performance'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PRODUCT_PERFORMANCE] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1567,7 +1730,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'raw_materials_hazardous_products'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1621,6 +1785,51 @@ export class ProductRegistrationService {
         });
       }
 
+      // Stage 13B: $lookup - Join with all_product_documents (bucket for raw-materials section docs)
+      pipeline.push({
+        $lookup: {
+          from: 'all_product_documents',
+          let: { urnNo: '$urnNo' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$urnNo', '$$urnNo'] },
+                    {
+                      $in: [
+                        '$documentForm',
+                        [
+                          DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
+                          DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
+                          DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS,
+                          DocumentSectionKey.RAW_MATERIALS_UTILIZATION,
+                          DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY,
+                          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+                          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+                          DocumentSectionKey.RAW_MATERIALS_ALTERNATIVE_RAW_MATERIALS,
+                          DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+                          DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
+                          DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+                          DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+                          DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIRONMENTAL,
+                          DocumentSectionKey.RAW_MATERIALS_RECOVERY,
+                          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
+                          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
+                        ],
+                      ],
+                    },
+                    { $ne: ['$isDeleted', true] },
+                  ],
+                },
+              },
+            },
+            { $sort: { productDocumentId: -1 } },
+          ],
+          as: 'raw_materials_documents_bucket',
+        },
+      });
+
       // Stage 14: $lookup - Join with process_manufacturing collection (by urn_no)
       pipeline.push({
         $lookup: {
@@ -1650,7 +1859,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_manufacturing'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_MANUFACTURING] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1709,7 +1919,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_waste_management'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_WASTE_MANAGEMENT] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1768,7 +1979,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_life_cycle_approach'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1808,7 +2020,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_product_stewardship'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1848,7 +2061,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_innovation'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_INNOVATION] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1863,14 +2077,14 @@ export class ProductRegistrationService {
       pipeline.push({
         $lookup: {
           from: 'process_comments',
-          let: { urnNo: '$urnNo', vendorId: '$vendorId' },
+          let: { urnNo: '$urnNo' },
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $and: [
-                    { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$vendorId', '$$vendorId'] },
+                  $eq: [
+                    { $rtrim: { input: { $toString: '$urnNo' }, chars: '/' } },
+                    { $rtrim: { input: { $toString: '$$urnNo' }, chars: '/' } },
                   ],
                 },
               },
@@ -1949,19 +2163,175 @@ export class ProductRegistrationService {
           raw_materials_hazardous_products: 1,
           raw_materials_hazardous_products_documents: 1,
           raw_materials_additives: 1,
+          raw_materials_additives_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_ADDITIVES],
+              },
+            },
+          },
+          raw_materials_alternative_raw_materials_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_ALTERNATIVE_RAW_MATERIALS,
+                ],
+              },
+            },
+          },
           raw_materials_elimination_of_formaldehyde: 1,
+          raw_materials_elimination_of_formaldehyde_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE],
+              },
+            },
+          },
           raw_materials_elimination_of_prohibited_flame: 1,
+          raw_materials_elimination_of_prohibited_flame_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME],
+              },
+            },
+          },
           raw_materials_elimination_of_prohibited_flame_solvents: 1,
+          raw_materials_elimination_of_prohibited_flame_solvents_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+                ],
+              },
+            },
+          },
           raw_materials_elimination_of_prohibited_flame_solvents_products: 1,
           raw_materials_green_supply: 1,
+          raw_materials_green_supply_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY],
+              },
+            },
+          },
           raw_materials_hazardous: 1,
           raw_materials_optimization_of_raw_mix: 1,
+          raw_materials_raw_mix_optimization_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+                ],
+              },
+            },
+          },
           raw_materials_rapidly_renewable_materials: 1,
+          raw_materials_rapidly_renewable_materials_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS],
+              },
+            },
+          },
           raw_materials_recovery: 1,
+          raw_materials_recovery_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_RECOVERY],
+              },
+            },
+          },
+          raw_materials_elimination_of_ozone_depleting_global_warming_substances_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
+                ],
+              },
+            },
+          },
           raw_materials_recycled_content: 1,
+          raw_materials_recycled_content_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT],
+              },
+            },
+          },
           raw_materials_reduce_environmental: 1,
+          raw_materials_reduce_environmental_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $in: [
+                  '$$doc.documentForm',
+                  [
+                    DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+                    DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIRONMENTAL,
+                  ],
+                ],
+              },
+            },
+          },
+          raw_materials_rmc_alternative_raw_materials_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+                ],
+              },
+            },
+          },
           raw_materials_regional_materials: 1,
+          raw_materials_regional_materials_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS],
+              },
+            },
+          },
           raw_materials_utilization: 1,
+          raw_materials_utilization_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_UTILIZATION],
+              },
+            },
+          },
           raw_materials_utilization_manufacturing_units: 1,
           raw_materials_utilization_rmc: 1,
           process_manufacturing: {
@@ -2049,13 +2419,7 @@ export class ProductRegistrationService {
           createdDate: product.createdDate,
           updatedDate: product.updatedDate,
         },
-        category: product.category
-          ? {
-              _id: product.category._id,
-              categoryName: product.category.categoryName || product.category.category_name,
-              categoryCode: product.category.categoryCode || product.category.category_code,
-            }
-          : null,
+        category: product.category || null,
         manufacturer: product.manufacturer
           ? {
               _id: product.manufacturer._id,
@@ -2086,55 +2450,66 @@ export class ProductRegistrationService {
               urnNo: product.product_design.urnNo,
               ecoVisionUpload: product.product_design.ecoVisionUpload,
               statergies: product.product_design.statergies,
-              productDesignSupportingDocument: product.product_design.productDesignSupportingDocument,
+              productDesignSupportingDocument:
+                product.product_design.productDesignSupportingDocument,
               productDesignStatus: product.product_design.productDesignStatus,
-              measuresAndBenefits: product.product_design.measuresAndBenefits || [],
+              measuresAndBenefits:
+                product.product_design.measuresAndBenefits || [],
               createdDate: product.product_design.createdDate,
               updatedDate: product.product_design.updatedDate,
             }
           : null,
-        product_design_measures: (product.product_design_measures || []).map((m) => ({
-          _id: m._id,
-          productDesignMeasureId: m.productDesignMeasureId,
-          urnNo: m.urnNo,
-          productDesignId: m.productDesignId,
-          measures: m.measures,
-          benefits: m.benefits,
-          createdDate: m.createdDate,
-          updatedDate: m.updatedDate,
-        })),
-        product_design_documents: (product.product_design_documents || []).map((d) => ({
-          _id: d._id,
-          productDocumentId: d.productDocumentId,
-          vendorId: d.vendorId,
-          urnNo: d.urnNo,
-          eoiNo: d.eoiNo,
-          documentForm: d.documentForm,
-          documentFormSubsection: d.documentFormSubsection,
-          formPrimaryId: d.formPrimaryId,
-          documentName: d.documentName,
-          documentOriginalName: d.documentOriginalName,
-          documentLink: d.documentLink,
-          createdDate: d.createdDate,
-          updatedDate: d.updatedDate,
-        })),
+        product_design_measures: (product.product_design_measures || []).map(
+          (m) => ({
+            _id: m._id,
+            productDesignMeasureId: m.productDesignMeasureId,
+            urnNo: m.urnNo,
+            productDesignId: m.productDesignId,
+            measures: m.measures,
+            benefits: m.benefits,
+            createdDate: m.createdDate,
+            updatedDate: m.updatedDate,
+          }),
+        ),
+        product_design_documents: (product.product_design_documents || []).map(
+          (d) => ({
+            _id: d._id,
+            productDocumentId: d.productDocumentId,
+            vendorId: d.vendorId,
+            urnNo: d.urnNo,
+            eoiNo: d.eoiNo,
+            documentForm: d.documentForm,
+            documentFormSubsection: d.documentFormSubsection,
+            formPrimaryId: d.formPrimaryId,
+            documentName: d.documentName,
+            documentOriginalName: d.documentOriginalName,
+            documentLink: d.documentLink,
+            createdDate: d.createdDate,
+            updatedDate: d.updatedDate,
+          }),
+        ),
         product_performance: product.product_performance
           ? {
               _id: product.product_performance._id,
-              processProductPerformanceId: product.product_performance.processProductPerformanceId,
+              processProductPerformanceId:
+                product.product_performance.processProductPerformanceId,
               urnNo: product.product_performance.urnNo,
               vendorId: product.product_performance.vendorId,
               eoiNo: product.product_performance.eoiNo,
               productName: product.product_performance.productName,
-              testReportFileName: product.product_performance.testReportFileName,
+              testReportFileName:
+                product.product_performance.testReportFileName,
               testReportFiles: product.product_performance.testReportFiles,
               renewalType: product.product_performance.renewalType,
-              productPerformanceStatus: product.product_performance.productPerformanceStatus,
+              productPerformanceStatus:
+                product.product_performance.productPerformanceStatus,
               createdDate: product.product_performance.createdDate,
               updatedDate: product.product_performance.updatedDate,
             }
           : null,
-        product_performance_documents: (product.product_performance_documents || []).map((d) => ({
+        product_performance_documents: (
+          product.product_performance_documents || []
+        ).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
           vendorId: d.vendorId,
@@ -2149,7 +2524,9 @@ export class ProductRegistrationService {
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
         })),
-        raw_materials_hazardous_products: (product.raw_materials_hazardous_products || []).map((r) => ({
+        raw_materials_hazardous_products: (
+          product.raw_materials_hazardous_products || []
+        ).map((r) => ({
           _id: r._id,
           rawMaterialsHazardousProductsId: r.rawMaterialsHazardousProductsId,
           urnNo: r.urnNo,
@@ -2159,7 +2536,9 @@ export class ProductRegistrationService {
           createdDate: r.createdDate,
           updatedDate: r.updatedDate,
         })),
-        raw_materials_hazardous_products_documents: (product.raw_materials_hazardous_products_documents || []).map((d) => ({
+        raw_materials_hazardous_products_documents: (
+          product.raw_materials_hazardous_products_documents || []
+        ).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
           vendorId: d.vendorId,
@@ -2175,48 +2554,7 @@ export class ProductRegistrationService {
           updatedDate: d.updatedDate,
         })),
         raw_materials_additives: product.raw_materials_additives || [],
-        raw_materials_elimination_of_formaldehyde:
-          product.raw_materials_elimination_of_formaldehyde || [],
-        raw_materials_elimination_of_prohibited_flame:
-          product.raw_materials_elimination_of_prohibited_flame || [],
-        raw_materials_elimination_of_prohibited_flame_solvents:
-          product.raw_materials_elimination_of_prohibited_flame_solvents || [],
-        raw_materials_elimination_of_prohibited_flame_solvents_products:
-          product.raw_materials_elimination_of_prohibited_flame_solvents_products || [],
-        raw_materials_green_supply: product.raw_materials_green_supply || [],
-        raw_materials_hazardous: product.raw_materials_hazardous || [],
-        raw_materials_optimization_of_raw_mix:
-          product.raw_materials_optimization_of_raw_mix || [],
-        raw_materials_rapidly_renewable_materials:
-          product.raw_materials_rapidly_renewable_materials || [],
-        raw_materials_recovery: product.raw_materials_recovery || [],
-        raw_materials_recycled_content: product.raw_materials_recycled_content || [],
-        raw_materials_reduce_environmental:
-          product.raw_materials_reduce_environmental || [],
-        raw_materials_regional_materials:
-          product.raw_materials_regional_materials || [],
-        raw_materials_utilization: product.raw_materials_utilization || [],
-        raw_materials_utilization_manufacturing_units:
-          product.raw_materials_utilization_manufacturing_units || [],
-        raw_materials_utilization_rmc: product.raw_materials_utilization_rmc || [],
-        process_manufacturing: product.process_manufacturing
-          ? {
-              _id: product.process_manufacturing._id,
-              processManufacturingId: product.process_manufacturing.processManufacturingId,
-              vendorId: product.process_manufacturing.vendorId,
-              urnNo: product.process_manufacturing.urnNo,
-              energyConservationSupportingDocuments: product.process_manufacturing.energyConservationSupportingDocuments,
-              portableWaterDemand: product.process_manufacturing.portableWaterDemand,
-              rainWaterHarvesting: product.process_manufacturing.rainWaterHarvesting,
-              beyondTheFenceInitiatives: product.process_manufacturing.beyondTheFenceInitiatives,
-              totalEnergyConsumption: product.process_manufacturing.totalEnergyConsumption,
-              energyConsumptionDocuments: product.process_manufacturing.energyConsumptionDocuments,
-              processManufacturingStatus: product.process_manufacturing.processManufacturingStatus,
-              createdDate: product.process_manufacturing.createdDate,
-              updatedDate: product.process_manufacturing.updatedDate,
-            }
-          : null,
-        process_manufacturing_documents: (product.process_manufacturing_documents || []).map((d) => ({
+        raw_materials_additives_documents: (product.raw_materials_additives_documents || []).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
           vendorId: d.vendorId,
@@ -2231,7 +2569,350 @@ export class ProductRegistrationService {
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
         })),
-        process_mp_manufacturing_units: (product.process_mp_manufacturing_units || []).map((u) => ({
+        raw_materials_alternative_raw_materials_documents: (
+          product.raw_materials_alternative_raw_materials_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_elimination_of_formaldehyde:
+          product.raw_materials_elimination_of_formaldehyde || [],
+        raw_materials_elimination_of_formaldehyde_documents: (
+          product.raw_materials_elimination_of_formaldehyde_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_elimination_of_prohibited_flame:
+          product.raw_materials_elimination_of_prohibited_flame || [],
+        raw_materials_elimination_of_prohibited_flame_documents: (
+          product.raw_materials_elimination_of_prohibited_flame_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_elimination_of_prohibited_flame_solvents:
+          product.raw_materials_elimination_of_prohibited_flame_solvents || [],
+        raw_materials_elimination_of_prohibited_flame_solvents_documents: (
+          product.raw_materials_elimination_of_prohibited_flame_solvents_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_elimination_of_prohibited_flame_solvents_products:
+          product.raw_materials_elimination_of_prohibited_flame_solvents_products ||
+          [],
+        raw_materials_green_supply: product.raw_materials_green_supply || [],
+        raw_materials_green_supply_documents: (
+          product.raw_materials_green_supply_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_hazardous: product.raw_materials_hazardous || [],
+        raw_materials_optimization_of_raw_mix:
+          product.raw_materials_optimization_of_raw_mix || [],
+        raw_materials_raw_mix_optimization_documents: (
+          product.raw_materials_raw_mix_optimization_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_rapidly_renewable_materials:
+          product.raw_materials_rapidly_renewable_materials || [],
+        raw_materials_rapidly_renewable_materials_documents: (
+          product.raw_materials_rapidly_renewable_materials_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_recovery: product.raw_materials_recovery || [],
+        raw_materials_recovery_documents: (
+          product.raw_materials_recovery_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_elimination_of_ozone_depleting_global_warming_substances_documents: (
+          product.raw_materials_elimination_of_ozone_depleting_global_warming_substances_documents ||
+          []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_recycled_content: product.raw_materials_recycled_content || [],
+        raw_materials_recycled_content_documents: (
+          product.raw_materials_recycled_content_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_reduce_environmental:
+          product.raw_materials_reduce_environmental || [],
+        raw_materials_reduce_environmental_documents: (
+          product.raw_materials_reduce_environmental_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_reduce_enviromental_documents: (
+          product.raw_materials_reduce_environmental_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_rmc_alternative_raw_materials_documents: (
+          product.raw_materials_rmc_alternative_raw_materials_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_regional_materials:
+          product.raw_materials_regional_materials || [],
+        raw_materials_regional_materials_documents: (
+          product.raw_materials_regional_materials_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_utilization: product.raw_materials_utilization || [],
+        raw_materials_utilization_documents: (product.raw_materials_utilization_documents || []).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_utilization_manufacturing_units:
+          product.raw_materials_utilization_manufacturing_units || [],
+        raw_materials_utilization_rmc: (product.raw_materials_utilization_rmc || []).map((r) => {
+          const row: any = { ...r };
+          for (const mat of ['Iron', 'Steel', 'Copper', 'Recycled', 'Aggregate']) {
+            for (const yr of [1, 2, 3, 4]) {
+              const canonical = `percentYear${yr}Subsititution${mat}`;
+              const legacy = `percentYear${yr}Subsitution${mat}`;
+              if (row[legacy] === undefined && row[canonical] !== undefined) {
+                row[legacy] = row[canonical];
+              }
+            }
+          }
+          for (const yr of [1, 2, 3, 4]) {
+            const canonical = `plantYear${yr}PercentSubstitution`;
+            const legacy = `plantYear${yr}PercentSubsitution`;
+            if (row[legacy] === undefined && row[canonical] !== undefined) {
+              row[legacy] = row[canonical];
+            }
+          }
+          return row;
+        }),
+        process_manufacturing: product.process_manufacturing
+          ? {
+              _id: product.process_manufacturing._id,
+              processManufacturingId:
+                product.process_manufacturing.processManufacturingId,
+              vendorId: product.process_manufacturing.vendorId,
+              urnNo: product.process_manufacturing.urnNo,
+              energyConservationSupportingDocuments:
+                product.process_manufacturing
+                  .energyConservationSupportingDocuments,
+              portableWaterDemand:
+                product.process_manufacturing.portableWaterDemand,
+              rainWaterHarvesting:
+                product.process_manufacturing.rainWaterHarvesting,
+              beyondTheFenceInitiatives:
+                product.process_manufacturing.beyondTheFenceInitiatives,
+              totalEnergyConsumption:
+                product.process_manufacturing.totalEnergyConsumption,
+              energyConsumptionDocuments:
+                product.process_manufacturing.energyConsumptionDocuments,
+              processManufacturingStatus:
+                product.process_manufacturing.processManufacturingStatus,
+              createdDate: product.process_manufacturing.createdDate,
+              updatedDate: product.process_manufacturing.updatedDate,
+            }
+          : null,
+        process_manufacturing_documents: (
+          product.process_manufacturing_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        process_mp_manufacturing_units: (
+          product.process_mp_manufacturing_units || []
+        ).map((u) => ({
           _id: u._id,
           processMpManufacturingUnitId: u.processMpManufacturingUnitId,
           vendorId: u.vendorId,
@@ -2296,24 +2977,31 @@ export class ProductRegistrationService {
           calculateBulkSecMultipled: u.calculateBulkSecMultipled,
           calculateBulkSwcMultipled: u.calculateBulkSwcMultipled,
           measuresImplementedMpUnits: u.measuresImplementedMpUnits,
-          detailsOfRainWaterHarvestingMpUnits: u.detailsOfRainWaterHarvestingMpUnits,
+          detailsOfRainWaterHarvestingMpUnits:
+            u.detailsOfRainWaterHarvestingMpUnits,
           createdDate: u.createdDate,
           updatedDate: u.updatedDate,
         })),
         process_waste_management: product.process_waste_management
           ? {
               _id: product.process_waste_management._id,
-              processWasteManagementId: product.process_waste_management.processWasteManagementId,
+              processWasteManagementId:
+                product.process_waste_management.processWasteManagementId,
               vendorId: product.process_waste_management.vendorId,
               urnNo: product.process_waste_management.urnNo,
-              wmImplementationDetails: product.process_waste_management.wmImplementationDetails,
-              wmSupportingDocuments: product.process_waste_management.wmSupportingDocuments,
-              processWasteManagementStatus: product.process_waste_management.processWasteManagementStatus,
+              wmImplementationDetails:
+                product.process_waste_management.wmImplementationDetails,
+              wmSupportingDocuments:
+                product.process_waste_management.wmSupportingDocuments,
+              processWasteManagementStatus:
+                product.process_waste_management.processWasteManagementStatus,
               createdDate: product.process_waste_management.createdDate,
               updatedDate: product.process_waste_management.updatedDate,
             }
           : null,
-        process_waste_management_documents: (product.process_waste_management_documents || []).map((d) => ({
+        process_waste_management_documents: (
+          product.process_waste_management_documents || []
+        ).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
           vendorId: d.vendorId,
@@ -2328,7 +3016,9 @@ export class ProductRegistrationService {
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
         })),
-        process_wm_manufacturing_units: (product.process_wm_manufacturing_units || []).map((u) => ({
+        process_wm_manufacturing_units: (
+          product.process_wm_manufacturing_units || []
+        ).map((u) => ({
           _id: u._id,
           processWmManufacturingUnitId: u.processWmManufacturingUnitId,
           vendorId: u.vendorId,
@@ -2368,18 +3058,28 @@ export class ProductRegistrationService {
         process_life_cycle_approach: product.process_life_cycle_approach
           ? {
               _id: product.process_life_cycle_approach._id,
-              processLifeCycleApproachId: product.process_life_cycle_approach.processLifeCycleApproachId,
+              processLifeCycleApproachId:
+                product.process_life_cycle_approach.processLifeCycleApproachId,
               vendorId: product.process_life_cycle_approach.vendorId,
               urnNo: product.process_life_cycle_approach.urnNo,
-              lifeCycleAssesmentReports: product.process_life_cycle_approach.lifeCycleAssesmentReports,
-              lifeCycleImplementationDetails: product.process_life_cycle_approach.lifeCycleImplementationDetails,
-              lifeCycleImplementationDocuments: product.process_life_cycle_approach.lifeCycleImplementationDocuments,
-              processLifeCycleApproachStatus: product.process_life_cycle_approach.processLifeCycleApproachStatus,
+              lifeCycleAssesmentReports:
+                product.process_life_cycle_approach.lifeCycleAssesmentReports,
+              lifeCycleImplementationDetails:
+                product.process_life_cycle_approach
+                  .lifeCycleImplementationDetails,
+              lifeCycleImplementationDocuments:
+                product.process_life_cycle_approach
+                  .lifeCycleImplementationDocuments,
+              processLifeCycleApproachStatus:
+                product.process_life_cycle_approach
+                  .processLifeCycleApproachStatus,
               createdDate: product.process_life_cycle_approach.createdDate,
               updatedDate: product.process_life_cycle_approach.updatedDate,
             }
           : null,
-        process_life_cycle_approach_documents: (product.process_life_cycle_approach_documents || []).map((d) => ({
+        process_life_cycle_approach_documents: (
+          product.process_life_cycle_approach_documents || []
+        ).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
           vendorId: d.vendorId,
@@ -2397,21 +3097,31 @@ export class ProductRegistrationService {
         process_product_stewardship: product.process_product_stewardship
           ? {
               _id: product.process_product_stewardship._id,
-              processProductStewardshipId: product.process_product_stewardship.processProductStewardshipId,
+              processProductStewardshipId:
+                product.process_product_stewardship.processProductStewardshipId,
               vendorId: product.process_product_stewardship.vendorId,
               urnNo: product.process_product_stewardship.urnNo,
-              seaSupportingDocuments: product.process_product_stewardship.seaSupportingDocuments,
-              qualityManagementDetails: product.process_product_stewardship.qualityManagementDetails,
-              qmSupportingDocuments: product.process_product_stewardship.qmSupportingDocuments,
-              eprImplementedDetails: product.process_product_stewardship.eprImplementedDetails,
-              eprGreenPackagingDetails: product.process_product_stewardship.eprGreenPackagingDetails,
-              eprSupportingDocuments: product.process_product_stewardship.eprSupportingDocuments,
-              productStewardshipStatus: product.process_product_stewardship.productStewardshipStatus,
+              seaSupportingDocuments:
+                product.process_product_stewardship.seaSupportingDocuments,
+              qualityManagementDetails:
+                product.process_product_stewardship.qualityManagementDetails,
+              qmSupportingDocuments:
+                product.process_product_stewardship.qmSupportingDocuments,
+              eprImplementedDetails:
+                product.process_product_stewardship.eprImplementedDetails,
+              eprGreenPackagingDetails:
+                product.process_product_stewardship.eprGreenPackagingDetails,
+              eprSupportingDocuments:
+                product.process_product_stewardship.eprSupportingDocuments,
+              productStewardshipStatus:
+                product.process_product_stewardship.productStewardshipStatus,
               createdDate: product.process_product_stewardship.createdDate,
               updatedDate: product.process_product_stewardship.updatedDate,
             }
           : null,
-        process_product_stewardship_documents: (product.process_product_stewardship_documents || []).map((d) => ({
+        process_product_stewardship_documents: (
+          product.process_product_stewardship_documents || []
+        ).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
           vendorId: d.vendorId,
@@ -2429,17 +3139,23 @@ export class ProductRegistrationService {
         process_innovation: product.process_innovation
           ? {
               _id: product.process_innovation._id,
-              processInnovationId: product.process_innovation.processInnovationId,
+              processInnovationId:
+                product.process_innovation.processInnovationId,
               vendorId: product.process_innovation.vendorId,
               urnNo: product.process_innovation.urnNo,
-              innovationImplementationDetails: product.process_innovation.innovationImplementationDetails,
-              innovationImplementationDocuments: product.process_innovation.innovationImplementationDocuments,
-              processInnovationStatus: product.process_innovation.processInnovationStatus,
+              innovationImplementationDetails:
+                product.process_innovation.innovationImplementationDetails,
+              innovationImplementationDocuments:
+                product.process_innovation.innovationImplementationDocuments,
+              processInnovationStatus:
+                product.process_innovation.processInnovationStatus,
               createdDate: product.process_innovation.createdDate,
               updatedDate: product.process_innovation.updatedDate,
             }
           : null,
-        process_innovation_documents: (product.process_innovation_documents || []).map((d) => ({
+        process_innovation_documents: (
+          product.process_innovation_documents || []
+        ).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
           vendorId: d.vendorId,
@@ -2456,10 +3172,23 @@ export class ProductRegistrationService {
         })),
         process_comments: product.process_comments
           ? {
+              ...product.process_comments,
               _id: product.process_comments._id,
               processCommentsId: product.process_comments.processCommentsId,
               urnNo: product.process_comments.urnNo,
               vendorId: product.process_comments.vendorId,
+              adminProcessComments:
+                product.process_comments.adminProcessComments ??
+                product.process_comments.adminComments ??
+                product.process_comments.admin_comment ??
+                product.process_comments.admin_comments ??
+                null,
+              vendorProcessComments:
+                product.process_comments.vendorProcessComments ??
+                product.process_comments.vendorComments ??
+                product.process_comments.vendor_comment ??
+                product.process_comments.vendor_comments ??
+                null,
               productDesign: product.process_comments.productDesign,
               productPerformance: product.process_comments.productPerformance,
               manfacturingProcess: product.process_comments.manfacturingProcess,
@@ -2492,12 +3221,16 @@ export class ProductRegistrationService {
       console.error('[Get Product Details by URN] Error:', error);
       console.error('[Get Product Details by URN] Error stack:', error.stack);
 
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         throw error;
       }
 
       throw new InternalServerErrorException(
-        error.message || 'Failed to get product details. Please check the logs for details.',
+        error.message ||
+          'Failed to get product details. Please check the logs for details.',
       );
     }
   }
@@ -2517,7 +3250,8 @@ export class ProductRegistrationService {
       eoiNo: 'eoiNo',
       urnNo: 'urnNo',
     };
-    const sortField = sortFieldMap[dto.sortBy ?? 'createdDate'] ?? 'createdDate';
+    const sortField =
+      sortFieldMap[dto.sortBy ?? 'createdDate'] ?? 'createdDate';
 
     const nativeMatch: Record<string, unknown> = {};
     if (dto.product_type !== undefined) {
@@ -2527,7 +3261,10 @@ export class ProductRegistrationService {
       nativeMatch.categoryId = this.toObjectId(dto.categoryId, 'categoryId');
     }
     if (dto.manufacturerId) {
-      nativeMatch.manufacturerId = this.toObjectId(dto.manufacturerId, 'manufacturerId');
+      nativeMatch.manufacturerId = this.toObjectId(
+        dto.manufacturerId,
+        'manufacturerId',
+      );
     }
     const createdFrom = dto.from ?? dto.fromDate;
     const createdTo = dto.to ?? dto.toDate;
@@ -2601,13 +3338,19 @@ export class ProductRegistrationService {
         plantMatch.stateId = this.toObjectId(dto.stateId, 'stateId');
       }
       if (dto.city && dto.city.trim() !== '') {
-        plantMatch.city = new RegExp(dto.city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        plantMatch.city = new RegExp(
+          dto.city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i',
+        );
       }
       basePipeline.push({ $match: { plants: { $elemMatch: plantMatch } } });
     }
 
     if (dto.search && dto.search.trim() !== '') {
-      const rx = new RegExp(dto.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      const rx = new RegExp(
+        dto.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'i',
+      );
       basePipeline.push({
         $match: {
           $or: [
@@ -2669,7 +3412,9 @@ export class ProductRegistrationService {
       { $sort: { [sortField]: sortOrder } },
     ];
 
-    const eoiLookupPipeline: any[] = [{ $match: { $expr: { $eq: ['$urnNo', '$$urnNo'] } } }];
+    const eoiLookupPipeline: any[] = [
+      { $match: { $expr: { $eq: ['$urnNo', '$$urnNo'] } } },
+    ];
     if (statusMatch) {
       eoiLookupPipeline.push({ $match: statusMatch });
     }
@@ -2692,7 +3437,12 @@ export class ProductRegistrationService {
                 as: 'manufacturer',
               },
             },
-            { $unwind: { path: '$manufacturer', preserveNullAndEmptyArrays: true } },
+            {
+              $unwind: {
+                path: '$manufacturer',
+                preserveNullAndEmptyArrays: true,
+              },
+            },
             {
               $lookup: {
                 from: 'categories',
@@ -2701,7 +3451,9 @@ export class ProductRegistrationService {
                 as: 'category',
               },
             },
-            { $unwind: { path: '$category', preserveNullAndEmptyArrays: true } },
+            {
+              $unwind: { path: '$category', preserveNullAndEmptyArrays: true },
+            },
             {
               $lookup: {
                 from: 'product_plants',
@@ -2716,7 +3468,12 @@ export class ProductRegistrationService {
                       as: 'state',
                     },
                   },
-                  { $unwind: { path: '$state', preserveNullAndEmptyArrays: true } },
+                  {
+                    $unwind: {
+                      path: '$state',
+                      preserveNullAndEmptyArrays: true,
+                    },
+                  },
                   {
                     $project: {
                       _id: 1,
@@ -2729,7 +3486,12 @@ export class ProductRegistrationService {
                       city: 1,
                       plantStatus: 1,
                       createdDate: 1,
-                      stateName: { $ifNull: ['$state.stateName', { $ifNull: ['$state.state_name', '$state.name'] }] },
+                      stateName: {
+                        $ifNull: [
+                          '$state.stateName',
+                          { $ifNull: ['$state.state_name', '$state.name'] },
+                        ],
+                      },
                     },
                   },
                 ],
@@ -2743,7 +3505,12 @@ export class ProductRegistrationService {
                 eoiNo: 1,
                 urnNo: 1,
                 productName: 1,
-                categoryName: { $ifNull: ['$category.categoryName', '$category.category_name'] },
+                categoryName: {
+                  $ifNull: [
+                    '$category.categoryName',
+                    '$category.category_name',
+                  ],
+                },
                 manufacturerName: '$manufacturer.manufacturerName',
                 productStatus: 1,
                 createdDate: 1,
@@ -2775,10 +3542,18 @@ export class ProductRegistrationService {
           $facet: {
             data: urnDataPipeline,
             total: totalUrnPipeline,
-            byStatus: [...rowBase, { $group: { _id: '$productStatus', count: { $sum: 1 } } }],
+            byStatus: [
+              ...rowBase,
+              { $group: { _id: '$productStatus', count: { $sum: 1 } } },
+            ],
             expired: [
               ...rowBase,
-              { $match: { productStatus: 2, validtillDate: { $exists: true, $ne: null, $lt: now } } },
+              {
+                $match: {
+                  productStatus: 2,
+                  validtillDate: { $exists: true, $ne: null, $lt: now },
+                },
+              },
               { $count: 'count' },
             ],
           },
@@ -2786,7 +3561,12 @@ export class ProductRegistrationService {
       ])
       .exec();
 
-    const payload = facetResult[0] ?? { data: [], total: [], byStatus: [], expired: [] };
+    const payload = facetResult[0] ?? {
+      data: [],
+      total: [],
+      byStatus: [],
+      expired: [],
+    };
     const total = payload.total?.[0]?.count ?? 0;
 
     const statusCounts: Record<string, number> = {
@@ -2802,12 +3582,16 @@ export class ProductRegistrationService {
       }
     }
 
-    const mapProductStatusLabel = (code: number): 'Pending' | 'Approved' | 'Rejected' => {
+    const mapProductStatusLabel = (
+      code: number,
+    ): 'Pending' | 'Approved' | 'Rejected' => {
       if (code === 3) return 'Rejected';
       if (code === 2) return 'Approved';
       return 'Pending';
     };
-    const deriveUrnStatus = (codes: number[]): 'Active' | 'Pending' | 'Inactive' => {
+    const deriveUrnStatus = (
+      codes: number[],
+    ): 'Active' | 'Pending' | 'Inactive' => {
       if (codes.includes(3)) return 'Inactive';
       if (codes.includes(2)) return 'Active';
       return 'Pending';
@@ -2816,7 +3600,9 @@ export class ProductRegistrationService {
     const grouped = (payload.data ?? []).map((u: any) => ({
       urnNo: u.urnNo,
       createdDate: u.createdDate,
-      urnStatus: deriveUrnStatus(Array.isArray(u.statusCodes) ? u.statusCodes : []),
+      urnStatus: deriveUrnStatus(
+        Array.isArray(u.statusCodes) ? u.statusCodes : [],
+      ),
       totalEoi: u.totalEoi ?? 0,
       eois: Array.isArray(u.eois)
         ? u.eois.map((e: any) => {
@@ -2856,7 +3642,9 @@ export class ProductRegistrationService {
 
   async getManufacturersByCategory(categoryId: string) {
     const categoryObjectId = this.toObjectId(categoryId, 'categoryId');
-    const apiBaseUrl = (process.env.API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+    const apiBaseUrl = (process.env.API_BASE_URL ?? '')
+      .trim()
+      .replace(/\/+$/, '');
     const toImageUrl = (path?: string | null): string | null => {
       if (!path) return null;
       if (/^https?:\/\//i.test(path)) return path;
@@ -2895,7 +3683,9 @@ export class ProductRegistrationService {
             manufacturerName: '$manufacturer.manufacturerName',
             gpInternalId: '$manufacturer.gpInternalId',
             manufacturerInitial: '$manufacturer.manufacturerInitial',
-            manufacturerImage: { $ifNull: ['$manufacturer.manufacturerImage', null] },
+            manufacturerImage: {
+              $ifNull: ['$manufacturer.manufacturerImage', null],
+            },
             manufacturerStatus: '$manufacturer.manufacturerStatus',
             vendor_status: '$manufacturer.vendor_status',
             vendor_name: '$manufacturer.vendor_name',
@@ -2921,8 +3711,13 @@ export class ProductRegistrationService {
   }
 
   async getCategoriesByManufacturer(manufacturerId: string) {
-    const manufacturerObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
-    const apiBaseUrl = (process.env.API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const apiBaseUrl = (process.env.API_BASE_URL ?? '')
+      .trim()
+      .replace(/\/+$/, '');
     const toImageUrl = (path?: string | null): string | null => {
       if (!path) return null;
       if (/^https?:\/\//i.test(path)) return path;
@@ -3007,7 +3802,9 @@ export class ProductRegistrationService {
       page += 1;
     }
 
-    const mapStatusLabel = (code: number): 'Pending' | 'Approved' | 'Rejected' => {
+    const mapStatusLabel = (
+      code: number,
+    ): 'Pending' | 'Approved' | 'Rejected' => {
       if (code === 3) return 'Rejected';
       if (code === 2) return 'Approved';
       return 'Pending';
@@ -3020,7 +3817,8 @@ export class ProductRegistrationService {
         productName: e.productName ?? '',
         categoryName: e.categoryName ?? '',
         manufacturerName: e.manufacturerName ?? '',
-        statusLabel: e.statusLabel ?? mapStatusLabel(Number(e.productStatus ?? 0)),
+        statusLabel:
+          e.statusLabel ?? mapStatusLabel(Number(e.productStatus ?? 0)),
         createdDate: e.createdDate ?? u.createdDate ?? null,
       })),
     );
@@ -3047,13 +3845,18 @@ export class ProductRegistrationService {
     };
   }
 
-  async createAdminProductsExportJob(dto: AdminProductsExportDto, requestedBy?: string) {
+  async createAdminProductsExportJob(
+    dto: AdminProductsExportDto,
+    requestedBy?: string,
+  ) {
     this.cleanupExpiredExportJobs();
 
     const format = dto.format ?? 'xlsx';
     const includeSheets = dto.includeSheets?.length
       ? dto.includeSheets
-      : (['urn_summary', 'eoi_details'] as Array<'urn_summary' | 'eoi_details'>);
+      : (['urn_summary', 'eoi_details'] as Array<
+          'urn_summary' | 'eoi_details'
+        >);
 
     const filtersForHash = {
       ...dto,
@@ -3113,7 +3916,10 @@ export class ProductRegistrationService {
     };
   }
 
-  private async runAdminProductsExportJob(jobId: string, dto: AdminProductsExportDto) {
+  private async runAdminProductsExportJob(
+    jobId: string,
+    dto: AdminProductsExportDto,
+  ) {
     const job = this.exportJobs.get(jobId);
     if (!job) return;
 
@@ -3143,7 +3949,10 @@ export class ProductRegistrationService {
           break;
         }
         page += 1;
-        job.progress = Math.min(70, 10 + Math.floor((urnRows.length / Math.max(total, 1)) * 60));
+        job.progress = Math.min(
+          70,
+          10 + Math.floor((urnRows.length / Math.max(total, 1)) * 60),
+        );
         job.updatedAt = new Date();
       }
 

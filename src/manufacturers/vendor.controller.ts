@@ -1,5 +1,19 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Patch, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Patch,
+  UseGuards,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { ManufacturersService } from './manufacturers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -19,9 +33,14 @@ export class VendorController {
     description:
       'Uses logged-in user id from JWT, resolves manufacturer mapping via vendor-users, and returns vendor details from manufacturer record.',
   })
-  @ApiResponse({ status: 200, description: 'Vendor details retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Vendor details retrieved successfully',
+  })
   async getVendorProfile(@CurrentUser() user: { userId: string }) {
-    const data = await this.manufacturersService.getVendorDetailsByAuthUserId(user.userId);
+    const data = await this.manufacturersService.getVendorDetailsByAuthUserId(
+      user.userId,
+    );
     return { message: 'Vendor details retrieved successfully', data };
   }
 
@@ -33,12 +52,18 @@ export class VendorController {
       'Updates vendor/company fields on the linked manufacturer record for the logged-in vendor user.',
   })
   @ApiBody({ type: UpdateProfileDto })
-  @ApiResponse({ status: 200, description: 'Vendor profile updated successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Vendor profile updated successfully',
+  })
   async updateVendorProfile(
     @CurrentUser() user: { userId: string },
     @Body() updateDto: UpdateProfileDto,
   ) {
-    const data = await this.manufacturersService.editProfile(user.userId, updateDto);
+    const data = await this.manufacturersService.editProfile(
+      user.userId,
+      updateDto,
+    );
     return { message: 'Vendor profile updated successfully', data };
   }
 
@@ -54,7 +79,10 @@ export class VendorController {
     @CurrentUser() user: { userId: string },
     @Body() changePasswordDto: ChangePasswordDto,
   ) {
-    await this.manufacturersService.changePassword(user.userId, changePasswordDto);
+    await this.manufacturersService.changePassword(
+      user.userId,
+      changePasswordDto,
+    );
     return { message: 'Password changed successfully' };
   }
 }

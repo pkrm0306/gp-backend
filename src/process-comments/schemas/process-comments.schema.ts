@@ -84,4 +84,5 @@ export class ProcessComments {
   updatedDate: Date;
 }
 
-export const ProcessCommentsSchema = SchemaFactory.createForClass(ProcessComments);
+export const ProcessCommentsSchema =
+  SchemaFactory.createForClass(ProcessComments);

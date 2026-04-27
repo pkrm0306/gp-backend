@@ -30,4 +30,5 @@ export class ProcessInnovation {
   updatedDate: Date;
 }
 
-export const ProcessInnovationSchema = SchemaFactory.createForClass(ProcessInnovation);
+export const ProcessInnovationSchema =
+  SchemaFactory.createForClass(ProcessInnovation);

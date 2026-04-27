@@ -48,7 +48,9 @@ const storage = diskStorage({
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class ProcessLifeCycleApproachController {
-  constructor(private readonly processLifeCycleApproachService: ProcessLifeCycleApproachService) {}
+  constructor(
+    private readonly processLifeCycleApproachService: ProcessLifeCycleApproachService,
+  ) {}
 
   @Post()
   @UseInterceptors(
@@ -70,7 +72,16 @@ export class ProcessLifeCycleApproachController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
           'application/vnd.ms-excel', // .xls
         ];
-        const allowedExtensions = ['.png', '.jpg', '.jpeg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'];
+        const allowedExtensions = [
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.pdf',
+          '.doc',
+          '.docx',
+          '.xls',
+          '.xlsx',
+        ];
         const fileExt = extname(file.originalname).toLowerCase();
 
         if (
@@ -115,7 +126,8 @@ export class ProcessLifeCycleApproachController {
         },
         processLifeCycleApproachStatus: {
           type: 'number',
-          description: 'Process life cycle approach status (0=Pending, 1=Completed)',
+          description:
+            'Process life cycle approach status (0=Pending, 1=Completed)',
           example: 0,
           enum: [0, 1],
         },
@@ -175,7 +187,8 @@ export class ProcessLifeCycleApproachController {
     @UploadedFiles() files?: Express.Multer.File[],
     @Req() req?: any,
   ) {
-    if (!user?.vendorId) throw new BadRequestException('Vendor ID not found in token');
+    if (!user?.vendorId)
+      throw new BadRequestException('Vendor ID not found in token');
 
     // Parse body to get DTO
     const dto: CreateProcessLifeCycleApproachDto = {
@@ -185,7 +198,8 @@ export class ProcessLifeCycleApproachController {
         ? parseInt(body.processLifeCycleApproachStatus, 10)
         : undefined,
       lifeCycleAssesmentReportsFileName: body.lifeCycleAssesmentReportsFileName,
-      lifeCycleImplementationDocumentsFileName: body.lifeCycleImplementationDocumentsFileName,
+      lifeCycleImplementationDocumentsFileName:
+        body.lifeCycleImplementationDocumentsFileName,
     };
 
     // Extract files by fieldname from the files array
@@ -198,24 +212,33 @@ export class ProcessLifeCycleApproachController {
     );
 
     // Validate file names if files are uploaded
-    if (lifeCycleAssesmentReportsFile && (!dto.lifeCycleAssesmentReportsFileName || dto.lifeCycleAssesmentReportsFileName.trim() === '')) {
+    if (
+      lifeCycleAssesmentReportsFile &&
+      (!dto.lifeCycleAssesmentReportsFileName ||
+        dto.lifeCycleAssesmentReportsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'lifeCycleAssesmentReportsFileName is required when uploading lifeCycleAssesmentReportsFile',
       );
     }
 
-    if (lifeCycleImplementationDocumentsFile && (!dto.lifeCycleImplementationDocumentsFileName || dto.lifeCycleImplementationDocumentsFileName.trim() === '')) {
+    if (
+      lifeCycleImplementationDocumentsFile &&
+      (!dto.lifeCycleImplementationDocumentsFileName ||
+        dto.lifeCycleImplementationDocumentsFileName.trim() === '')
+    ) {
       throw new BadRequestException(
         'lifeCycleImplementationDocumentsFileName is required when uploading lifeCycleImplementationDocumentsFile',
       );
     }
 
-    const data = await this.processLifeCycleApproachService.createProcessLifeCycleApproach(
-      dto,
-      user.vendorId,
-      lifeCycleAssesmentReportsFile,
-      lifeCycleImplementationDocumentsFile,
-    );
+    const data =
+      await this.processLifeCycleApproachService.createProcessLifeCycleApproach(
+        dto,
+        user.vendorId,
+        lifeCycleAssesmentReportsFile,
+        lifeCycleImplementationDocumentsFile,
+      );
     return { success: true, data };
   }
 }

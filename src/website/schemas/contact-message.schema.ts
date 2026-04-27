@@ -24,5 +24,5 @@ export class ContactMessage {
   updatedAt?: Date;
 }
 
-export const ContactMessageSchema = SchemaFactory.createForClass(ContactMessage);
-
+export const ContactMessageSchema =
+  SchemaFactory.createForClass(ContactMessage);

@@ -24,5 +24,6 @@ export class RawMaterialsHazardous {
   updatedDate: Date;
 }
 
-export const RawMaterialsHazardousSchema =
-  SchemaFactory.createForClass(RawMaterialsHazardous);
+export const RawMaterialsHazardousSchema = SchemaFactory.createForClass(
+  RawMaterialsHazardous,
+);

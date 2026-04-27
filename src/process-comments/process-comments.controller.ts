@@ -25,7 +25,9 @@ import { CreateProcessCommentsDto } from './dto/create-process-comments.dto';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class ProcessCommentsController {
-  constructor(private readonly processCommentsService: ProcessCommentsService) {}
+  constructor(
+    private readonly processCommentsService: ProcessCommentsService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -35,7 +37,8 @@ export class ProcessCommentsController {
   })
   @ApiBody({
     type: CreateProcessCommentsDto,
-    description: 'Process comments data. Only urnNo is required. All other fields are optional.',
+    description:
+      'Process comments data. Only urnNo is required. All other fields are optional.',
   })
   @ApiResponse({
     status: 201,
@@ -80,7 +83,10 @@ export class ProcessCommentsController {
     },
   })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid input data' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
   async createOrUpdate(
     @CurrentUser() user: any,
     @Body() createProcessCommentsDto: CreateProcessCommentsDto,
@@ -155,14 +161,23 @@ export class ProcessCommentsController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Bad request - Vendor ID not found in token' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Vendor ID not found in token',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
   async getByUrn(@CurrentUser() user: any, @Param('urn_no') urnNo: string) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    const data = await this.processCommentsService.getByUrnAndVendor(urnNo, user.vendorId);
+    const data = await this.processCommentsService.getByUrnAndVendor(
+      urnNo,
+      user.vendorId,
+    );
 
     return {
       success: true,

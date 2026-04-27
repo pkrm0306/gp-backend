@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type RawMaterialsUtilizationRmcDocument = RawMaterialsUtilizationRmc & Document;
+export type RawMaterialsUtilizationRmcDocument = RawMaterialsUtilizationRmc &
+  Document;
 
 @Schema({ collection: 'raw_materials_utilization_rmc', timestamps: false })
 export class RawMaterialsUtilizationRmc {
@@ -54,24 +55,36 @@ export class RawMaterialsUtilizationRmc {
   @Prop({ type: Number, required: true }) brandClsmConcrete: number;
   @Prop({ type: Number, required: true }) brandAnyOtherTypes: number;
   @Prop({ type: Number, required: true }) brandTotalConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear1ConcreteWithHighScm: number;
-  @Prop({ type: Number, required: true }) productionYear1HighStrengthConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear1SelfCpmactingConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear1LowDensityConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear1ConcreteWithHighScm: number;
+  @Prop({ type: Number, required: true })
+  productionYear1HighStrengthConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear1SelfCpmactingConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear1LowDensityConcrete: number;
   @Prop({ type: Number, required: true }) productionYear1ClsmConcrete: number;
   @Prop({ type: Number, required: true }) productionYear1AnyOtherTypes: number;
   @Prop({ type: Number, required: true }) productionYear1TotalConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear2ConcreteWithHighScm: number;
-  @Prop({ type: Number, required: true }) productionYear2HighStrengthConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear2SelfCpmactingConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear2LowDensityConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear2ConcreteWithHighScm: number;
+  @Prop({ type: Number, required: true })
+  productionYear2HighStrengthConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear2SelfCpmactingConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear2LowDensityConcrete: number;
   @Prop({ type: Number, required: true }) productionYear2ClsmConcrete: number;
   @Prop({ type: Number, required: true }) productionYear2AnyOtherTypes: number;
   @Prop({ type: Number, required: true }) productionYear2TotalConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear3ConcreteWithHighScm: number;
-  @Prop({ type: Number, required: true }) productionYear3HighStrengthConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear3SelfCpmactingConcrete: number;
-  @Prop({ type: Number, required: true }) productionYear3LowDensityConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear3ConcreteWithHighScm: number;
+  @Prop({ type: Number, required: true })
+  productionYear3HighStrengthConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear3SelfCpmactingConcrete: number;
+  @Prop({ type: Number, required: true })
+  productionYear3LowDensityConcrete: number;
   @Prop({ type: Number, required: true }) productionYear3ClsmConcrete: number;
   @Prop({ type: Number, required: true }) productionYear3AnyOtherTypes: number;
   @Prop({ type: Number, required: true }) productionYear3TotalConcrete: number;
@@ -95,22 +108,38 @@ export class RawMaterialsUtilizationRmc {
   @Prop({ type: Number, required: true }) percentYear2SubsititutionIron: number;
   @Prop({ type: Number, required: true }) percentYear3SubsititutionIron: number;
   @Prop({ type: Number, required: true }) percentYear4SubsititutionIron: number;
-  @Prop({ type: Number, required: true }) percentYear1SubsititutionSteel: number;
-  @Prop({ type: Number, required: true }) percentYear2SubsititutionSteel: number;
-  @Prop({ type: Number, required: true }) percentYear3SubsititutionSteel: number;
-  @Prop({ type: Number, required: true }) percentYear4SubsititutionSteel: number;
-  @Prop({ type: Number, required: true }) percentYear1SubsititutionCopper: number;
-  @Prop({ type: Number, required: true }) percentYear2SubsititutionCopper: number;
-  @Prop({ type: Number, required: true }) percentYear3SubsititutionCopper: number;
-  @Prop({ type: Number, required: true }) percentYear4SubsititutionCopper: number;
-  @Prop({ type: Number, required: true }) percentYear1SubsititutionRecycled: number;
-  @Prop({ type: Number, required: true }) percentYear2SubsititutionRecycled: number;
-  @Prop({ type: Number, required: true }) percentYear3SubsititutionRecycled: number;
-  @Prop({ type: Number, required: true }) percentYear4SubsititutionRecycled: number;
-  @Prop({ type: Number, required: true }) percentYear1SubsititutionAggregate: number;
-  @Prop({ type: Number, required: true }) percentYear2SubsititutionAggregate: number;
-  @Prop({ type: Number, required: true }) percentYear3SubsititutionAggregate: number;
-  @Prop({ type: Number, required: true }) percentYear4SubsititutionAggregate: number;
+  @Prop({ type: Number, required: true })
+  percentYear1SubsititutionSteel: number;
+  @Prop({ type: Number, required: true })
+  percentYear2SubsititutionSteel: number;
+  @Prop({ type: Number, required: true })
+  percentYear3SubsititutionSteel: number;
+  @Prop({ type: Number, required: true })
+  percentYear4SubsititutionSteel: number;
+  @Prop({ type: Number, required: true })
+  percentYear1SubsititutionCopper: number;
+  @Prop({ type: Number, required: true })
+  percentYear2SubsititutionCopper: number;
+  @Prop({ type: Number, required: true })
+  percentYear3SubsititutionCopper: number;
+  @Prop({ type: Number, required: true })
+  percentYear4SubsititutionCopper: number;
+  @Prop({ type: Number, required: true })
+  percentYear1SubsititutionRecycled: number;
+  @Prop({ type: Number, required: true })
+  percentYear2SubsititutionRecycled: number;
+  @Prop({ type: Number, required: true })
+  percentYear3SubsititutionRecycled: number;
+  @Prop({ type: Number, required: true })
+  percentYear4SubsititutionRecycled: number;
+  @Prop({ type: Number, required: true })
+  percentYear1SubsititutionAggregate: number;
+  @Prop({ type: Number, required: true })
+  percentYear2SubsititutionAggregate: number;
+  @Prop({ type: Number, required: true })
+  percentYear3SubsititutionAggregate: number;
+  @Prop({ type: Number, required: true })
+  percentYear4SubsititutionAggregate: number;
   @Prop({ type: Number, required: true }) plant1: number;
   @Prop({ type: Number, required: true }) plantYear1: number;
   @Prop({ type: Number, required: true }) plantYear2: number;
@@ -128,5 +157,6 @@ export class RawMaterialsUtilizationRmc {
   updatedDate: Date;
 }
 
-export const RawMaterialsUtilizationRmcSchema =
-  SchemaFactory.createForClass(RawMaterialsUtilizationRmc);
+export const RawMaterialsUtilizationRmcSchema = SchemaFactory.createForClass(
+  RawMaterialsUtilizationRmc,
+);

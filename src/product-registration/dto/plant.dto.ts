@@ -12,7 +12,10 @@ export class PlantDto {
   @IsNotEmpty()
   plantLocation: string;
 
-  @ApiProperty({ description: 'Country ID', example: '507f1f77bcf86cd799439013' })
+  @ApiProperty({
+    description: 'Country ID',
+    example: '507f1f77bcf86cd799439013',
+  })
   @IsString()
   @IsNotEmpty()
   @IsMongoId()

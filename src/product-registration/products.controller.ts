@@ -51,24 +51,40 @@ export class ProductsController {
               urn_no: { type: 'string', example: 'URN-20240302120000' },
               product_name: { type: 'string', example: 'Solar Panel 100W' },
               category_name: { type: 'string', example: 'Solar Panels' },
-              validtill_date: { type: 'string', format: 'date-time', example: '2024-05-15T10:30:00.000Z' },
+              validtill_date: {
+                type: 'string',
+                format: 'date-time',
+                example: '2024-05-15T10:30:00.000Z',
+              },
               product_status: { type: 'number', example: 2 },
-              created_date: { type: 'string', format: 'date-time', example: '2024-03-02T12:00:00.000Z' },
+              created_date: {
+                type: 'string',
+                format: 'date-time',
+                example: '2024-03-02T12:00:00.000Z',
+              },
             },
           },
         },
       },
     },
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
-  @ApiResponse({ status: 400, description: 'Bad request - Manufacturer ID not found in token' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Manufacturer ID not found in token',
+  })
   async getRenewList(@CurrentUser() user: any) {
     try {
       if (!user?.manufacturerId) {
         throw new BadRequestException('Manufacturer ID not found in token');
       }
 
-      const data = await this.productRegistrationService.getRenewList(user.manufacturerId);
+      const data = await this.productRegistrationService.getRenewList(
+        user.manufacturerId,
+      );
 
       return {
         success: true,
@@ -130,6 +146,9 @@ export class ProductsController {
                   categoryName: { type: 'string' },
                   categoryCode: { type: 'string' },
                 },
+                additionalProperties: true,
+                description:
+                  'Complete category document from categories collection (includes all available fields).',
               },
               manufacturer: {
                 type: 'object',
@@ -164,10 +183,19 @@ export class ProductsController {
                   _id: { type: 'string' },
                   productDesignId: { type: 'number' },
                   urnNo: { type: 'string' },
-                  ecoVisionUpload: { type: 'number', description: '0=No File Available, 1=File Available' },
+                  ecoVisionUpload: {
+                    type: 'number',
+                    description: '0=No File Available, 1=File Available',
+                  },
                   statergies: { type: 'string' },
-                  productDesignSupportingDocument: { type: 'number', description: '0=No File Available, 1=File Available' },
-                  productDesignStatus: { type: 'number', description: '0=Pending, 1=Completed' },
+                  productDesignSupportingDocument: {
+                    type: 'number',
+                    description: '0=No File Available, 1=File Available',
+                  },
+                  productDesignStatus: {
+                    type: 'number',
+                    description: '0=Pending, 1=Completed',
+                  },
                   measuresAndBenefits: {
                     type: 'array',
                     items: {
@@ -192,9 +220,18 @@ export class ProductsController {
                   eoiNo: { type: 'string' },
                   productName: { type: 'string' },
                   testReportFileName: { type: 'string' },
-                  testReportFiles: { type: 'number', description: '0=No File Available, 1=File Available' },
-                  renewalType: { type: 'number', description: '0=Not Renewed, >0 = Renewed no of times' },
-                  productPerformanceStatus: { type: 'number', description: '0=Pending, 1=Completed' },
+                  testReportFiles: {
+                    type: 'number',
+                    description: '0=No File Available, 1=File Available',
+                  },
+                  renewalType: {
+                    type: 'number',
+                    description: '0=Not Renewed, >0 = Renewed no of times',
+                  },
+                  productPerformanceStatus: {
+                    type: 'number',
+                    description: '0=Pending, 1=Completed',
+                  },
                   createdDate: { type: 'string', format: 'date-time' },
                   updatedDate: { type: 'string', format: 'date-time' },
                 },
@@ -220,16 +257,27 @@ export class ProductsController {
       },
     },
   })
-  @ApiResponse({ status: 404, description: 'No products found with the specified URN' })
-  @ApiResponse({ status: 400, description: 'Bad request - URN number is required' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
+  @ApiResponse({
+    status: 404,
+    description: 'No products found with the specified URN',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - URN number is required',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
   async getProductDetailsByUrn(@Param('urn_no') urnNo: string) {
     try {
       if (!urnNo || urnNo.trim() === '') {
         throw new BadRequestException('URN number is required');
       }
 
-      const data = await this.productRegistrationService.getProductDetailsByUrn(urnNo.trim());
+      const data = await this.productRegistrationService.getProductDetailsByUrn(
+        urnNo.trim(),
+      );
 
       return {
         success: true,
@@ -264,7 +312,10 @@ export class ProductsController {
             urnNo: { type: 'string' },
             eoiNo: { type: 'string' },
             productName: { type: 'string' },
-            urnStatus: { type: 'number', description: 'Updated URN status (0-11)' },
+            urnStatus: {
+              type: 'number',
+              description: 'Updated URN status (0-11)',
+            },
             updatedDate: { type: 'string', format: 'date-time' },
           },
         },
@@ -272,9 +323,15 @@ export class ProductsController {
       },
     },
   })
-  @ApiResponse({ status: 404, description: 'Product not found with the given manufacturer and urnNo' })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found with the given manufacturer and urnNo',
+  })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid input data' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - Invalid or missing token' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid or missing token',
+  })
   async updateUrnStatus(
     @CurrentUser() user: any,
     @Body() updateUrnStatusDto: UpdateUrnStatusDto,

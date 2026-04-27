@@ -64,17 +64,28 @@ export class StandardsService implements OnModuleInit {
 
   private async syncStandardIdCounter(): Promise<void> {
     const maxFromDocs = await this.getMaxStandardIdFromCollection();
-    const existing = await this.counterModel.findOne({ _id: STANDARD_ID_COUNTER_KEY }).lean().exec();
+    const existing = await this.counterModel
+      .findOne({ _id: STANDARD_ID_COUNTER_KEY })
+      .lean()
+      .exec();
     const currentSeq = existing?.seq ?? 0;
     const seed = Math.max(currentSeq, maxFromDocs);
     await this.counterModel
-      .updateOne({ _id: STANDARD_ID_COUNTER_KEY }, { $set: { seq: seed } }, { upsert: true })
+      .updateOne(
+        { _id: STANDARD_ID_COUNTER_KEY },
+        { $set: { seq: seed } },
+        { upsert: true },
+      )
       .exec();
   }
 
   private async nextStandardId(): Promise<number> {
     const doc = await this.counterModel
-      .findOneAndUpdate({ _id: STANDARD_ID_COUNTER_KEY }, { $inc: { seq: 1 } }, { new: true, upsert: true })
+      .findOneAndUpdate(
+        { _id: STANDARD_ID_COUNTER_KEY },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true },
+      )
       .exec();
     if (!doc || typeof doc.seq !== 'number' || !Number.isFinite(doc.seq)) {
       throw new Error('Failed to allocate standard id');
@@ -90,16 +101,25 @@ export class StandardsService implements OnModuleInit {
     return n;
   }
 
-  private buildListFilter(query: ListStandardsQueryDto): Record<string, unknown> {
+  private buildListFilter(
+    query: ListStandardsQueryDto,
+  ): Record<string, unknown> {
     const parts: Record<string, unknown>[] = [];
 
     if (query.search !== undefined && query.search.trim() !== '') {
-      parts.push({ name: { $regex: new RegExp(escapeRegex(query.search.trim()), 'i') } });
+      parts.push({
+        name: { $regex: new RegExp(escapeRegex(query.search.trim()), 'i') },
+      });
     }
-    if (query.resource_standard_type !== undefined && query.resource_standard_type.trim() !== '') {
+    if (
+      query.resource_standard_type !== undefined &&
+      query.resource_standard_type.trim() !== ''
+    ) {
       const t = query.resource_standard_type.trim();
       parts.push({
-        resource_standard_type: { $regex: new RegExp(`^${escapeRegex(t)}$`, 'i') },
+        resource_standard_type: {
+          $regex: new RegExp(`^${escapeRegex(t)}$`, 'i'),
+        },
       });
     }
     if (query.status !== undefined) {
@@ -136,11 +156,19 @@ export class StandardsService implements OnModuleInit {
     const skip = (page - 1) * limit;
 
     const [rows, total] = await Promise.all([
-      this.standardModel.find(filter).sort(sort).skip(skip).limit(limit).lean().exec(),
+      this.standardModel
+        .find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
       this.standardModel.countDocuments(filter).exec(),
     ]);
 
-    const data = rows.map((d) => this.ensureDescriptionField(this.enrichStandardFileUrl(d)));
+    const data = rows.map((d) =>
+      this.ensureDescriptionField(this.enrichStandardFileUrl(d)),
+    );
 
     return {
       message: 'Standards retrieved successfully',
@@ -160,9 +188,9 @@ export class StandardsService implements OnModuleInit {
   }
 
   /** Legacy rows may omit file_url; derive local URL from filename when needed. */
-  private enrichStandardFileUrl<T extends { filename?: string; file_url?: string; storage_type?: string }>(
-    doc: T,
-  ): T & { file_url?: string } {
+  private enrichStandardFileUrl<
+    T extends { filename?: string; file_url?: string; storage_type?: string },
+  >(doc: T): T & { file_url?: string } {
     if (doc.file_url) {
       return doc;
     }
@@ -212,10 +240,16 @@ export class StandardsService implements OnModuleInit {
       created_at: now,
       updated_at: now,
     });
-    return this.ensureDescriptionField(this.enrichStandardFileUrl(doc.toObject()));
+    return this.ensureDescriptionField(
+      this.enrichStandardFileUrl(doc.toObject()),
+    );
   }
 
-  async update(id: number, dto: UpdateStandardMultipartDto, file?: Express.Multer.File) {
+  async update(
+    id: number,
+    dto: UpdateStandardMultipartDto,
+    file?: Express.Multer.File,
+  ) {
     const existing = await this.standardModel.findOne({ id }).exec();
     if (!existing) {
       throw new NotFoundException('Standard not found');
@@ -224,7 +258,8 @@ export class StandardsService implements OnModuleInit {
     const hasText =
       (dto.name !== undefined && dto.name.trim() !== '') ||
       dto.description !== undefined ||
-      (dto.resource_standard_type !== undefined && dto.resource_standard_type.trim() !== '') ||
+      (dto.resource_standard_type !== undefined &&
+        dto.resource_standard_type.trim() !== '') ||
       dto.status !== undefined;
     if (!hasText && !file) {
       throw new BadRequestException('No fields to update');
@@ -238,7 +273,10 @@ export class StandardsService implements OnModuleInit {
     if (dto.description !== undefined) {
       set.description = dto.description.trim();
     }
-    if (dto.resource_standard_type !== undefined && dto.resource_standard_type.trim() !== '') {
+    if (
+      dto.resource_standard_type !== undefined &&
+      dto.resource_standard_type.trim() !== ''
+    ) {
       set.resource_standard_type = dto.resource_standard_type.trim();
     }
     if (dto.status !== undefined) {
@@ -292,7 +330,9 @@ export class StandardsService implements OnModuleInit {
   async buildCsvExport(query: ListStandardsQueryDto): Promise<string> {
     const sortBy = query.sortBy ?? 'id';
     const order = query.order ?? 'asc';
-    const sort: Record<string, 1 | -1> = { [sortBy]: order === 'desc' ? -1 : 1 };
+    const sort: Record<string, 1 | -1> = {
+      [sortBy]: order === 'desc' ? -1 : 1,
+    };
     const filter = this.buildListFilter(query);
     const rows = await this.standardModel.find(filter).sort(sort).lean().exec();
 
