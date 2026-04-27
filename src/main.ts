@@ -49,7 +49,15 @@ function buildCorsOrigins(): string[] {
     process.env.CORS_ORIGINS?.split(',')
       .map((o) => o.trim())
       .filter(Boolean) ?? [];
-  return [...new Set([...ALLOWED_CORS_ORIGINS, ...fromEnv])];
+  const deploymentOrigins = [
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.APP_URL,
+    process.env.FRONTEND_URL,
+    process.env.ADMIN_URL,
+  ]
+    .filter(Boolean)
+    .map((o) => String(o).trim());
+  return [...new Set([...ALLOWED_CORS_ORIGINS, ...fromEnv, ...deploymentOrigins])];
 }
 
 async function bootstrap() {
@@ -96,6 +104,11 @@ async function bootstrap() {
 
       // Allow known deployed/admin origins
       if (corsOrigins.includes(origin)) return callback(null, true);
+
+      // Allow Render-hosted callers (Swagger on backend domain, preview URLs, etc.)
+      if (/^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(origin)) {
+        return callback(null, true);
+      }
 
       return callback(new Error(`CORS blocked for origin: ${origin}`), false);
     },
