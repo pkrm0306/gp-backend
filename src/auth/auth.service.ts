@@ -60,8 +60,6 @@ export class AuthService {
       const manufacturer = await this.manufacturersService.create(
         {
           manufacturerName: registerDto.companyName,
-          gpInternalId: null,
-          manufacturerInitial: null,
           manufacturerStatus: 0,
           vendor_name: registerDto.companyName,
           vendor_email: registerDto.email,

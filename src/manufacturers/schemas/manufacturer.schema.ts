@@ -8,10 +8,10 @@ export class Manufacturer {
   @Prop({ required: true })
   manufacturerName: string;
 
-  @Prop({ required: false, unique: true, sparse: true, default: null })
+  @Prop({ required: false, unique: true, sparse: true, default: undefined })
   gpInternalId?: string | null;
 
-  @Prop({ required: false, default: null })
+  @Prop({ required: false, default: undefined })
   manufacturerInitial?: string | null;
 
   @Prop({ default: 0 })
