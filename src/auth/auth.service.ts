@@ -49,6 +49,7 @@ export class AuthService {
     const session = await this.connection.startSession();
     session.startTransaction();
 
+    let transactionCommitted = false;
     try {
       const manufacturer = await this.manufacturersService.create(
         {
@@ -82,32 +83,42 @@ export class AuthService {
       );
 
       await session.commitTransaction();
+      transactionCommitted = true;
 
-      await this.emailService.sendRegistrationEmail(
-        registerDto.email,
-        registerDto.password,
-        otp,
-      );
+      try {
+        await this.emailService.sendRegistrationEmail(
+          registerDto.email,
+          registerDto.password,
+          otp,
+        );
+      } catch (emailError) {
+        // Do not fail successful registration due to email transport issues.
+        console.warn(
+          `Registration email failed for ${registerDto.email}:`,
+          emailError,
+        );
+      }
 
       return {
         message: 'Registration successful. Please verify your email.',
       };
     } catch (error) {
       // Keep known HTTP errors intact for client-friendly responses.
-      if (error instanceof HttpException) {
+      if (!transactionCommitted && session.inTransaction()) {
         await session.abortTransaction();
+      }
+
+      if (error instanceof HttpException) {
         throw error;
       }
 
       // Convert duplicate key DB errors into a stable 409 response.
       if ((error as any)?.code === 11000) {
-        await session.abortTransaction();
         throw new ConflictException(
           'Email already exists. Please use a different email.',
         );
       }
 
-      await session.abortTransaction();
       throw error;
     } finally {
       session.endSession();
