@@ -44,11 +44,13 @@ export class AuthService {
       throw new ConflictException('Email already exists');
     }
 
-    const isValidCaptcha = await this.captchaService.verifyCaptcha(
-      registerDto.captchaToken,
-    );
-    if (!isValidCaptcha) {
-      throw new BadRequestException('Invalid recaptcha');
+    if (registerDto.captchaToken) {
+      const isValidCaptcha = await this.captchaService.verifyCaptcha(
+        registerDto.captchaToken,
+      );
+      if (!isValidCaptcha) {
+        throw new BadRequestException('Invalid recaptcha');
+      }
     }
 
     const session = await this.connection.startSession();
