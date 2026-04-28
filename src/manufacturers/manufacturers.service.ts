@@ -57,6 +57,10 @@ export class ManufacturersService {
     return this.manufacturerModel.findById(id).exec();
   }
 
+  async findByVendorEmail(email: string): Promise<ManufacturerDocument | null> {
+    return this.manufacturerModel.findOne({ vendor_email: email }).exec();
+  }
+
   async update(
     id: string,
     data: Partial<Manufacturer>,

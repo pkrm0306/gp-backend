@@ -44,6 +44,12 @@ export class AuthService {
       throw new ConflictException('Email already exists');
     }
 
+    const existingManufacturer =
+      await this.manufacturersService.findByVendorEmail(registerDto.email);
+    if (existingManufacturer) {
+      throw new ConflictException('Email already exists');
+    }
+
     // Temporary bypass: captcha is ignored for vendor registration.
 
     const session = await this.connection.startSession();
@@ -114,8 +120,17 @@ export class AuthService {
 
       // Convert duplicate key DB errors into a stable 409 response.
       if ((error as any)?.code === 11000) {
+        const keyPattern = (error as any)?.keyPattern as
+          | Record<string, unknown>
+          | undefined;
+        if (keyPattern?.vendor_email) {
+          throw new ConflictException('Email already exists');
+        }
+        if (keyPattern?.phone || keyPattern?.vendor_phone) {
+          throw new ConflictException('Phone number already exists');
+        }
         throw new ConflictException(
-          'Email already exists. Please use a different email.',
+          'Duplicate value found. Please use different registration details.',
         );
       }
 
