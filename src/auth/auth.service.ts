@@ -44,14 +44,7 @@ export class AuthService {
       throw new ConflictException('Email already exists');
     }
 
-    if (registerDto.captchaToken) {
-      const isValidCaptcha = await this.captchaService.verifyCaptcha(
-        registerDto.captchaToken,
-      );
-      if (!isValidCaptcha) {
-        throw new BadRequestException('Invalid recaptcha');
-      }
-    }
+    // Temporary bypass: captcha is ignored for vendor registration.
 
     const session = await this.connection.startSession();
     session.startTransaction();
