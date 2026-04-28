@@ -121,12 +121,49 @@ export class AuthService {
         const keyPattern = (error as any)?.keyPattern as
           | Record<string, unknown>
           | undefined;
+        const keyValue = (error as any)?.keyValue as
+          | Record<string, unknown>
+          | undefined;
+        const message = String((error as any)?.message ?? '');
+
+        const duplicateIndexName =
+          message.match(/index:\s*([^\s]+)\s*dup key/i)?.[1] ?? '';
+
         if (keyPattern?.vendor_email) {
           throw new ConflictException('Email already exists');
         }
         if (keyPattern?.phone || keyPattern?.vendor_phone) {
           throw new ConflictException('Phone number already exists');
         }
+        if (keyPattern?.gpInternalId) {
+          throw new ConflictException('GP Internal ID already exists');
+        }
+        if (keyPattern?.manufacturerInitial) {
+          throw new ConflictException('Manufacturer initials already exist');
+        }
+
+        // Fallbacks for environments where MongoServerError omits keyPattern.
+        if (duplicateIndexName.includes('vendor_email')) {
+          throw new ConflictException('Email already exists');
+        }
+        if (duplicateIndexName.includes('vendor_phone')) {
+          throw new ConflictException('Phone number already exists');
+        }
+        if (duplicateIndexName.toLowerCase().includes('gpinternalid')) {
+          throw new ConflictException('GP Internal ID already exists');
+        }
+        if (duplicateIndexName.toLowerCase().includes('manufacturerinitial')) {
+          throw new ConflictException('Manufacturer initials already exist');
+        }
+
+        // Last-resort explicit detail for debugging in production.
+        if (keyValue && Object.keys(keyValue).length > 0) {
+          const detail = Object.entries(keyValue)
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(', ');
+          throw new ConflictException(`Duplicate value found: ${detail}`);
+        }
+
         throw new ConflictException(
           'Duplicate value found. Please use different registration details.',
         );
