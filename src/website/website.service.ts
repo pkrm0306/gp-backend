@@ -321,9 +321,19 @@ export class WebsiteService {
    * Sends an email to the customer with manufacturer details included.
    * Uses `manufacturerId` to fetch manufacturer details.
    */
-  async submitManufacturerInquiry(dto: ManufacturerInquiryDto) {
+  async submitManufacturerInquiry(
+    dto: ManufacturerInquiryDto,
+    manufacturerIdFromQuery?: string,
+  ) {
+    const manufacturerId = String(
+      dto.manufacturerId ?? manufacturerIdFromQuery ?? '',
+    ).trim();
+    if (!manufacturerId) {
+      throw new BadRequestException('manufacturerId is required');
+    }
+
     const manufacturer = await this.manufacturersService.findById(
-      dto.manufacturerId,
+      manufacturerId,
     );
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
@@ -385,7 +395,7 @@ export class WebsiteService {
 
             <h3 style="margin:18px 0 8px;">Your Message</h3>
             <div style="background:#f9fafb; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">
-              <p style="margin:0;"><strong>Contact:</strong> ${safe(dto.contact)}</p>
+              <p style="margin:0;"><strong>Contact:</strong> ${safe(dto.phone || dto.contact || '')}</p>
               <p style="margin:8px 0 0; white-space:pre-wrap;">${safe(dto.message || '')}</p>
             </div>
 
@@ -412,7 +422,7 @@ export class WebsiteService {
       type: 'info',
       source: 'website',
       referenceType: 'manufacturer_inquiry',
-      referenceId: String(dto.manufacturerId),
+      referenceId: manufacturerId,
       actorName: dto.name,
     });
 

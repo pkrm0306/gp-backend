@@ -8,10 +8,10 @@ import {
 } from 'class-validator';
 
 export class RegisterVendorDto {
-  @ApiProperty()
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  companyName: string;
+  companyName?: string;
 
   @ApiProperty()
   @IsEmail()

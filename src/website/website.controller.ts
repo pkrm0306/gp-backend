@@ -232,8 +232,14 @@ export class WebsiteController {
   @ApiResponse({ status: 200, description: 'Email sent successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })
   @ApiResponse({ status: 404, description: 'Manufacturer not found' })
-  async manufacturerInquiry(@Body() dto: ManufacturerInquiryDto) {
-    const data = await this.websiteService.submitManufacturerInquiry(dto);
+  async manufacturerInquiry(
+    @Body() dto: ManufacturerInquiryDto,
+    @Query('manufacturerId') manufacturerId?: string,
+  ) {
+    const data = await this.websiteService.submitManufacturerInquiry(
+      dto,
+      manufacturerId,
+    );
     return { message: 'Email sent successfully', data };
   }
 }

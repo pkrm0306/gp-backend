@@ -51,6 +51,10 @@ export class AuthService {
     }
 
     // Temporary bypass: captcha is ignored for vendor registration.
+    const normalizedCompanyName =
+      registerDto.companyName?.trim() ||
+      registerDto.email.split('@')[0]?.trim() ||
+      'Vendor';
 
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -59,9 +63,9 @@ export class AuthService {
     try {
       const manufacturer = await this.manufacturersService.create(
         {
-          manufacturerName: registerDto.companyName,
+          manufacturerName: normalizedCompanyName,
           manufacturerStatus: 0,
-          vendor_name: registerDto.companyName,
+          vendor_name: normalizedCompanyName,
           vendor_email: registerDto.email,
           vendor_phone: registerDto.phone,
           vendor_status: 0,
@@ -74,7 +78,7 @@ export class AuthService {
         {
           manufacturerId: manufacturer._id,
           vendorId: manufacturer._id,
-          name: registerDto.companyName,
+          name: normalizedCompanyName,
           email: registerDto.email,
           phone: registerDto.phone,
           password: registerDto.password,
