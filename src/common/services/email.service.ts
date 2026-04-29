@@ -8,6 +8,10 @@ export class EmailService {
   private transporter: nodemailer.Transporter;
 
   constructor(private configService: ConfigService) {
+    const service =
+      this.configService.get<string>('SMTP_SERVER_SERVICE') ||
+      this.configService.get<string>('MAIL_SERVICE') ||
+      '';
     const host =
       this.configService.get<string>('SMTP_SERVER_HOST') ||
       this.configService.get<string>('MAIL_HOST') ||
@@ -32,15 +36,17 @@ export class EmailService {
       this.configService.get<string>('MAIL_PASSWORD') ||
       '';
 
-    this.transporter = nodemailer.createTransport({
-      host,
-      port,
+    // Prefer provider-level `service` when supplied; fallback to host/port.
+    const transportOptions: nodemailer.TransportOptions = {
+      ...(service ? { service } : { host, port }),
       secure,
       ...(user && pass ? { auth: { user, pass } } : {}),
       tls: {
         rejectUnauthorized: false,
       },
-    });
+    };
+
+    this.transporter = nodemailer.createTransport(transportOptions);
   }
 
   async sendEmail(
