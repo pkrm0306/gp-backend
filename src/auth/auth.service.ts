@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  HttpException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -36,33 +37,39 @@ export class AuthService {
       throw new BadRequestException('Passwords do not match');
     }
 
+    const normalizedEmail = String(registerDto.email || '')
+      .trim()
+      .toLowerCase();
+    const normalizedPhone = String(registerDto.phone || '').trim();
+    const normalizedCompanyName =
+      registerDto.companyName?.trim() ||
+      normalizedEmail.split('@')[0]?.trim() ||
+      'Vendor';
+
     const existingUser = await this.vendorUsersService.findByEmail(
-      registerDto.email,
+      normalizedEmail,
     );
     if (existingUser) {
       throw new ConflictException('Email already exists');
     }
-
-    const isValidCaptcha = await this.captchaService.verifyCaptcha(
-      registerDto.captchaToken,
-    );
-    if (!isValidCaptcha) {
-      throw new BadRequestException('Invalid recaptcha');
+    const existingManufacturer =
+      await this.manufacturersService.findByVendorEmail(normalizedEmail);
+    if (existingManufacturer) {
+      throw new ConflictException('Email already exists');
     }
 
     const session = await this.connection.startSession();
     session.startTransaction();
+    let transactionCommitted = false;
 
     try {
       const manufacturer = await this.manufacturersService.create(
         {
-          manufacturerName: registerDto.companyName,
-          gpInternalId: null,
-          manufacturerInitial: null,
+          manufacturerName: normalizedCompanyName,
           manufacturerStatus: 0,
-          vendor_name: registerDto.companyName,
-          vendor_email: registerDto.email,
-          vendor_phone: registerDto.phone,
+          vendor_name: normalizedCompanyName,
+          vendor_email: normalizedEmail,
+          vendor_phone: normalizedPhone,
           vendor_status: 0,
         },
         session,
@@ -73,9 +80,9 @@ export class AuthService {
         {
           manufacturerId: manufacturer._id,
           vendorId: manufacturer._id,
-          name: registerDto.companyName,
-          email: registerDto.email,
-          phone: registerDto.phone,
+          name: normalizedCompanyName,
+          email: normalizedEmail,
+          phone: normalizedPhone,
           password: registerDto.password,
           type: 'vendor',
           status: 1,
@@ -86,18 +93,75 @@ export class AuthService {
       );
 
       await session.commitTransaction();
+      transactionCommitted = true;
 
-      await this.emailService.sendRegistrationEmail(
-        registerDto.email,
-        registerDto.password,
-        otp,
-      );
+      try {
+        await this.emailService.sendRegistrationEmail(
+          normalizedEmail,
+          registerDto.password,
+          otp,
+        );
+      } catch (emailError: any) {
+        console.warn(
+          `[registerVendor] Email send failed for ${normalizedEmail}:`,
+          emailError?.message || emailError,
+        );
+      }
 
       return {
         message: 'Registration successful. Please verify your email.',
       };
-    } catch (error) {
-      await session.abortTransaction();
+    } catch (error: any) {
+      if (session.inTransaction() && !transactionCommitted) {
+        await session.abortTransaction();
+      }
+
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      if (error?.code === 11000) {
+        const keyPattern = error?.keyPattern || {};
+        const keyValue = error?.keyValue || {};
+        const duplicateField = Object.keys(keyPattern)[0];
+        const duplicateValue = duplicateField ? keyValue?.[duplicateField] : undefined;
+        const message = String(error?.message || '');
+
+        if (
+          duplicateField === 'email' ||
+          duplicateField === 'vendor_email' ||
+          (message.includes('email') && message.includes('dup key'))
+        ) {
+          throw new ConflictException('Email already exists');
+        }
+        if (
+          duplicateField === 'phone' ||
+          duplicateField === 'vendor_phone' ||
+          (message.includes('phone') && message.includes('dup key'))
+        ) {
+          throw new ConflictException('Phone number already exists');
+        }
+        if (
+          duplicateField === 'gpInternalId' ||
+          message.includes('gpInternalId_1') ||
+          (String(duplicateValue || '').toLowerCase() === 'null' &&
+            message.includes('gpInternalId'))
+        ) {
+          throw new ConflictException('GP Internal ID already exists');
+        }
+        if (
+          duplicateField === 'manufacturerInitial' ||
+          message.includes('manufacturerInitial_1') ||
+          message.includes('manufacturer_initial')
+        ) {
+          throw new ConflictException('Manufacturer initials already exist');
+        }
+
+        throw new ConflictException(
+          'Duplicate value found. Please use different registration details.',
+        );
+      }
+
       throw error;
     } finally {
       session.endSession();
