@@ -44,3 +44,7 @@ export class ProcessManufacturing {
 
 export const ProcessManufacturingSchema =
   SchemaFactory.createForClass(ProcessManufacturing);
+ProcessManufacturingSchema.index(
+  { urnNo: 1 },
+  { unique: true, name: 'uniq_process_manufacturing_urn' },
+);

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -43,6 +44,7 @@ import {
   NotificationDocument,
 } from '../common/schemas/notification.schema';
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
+import * as bcrypt from 'bcryptjs';
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -64,6 +66,8 @@ const DEFAULT_EVENT_BROCHURE_LINK =
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     @InjectModel(Manufacturer.name)
     private manufacturerModel: Model<ManufacturerDocument>,
@@ -719,7 +723,7 @@ export class AdminService {
             ],
           },
           { status: { $ne: 2 } },
-          { type: 'partner' },
+          { type: 'staff' },
           { $or: [{ email: data.email }, { phone: data.mobile }] },
         ],
       })
@@ -740,12 +744,13 @@ export class AdminService {
     }
 
     const password = crypto.randomBytes(8).toString('hex');
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const teamMember: Partial<VendorUser> = {
       // Canonical + legacy alias (some modules still query vendorId)
       manufacturerId: vendorObjectId,
       vendorId: vendorObjectId,
-      type: 'partner',
+      type: 'staff',
       status: 1,
       isVerified: true,
       name: data.name,
@@ -758,7 +763,7 @@ export class AdminService {
       facebookUrl: data.facebookUrl,
       twitterUrl: data.twitterUrl,
       linkedinUrl: data.linkedinUrl,
-      password,
+      password: passwordHash,
     };
 
     const created = new this.vendorUserModel(teamMember);
@@ -784,6 +789,20 @@ export class AdminService {
     const obj: any = saved.toObject();
     delete obj.password;
     delete obj.otp;
+
+    // Best-effort credential mail for team member onboarding.
+    try {
+      await this.emailService.sendStaffCredentialsEmail(
+        String(data.email || '').trim().toLowerCase(),
+        password,
+        data.name,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Team member created but credentials email failed for ${String(data.email || '').trim().toLowerCase()}: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     return obj;
   }
 
@@ -806,7 +825,7 @@ export class AdminService {
           { vendorId: vendorObjectId },
           { vendorId },
         ],
-        type: 'partner',
+        type: 'staff',
         status: { $ne: 2 },
       })
       // Newest team members first (do not change to ascending).
@@ -849,7 +868,7 @@ export class AdminService {
         { vendorId: vendorObjectId },
         { vendorId },
       ],
-      type: 'partner',
+      type: 'staff',
       status: { $ne: 2 },
     };
 
@@ -922,7 +941,7 @@ export class AdminService {
         { vendorId: vendorObjectId },
         { vendorId },
       ],
-      type: 'partner',
+      type: 'staff',
       status: { $ne: 2 },
     };
     if (name) {
@@ -969,7 +988,7 @@ export class AdminService {
           { vendorId: vendorObjectId },
           { vendorId },
         ],
-        type: 'partner',
+        type: 'staff',
         status: { $ne: 2 },
       })
       .select(
@@ -1316,7 +1335,7 @@ export class AdminService {
           { vendorId: vendorObjectId },
           { vendorId },
         ],
-        type: 'partner',
+        type: 'staff',
         status: { $ne: 2 },
       })
       .exec();
@@ -1337,7 +1356,7 @@ export class AdminService {
           },
           { _id: { $ne: memberObjectId } },
           { status: { $ne: 2 } },
-          { type: 'partner' },
+          { type: 'staff' },
           { $or: [{ email: data.email }, { phone: data.mobile }] },
         ],
       })
@@ -1419,7 +1438,7 @@ export class AdminService {
           { vendorId: vendorObjectId },
           { vendorId },
         ],
-        type: 'partner',
+        type: 'staff',
         status: { $ne: 2 },
       })
       .exec();
@@ -1676,7 +1695,7 @@ export class AdminService {
           { vendorId: vendorObjectId },
           { vendorId },
         ],
-        type: 'partner',
+        type: 'staff',
         status: { $ne: 2 },
       })
       .exec();

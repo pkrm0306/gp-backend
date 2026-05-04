@@ -1218,6 +1218,7 @@ export class ProductRegistrationService {
         page = 1,
         limit = 10,
         search,
+        productStatus,
         status,
         sort = 'desc',
       } = listProductsDto;
@@ -1234,8 +1235,12 @@ export class ProductRegistrationService {
       };
 
       // Status filter
-      if (status !== undefined && status !== null) {
-        initialMatchConditions.productStatus = status;
+      const normalizedProductStatus = productStatus ?? status;
+      if (
+        normalizedProductStatus !== undefined &&
+        normalizedProductStatus !== null
+      ) {
+        initialMatchConditions.productStatus = normalizedProductStatus;
       }
 
       // Aggregation pipeline

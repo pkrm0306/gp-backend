@@ -21,13 +21,16 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ProductRegistrationService } from './product-registration.service';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
+import { Permissions } from '../common/decorators/permissions.decorator';
+import { PERMISSIONS } from '../common/constants/permissions.constants';
 
 @ApiTags('Admin Products')
 @Controller('api/admin/products')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class AdminProductsController {
   constructor(
@@ -35,6 +38,7 @@ export class AdminProductsController {
   ) {}
 
   @Get('details/:urn')
+  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({
     summary: 'Get product details by URN (platform admin)',
     description:
@@ -61,6 +65,7 @@ export class AdminProductsController {
   }
 
   @Patch('urn-status')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Update URN status (platform admin)',
@@ -86,6 +91,7 @@ export class AdminProductsController {
   }
 
   @Post('list')
+  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({
     summary: 'Unified product lifecycle listing',
     description:
@@ -99,6 +105,7 @@ export class AdminProductsController {
   }
 
   @Post('export')
+  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiConsumes('application/json')
   @ApiOperation({

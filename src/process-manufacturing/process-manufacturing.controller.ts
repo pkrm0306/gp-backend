@@ -158,14 +158,22 @@ export class ProcessManufacturingController {
           example: 'Energy Consumption Documents - March 2026',
         },
         energyConservationSupportingDocumentsFile: {
-          type: 'string',
-          format: 'binary',
-          description: 'Energy conservation supporting documents file',
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+          description:
+            'Energy conservation supporting documents files (multiple supported)',
         },
         energyConsumptionDocumentsFile: {
-          type: 'string',
-          format: 'binary',
-          description: 'Energy consumption documents file',
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+          description:
+            'Energy consumption documents files (multiple supported)',
         },
       },
     },
@@ -227,16 +235,16 @@ export class ProcessManufacturingController {
 
     // Extract files by fieldname from the files array
     // AnyFilesInterceptor captures all files and stores them with their fieldname
-    const energyConservationFile = files?.find(
+    const energyConservationFiles = (files || []).filter(
       (f) => f.fieldname === 'energyConservationSupportingDocumentsFile',
     );
-    const energyConsumptionFile = files?.find(
+    const energyConsumptionFiles = (files || []).filter(
       (f) => f.fieldname === 'energyConsumptionDocumentsFile',
     );
 
     // Validate file names if files are uploaded
     if (
-      energyConservationFile &&
+      energyConservationFiles.length > 0 &&
       (!dto.energyConservationSupportingDocumentsFileName ||
         dto.energyConservationSupportingDocumentsFileName.trim() === '')
     ) {
@@ -246,7 +254,7 @@ export class ProcessManufacturingController {
     }
 
     if (
-      energyConsumptionFile &&
+      energyConsumptionFiles.length > 0 &&
       (!dto.energyConsumptionDocumentsFileName ||
         dto.energyConsumptionDocumentsFileName.trim() === '')
     ) {
@@ -259,8 +267,8 @@ export class ProcessManufacturingController {
       await this.processManufacturingService.createProcessManufacturing(
         dto,
         user.vendorId,
-        energyConservationFile,
-        energyConsumptionFile,
+        energyConservationFiles,
+        energyConsumptionFiles,
       );
     return { success: true, data };
   }

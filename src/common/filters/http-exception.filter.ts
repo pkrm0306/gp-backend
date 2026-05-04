@@ -32,19 +32,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
     }
 
-    // Always log server-side details for production debugging (Render logs),
-    // while still returning sanitized client responses.
-    const method = request?.method ?? 'UNKNOWN_METHOD';
-    const path = request?.path ?? 'UNKNOWN_PATH';
-    const errorForLog =
-      exception instanceof Error
-        ? {
-            name: exception.name,
-            message: exception.message,
-            stack: exception.stack,
-          }
-        : exception;
-    console.error(`[HttpExceptionFilter] ${method} ${path} -> ${status}`, errorForLog);
+    // Server-side diagnostic logging (sanitized response is still returned to client)
+    const reqMethod = request?.method || 'UNKNOWN';
+    const reqPath = request?.path || request?.url || 'UNKNOWN_PATH';
+    console.error(
+      `[HttpExceptionFilter] ${reqMethod} ${reqPath} -> ${status}`,
+      {
+        message,
+        error,
+        exceptionName: (exception as any)?.name,
+        exceptionMessage: (exception as any)?.message,
+        stack: (exception as any)?.stack,
+        response: exception instanceof HttpException ? exception.getResponse() : null,
+      },
+    );
 
     if (
       status === HttpStatus.BAD_REQUEST &&

@@ -187,7 +187,7 @@ export class AuthService {
     };
   }
 
-  async login(loginDto: LoginDto) {
+  async login(loginDto: LoginDto, portal?: 'admin' | 'vendor') {
     const submittedEmail = String(loginDto.email ?? '').trim().toLowerCase();
     const nodeEnv = String(
       this.configService.get<string>('NODE_ENV') ||
@@ -238,11 +238,28 @@ export class AuthService {
       throw new UnauthorizedException('Account is inactive');
     }
 
+    const resolvedUserType = user ? user.type : 'vendor';
+    const allowedTypesByPortal: Record<'admin' | 'vendor', string[]> = {
+      admin: ['admin', 'staff'],
+      vendor: ['vendor', 'partner'],
+    };
+    if (portal) {
+      const allowedTypes = allowedTypesByPortal[portal];
+      if (!allowedTypes.includes(resolvedUserType)) {
+        const message =
+          portal === 'admin'
+            ? 'Admin portal allows only admin or staff users'
+            : 'Vendor portal allows only vendor or partner users';
+        throw new UnauthorizedException(message);
+      }
+    }
+
     const payload = user
       ? {
           userId: user._id.toString(),
           manufacturerId:
             user.manufacturerId?.toString() || user.vendorId.toString(),
+          type: user.type,
           role: user.type,
           name: user.name,
           email: user.email,
@@ -250,6 +267,7 @@ export class AuthService {
       : {
           userId: fallbackManufacturer!._id.toString(),
           manufacturerId: fallbackManufacturer!._id.toString(),
+          type: 'vendor',
           role: 'vendor',
           name:
             fallbackManufacturer!.vendor_name ||
@@ -326,14 +344,14 @@ export class AuthService {
     if (!payload?.userId || !payload?.role) {
       throw new UnauthorizedException('Invalid refresh token payload');
     }
-    const isPlatformAdmin =
-      payload.role === 'admin' || payload.role === 'super_admin';
+    const isPlatformAdmin = payload.role === 'admin';
     if (!isPlatformAdmin && !(payload.manufacturerId || payload.vendorId)) {
       throw new UnauthorizedException('Invalid refresh token payload');
     }
 
     const newPayload: Record<string, unknown> = {
       userId: payload.userId,
+      type: payload.type || payload.role,
       role: payload.role,
     };
     const mid = payload.manufacturerId || payload.vendorId;

@@ -34,10 +34,13 @@ import {
   Notification,
   NotificationSchema,
 } from '../common/schemas/notification.schema';
+import { RbacModule } from '../rbac/rbac.module';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
 
 @Module({
   imports: [
     ManufacturersModule,
+    RbacModule,
     MongooseModule.forFeature([
       { name: Manufacturer.name, schema: ManufacturerSchema },
       { name: VendorUser.name, schema: VendorUserSchema },
@@ -51,7 +54,7 @@ import {
     ]),
   ],
   controllers: [AdminController],
-  providers: [AdminService, EmailService],
+  providers: [AdminService, EmailService, PermissionsGuard],
   exports: [AdminService],
 })
 export class AdminModule {}

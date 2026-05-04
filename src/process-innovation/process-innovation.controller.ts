@@ -4,10 +4,10 @@ import {
   Body,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -53,7 +53,7 @@ export class ProcessInnovationController {
 
   @Post()
   @UseInterceptors(
-    FileInterceptor('innovationImplementationDocumentsFile', {
+    AnyFilesInterceptor({
       storage,
       fileFilter: (req, file, cb) => {
         if (!file) {
@@ -136,9 +136,13 @@ export class ProcessInnovationController {
           example: 'Innovation Implementation Documents - March 2026',
         },
         innovationImplementationDocumentsFile: {
-          type: 'string',
-          format: 'binary',
-          description: 'Innovation implementation documents file',
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+          description:
+            'Innovation implementation documents files (multiple supported)',
         },
       },
     },
@@ -170,7 +174,7 @@ export class ProcessInnovationController {
   async create(
     @CurrentUser() user: any,
     @Body() body: any,
-    @UploadedFile() innovationImplementationDocumentsFile?: Express.Multer.File,
+    @UploadedFiles() files?: Express.Multer.File[],
   ) {
     if (!user?.vendorId)
       throw new BadRequestException('Vendor ID not found in token');
@@ -185,9 +189,13 @@ export class ProcessInnovationController {
         body.innovationImplementationDocumentsFileName,
     };
 
+    const innovationImplementationDocumentsFiles = (files || []).filter(
+      (f) => f.fieldname === 'innovationImplementationDocumentsFile',
+    );
+
     // Validate file name if file is uploaded
     if (
-      innovationImplementationDocumentsFile &&
+      innovationImplementationDocumentsFiles.length > 0 &&
       (!dto.innovationImplementationDocumentsFileName ||
         dto.innovationImplementationDocumentsFileName.trim() === '')
     ) {
@@ -199,7 +207,7 @@ export class ProcessInnovationController {
     const data = await this.processInnovationService.createProcessInnovation(
       dto,
       user.vendorId,
-      innovationImplementationDocumentsFile,
+      innovationImplementationDocumentsFiles,
     );
     return { success: true, data };
   }

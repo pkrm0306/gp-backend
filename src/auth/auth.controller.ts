@@ -1,4 +1,11 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  Req,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
@@ -45,12 +52,36 @@ export class AuthController {
         value: {
           email: 'user@example.com',
           password: 'YourPassword123',
+          portal: 'vendor',
         },
       },
     },
   })
-  async login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto);
+  async login(@Body() loginDto: LoginDto, @Req() req: any) {
+    const portal = this.resolvePortal(req, loginDto.portal);
+    return this.authService.login(loginDto, portal);
+  }
+
+  private resolvePortal(
+    req: any,
+    dtoPortal?: 'admin' | 'vendor',
+  ): 'admin' | 'vendor' | undefined {
+    if (dtoPortal) return dtoPortal;
+
+    const host = String(req?.headers?.host || '')
+      .trim()
+      .toLowerCase();
+    const origin = String(req?.headers?.origin || '')
+      .trim()
+      .toLowerCase();
+    const referer = String(req?.headers?.referer || '')
+      .trim()
+      .toLowerCase();
+    const combined = `${host} ${origin} ${referer}`;
+
+    if (combined.includes('localhost:3004')) return 'admin';
+    if (combined.includes('localhost:3001')) return 'vendor';
+    return undefined;
   }
 
   @Post('forgot-password')

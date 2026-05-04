@@ -9,8 +9,8 @@ import {
 
 export class RegisterVendorDto {
   @ApiPropertyOptional()
-  @IsOptional()
   @IsString()
+  @IsOptional()
   companyName?: string;
 
   @ApiProperty()
@@ -34,7 +34,7 @@ export class RegisterVendorDto {
   confirmPassword: string;
 
   @ApiPropertyOptional()
-  @IsOptional()
   @IsString()
+  @IsOptional()
   captchaToken?: string;
 }

@@ -36,6 +36,7 @@ import {
 import { AdminService } from './admin.service';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import { ChangePasswordDto } from '../manufacturers/dto/change-password.dto';
@@ -62,6 +63,8 @@ import { extname, join } from 'path';
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
 import type { Request } from 'express';
+import { Permissions } from '../common/decorators/permissions.decorator';
+import { PERMISSIONS } from '../common/constants/permissions.constants';
 
 const storage = diskStorage({
   destination: join(process.cwd(), 'uploads', 'manufacturers'),
@@ -156,7 +159,7 @@ function TeamMemberEditDocs() {
 
 @ApiTags('Admin')
 @Controller('admin')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 @ApiBearerAuth()
 export class AdminController {
   constructor(
@@ -165,6 +168,7 @@ export class AdminController {
   ) {}
 
   @Patch('profile/edit')
+  @Permissions(PERMISSIONS.PROFILE_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Edit profile (unique GST + phone)',
@@ -243,6 +247,7 @@ export class AdminController {
   }
 
   @Post('banner')
+  @Permissions(PERMISSIONS.BANNERS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileInterceptor('image', {
@@ -342,6 +347,7 @@ export class AdminController {
   }
 
   @Patch(['banner/:id', 'banner/:id/edit'])
+  @Permissions(PERMISSIONS.BANNERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileInterceptor('image', {
@@ -444,6 +450,7 @@ export class AdminController {
   }
 
   @Post('events/create')
+  @Permissions(PERMISSIONS.EVENTS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileInterceptor('image', {
@@ -557,6 +564,7 @@ export class AdminController {
   }
 
   @Patch('events/:id/edit')
+  @Permissions(PERMISSIONS.EVENTS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -799,6 +807,7 @@ export class AdminController {
   }
 
   @Delete('events/:id')
+  @Permissions(PERMISSIONS.EVENTS_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete event',
@@ -830,6 +839,7 @@ export class AdminController {
   }
 
   @Post('contact/:id/reply')
+  @Permissions(PERMISSIONS.INQUIRIES_REPLY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Reply to contact message (store history)',
@@ -847,6 +857,7 @@ export class AdminController {
   }
 
   @Get('contact/:id/replies')
+  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get contact reply history',
@@ -862,6 +873,7 @@ export class AdminController {
   }
 
   @Get('notifications')
+  @Permissions(PERMISSIONS.PROFILE_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List notifications',
@@ -999,6 +1011,7 @@ export class AdminController {
   }
 
   @Post('team-member/create')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(teamMemberImageInterceptor)
   @ApiOperation({
@@ -1093,6 +1106,7 @@ export class AdminController {
 
   @TeamMemberEditDocs()
   @Post('team-member/edit')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_UPDATE)
   async editTeamMemberPost(
     @CurrentUser() user: { vendorId: string },
     @Body() body: any,
@@ -1114,6 +1128,7 @@ export class AdminController {
 
   @TeamMemberEditDocs()
   @Patch('team-member/edit')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_UPDATE)
   async editTeamMemberPatch(
     @CurrentUser() user: { vendorId: string },
     @Body() body: any,
@@ -1190,6 +1205,7 @@ export class AdminController {
   }
 
   @Post('team-member/delete')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete team member (soft delete)',
@@ -1207,6 +1223,7 @@ export class AdminController {
   }
 
   @Delete('team-member/delete')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete team member (soft delete)',
@@ -1347,6 +1364,7 @@ export class AdminController {
   }
 
   @Get('team-member/list')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List team members',
@@ -1389,6 +1407,7 @@ export class AdminController {
   }
 
   @Get('team-members/list')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List team members (filters + pagination)',
@@ -1435,6 +1454,7 @@ export class AdminController {
   }
 
   @Get('contact/list')
+  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List contact messages',
@@ -1475,6 +1495,7 @@ export class AdminController {
   }
 
   @Get('contact/:id/view')
+  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'View contact message',
@@ -1494,6 +1515,7 @@ export class AdminController {
   }
 
   @Post('contact/delete')
+  @Permissions(PERMISSIONS.INQUIRIES_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete contact message',
@@ -1513,6 +1535,7 @@ export class AdminController {
   }
 
   @Delete('contact/delete')
+  @Permissions(PERMISSIONS.INQUIRIES_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete contact message',
@@ -1689,6 +1712,7 @@ export class AdminController {
   }
 
   @Patch('change-password')
+  @Permissions(PERMISSIONS.PROFILE_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Change password',

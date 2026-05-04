@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types } from 'mongoose';
@@ -20,7 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 @Injectable()
-export class ProcessLifeCycleApproachService {
+export class ProcessLifeCycleApproachService implements OnModuleInit {
   constructor(
     @InjectModel(ProcessLifeCycleApproach.name)
     private processLifeCycleApproachModel: Model<ProcessLifeCycleApproachDocument>,
@@ -29,6 +30,17 @@ export class ProcessLifeCycleApproachService {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
   ) {}
+
+  async onModuleInit() {
+    try {
+      await this.processLifeCycleApproachModel.syncIndexes();
+    } catch (error) {
+      console.error(
+        '[process-life-cycle-approach] syncIndexes failed (check duplicates):',
+        error,
+      );
+    }
+  }
 
   /**
    * Safely convert string to ObjectId with validation
@@ -104,60 +116,100 @@ export class ProcessLifeCycleApproachService {
   async createProcessLifeCycleApproach(
     createProcessLifeCycleApproachDto: CreateProcessLifeCycleApproachDto,
     vendorId: string,
-    lifeCycleAssesmentReportsFile?: Express.Multer.File,
-    lifeCycleImplementationDocumentsFile?: Express.Multer.File,
+    lifeCycleAssesmentReportsFiles?: Express.Multer.File[],
+    lifeCycleImplementationDocumentsFiles?: Express.Multer.File[],
   ): Promise<ProcessLifeCycleApproachDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
-    // Declare file paths outside try block for cleanup in catch
-    let lcaReportsFullPath: string | undefined;
-    let lcaImplementationFullPath: string | undefined;
+    let createdFileFullPaths: string[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
-      // Get next process life cycle approach ID
-      const processLifeCycleApproachId =
-        await this.sequenceHelper.getProcessLifeCycleApproachId();
-
       // Get current date
       const now = new Date();
+      const existingLifeCycle = await this.processLifeCycleApproachModel
+        .findOne({ urnNo: createProcessLifeCycleApproachDto.urnNo })
+        .session(session);
+      const processLifeCycleApproachId =
+        existingLifeCycle?.processLifeCycleApproachId ??
+        (await this.sequenceHelper.getProcessLifeCycleApproachId());
+      const lcaReportsFiles = Array.isArray(lifeCycleAssesmentReportsFiles)
+        ? lifeCycleAssesmentReportsFiles
+        : [];
+      const lcaImplementationFiles = Array.isArray(
+        lifeCycleImplementationDocumentsFiles,
+      )
+        ? lifeCycleImplementationDocumentsFiles
+        : [];
 
       // Handle file uploads and set flags
-      let lifeCycleAssesmentReports = 0;
-      let lcaReportsFilePath: string | undefined;
+      let lifeCycleAssesmentReports =
+        existingLifeCycle?.lifeCycleAssesmentReports ?? 0;
+      const lcaReportsFilePaths: string[] = [];
 
-      if (lifeCycleAssesmentReportsFile) {
-        lcaReportsFilePath = this.saveFileToUrnFolder(
-          lifeCycleAssesmentReportsFile,
-          createProcessLifeCycleApproachDto.urnNo,
-          'lca_reports',
-        );
-        lcaReportsFullPath = path.join('uploads', lcaReportsFilePath);
+      if (lcaReportsFiles.length > 0) {
+        for (const lifeCycleAssesmentReportsFile of lcaReportsFiles) {
+          const lcaReportsFilePath = this.saveFileToUrnFolder(
+            lifeCycleAssesmentReportsFile,
+            createProcessLifeCycleApproachDto.urnNo,
+            'lca_reports',
+          );
+          lcaReportsFilePaths.push(lcaReportsFilePath);
+          createdFileFullPaths.push(path.join('uploads', lcaReportsFilePath));
+        }
         lifeCycleAssesmentReports = 1;
       }
 
-      let lifeCycleImplementationDocuments = 0;
-      let lcaImplementationFilePath: string | undefined;
+      let lifeCycleImplementationDocuments =
+        existingLifeCycle?.lifeCycleImplementationDocuments ?? 0;
+      const lcaImplementationFilePaths: string[] = [];
 
-      if (lifeCycleImplementationDocumentsFile) {
-        lcaImplementationFilePath = this.saveFileToUrnFolder(
-          lifeCycleImplementationDocumentsFile,
-          createProcessLifeCycleApproachDto.urnNo,
-          'lca_implementation',
-        );
-        lcaImplementationFullPath = path.join(
-          'uploads',
-          lcaImplementationFilePath,
-        );
+      if (lcaImplementationFiles.length > 0) {
+        for (const lifeCycleImplementationDocumentsFile of lcaImplementationFiles) {
+          const lcaImplementationFilePath = this.saveFileToUrnFolder(
+            lifeCycleImplementationDocumentsFile,
+            createProcessLifeCycleApproachDto.urnNo,
+            'lca_implementation',
+          );
+          lcaImplementationFilePaths.push(lcaImplementationFilePath);
+          createdFileFullPaths.push(path.join('uploads', lcaImplementationFilePath));
+        }
         lifeCycleImplementationDocuments = 1;
+      }
+
+      if (lcaReportsFiles.length > 0 || lcaImplementationFiles.length > 0) {
+        const existingDocs = await this.allProductDocumentModel
+          .find({
+            urnNo: createProcessLifeCycleApproachDto.urnNo,
+            documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
+            isDeleted: { $ne: true },
+          })
+          .session(session);
+        oldFileLinksToDeleteAfterCommit = existingDocs
+          .map((d) => d.documentLink)
+          .filter(Boolean);
+        if (existingDocs.length) {
+          await this.allProductDocumentModel.updateMany(
+            { _id: { $in: existingDocs.map((d) => d._id) } },
+            {
+              $set: {
+                isDeleted: true,
+                deletedAt: now,
+                deletedBy: vendorObjectId,
+                updatedDate: now,
+              },
+            },
+            { session },
+          );
+        }
       }
 
       // Create process life cycle approach data
       const processLifeCycleApproachData = {
-        processLifeCycleApproachId,
         vendorId: vendorObjectId,
         urnNo: createProcessLifeCycleApproachDto.urnNo,
         lifeCycleAssesmentReports,
@@ -167,67 +219,73 @@ export class ProcessLifeCycleApproachService {
         lifeCycleImplementationDocuments,
         processLifeCycleApproachStatus:
           createProcessLifeCycleApproachDto.processLifeCycleApproachStatus || 0,
-        createdDate: now,
         updatedDate: now,
       };
-
-      const processLifeCycleApproach = new this.processLifeCycleApproachModel(
-        processLifeCycleApproachData,
-      );
-      const savedProcessLifeCycleApproach = await processLifeCycleApproach.save(
-        { session },
-      );
+      const savedProcessLifeCycleApproach =
+        await this.processLifeCycleApproachModel
+          .findOneAndUpdate(
+            { urnNo: createProcessLifeCycleApproachDto.urnNo },
+            {
+              $set: processLifeCycleApproachData,
+              $setOnInsert: { processLifeCycleApproachId, createdDate: now },
+            },
+            { upsert: true, new: true, session },
+          )
+          .exec();
 
       // Insert uploaded documents into all_product_documents (master table)
-      if (lcaReportsFilePath && lifeCycleAssesmentReportsFile) {
-        const productDocumentId =
-          await this.sequenceHelper.getProductDocumentId();
-        const documentLink = `uploads/${lcaReportsFilePath}`;
-
-        const documentData = {
+      const docsToInsert = [];
+      for (let i = 0; i < lcaReportsFilePaths.length; i++) {
+        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        docsToInsert.push({
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo: createProcessLifeCycleApproachDto.urnNo,
           eoiNo: '',
           documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
           documentFormSubsection: 'life_cycle_assesment_reports',
-          formPrimaryId: processLifeCycleApproachId,
-          documentName: path.basename(lcaReportsFilePath),
-          documentOriginalName: lifeCycleAssesmentReportsFile.originalname,
-          documentLink,
+          formPrimaryId: savedProcessLifeCycleApproach.processLifeCycleApproachId,
+          documentName: path.basename(lcaReportsFilePaths[i]),
+          documentOriginalName: lcaReportsFiles[i].originalname,
+          documentLink: `uploads/${lcaReportsFilePaths[i]}`,
           createdDate: now,
           updatedDate: now,
-        };
-
-        await this.allProductDocumentModel.create([documentData], { session });
+        });
       }
-
-      if (lcaImplementationFilePath && lifeCycleImplementationDocumentsFile) {
-        const productDocumentId =
-          await this.sequenceHelper.getProductDocumentId();
-        const documentLink = `uploads/${lcaImplementationFilePath}`;
-
-        const documentData = {
+      for (let i = 0; i < lcaImplementationFilePaths.length; i++) {
+        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        docsToInsert.push({
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo: createProcessLifeCycleApproachDto.urnNo,
           eoiNo: '',
           documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
           documentFormSubsection: 'life_cycle_implementation_documents',
-          formPrimaryId: processLifeCycleApproachId,
-          documentName: path.basename(lcaImplementationFilePath),
-          documentOriginalName:
-            lifeCycleImplementationDocumentsFile.originalname,
-          documentLink,
+          formPrimaryId: savedProcessLifeCycleApproach.processLifeCycleApproachId,
+          documentName: path.basename(lcaImplementationFilePaths[i]),
+          documentOriginalName: lcaImplementationFiles[i].originalname,
+          documentLink: `uploads/${lcaImplementationFilePaths[i]}`,
           createdDate: now,
           updatedDate: now,
-        };
-
-        await this.allProductDocumentModel.create([documentData], { session });
+        });
+      }
+      if (docsToInsert.length) {
+        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
       }
 
       await session.commitTransaction();
       session.endSession();
+
+      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
+        const normalizedPath = String(fileLink).replace(/\\/g, '/');
+        if (normalizedPath && fs.existsSync(normalizedPath)) {
+          try {
+            fs.unlinkSync(normalizedPath);
+          } catch {
+            // Ignore post-commit cleanup issues
+          }
+        }
+      }
 
       return savedProcessLifeCycleApproach;
     } catch (error: any) {
@@ -236,14 +294,10 @@ export class ProcessLifeCycleApproachService {
 
       // Clean up uploaded files if transaction fails (files were moved to URN folder)
       try {
-        if (lcaReportsFullPath && fs.existsSync(lcaReportsFullPath)) {
-          fs.unlinkSync(lcaReportsFullPath);
-        }
-        if (
-          lcaImplementationFullPath &&
-          fs.existsSync(lcaImplementationFullPath)
-        ) {
-          fs.unlinkSync(lcaImplementationFullPath);
+        for (const fullPath of createdFileFullPaths) {
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+          }
         }
       } catch (cleanupError: any) {
         console.error(

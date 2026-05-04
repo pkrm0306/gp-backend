@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types } from 'mongoose';
@@ -20,7 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 @Injectable()
-export class ProcessWasteManagementService {
+export class ProcessWasteManagementService implements OnModuleInit {
   constructor(
     @InjectModel(ProcessWasteManagement.name)
     private processWasteManagementModel: Model<ProcessWasteManagementDocument>,
@@ -29,6 +30,17 @@ export class ProcessWasteManagementService {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
   ) {}
+
+  async onModuleInit() {
+    try {
+      await this.processWasteManagementModel.syncIndexes();
+    } catch (error) {
+      console.error(
+        '[process-waste-management] syncIndexes failed (check duplicates):',
+        error,
+      );
+    }
+  }
 
   /**
    * Safely convert string to ObjectId with validation
@@ -104,45 +116,79 @@ export class ProcessWasteManagementService {
   async createProcessWasteManagement(
     createProcessWasteManagementDto: CreateProcessWasteManagementDto,
     vendorId: string,
-    wmSupportingDocumentsFile?: Express.Multer.File,
+    wmSupportingDocumentsFiles?: Express.Multer.File[],
   ): Promise<ProcessWasteManagementDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
-    // Declare file path outside try block for cleanup in catch
-    let wmSupportingDocumentsFullPath: string | undefined;
+    let createdFileFullPaths: string[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
-      // Get next process waste management ID
-      const processWasteManagementId =
-        await this.sequenceHelper.getProcessWasteManagementId();
-
       // Get current date
       const now = new Date();
+      const existingWasteManagement = await this.processWasteManagementModel
+        .findOne({ urnNo: createProcessWasteManagementDto.urnNo })
+        .session(session);
+      const processWasteManagementId =
+        existingWasteManagement?.processWasteManagementId ??
+        (await this.sequenceHelper.getProcessWasteManagementId());
+      const uploadedWmFiles = Array.isArray(wmSupportingDocumentsFiles)
+        ? wmSupportingDocumentsFiles
+        : [];
 
       // Handle file upload and set flag
-      let wmSupportingDocuments = 0;
-      let wmSupportingDocumentsFilePath: string | undefined;
+      let wmSupportingDocuments =
+        existingWasteManagement?.wmSupportingDocuments ?? 0;
+      const wmSupportingDocumentsFilePaths: string[] = [];
 
-      if (wmSupportingDocumentsFile) {
-        wmSupportingDocumentsFilePath = this.saveFileToUrnFolder(
-          wmSupportingDocumentsFile,
-          createProcessWasteManagementDto.urnNo,
-          'waste_management_supporting',
-        );
-        wmSupportingDocumentsFullPath = path.join(
-          'uploads',
-          wmSupportingDocumentsFilePath,
-        );
+      if (uploadedWmFiles.length > 0) {
+        for (const wmSupportingDocumentsFile of uploadedWmFiles) {
+          const wmSupportingDocumentsFilePath = this.saveFileToUrnFolder(
+            wmSupportingDocumentsFile,
+            createProcessWasteManagementDto.urnNo,
+            'waste_management_supporting',
+          );
+          wmSupportingDocumentsFilePaths.push(wmSupportingDocumentsFilePath);
+          createdFileFullPaths.push(
+            path.join('uploads', wmSupportingDocumentsFilePath),
+          );
+        }
         wmSupportingDocuments = 1;
+      }
+
+      if (uploadedWmFiles.length > 0) {
+        const existingDocs = await this.allProductDocumentModel
+          .find({
+            urnNo: createProcessWasteManagementDto.urnNo,
+            documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+            isDeleted: { $ne: true },
+          })
+          .session(session);
+        oldFileLinksToDeleteAfterCommit = existingDocs
+          .map((d) => d.documentLink)
+          .filter(Boolean);
+        if (existingDocs.length) {
+          await this.allProductDocumentModel.updateMany(
+            { _id: { $in: existingDocs.map((d) => d._id) } },
+            {
+              $set: {
+                isDeleted: true,
+                deletedAt: now,
+                deletedBy: vendorObjectId,
+                updatedDate: now,
+              },
+            },
+            { session },
+          );
+        }
       }
 
       // Create process waste management data
       const processWasteManagementData = {
-        processWasteManagementId,
         vendorId: vendorObjectId,
         urnNo: createProcessWasteManagementDto.urnNo,
         wmImplementationDetails:
@@ -150,43 +196,56 @@ export class ProcessWasteManagementService {
         wmSupportingDocuments,
         processWasteManagementStatus:
           createProcessWasteManagementDto.processWasteManagementStatus || 0,
-        createdDate: now,
         updatedDate: now,
       };
-
-      const processWasteManagement = new this.processWasteManagementModel(
-        processWasteManagementData,
-      );
-      const savedProcessWasteManagement = await processWasteManagement.save({
-        session,
-      });
+      const savedProcessWasteManagement = await this.processWasteManagementModel
+        .findOneAndUpdate(
+          { urnNo: createProcessWasteManagementDto.urnNo },
+          {
+            $set: processWasteManagementData,
+            $setOnInsert: { processWasteManagementId, createdDate: now },
+          },
+          { upsert: true, new: true, session },
+        )
+        .exec();
 
       // Insert uploaded document into all_product_documents (master table)
-      if (wmSupportingDocumentsFilePath && wmSupportingDocumentsFile) {
-        const productDocumentId =
-          await this.sequenceHelper.getProductDocumentId();
-        const documentLink = `uploads/${wmSupportingDocumentsFilePath}`;
-
-        const documentData = {
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo: createProcessWasteManagementDto.urnNo,
-          eoiNo: '',
-          documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
-          documentFormSubsection: 'wm_supporting_documents',
-          formPrimaryId: processWasteManagementId,
-          documentName: path.basename(wmSupportingDocumentsFilePath),
-          documentOriginalName: wmSupportingDocumentsFile.originalname,
-          documentLink,
-          createdDate: now,
-          updatedDate: now,
-        };
-
-        await this.allProductDocumentModel.create([documentData], { session });
+      if (wmSupportingDocumentsFilePaths.length > 0) {
+        const docsToInsert = [];
+        for (let i = 0; i < wmSupportingDocumentsFilePaths.length; i++) {
+          const productDocumentId =
+            await this.sequenceHelper.getProductDocumentId();
+          docsToInsert.push({
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo: createProcessWasteManagementDto.urnNo,
+            eoiNo: '',
+            documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+            documentFormSubsection: 'wm_supporting_documents',
+            formPrimaryId: savedProcessWasteManagement.processWasteManagementId,
+            documentName: path.basename(wmSupportingDocumentsFilePaths[i]),
+            documentOriginalName: uploadedWmFiles[i].originalname,
+            documentLink: `uploads/${wmSupportingDocumentsFilePaths[i]}`,
+            createdDate: now,
+            updatedDate: now,
+          });
+        }
+        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
       }
 
       await session.commitTransaction();
       session.endSession();
+
+      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
+        const normalizedPath = String(fileLink).replace(/\\/g, '/');
+        if (normalizedPath && fs.existsSync(normalizedPath)) {
+          try {
+            fs.unlinkSync(normalizedPath);
+          } catch {
+            // Ignore post-commit cleanup issues
+          }
+        }
+      }
 
       return savedProcessWasteManagement;
     } catch (error: any) {
@@ -195,11 +254,10 @@ export class ProcessWasteManagementService {
 
       // Clean up uploaded file if transaction fails (file was moved to URN folder)
       try {
-        if (
-          wmSupportingDocumentsFullPath &&
-          fs.existsSync(wmSupportingDocumentsFullPath)
-        ) {
-          fs.unlinkSync(wmSupportingDocumentsFullPath);
+        for (const fullPath of createdFileFullPaths) {
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+          }
         }
       } catch (cleanupError: any) {
         console.error(

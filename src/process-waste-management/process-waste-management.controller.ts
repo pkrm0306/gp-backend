@@ -4,10 +4,10 @@ import {
   Body,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -53,7 +53,7 @@ export class ProcessWasteManagementController {
 
   @Post()
   @UseInterceptors(
-    FileInterceptor('wmSupportingDocumentsFile', {
+    AnyFilesInterceptor({
       storage,
       fileFilter: (req, file, cb) => {
         if (!file) {
@@ -137,9 +137,12 @@ export class ProcessWasteManagementController {
           example: 'Waste Management Supporting Documents - March 2026',
         },
         wmSupportingDocumentsFile: {
-          type: 'string',
-          format: 'binary',
-          description: 'Waste management supporting documents file',
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+          description: 'Waste management supporting documents files (multiple)',
         },
       },
     },
@@ -171,7 +174,7 @@ export class ProcessWasteManagementController {
   async create(
     @CurrentUser() user: any,
     @Body() body: any,
-    @UploadedFile() wmSupportingDocumentsFile?: Express.Multer.File,
+    @UploadedFiles() files?: Express.Multer.File[],
   ) {
     if (!user?.vendorId)
       throw new BadRequestException('Vendor ID not found in token');
@@ -185,9 +188,13 @@ export class ProcessWasteManagementController {
       wmSupportingDocumentsFileName: body.wmSupportingDocumentsFileName,
     };
 
+    const wmSupportingDocumentsFiles = (files || []).filter(
+      (f) => f.fieldname === 'wmSupportingDocumentsFile',
+    );
+
     // Validate file name if file is uploaded
     if (
-      wmSupportingDocumentsFile &&
+      wmSupportingDocumentsFiles.length > 0 &&
       (!dto.wmSupportingDocumentsFileName ||
         dto.wmSupportingDocumentsFileName.trim() === '')
     ) {
@@ -200,7 +207,7 @@ export class ProcessWasteManagementController {
       await this.processWasteManagementService.createProcessWasteManagement(
         dto,
         user.vendorId,
-        wmSupportingDocumentsFile,
+        wmSupportingDocumentsFiles,
       );
     return { success: true, data };
   }

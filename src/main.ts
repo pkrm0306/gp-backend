@@ -42,23 +42,24 @@ const ALLOWED_CORS_ORIGINS = [
   'https://cursor-greenpro-admin-mern-cyan.vercel.app',
   'https://cursor-greenpro-website-mern-seven.vercel.app',
   'https://cursor-greenpro-admin-mern-dun.vercel.app',
-  'https://greenpro-vendor.vercel.app',
 ];
 
 function buildCorsOrigins(): string[] {
-  const fromEnv =
-    process.env.CORS_ORIGINS?.split(',')
-      .map((o) => o.trim())
-      .filter(Boolean) ?? [];
   const deploymentOrigins = [
     process.env.RENDER_EXTERNAL_URL,
     process.env.APP_URL,
     process.env.FRONTEND_URL,
     process.env.ADMIN_URL,
   ]
-    .filter(Boolean)
-    .map((o) => String(o).trim());
-  return [...new Set([...ALLOWED_CORS_ORIGINS, ...fromEnv, ...deploymentOrigins])];
+    .map((o) => String(o || '').trim())
+    .filter(Boolean);
+  const fromEnv =
+    process.env.CORS_ORIGINS?.split(',')
+      .map((o) => o.trim())
+      .filter(Boolean) ?? [];
+  return [
+    ...new Set([...ALLOWED_CORS_ORIGINS, ...deploymentOrigins, ...fromEnv]),
+  ];
 }
 
 async function bootstrap() {
@@ -106,8 +107,8 @@ async function bootstrap() {
       // Allow known deployed/admin origins
       if (corsOrigins.includes(origin)) return callback(null, true);
 
-      // Allow Render-hosted callers (Swagger on backend domain, preview URLs, etc.)
-      if (/^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(origin)) {
+      // Allow Render-hosted callers (Swagger previews, staging frontends)
+      if (/^https:\/\/([a-z0-9-]+\.)*onrender\.com$/i.test(origin)) {
         return callback(null, true);
       }
 

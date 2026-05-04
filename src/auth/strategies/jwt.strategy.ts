@@ -30,11 +30,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    if (!payload.userId || !payload.role) {
+    const role = payload.role || payload.type;
+    if (!payload.userId || !role) {
       throw new UnauthorizedException('Invalid token payload');
     }
-    const isPlatformAdmin =
-      payload.role === 'admin' || payload.role === 'super_admin';
+    const isPlatformAdmin = role === 'admin';
     const manufacturerId = payload.manufacturerId || payload.vendorId;
     if (!isPlatformAdmin && !manufacturerId) {
       throw new UnauthorizedException('Invalid token payload');
@@ -43,7 +43,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       userId: payload.userId,
       manufacturerId: manufacturerId ?? undefined,
       vendorId: manufacturerId ?? undefined,
-      role: payload.role,
+      role,
+      type: role,
       name: payload.name,
       email: payload.email,
     };

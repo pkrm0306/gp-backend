@@ -23,6 +23,12 @@ export class ProductPerformance {
   @Prop({ required: false, default: '' })
   testReportFileName?: string;
 
+  @Prop({ required: true, default: '' })
+  normalizedProductName: string;
+
+  @Prop({ required: true, default: '' })
+  normalizedTestReportFileName: string;
+
   @Prop({ required: true, type: Number, default: 0 })
   testReportFiles: number; // 0=No File Available, 1=File Available
 
@@ -41,3 +47,7 @@ export class ProductPerformance {
 
 export const ProductPerformanceSchema =
   SchemaFactory.createForClass(ProductPerformance);
+ProductPerformanceSchema.index(
+  { urnNo: 1, normalizedProductName: 1, normalizedTestReportFileName: 1 },
+  { unique: true, name: 'uniq_product_performance_urn_normalized_pair' },
+);

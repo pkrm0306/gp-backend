@@ -32,3 +32,7 @@ export class ProcessInnovation {
 
 export const ProcessInnovationSchema =
   SchemaFactory.createForClass(ProcessInnovation);
+ProcessInnovationSchema.index(
+  { urnNo: 1 },
+  { unique: true, name: 'uniq_process_innovation_urn' },
+);
