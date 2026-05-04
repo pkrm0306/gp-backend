@@ -42,6 +42,9 @@ const ALLOWED_CORS_ORIGINS = [
   'https://cursor-greenpro-admin-mern-cyan.vercel.app',
   'https://cursor-greenpro-website-mern-seven.vercel.app',
   'https://cursor-greenpro-admin-mern-dun.vercel.app',
+  'https://greenpro-portals.vercel.app',
+  'https://admin-nine-beta-48.vercel.app',
+  'https://vendor-five-zeta.vercel.app',
 ];
 
 function buildCorsOrigins(): string[] {
