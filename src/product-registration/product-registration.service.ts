@@ -3,7 +3,9 @@ import {
   BadRequestException,
   NotFoundException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, ClientSession, Connection, Types } from 'mongoose';
 import { createHash, randomUUID } from 'crypto';
@@ -31,6 +33,7 @@ import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RedisService } from '../common/redis/redis.service';
 
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
@@ -52,6 +55,7 @@ type AdminExportJob = {
 
 @Injectable()
 export class ProductRegistrationService {
+  private readonly logger = new Logger(ProductRegistrationService.name);
   private readonly exportJobs = new Map<string, AdminExportJob>();
   private readonly exportDir = join(process.cwd(), 'uploads', 'exports');
   private readonly exportTtlMs = 24 * 60 * 60 * 1000;
@@ -68,7 +72,75 @@ export class ProductRegistrationService {
     private countriesService: CountriesService,
     private statesService: StatesService,
     private activityLogService: ActivityLogService,
+    private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private getProductListCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('PRODUCT_LIST_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '60',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 60;
+  }
+
+  private buildVendorProductListCacheKey(
+    listProductsDto: ListProductsDto,
+    manufacturerId: string,
+  ): string {
+    const normalized = {
+      manufacturerId,
+      page: listProductsDto.page ?? 1,
+      limit: listProductsDto.limit ?? 10,
+      search: String(listProductsDto.search || '').trim().toLowerCase(),
+      productStatus: listProductsDto.productStatus ?? listProductsDto.status ?? null,
+      sort: listProductsDto.sort === 'asc' ? 'asc' : 'desc',
+    };
+    return this.redisService.buildKey(
+      'products',
+      'list',
+      'vendor',
+      JSON.stringify(normalized),
+    );
+  }
+
+  private buildAdminProductListCacheKey(dto: AdminListProductsDto): string {
+    const normalized = {
+      page: dto.page ?? 1,
+      limit: dto.limit ?? 10,
+      order: (dto.order ?? dto.sortOrder) === 'asc' ? 'asc' : 'desc',
+      sortBy: dto.sortBy ?? 'createdDate',
+      search: String(dto.search || '').trim().toLowerCase(),
+      product_type: dto.product_type ?? null,
+      categoryId: dto.categoryId ?? null,
+      manufacturerId: dto.manufacturerId ?? null,
+      stateId: dto.stateId ?? null,
+      city: String(dto.city || '').trim().toLowerCase(),
+      from: dto.from ?? dto.fromDate ?? null,
+      to: dto.to ?? dto.toDate ?? null,
+      validTillYear: dto.validTillYear ?? null,
+      status: Array.isArray(dto.status) ? [...dto.status].sort((a, b) => a - b) : [],
+    };
+    return this.redisService.buildKey(
+      'products',
+      'list',
+      'admin',
+      JSON.stringify(normalized),
+    );
+  }
+
+  private async invalidateProductListingsCache(): Promise<void> {
+    await Promise.all([
+      this.redisService.deleteByPattern(this.redisService.buildKey('products', 'list', 'vendor', '*')),
+      this.redisService.deleteByPattern(this.redisService.buildKey('products', 'list', 'admin', '*')),
+    ]).catch((error) => {
+      this.logger.warn(
+        `Failed to invalidate product listing caches: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    });
+  }
 
   private ensureExportDir() {
     if (!existsSync(this.exportDir)) {
@@ -548,6 +620,7 @@ export class ProductRegistrationService {
           );
         }
 
+        await this.invalidateProductListingsCache();
         return {
           ...savedProduct.toObject(),
           plants: plants.map((p) => p.toObject()),
@@ -821,6 +894,7 @@ export class ProductRegistrationService {
           results.length,
           'products',
         );
+        await this.invalidateProductListingsCache();
         return results;
       } catch (error: any) {
         await session.abortTransaction();
@@ -1029,6 +1103,7 @@ export class ProductRegistrationService {
         );
       }
 
+      await this.invalidateProductListingsCache();
       return updatedProduct.toObject();
     } catch (error: any) {
       await session.abortTransaction();
@@ -1122,6 +1197,7 @@ export class ProductRegistrationService {
         updateUrnStatusDto.updateStatusTo,
       );
 
+      await this.invalidateProductListingsCache();
       return updatedProduct;
     } catch (error: any) {
       await session.abortTransaction();
@@ -1203,8 +1279,10 @@ export class ProductRegistrationService {
         urnNo,
         dto.updateStatusTo,
       );
+      await this.invalidateProductListingsCache();
       return { urnNo, urnStatus: dto.updateStatusTo };
     }
+    await this.invalidateProductListingsCache();
     return { urnNo, productStatus: dto.updateStatusTo };
   }
 
@@ -1214,6 +1292,29 @@ export class ProductRegistrationService {
    */
   async listProducts(listProductsDto: ListProductsDto, manufacturerId: string) {
     try {
+      const cacheKey = this.buildVendorProductListCacheKey(
+        listProductsDto,
+        manufacturerId,
+      );
+      try {
+        const cached = await this.redisService.get<{
+          data: any[];
+          pagination: {
+            page: number;
+            limit: number;
+            totalCount: number;
+            totalPages: number;
+          };
+        }>(cacheKey);
+        if (cached && Array.isArray(cached.data) && cached.pagination) {
+          return cached;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Product vendor list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      }
+
       const {
         page = 1,
         limit = 10,
@@ -1371,7 +1472,7 @@ export class ProductRegistrationService {
         );
       }
 
-      return {
+      const response = {
         data,
         pagination: {
           page,
@@ -1380,6 +1481,14 @@ export class ProductRegistrationService {
           totalPages,
         },
       };
+      this.redisService
+        .set(cacheKey, response, this.getProductListCacheTtlSeconds())
+        .catch((error) => {
+          this.logger.warn(
+            `Product vendor list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+          );
+        });
+      return response;
     } catch (error: any) {
       console.error('[List Products] Error:', error);
       console.error('[List Products] Error stack:', error.stack);
@@ -3241,6 +3350,25 @@ export class ProductRegistrationService {
   }
 
   async adminListProducts(dto: AdminListProductsDto) {
+    const cacheKey = this.buildAdminProductListCacheKey(dto);
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: any[];
+        total: number;
+        page: number;
+        limit: number;
+        statusCounts: Record<string, number>;
+      }>(cacheKey);
+      if (cached && Array.isArray(cached.data)) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Product admin list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 10;
     const skip = (page - 1) * limit;
@@ -3635,7 +3763,7 @@ export class ProductRegistrationService {
         : [],
     }));
 
-    return {
+    const response = {
       message: 'Products listed successfully',
       data: grouped,
       total,
@@ -3643,6 +3771,14 @@ export class ProductRegistrationService {
       limit,
       statusCounts,
     };
+    this.redisService
+      .set(cacheKey, response, this.getProductListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Product admin list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return response;
   }
 
   async getManufacturersByCategory(categoryId: string) {

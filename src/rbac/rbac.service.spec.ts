@@ -19,6 +19,15 @@ describe('RbacService', () => {
   const emailService: any = {
     sendStaffCredentialsEmail: jest.fn(),
   };
+  const configService: any = {
+    get: jest.fn().mockReturnValue('120'),
+  };
+  const redisService: any = {
+    buildKey: jest.fn().mockReturnValue('rbac:test:*'),
+    deleteByPattern: jest.fn().mockResolvedValue(0),
+    get: jest.fn(),
+    set: jest.fn().mockResolvedValue('OK'),
+  };
 
   const service = new RbacService(
     roleModel,
@@ -26,6 +35,8 @@ describe('RbacService', () => {
     vendorUserModel,
     vendorUsersService,
     emailService,
+    configService,
+    redisService,
   );
 
   beforeEach(() => {

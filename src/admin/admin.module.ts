@@ -34,6 +34,7 @@ import {
   Notification,
   NotificationSchema,
 } from '../common/schemas/notification.schema';
+import { Article, ArticleSchema } from '../articles/schemas/article.schema';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 
@@ -51,6 +52,7 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
       { name: Notification.name, schema: NotificationSchema },
       { name: Event.name, schema: EventSchema },
       { name: EventIdCounter.name, schema: EventIdCounterSchema },
+      { name: Article.name, schema: ArticleSchema },
     ]),
   ],
   controllers: [AdminController],

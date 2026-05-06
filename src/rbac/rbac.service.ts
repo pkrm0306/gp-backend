@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Role, RoleDocument } from './schemas/role.schema';
@@ -27,6 +28,9 @@ import {
 } from '../common/permissions/permission-hierarchy';
 import { ALL_KNOWN_PERMISSION_VALUES } from '../common/constants/permissions.constants';
 import { EmailService } from '../common/services/email.service';
+import { RedisService } from '../common/redis/redis.service';
+import * as crypto from 'crypto';
+import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class RbacService {
@@ -40,13 +44,81 @@ export class RbacService {
     private vendorUserModel: Model<VendorUserDocument>,
     private vendorUsersService: VendorUsersService,
     private emailService: EmailService,
+    private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private getRbacCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('RBAC_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '120',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 120;
+  }
+
+  private async invalidateRbacCache(manufacturerId: string): Promise<void> {
+    await this.redisService
+      .deleteByPattern(this.redisService.buildKey('rbac', manufacturerId, '*'))
+      .catch((error) => {
+        this.logger.warn(
+          `RBAC cache invalidation failed for manufacturer=${manufacturerId}: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+  }
 
   private toObjectId(id: string, field: string): Types.ObjectId {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException(`Invalid ${field}`);
     }
     return new Types.ObjectId(id);
+  }
+
+  async hasAnyActiveStaffRoleMapping(
+    manufacturerId: string,
+    vendorUserId: string,
+  ): Promise<boolean> {
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
+    const count = await this.mappingModel
+      .countDocuments({
+        manufacturerId: manufacturerObjectId,
+        vendorUserId: vendorUserObjectId,
+        status: 1,
+      })
+      .exec();
+    return count > 0;
+  }
+
+  private async sendFirstRoleAssignmentCredentialsIfNeeded(input: {
+    manufacturerId: string;
+    vendorUserId: Types.ObjectId;
+    user: VendorUserDocument;
+  }): Promise<void> {
+    const email = String(input.user.email ?? '').trim().toLowerCase();
+    const name = String(input.user.name ?? '').trim();
+    if (!email) return;
+
+    const password = crypto.randomBytes(8).toString('hex');
+    const passwordHash = await bcrypt.hash(password, 10);
+    await this.vendorUserModel
+      .updateOne(
+        { _id: input.vendorUserId },
+        { $set: { password: passwordHash, updatedAt: new Date() } },
+      )
+      .exec();
+
+    try {
+      await this.emailService.sendStaffCredentialsEmail(email, password, name);
+    } catch (error) {
+      this.logger.warn(
+        `First role assignment credentials email failed for ${email}: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
   }
 
   private canonicalizePermission(permission: string): string {
@@ -103,13 +175,15 @@ export class RbacService {
       'manufacturerId',
     );
     try {
-      return await this.roleModel.create({
+      const role = await this.roleModel.create({
         manufacturerId: manufacturerObjectId,
         name: dto.name.trim(),
         description: dto.description?.trim() || '',
         permissions: this.normalizePermissions(dto.permissions || []),
-        status: dto.status ?? 1,
+        status: 1,
       });
+      await this.invalidateRbacCache(manufacturerId);
+      return role;
     } catch (error: any) {
       if (error?.code === 11000) {
         throw new ConflictException('Role name already exists');
@@ -119,15 +193,33 @@ export class RbacService {
   }
 
   async listRoles(manufacturerId: string) {
+    const cacheKey = this.redisService.buildKey('rbac', manufacturerId, 'roles', 'list');
+    try {
+      const cached = await this.redisService.get<Record<string, unknown>[]>(cacheKey);
+      if (Array.isArray(cached)) return cached;
+    } catch (error) {
+      this.logger.warn(
+        `RBAC roles cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
       'manufacturerId',
     );
-    return this.roleModel
+    const rows = await this.roleModel
       .find({ manufacturerId: manufacturerObjectId })
       .sort({ createdAt: -1 })
       .lean()
       .exec();
+    this.redisService
+      .set(cacheKey, rows, this.getRbacCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `RBAC roles cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return rows;
   }
 
   async updateRole(manufacturerId: string, roleId: string, dto: UpdateRoleDto) {
@@ -142,7 +234,6 @@ export class RbacService {
     if (dto.permissions !== undefined) {
       updateDoc.permissions = this.normalizePermissions(dto.permissions);
     }
-    if (dto.status !== undefined) updateDoc.status = dto.status;
 
     const row = await this.roleModel
       .findOneAndUpdate(
@@ -152,11 +243,98 @@ export class RbacService {
       )
       .exec();
     if (!row) throw new NotFoundException('Role not found');
+    await this.invalidateRbacCache(manufacturerId);
     return row;
   }
 
   async disableRole(manufacturerId: string, roleId: string) {
-    return this.updateRole(manufacturerId, roleId, { status: 0 });
+    return this.setOrToggleRoleStatus(manufacturerId, roleId, 0);
+  }
+
+  async setOrToggleRoleStatus(
+    manufacturerId: string,
+    roleId: string,
+    status?: number,
+  ) {
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const roleObjectId = this.toObjectId(roleId, 'roleId');
+
+    let nextStatus: number;
+    if (status === 0 || status === 1) {
+      nextStatus = status;
+    } else {
+      const current = await this.roleModel
+        .findOne({ _id: roleObjectId, manufacturerId: manufacturerObjectId })
+        .select('status')
+        .lean()
+        .exec();
+      if (!current) throw new NotFoundException('Role not found');
+      nextStatus = Number((current as any).status) === 1 ? 0 : 1;
+    }
+
+    const row = await this.roleModel
+      .findOneAndUpdate(
+        { _id: roleObjectId, manufacturerId: manufacturerObjectId },
+        { $set: { status: nextStatus } },
+        { new: true },
+      )
+      .lean()
+      .exec();
+    if (!row) throw new NotFoundException('Role not found');
+
+    return {
+      id: String((row as any)._id),
+      status: Number((row as any).status) === 1 ? 'active' : 'inactive',
+      is_active: Number((row as any).status) === 1,
+    };
+  }
+
+  async deleteRole(manufacturerId: string, roleId: string) {
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const roleObjectId = this.toObjectId(roleId, 'roleId');
+
+    const role = await this.roleModel
+      .findOne({ _id: roleObjectId, manufacturerId: manufacturerObjectId })
+      .select('_id name')
+      .lean()
+      .exec();
+    if (!role) throw new NotFoundException('Role not found');
+
+    const activeMappingsCount = await this.mappingModel
+      .countDocuments({
+        manufacturerId: manufacturerObjectId,
+        roleId: roleObjectId,
+        status: 1,
+      })
+      .exec();
+    if (activeMappingsCount > 0) {
+      throw new BadRequestException(
+        'Cannot delete role while assigned to staff. Reassign/remove mappings first.',
+      );
+    }
+
+    const res = await this.roleModel
+      .deleteOne({ _id: roleObjectId, manufacturerId: manufacturerObjectId })
+      .exec();
+    if (!res || res.deletedCount === 0) {
+      throw new NotFoundException('Role not found');
+    }
+
+    // Clean up any stale inactive mappings for this deleted role.
+    await this.mappingModel
+      .deleteMany({
+        manufacturerId: manufacturerObjectId,
+        roleId: roleObjectId,
+      })
+      .exec();
+
+    return { id: String(roleObjectId), name: String((role as any).name ?? '') };
   }
 
   async createStaff(manufacturerId: string, dto: CreateStaffDto) {
@@ -191,15 +369,26 @@ export class RbacService {
       );
     }
 
+    await this.invalidateRbacCache(manufacturerId);
     return createdStaff;
   }
 
   async listStaff(manufacturerId: string) {
+    const cacheKey = this.redisService.buildKey('rbac', manufacturerId, 'staff', 'list');
+    try {
+      const cached = await this.redisService.get<Record<string, unknown>[]>(cacheKey);
+      if (Array.isArray(cached)) return cached;
+    } catch (error) {
+      this.logger.warn(
+        `RBAC staff cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
       'manufacturerId',
     );
-    return this.vendorUserModel
+    const rows = await this.vendorUserModel
       .find({
         manufacturerId: manufacturerObjectId,
         type: 'staff',
@@ -208,6 +397,14 @@ export class RbacService {
       .sort({ createdAt: -1 })
       .lean()
       .exec();
+    this.redisService
+      .set(cacheKey, rows, this.getRbacCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `RBAC staff cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return rows;
   }
 
   async assignRole(manufacturerId: string, dto: AssignRoleDto) {
@@ -218,13 +415,21 @@ export class RbacService {
     const vendorUserId = this.toObjectId(dto.vendorUserId, 'vendorUserId');
     const roleId = this.toObjectId(dto.roleId, 'roleId');
 
-    const [user, role] = await Promise.all([
+    const [user, role, hadAnyRoleBefore] = await Promise.all([
       this.vendorUserModel
         .findOne({ _id: vendorUserId, manufacturerId: manufacturerObjectId })
         .exec(),
       this.roleModel
         .findOne({ _id: roleId, manufacturerId: manufacturerObjectId, status: 1 })
         .exec(),
+      this.mappingModel
+        .countDocuments({
+          manufacturerId: manufacturerObjectId,
+          vendorUserId,
+          status: 1,
+        })
+        .exec()
+        .then((c) => c > 0),
     ]);
     if (!user) throw new NotFoundException('Staff user not found');
     if (user.type !== 'staff') {
@@ -232,13 +437,23 @@ export class RbacService {
     }
     if (!role) throw new NotFoundException('Role not found');
 
-    return this.mappingModel
+    const mapping = await this.mappingModel
       .findOneAndUpdate(
         { manufacturerId: manufacturerObjectId, vendorUserId, roleId },
         { $set: { status: 1 } },
         { upsert: true, new: true },
       )
       .exec();
+
+    if (!hadAnyRoleBefore) {
+      await this.sendFirstRoleAssignmentCredentialsIfNeeded({
+        manufacturerId,
+        vendorUserId,
+        user,
+      });
+    }
+    await this.invalidateRbacCache(manufacturerId);
+    return mapping;
   }
 
   async updateStaffRole(manufacturerId: string, dto: AssignRoleDto) {
@@ -249,14 +464,23 @@ export class RbacService {
     const vendorUserId = this.toObjectId(dto.vendorUserId, 'vendorUserId');
     const roleId = this.toObjectId(dto.roleId, 'roleId');
 
-    const role = await this.roleModel
-      .findOne({ _id: roleId, manufacturerId: manufacturerObjectId, status: 1 })
-      .exec();
+    const [role, user, hadAnyRoleBefore] = await Promise.all([
+      this.roleModel
+        .findOne({ _id: roleId, manufacturerId: manufacturerObjectId, status: 1 })
+        .exec(),
+      this.vendorUserModel
+        .findOne({ _id: vendorUserId, manufacturerId: manufacturerObjectId })
+        .exec(),
+      this.mappingModel
+        .countDocuments({
+          manufacturerId: manufacturerObjectId,
+          vendorUserId,
+          status: 1,
+        })
+        .exec()
+        .then((c) => c > 0),
+    ]);
     if (!role) throw new NotFoundException('Role not found');
-
-    const user = await this.vendorUserModel
-      .findOne({ _id: vendorUserId, manufacturerId: manufacturerObjectId })
-      .exec();
     if (!user) throw new NotFoundException('Staff user not found');
     if (user.type !== 'staff') {
       throw new BadRequestException('Role assignment only allowed for staff');
@@ -266,15 +490,61 @@ export class RbacService {
       manufacturerId: manufacturerObjectId,
       vendorUserId,
     });
-    return this.mappingModel.create({
+    const mapping = await this.mappingModel.create({
       manufacturerId: manufacturerObjectId,
       vendorUserId,
       roleId,
       status: 1,
     });
+
+    if (!hadAnyRoleBefore) {
+      await this.sendFirstRoleAssignmentCredentialsIfNeeded({
+        manufacturerId,
+        vendorUserId,
+        user,
+      });
+    }
+    await this.invalidateRbacCache(manufacturerId);
+    return mapping;
+  }
+
+  async unassignStaffRole(manufacturerId: string, vendorUserId: string) {
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
+
+    const res = await this.mappingModel
+      .deleteMany({
+        manufacturerId: manufacturerObjectId,
+        vendorUserId: vendorUserObjectId,
+      })
+      .exec();
+
+    await this.invalidateRbacCache(manufacturerId);
+    return {
+      vendorUserId,
+      deletedCount: res?.deletedCount ?? 0,
+    };
   }
 
   async getStaffWithRoles(manufacturerId: string, vendorUserId?: string) {
+    const cacheKey = this.redisService.buildKey(
+      'rbac',
+      manufacturerId,
+      'staff-roles',
+      vendorUserId || 'all',
+    );
+    try {
+      const cached = await this.redisService.get<Record<string, unknown>[]>(cacheKey);
+      if (Array.isArray(cached)) return cached;
+    } catch (error) {
+      this.logger.warn(
+        `RBAC staff-roles cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
       'manufacturerId',
@@ -293,7 +563,7 @@ export class RbacService {
       .lean()
       .exec();
 
-    return rows.map((row: Record<string, unknown>) => {
+    const mapped = rows.map((row: Record<string, unknown>) => {
       const role = row.roleId as
         | { permissions?: string[]; status?: number; [k: string]: unknown }
         | null
@@ -313,12 +583,35 @@ export class RbacService {
         roleId: roleIdPayload,
       };
     });
+    this.redisService
+      .set(cacheKey, mapped, this.getRbacCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `RBAC staff-roles cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return mapped;
   }
 
   async getStaffPermissions(
     manufacturerId: string,
     vendorUserId: string,
   ): Promise<string[]> {
+    const cacheKey = this.redisService.buildKey(
+      'rbac',
+      manufacturerId,
+      'staff-permissions',
+      vendorUserId,
+    );
+    try {
+      const cached = await this.redisService.get<string[]>(cacheKey);
+      if (Array.isArray(cached)) return cached;
+    } catch (error) {
+      this.logger.warn(
+        `RBAC staff-permissions cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
       'manufacturerId',
@@ -342,7 +635,15 @@ export class RbacService {
         permissions.add(permission);
       }
     }
-    return minimizePermissionSet(Array.from(permissions));
+    const minimized = minimizePermissionSet(Array.from(permissions));
+    this.redisService
+      .set(cacheKey, minimized, this.getRbacCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `RBAC staff-permissions cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return minimized;
   }
 }
 

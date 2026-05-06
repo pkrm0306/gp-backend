@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -33,6 +34,8 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
 import { UpdateCategoryStatusDto } from './dto/update-category-status.dto';
 import { UpdateCategoryMultipartDto } from './dto/update-category-multipart.dto';
+import { RedisService } from '../common/redis/redis.service';
+import { uploadFile } from '../utils/upload-file.util';
 
 /** Listing row: Mongo lean doc plus computed image URL */
 export type CategoryListItem = Record<string, unknown> & {
@@ -76,6 +79,8 @@ function escapeRegex(text: string): string {
 
 @Injectable()
 export class CategoriesService implements OnModuleInit {
+  private readonly logger = new Logger(CategoriesService.name);
+
   constructor(
     @InjectModel(Category.name)
     private categoryModel: Model<CategoryDocument>,
@@ -86,7 +91,49 @@ export class CategoriesService implements OnModuleInit {
     @InjectModel(ProductPlant.name)
     private productPlantModel: Model<ProductPlantDocument>,
     private configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private getCategoryListCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('CATEGORY_LIST_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '60',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 60;
+  }
+
+  private buildCategoryListCacheKey(query: ListCategoriesQueryDto): string {
+    const normalized = {
+      sector: query.sector ?? null,
+      sectors: String(query.sectors || '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .sort()
+        .join(','),
+      status: query.status ?? null,
+      raw_material: String(query.raw_material || '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .sort()
+        .join(','),
+      sort: query.sort === 'desc' ? 'desc' : 'asc',
+    };
+    return this.redisService.buildKey('categories', 'list', JSON.stringify(normalized));
+  }
+
+  private async invalidateCategoryListCache(): Promise<void> {
+    await this.redisService
+      .deleteByPattern(this.redisService.buildKey('categories', 'list', '*'))
+      .catch((error) => {
+      this.logger.warn(
+        `Failed to invalidate category list cache: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    });
+  }
 
   async onModuleInit(): Promise<void> {
     this.ensureCategoryUploadDirs();
@@ -318,6 +365,18 @@ export class CategoriesService implements OnModuleInit {
   }
 
   async findAll(query: ListCategoriesQueryDto): Promise<CategoryListItem[]> {
+    const cacheKey = this.buildCategoryListCacheKey(query);
+    try {
+      const cached = await this.redisService.get<CategoryListItem[]>(cacheKey);
+      if (Array.isArray(cached)) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Category list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const filter = this.buildFindFilter(query, { enableMultiSector: true });
     const sortOrder = query.sort === 'desc' ? -1 : 1;
     const rows = await this.categoryModel
@@ -332,6 +391,13 @@ export class CategoriesService implements OnModuleInit {
         category_image_url: this.resolveCategoryImageUrl(doc.category_image),
       });
     }
+    this.redisService
+      .set(cacheKey, out, this.getCategoryListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Category list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
     return out;
   }
 
@@ -477,6 +543,7 @@ export class CategoriesService implements OnModuleInit {
       throw err;
     }
     const plain = doc.toObject();
+    await this.invalidateCategoryListCache();
     return {
       ...plain,
       category_image_url: this.resolveCategoryImageUrl(plain.category_image),
@@ -517,6 +584,7 @@ export class CategoriesService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Category not found');
     }
+    await this.invalidateCategoryListCache();
     return this.toCategoryResponse(
       updated.toObject() as unknown as Record<string, unknown>,
     );
@@ -525,7 +593,7 @@ export class CategoriesService implements OnModuleInit {
   async update(
     id: string,
     dto: UpdateCategoryMultipartDto,
-    image?: { filename: string },
+    image?: Express.Multer.File,
   ) {
     const oid = this.parseCategoryObjectId(id);
     const existing = await this.categoryModel.findById(oid).exec();
@@ -572,7 +640,8 @@ export class CategoriesService implements OnModuleInit {
       set.sector = dto.sector;
     }
     if (image) {
-      set.category_image = `categories/${image.filename}`;
+      const uploaded = await uploadFile(image, 'categories');
+      set.category_image = uploaded.fileUrl;
     }
 
     let updated: CategoryDocument | null;
@@ -587,6 +656,7 @@ export class CategoriesService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Category not found');
     }
+    await this.invalidateCategoryListCache();
     return this.toCategoryResponse(
       updated.toObject() as unknown as Record<string, unknown>,
     );
@@ -610,5 +680,6 @@ export class CategoriesService implements OnModuleInit {
     }
 
     await this.categoryModel.deleteOne({ _id: oid }).exec();
+    await this.invalidateCategoryListCache();
   }
 }

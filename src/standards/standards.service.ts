@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -19,6 +21,7 @@ import { ListStandardsQueryDto } from './dto/list-standards-query.dto';
 import { CreateStandardMultipartDto } from './dto/create-standard-multipart.dto';
 import { UpdateStandardMultipartDto } from './dto/update-standard-multipart.dto';
 import { UpdateStandardStatusDto } from './dto/update-standard-status.dto';
+import { RedisService } from '../common/redis/redis.service';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -35,12 +38,55 @@ function csvEscape(value: string | number | Date | null | undefined): string {
 
 @Injectable()
 export class StandardsService implements OnModuleInit {
+  private readonly logger = new Logger(StandardsService.name);
+
   constructor(
     @InjectModel(Standard.name)
     private standardModel: Model<StandardDocument>,
     @InjectModel(StandardIdCounter.name)
     private counterModel: Model<StandardIdCounterDocument>,
+    private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private getStandardListCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('STANDARD_LIST_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '60',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 60;
+  }
+
+  private buildStandardListCacheKey(query: ListStandardsQueryDto): string {
+    const normalized = {
+      page: query.page ?? 1,
+      limit: query.limit ?? 10,
+      search: String(query.search || '').trim().toLowerCase(),
+      resource_standard_type: String(query.resource_standard_type || '')
+        .trim()
+        .toLowerCase(),
+      status: query.status ?? null,
+      sortBy: query.sortBy ?? 'id',
+      order: query.order === 'desc' ? 'desc' : 'asc',
+    };
+    return this.redisService.buildKey(
+      'standards',
+      'list',
+      JSON.stringify(normalized),
+    );
+  }
+
+  private async invalidateStandardListCache(): Promise<void> {
+    await this.redisService
+      .deleteByPattern(this.redisService.buildKey('standards', 'list', '*'))
+      .catch((error) => {
+        this.logger.warn(
+          `Failed to invalidate standard list cache: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+  }
 
   async onModuleInit(): Promise<void> {
     this.ensureUploadDir();
@@ -145,6 +191,24 @@ export class StandardsService implements OnModuleInit {
   }
 
   async findAllPaginated(query: ListStandardsQueryDto) {
+    const cacheKey = this.buildStandardListCacheKey(query);
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: unknown[];
+        total: number;
+        page: number;
+        limit: number;
+      }>(cacheKey);
+      if (cached && Array.isArray(cached.data)) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Standard list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const sortBy = query.sortBy ?? 'id';
@@ -170,13 +234,21 @@ export class StandardsService implements OnModuleInit {
       this.ensureDescriptionField(this.enrichStandardFileUrl(d)),
     );
 
-    return {
+    const response = {
       message: 'Standards retrieved successfully',
       data,
       total,
       page,
       limit,
     };
+    this.redisService
+      .set(cacheKey, response, this.getStandardListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Standard list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return response;
   }
 
   async findOneById(id: number) {
@@ -240,9 +312,11 @@ export class StandardsService implements OnModuleInit {
       created_at: now,
       updated_at: now,
     });
-    return this.ensureDescriptionField(
+    const created = this.ensureDescriptionField(
       this.enrichStandardFileUrl(doc.toObject()),
     );
+    await this.invalidateStandardListCache();
+    return created;
   }
 
   async update(
@@ -300,7 +374,9 @@ export class StandardsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Standard not found');
     }
-    return this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
+    const response = this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
+    await this.invalidateStandardListCache();
+    return response;
   }
 
   async updateStatus(id: number, dto: UpdateStandardStatusDto) {
@@ -315,7 +391,9 @@ export class StandardsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Standard not found');
     }
-    return this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
+    const response = this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
+    await this.invalidateStandardListCache();
+    return response;
   }
 
   async remove(id: number) {
@@ -325,6 +403,7 @@ export class StandardsService implements OnModuleInit {
     }
     await deleteUploadedFile(this.fileMetaForDelete(existing));
     await this.standardModel.deleteOne({ id }).exec();
+    await this.invalidateStandardListCache();
   }
 
   async buildCsvExport(query: ListStandardsQueryDto): Promise<string> {

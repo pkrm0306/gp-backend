@@ -21,6 +21,7 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class ProductDesignService implements OnModuleInit {
@@ -176,56 +177,13 @@ export class ProductDesignService implements OnModuleInit {
     };
   }
 
-  /**
-   * Ensure URN folder exists, create if it doesn't
-   */
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-
-    return urnFolderPath;
-  }
-
-  /**
-   * Save file to URN-specific folder
-   */
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'eco_vision' | 'supporting_document',
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    // Copy file from temp location to URN folder (file.path is the temp location)
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      // Optionally remove temp file
-      try {
-        fs.unlinkSync(file.path);
-      } catch (err) {
-        // Ignore if temp file doesn't exist or can't be deleted
-      }
-    } else {
-      // If file.path doesn't exist, write buffer directly
-      if (file.buffer) {
-        fs.writeFileSync(filePath, file.buffer);
-      } else {
-        throw new BadRequestException(
-          `File data not available for ${fileType}`,
-        );
-      }
-    }
-
-    // Return relative path from uploads folder
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
   }
 
   /**
@@ -286,28 +244,31 @@ export class ProductDesignService implements OnModuleInit {
       // Handle file uploads and set flags
       let ecoVisionUpload = existingProductDesign?.ecoVisionUpload ?? 0;
       let ecoVisionFilePath: string | undefined;
+      let ecoVisionStoredFileName: string | undefined;
       if (ecoVisionFile) {
-        ecoVisionFilePath = this.saveFileToUrnFolder(
+        const uploadedEcoVision = await this.saveFileToUrnFolder(
           ecoVisionFile,
           createProductDesignDto.urnNo,
           'eco_vision',
         );
-        createdFileFullPaths.push(path.join('uploads', ecoVisionFilePath));
+        ecoVisionFilePath = uploadedEcoVision.fileUrl;
+        ecoVisionStoredFileName = uploadedEcoVision.fileName;
         ecoVisionUpload = 1;
       }
 
       let productDesignSupportingDocument =
         existingProductDesign?.productDesignSupportingDocument ?? 0;
       const supportingDocumentFilePaths: string[] = [];
+      const supportingDocumentStoredNames: string[] = [];
       if (supportingDocumentFiles.length > 0) {
         for (const supportingDocumentFile of supportingDocumentFiles) {
-          const supportingDocumentFilePath = this.saveFileToUrnFolder(
+          const supportingDocumentFileUpload = await this.saveFileToUrnFolder(
             supportingDocumentFile,
             createProductDesignDto.urnNo,
             'supporting_document',
           );
-          supportingDocumentFilePaths.push(supportingDocumentFilePath);
-          createdFileFullPaths.push(path.join('uploads', supportingDocumentFilePath));
+          supportingDocumentFilePaths.push(supportingDocumentFileUpload.fileUrl);
+          supportingDocumentStoredNames.push(supportingDocumentFileUpload.fileName);
         }
         productDesignSupportingDocument = 1;
       }
@@ -394,13 +355,15 @@ export class ProductDesignService implements OnModuleInit {
       const docRows: Array<{
         subsection: string;
         filePath: string;
+        fileName: string;
         originalName: string;
       }> = [];
 
-      if (ecoVisionFilePath && ecoVisionFile) {
+      if (ecoVisionFilePath && ecoVisionFile && ecoVisionStoredFileName) {
         docRows.push({
           subsection: 'eco_vision_upload',
-          filePath: `uploads/${ecoVisionFilePath}`,
+          filePath: ecoVisionFilePath,
+          fileName: ecoVisionStoredFileName,
           originalName: ecoVisionFile.originalname,
         });
       }
@@ -408,7 +371,8 @@ export class ProductDesignService implements OnModuleInit {
         for (let i = 0; i < supportingDocumentFilePaths.length; i++) {
           docRows.push({
             subsection: 'supporting_documents',
-            filePath: `uploads/${supportingDocumentFilePaths[i]}`,
+            filePath: supportingDocumentFilePaths[i],
+            fileName: supportingDocumentStoredNames[i],
             originalName: supportingDocumentFiles[i].originalname,
           });
         }
@@ -427,7 +391,7 @@ export class ProductDesignService implements OnModuleInit {
             documentForm: DocumentSectionKey.PRODUCT_DESIGN,
             documentFormSubsection: d.subsection,
             formPrimaryId: effectiveProductDesignId,
-            documentName: path.basename(d.filePath),
+            documentName: d.fileName,
             documentOriginalName: d.originalName,
             documentLink: d.filePath,
             createdDate: now,

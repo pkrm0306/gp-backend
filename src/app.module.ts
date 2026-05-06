@@ -1,6 +1,8 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
+import { redisStore } from 'cache-manager-redis-yet';
 import { AuthModule } from './auth/auth.module';
 import { ManufacturersModule } from './manufacturers/manufacturers.module';
 import { VendorUsersModule } from './vendor-users/vendor-users.module';
@@ -47,6 +49,7 @@ import { LoggingMiddleware } from './common/middleware/logging.middleware';
 import { WebsiteModule } from './website/website.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { DocumentsModule } from './documents/documents.module';
+import { RedisModule } from './common/redis/redis.module';
 
 @Module({
   imports: [
@@ -54,6 +57,44 @@ import { DocumentsModule } from './documents/documents.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => {
+        const cacheEnabledRaw = configService.get<string>('CACHE_ENABLED') || 'true';
+        const cacheEnabled = cacheEnabledRaw.toLowerCase() !== 'false';
+        const ttl = parseInt(
+          configService.get<string>('CACHE_TTL_SECONDS') || '60',
+          10,
+        );
+
+        if (!cacheEnabled) {
+          return {
+            ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 60,
+          };
+        }
+
+        const host = configService.get<string>('REDIS_HOST') || 'redis';
+        const port = parseInt(configService.get<string>('REDIS_PORT') || '6379', 10);
+        const password = configService.get<string>('REDIS_PASSWORD') || undefined;
+        const db = parseInt(configService.get<string>('REDIS_DB') || '0', 10);
+        const prefix =
+          configService.get<string>('REDIS_KEY_PREFIX') || 'greenpro:cache:';
+
+        return {
+          store: await redisStore({
+            socket: { host, port },
+            password,
+            database: db,
+            ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 60,
+            keyPrefix: prefix,
+          }),
+          ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 60,
+        };
+      },
+    }),
+    RedisModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

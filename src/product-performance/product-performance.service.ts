@@ -20,6 +20,7 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class ProductPerformanceService implements OnModuleInit {
@@ -63,56 +64,13 @@ export class ProductPerformanceService implements OnModuleInit {
     return String(value ?? '').trim().toLowerCase();
   }
 
-  /**
-   * Ensure URN folder exists, create if it doesn't
-   */
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-
-    return urnFolderPath;
-  }
-
-  /**
-   * Save file to URN-specific folder
-   */
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'test_report',
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    // Copy file from temp location to URN folder (file.path is the temp location)
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      // Optionally remove temp file
-      try {
-        fs.unlinkSync(file.path);
-      } catch (err) {
-        // Ignore if temp file doesn't exist or can't be deleted
-      }
-    } else {
-      // If file.path doesn't exist, write buffer directly
-      if (file.buffer) {
-        fs.writeFileSync(filePath, file.buffer);
-      } else {
-        throw new BadRequestException(
-          `File data not available for ${fileType}`,
-        );
-      }
-    }
-
-    // Return relative path from uploads folder
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
   }
 
   /**
@@ -162,20 +120,21 @@ export class ProductPerformanceService implements OnModuleInit {
       // Handle file uploads and set flags
       let testReportFiles = existingProductPerformance?.testReportFiles ?? 0;
       const testReportFilePaths: string[] = [];
+      const testReportStoredNames: string[] = [];
       let storedFileName = existingProductPerformance?.testReportFileName ?? '';
 
       if (uploadedTestReportFiles.length > 0) {
         for (const testReportFile of uploadedTestReportFiles) {
-          const testReportFilePath = this.saveFileToUrnFolder(
+          const testReportFilePath = await this.saveFileToUrnFolder(
             testReportFile,
             createProductPerformanceDto.urnNo,
             'test_report',
           );
-          testReportFilePaths.push(testReportFilePath);
-          createdFileFullPaths.push(path.join('uploads', testReportFilePath));
+          testReportFilePaths.push(testReportFilePath.fileUrl);
+          testReportStoredNames.push(testReportFilePath.fileName);
         }
         testReportFiles = 1;
-        storedFileName = path.basename(testReportFilePaths[0]);
+        storedFileName = testReportStoredNames[0] || storedFileName;
       }
 
       // Replace existing performance docs on re-upload
@@ -251,7 +210,7 @@ export class ProductPerformanceService implements OnModuleInit {
         for (let i = 0; i < testReportFilePaths.length; i++) {
           const productDocumentId =
             await this.sequenceHelper.getProductDocumentId();
-          const documentLink = `uploads/${testReportFilePaths[i]}`;
+          const documentLink = testReportFilePaths[i];
           docsToInsert.push({
             productDocumentId,
             vendorId: vendorObjectId,
@@ -260,7 +219,7 @@ export class ProductPerformanceService implements OnModuleInit {
             documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE,
             documentFormSubsection: 'test_report_files',
             formPrimaryId: savedProductPerformance.processProductPerformanceId,
-            documentName: path.basename(testReportFilePaths[i]),
+            documentName: testReportStoredNames[i] || storedFileName,
             documentOriginalName: uploadedTestReportFiles[i].originalname,
             documentLink,
             createdDate: now,

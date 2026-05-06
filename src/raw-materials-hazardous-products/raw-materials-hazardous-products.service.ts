@@ -15,6 +15,7 @@ import { AllProductDocument, AllProductDocumentDocument } from '../product-desig
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class RawMaterialsHazardousProductsService {
@@ -37,38 +38,12 @@ export class RawMaterialsHazardousProductsService {
     return new Types.ObjectId(id);
   }
 
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-    return urnFolderPath;
-  }
-
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: string,
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      try {
-        fs.unlinkSync(file.path);
-      } catch {}
-    } else if (file.buffer) {
-      fs.writeFileSync(filePath, file.buffer);
-    } else {
-      throw new BadRequestException('File data not available');
-    }
-
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
 
   async create(
@@ -85,7 +60,7 @@ export class RawMaterialsHazardousProductsService {
       let storedFileName = '';
       let storedRelativePath = '';
       if (productsTestReportFile) {
-        storedRelativePath = this.saveFileToUrnFolder(
+        storedRelativePath = await this.saveFileToUrnFolder(
           productsTestReportFile,
           dto.urnNo,
           'hazardous_test_report',
@@ -119,7 +94,7 @@ export class RawMaterialsHazardousProductsService {
           formPrimaryId: id,
           documentName: storedFileName,
           documentOriginalName: productsTestReportFile.originalname,
-          documentLink: `uploads/${storedRelativePath}`,
+          documentLink: storedRelativePath,
           createdDate: now,
           updatedDate: now,
         });

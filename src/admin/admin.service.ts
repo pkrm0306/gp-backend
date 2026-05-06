@@ -15,12 +15,14 @@ import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import {
   VendorUser,
   VendorUserDocument,
+  TeamMemberTeam,
 } from '../vendor-users/schemas/vendor-user.schema';
 import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
 import { Event, EventDocument } from '../events/schemas/event.schema';
+import { Article, ArticleDocument } from '../articles/schemas/article.schema';
 import {
   EventIdCounter,
   EventIdCounterDocument,
@@ -45,6 +47,7 @@ import {
 } from '../common/schemas/notification.schema';
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 import * as bcrypt from 'bcryptjs';
+import { RbacService } from '../rbac/rbac.service';
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -87,7 +90,10 @@ export class AdminService {
     private contactReplyThreadModel: Model<ContactReplyThreadDocument>,
     @InjectModel(Notification.name)
     private notificationModel: Model<NotificationDocument>,
+    @InjectModel(Article.name)
+    private articleModel: Model<ArticleDocument>,
     private readonly emailService: EmailService,
+    private readonly rbacService: RbacService,
   ) {}
 
   private resolveEventImagePath(eventImage?: string | null): string {
@@ -103,6 +109,18 @@ export class AdminService {
   }
 
   private resolveBannerImagePath(imageUrl?: string | null): string {
+    const raw = String(imageUrl ?? '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('/uploads/')) {
+      return raw.replace(/^\/uploads\//, '');
+    }
+    if (raw.startsWith('uploads/')) {
+      return raw.replace(/^uploads\//, '');
+    }
+    return raw;
+  }
+
+  private resolveArticleImagePath(imageUrl?: string | null): string {
     const raw = String(imageUrl ?? '').trim();
     if (!raw) return '';
     if (raw.startsWith('/uploads/')) {
@@ -159,6 +177,11 @@ export class AdminService {
     const { _id, __v, ...rest } = obj ?? {};
     return {
       ...rest,
+      galleryImages: Array.isArray((rest as any)?.galleryImages)
+        ? (rest as any).galleryImages
+        : (rest as any)?.eventImage
+          ? [(rest as any).eventImage]
+          : [],
       event_image:
         (rest as any)?.event_image ??
         this.resolveEventImagePath((rest as any)?.eventImage),
@@ -172,6 +195,7 @@ export class AdminService {
   async createEvent(payload: {
     eventName: string;
     eventDate: Date;
+    eventStatus?: number;
     eventStartTime?: string;
     eventEndTime?: string;
     eventLocation?: string;
@@ -181,6 +205,8 @@ export class AdminService {
     contactPersonEmail?: string;
     contactPersonPhone?: string;
     eventImage?: string;
+    galleryImages?: string[];
+    galleryType?: string;
     registrationLink?: string;
     brochureLink?: string;
   }) {
@@ -192,6 +218,13 @@ export class AdminService {
       eventName: payload.eventName,
       eventImage: payload.eventImage,
       event_image: this.resolveEventImagePath(payload.eventImage),
+      galleryImages:
+        Array.isArray(payload.galleryImages) && payload.galleryImages.length
+          ? payload.galleryImages
+          : payload.eventImage
+            ? [payload.eventImage]
+            : [],
+      galleryType: payload.galleryType,
       eventDescription: payload.eventDescription,
       eventDate: payload.eventDate,
       eventStartTime: payload.eventStartTime,
@@ -203,7 +236,10 @@ export class AdminService {
       contactPersonPhone: payload.contactPersonPhone,
       registrationLink: payload.registrationLink,
       brochureLink: payload.brochureLink,
-      eventStatus: 1,
+      eventStatus:
+        payload.eventStatus === 0 || payload.eventStatus === 1
+          ? payload.eventStatus
+          : 1,
       createdDate: now,
       updatedDate: now,
     });
@@ -234,8 +270,11 @@ export class AdminService {
       contactPersonEmail?: string;
       contactPersonPhone?: string;
       eventImage?: string;
+      galleryImages?: string[];
+      galleryType?: string;
       registrationLink?: string;
       brochureLink?: string;
+      eventStatus?: number;
     },
   ) {
     const raw = String(identifier ?? '').trim();
@@ -292,6 +331,24 @@ export class AdminService {
       $set.eventImage = payload.eventImage;
       $set.event_image = this.resolveEventImagePath(payload.eventImage);
     }
+    if (payload.galleryImages !== undefined) {
+      $set.galleryImages = Array.isArray(payload.galleryImages)
+        ? payload.galleryImages
+        : [];
+      const first = Array.isArray(payload.galleryImages)
+        ? payload.galleryImages[0]
+        : undefined;
+      if (first) {
+        $set.eventImage = first;
+        $set.event_image = this.resolveEventImagePath(first);
+      }
+    }
+    if (
+      payload.galleryType !== undefined &&
+      String(payload.galleryType).trim() !== ''
+    ) {
+      $set.galleryType = payload.galleryType;
+    }
     if (
       payload.registrationLink !== undefined &&
       String(payload.registrationLink).trim() !== ''
@@ -302,6 +359,9 @@ export class AdminService {
       String(payload.brochureLink).trim() !== ''
     )
       $set.brochureLink = payload.brochureLink;
+    if (payload.eventStatus === 0 || payload.eventStatus === 1) {
+      $set.eventStatus = payload.eventStatus;
+    }
 
     let updated: any = null;
     if (Types.ObjectId.isValid(raw)) {
@@ -343,7 +403,7 @@ export class AdminService {
       .find({})
       .sort({ createdDate: -1, _id: -1 })
       .select(
-        'eventName eventImage event_image eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
       )
       .lean()
       .exec();
@@ -362,8 +422,16 @@ export class AdminService {
         id: String(e._id),
         eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
         image: e.eventImage ?? null,
+        galleryImages: Array.isArray(e.galleryImages)
+          ? e.galleryImages
+          : e.eventImage
+            ? [e.eventImage]
+            : [],
         event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
         eventName: String(e.eventName ?? ''),
+        eventDescription: String(e.eventDescription ?? ''),
+        galleryType: e.galleryType ?? '',
+        date: datePart,
         dateTime: [datePart, timePart].filter(Boolean).join(' '),
         location: String(e.eventLocation ?? ''),
         is_active: Number(e.eventStatus) === 1,
@@ -438,6 +506,277 @@ export class AdminService {
     return { id: raw };
   }
 
+  async setOrToggleEventStatus(identifier: string, status?: number) {
+    const raw = String(identifier ?? '').trim();
+    if (!raw) throw new BadRequestException('Event id is required');
+
+    const where: Record<string, unknown> = {};
+    if (Types.ObjectId.isValid(raw)) {
+      where._id = new Types.ObjectId(raw);
+    } else {
+      const asNumber = Number.parseInt(raw, 10);
+      if (!Number.isFinite(asNumber) || asNumber <= 0) {
+        throw new BadRequestException(
+          'Invalid event id (expected Mongo _id or numeric eventId)',
+        );
+      }
+      where.eventId = asNumber;
+    }
+
+    let nextStatus: number;
+    if (status === 0 || status === 1) {
+      nextStatus = status;
+    } else {
+      const current = await this.eventModel
+        .findOne(where)
+        .select('eventStatus')
+        .lean()
+        .exec();
+      if (!current) {
+        throw new NotFoundException('Event not found');
+      }
+      const cur = Number((current as any).eventStatus) === 1 ? 1 : 0;
+      nextStatus = cur === 1 ? 0 : 1;
+    }
+
+    const updated = await this.eventModel
+      .findOneAndUpdate(
+        where,
+        { $set: { eventStatus: nextStatus, updatedDate: new Date() } },
+        { new: true },
+      )
+      .select('_id eventId eventStatus')
+      .lean()
+      .exec();
+    if (!updated) {
+      throw new NotFoundException('Event not found');
+    }
+
+    await this.createNotification({
+      title: 'Gallery status updated',
+      message: `Gallery item (${String((updated as any).eventId ?? (updated as any)._id)}) status updated to ${nextStatus === 1 ? 'active' : 'inactive'}.`,
+      type: 'info',
+      source: 'admin',
+      referenceType: 'event',
+      referenceId: String((updated as any)._id),
+    });
+
+    return {
+      id: String((updated as any)._id),
+      eventId: (updated as any).eventId,
+      status: Number((updated as any).eventStatus) === 1 ? 'active' : 'inactive',
+      is_active: Number((updated as any).eventStatus) === 1,
+    };
+  }
+
+  async createArticle(payload: {
+    title: string;
+    description?: string;
+    date: Date;
+    image?: string;
+    url?: string;
+    status?: number;
+  }) {
+    const doc = new this.articleModel({
+      title: String(payload.title ?? '').trim(),
+      description: String(payload.description ?? '').trim(),
+      date: payload.date,
+      image: payload.image,
+      article_image: this.resolveArticleImagePath(payload.image),
+      url: String(payload.url ?? '').trim(),
+      status: payload.status === 0 || payload.status === 1 ? payload.status : 1,
+    });
+    const saved = await doc.save();
+    await this.createNotification({
+      title: 'Article created',
+      message: `Article "${String((saved as any).title ?? '')}" was created.`,
+      type: 'success',
+      source: 'admin',
+      referenceType: 'article',
+      referenceId: String((saved as any)._id),
+    });
+    return saved.toObject();
+  }
+
+  async updateArticle(
+    id: string,
+    payload: {
+      title?: string;
+      description?: string;
+      date?: Date;
+      image?: string;
+      url?: string;
+      status?: number;
+    },
+  ) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException('Invalid article id');
+    }
+
+    const $set: Record<string, unknown> = {};
+    if (payload.title !== undefined) $set.title = String(payload.title).trim();
+    if (payload.description !== undefined) {
+      $set.description = String(payload.description).trim();
+    }
+    if (payload.date !== undefined) $set.date = payload.date;
+    if (payload.image !== undefined) {
+      $set.image = payload.image;
+      $set.article_image = this.resolveArticleImagePath(payload.image);
+    }
+    if (payload.url !== undefined) $set.url = String(payload.url).trim();
+    if (payload.status === 0 || payload.status === 1) $set.status = payload.status;
+    if (Object.keys($set).length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
+
+    const updated = await this.articleModel
+      .findByIdAndUpdate(objectId, { $set }, { new: true })
+      .lean()
+      .exec();
+    if (!updated) throw new NotFoundException('Article not found');
+
+    await this.createNotification({
+      title: 'Article updated',
+      message: `Article "${String((updated as any).title ?? '')}" was updated.`,
+      type: 'info',
+      source: 'admin',
+      referenceType: 'article',
+      referenceId: String((updated as any)._id),
+    });
+
+    return updated;
+  }
+
+  async listArticles() {
+    const rows = await this.articleModel
+      .find({})
+      .sort({ createdAt: -1, _id: -1 })
+      .select('title description date image article_image url status')
+      .lean()
+      .exec();
+
+    return (rows ?? []).map((a: any, idx: number) => ({
+      s_no: idx + 1,
+      id: String(a._id),
+      title: String(a.title ?? ''),
+      description: String(a.description ?? ''),
+      date:
+        a?.date instanceof Date
+          ? a.date.toISOString().slice(0, 10)
+          : a?.date
+            ? new Date(a.date).toISOString().slice(0, 10)
+            : '',
+      image: a.image ?? null,
+      article_image: a.article_image ?? this.resolveArticleImagePath(a.image),
+      url: String(a.url ?? ''),
+      is_active: Number(a.status) === 1,
+    }));
+  }
+
+  async getArticleById(id: string) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException('Invalid article id');
+    }
+    const article = await this.articleModel.findById(objectId).lean().exec();
+    if (!article) throw new NotFoundException('Article not found');
+
+    return {
+      id: String((article as any)._id),
+      title: String((article as any).title ?? ''),
+      description: String((article as any).description ?? ''),
+      date:
+        (article as any)?.date instanceof Date
+          ? (article as any).date.toISOString().slice(0, 10)
+          : (article as any)?.date
+            ? new Date((article as any).date).toISOString().slice(0, 10)
+            : '',
+      image: (article as any).image ?? null,
+      article_image:
+        (article as any).article_image ??
+        this.resolveArticleImagePath((article as any).image),
+      url: String((article as any).url ?? ''),
+      is_active: Number((article as any).status) === 1,
+    };
+  }
+
+  async setOrToggleArticleStatus(id: string, status?: number) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException('Invalid article id');
+    }
+
+    let nextStatus: number;
+    if (status === 0 || status === 1) {
+      nextStatus = status;
+    } else {
+      const current = await this.articleModel
+        .findById(objectId)
+        .select('status')
+        .lean()
+        .exec();
+      if (!current) throw new NotFoundException('Article not found');
+      nextStatus = Number((current as any).status) === 1 ? 0 : 1;
+    }
+
+    const updated = await this.articleModel
+      .findByIdAndUpdate(
+        objectId,
+        { $set: { status: nextStatus } },
+        { new: true },
+      )
+      .lean()
+      .exec();
+    if (!updated) throw new NotFoundException('Article not found');
+
+    return {
+      id: String((updated as any)._id),
+      status: Number((updated as any).status) === 1 ? 'active' : 'inactive',
+      is_active: Number((updated as any).status) === 1,
+    };
+  }
+
+  async deleteArticle(id: string) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException('Invalid article id');
+    }
+
+    const existing = await this.articleModel
+      .findById(objectId)
+      .select('title')
+      .lean()
+      .exec();
+    if (!existing) {
+      throw new NotFoundException('Article not found');
+    }
+
+    const res = await this.articleModel.deleteOne({ _id: objectId }).exec();
+    if (!res || res.deletedCount === 0) {
+      throw new NotFoundException('Article not found');
+    }
+
+    await this.createNotification({
+      title: 'Article deleted',
+      message: `Article "${String((existing as any).title ?? '')}" was deleted.`,
+      type: 'warning',
+      source: 'admin',
+      referenceType: 'article',
+      referenceId: id,
+    });
+
+    return { id };
+  }
+
   async replyToCustomerViaManufacturer(payload: {
     email: string;
     userMessage: string;
@@ -487,11 +826,13 @@ export class AdminService {
 
     const textBody = `Hello,\n\nPlease find our response below.\n\n${cleanReply}\n\nRegards,\n${brand} Support Team`;
 
-    await this.emailService.sendEmail(
-      payload.email,
-      subject,
-      htmlBody,
-      textBody,
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendEmail(
+        payload.email,
+        subject,
+        htmlBody,
+        textBody,
+      ),
     );
 
     return { to: payload.email, subject };
@@ -568,8 +909,6 @@ export class AdminService {
 
     const textBody = `${greeting}\n\nThank you for contacting us. Please find our response below.\n\n${cleanReply}\n\nRegards,\nGreenPro Support Team`;
 
-    await this.emailService.sendEmail(to, subject, htmlBody, textBody);
-
     const entry = {
       adminReply: replyMessage,
       repliedAt: new Date(),
@@ -584,7 +923,7 @@ export class AdminService {
         },
         { upsert: true },
       )
-      .exec();
+      .exec(); 
 
     await this.createNotification({
       title: 'Contact replied',
@@ -594,6 +933,10 @@ export class AdminService {
       referenceType: 'contact',
       referenceId: String(objectId),
     });
+
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendEmail(to, subject, htmlBody, textBody),
+    );
 
     return { sent: true };
   }
@@ -703,6 +1046,7 @@ export class AdminService {
       facebookUrl?: string;
       twitterUrl?: string;
       linkedinUrl?: string;
+      roleId?: string;
     },
   ) {
     let vendorObjectId: Types.ObjectId;
@@ -715,13 +1059,6 @@ export class AdminService {
     const existingActive = await this.vendorUserModel
       .findOne({
         $and: [
-          // Support both the new canonical field (`manufacturerId`) and legacy alias (`vendorId`)
-          {
-            $or: [
-              { manufacturerId: vendorObjectId },
-              { vendorId: vendorObjectId },
-            ],
-          },
           { status: { $ne: 2 } },
           { type: 'staff' },
           { $or: [{ email: data.email }, { phone: data.mobile }] },
@@ -733,18 +1070,46 @@ export class AdminService {
 
     if (existingActive) {
       if (existingActive.email === data.email) {
-        throw new ConflictException('Email already exists for this vendor');
+        throw new ConflictException('Email already exists');
       }
       if (existingActive.phone === data.mobile) {
-        throw new ConflictException(
-          'Phone number already exists for this vendor',
-        );
+        throw new ConflictException('Phone number already exists');
       }
       throw new ConflictException('Team member already exists');
     }
 
-    const password = crypto.randomBytes(8).toString('hex');
-    const passwordHash = await bcrypt.hash(password, 10);
+    const totalNonDeleted = await this.vendorUserModel
+      .countDocuments({ type: 'staff', status: { $ne: 2 } })
+      .exec();
+    const maxAllowed = Math.max(1, totalNonDeleted);
+    const desiredOrder =
+      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
+    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
+      throw new BadRequestException('Display order must be a positive integer');
+    }
+    if (desiredOrder > maxAllowed) {
+      throw new BadRequestException(
+        `Display order must be between 1 and ${maxAllowed}`,
+      );
+    }
+
+    if (desiredOrder < maxAllowed) {
+      await this.vendorUserModel
+        .updateMany(
+          {
+            type: 'staff',
+            status: { $ne: 2 },
+            displayOrder: { $gte: desiredOrder },
+          },
+          { $inc: { displayOrder: 1 } },
+        )
+        .exec();
+    }
+
+    // Staff can log into admin portal only after a role is assigned (RBAC mapping).
+    // We still store a random password hash here; on first role assignment we rotate it
+    // and send credentials via email (see RbacService).
+    const passwordHash = await bcrypt.hash(crypto.randomBytes(8).toString('hex'), 10);
 
     const teamMember: Partial<VendorUser> = {
       // Canonical + legacy alias (some modules still query vendorId)
@@ -763,6 +1128,8 @@ export class AdminService {
       facebookUrl: data.facebookUrl,
       twitterUrl: data.twitterUrl,
       linkedinUrl: data.linkedinUrl,
+      displayOrder: desiredOrder,
+      team: data.team,
       password: passwordHash,
     };
 
@@ -790,63 +1157,54 @@ export class AdminService {
     delete obj.password;
     delete obj.otp;
 
-    // Best-effort credential mail for team member onboarding.
-    try {
-      await this.emailService.sendStaffCredentialsEmail(
-        String(data.email || '').trim().toLowerCase(),
-        password,
-        data.name,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Team member created but credentials email failed for ${String(data.email || '').trim().toLowerCase()}: ${(error as Error)?.message || 'unknown error'}`,
-      );
+    if (data.roleId) {
+      // Role assignment becomes the source of truth for portal access.
+      // Credentials email is triggered only when role is assigned for the first time.
+      await this.rbacService.updateStaffRole(vendorId, {
+        vendorUserId: String(saved._id),
+        roleId: data.roleId,
+      });
     }
 
-    return obj;
+    const id = String(saved._id);
+    return {
+      ...obj,
+      id,
+      vendorUserId: id,
+    };
   }
 
   /**
    * Team members for the admin table: non-deleted partners (status !== 2).
    * status 1 = active, 0 = inactive (matches partner toggle).
    */
-  async listTeamMembers(vendorId: string) {
-    let vendorObjectId: Types.ObjectId;
-    try {
-      vendorObjectId = new Types.ObjectId(vendorId);
-    } catch {
-      throw new BadRequestException('Invalid vendor ID format');
-    }
-
+  async listTeamMembers(_vendorId: string) {
     const members = await this.vendorUserModel
       .find({
-        $or: [
-          { manufacturerId: vendorObjectId },
-          { vendorId: vendorObjectId },
-          { vendorId },
-        ],
         type: 'staff',
         status: { $ne: 2 },
       })
-      // Newest team members first (do not change to ascending).
-      .sort({ createdAt: -1, _id: -1 })
-      .select('name designation email phone status')
+      .sort({ displayOrder: 1, _id: 1 })
+      .select('name designation email phone status displayOrder team')
       .lean()
       .exec();
 
     return members.map((m, index) => ({
       s_no: index + 1,
       id: String(m._id),
+      vendorUserId: String(m._id),
       name: m.name,
       designation: m.designation ?? '',
       email: m.email,
       mobile: m.phone,
       is_active: m.status === 1,
+      displayOrder: Number((m as any).displayOrder) || 0,
+      team: String((m as any).team ?? ''),
     }));
   }
 
   async listTeamMembersPaginated(
-    vendorId: string,
+    _vendorId: string,
     query: ListTeamMembersQueryDto,
   ) {
     const page = Number(query?.page ?? 1);
@@ -855,19 +1213,7 @@ export class AdminService {
     const perPage = Number.isFinite(limit) && limit > 0 ? limit : 10;
     const skip = (currentPage - 1) * perPage;
 
-    let vendorObjectId: Types.ObjectId;
-    try {
-      vendorObjectId = new Types.ObjectId(vendorId);
-    } catch {
-      throw new BadRequestException('Invalid vendor ID format');
-    }
-
     const mongoQuery: Record<string, unknown> = {
-      $or: [
-        { manufacturerId: vendorObjectId },
-        { vendorId: vendorObjectId },
-        { vendorId },
-      ],
       type: 'staff',
       status: { $ne: 2 },
     };
@@ -883,14 +1229,17 @@ export class AdminService {
       mongoQuery.designation = new RegExp(`^${escapeRegex(designation)}$`, 'i');
     }
 
-    const [totalCount, members] = await Promise.all([
+    const [displayOrderMax, totalCount, members] = await Promise.all([
+      this.vendorUserModel
+        .countDocuments({ type: 'staff', status: { $ne: 2 } })
+        .exec(),
       this.vendorUserModel.countDocuments(mongoQuery).exec(),
       this.vendorUserModel
         .find(mongoQuery)
-        .sort({ createdAt: -1, _id: -1 })
+        .sort({ displayOrder: 1, _id: 1 })
         .skip(skip)
         .limit(perPage)
-        .select('name designation email phone status')
+        .select('name designation email phone status displayOrder team')
         .lean()
         .exec(),
     ]);
@@ -899,15 +1248,19 @@ export class AdminService {
     const data = (members ?? []).map((m, index) => ({
       s_no: skip + index + 1,
       id: String(m._id),
+      vendorUserId: String(m._id),
       name: m.name,
       designation: m.designation ?? '',
       email: m.email,
       mobile: m.phone,
       is_active: m.status === 1,
+      displayOrder: Number((m as any).displayOrder) || 0,
+      team: String((m as any).team ?? ''),
     }));
 
     return {
       data,
+      displayOrderMax: Math.max(1, displayOrderMax),
       totalCount,
       currentPage,
       totalPages,
@@ -918,29 +1271,14 @@ export class AdminService {
    * Partial, case-insensitive match on name and/or email (non-deleted partners only).
    * When both filters are set, both must match (AND).
    */
-  async searchTeamMembers(
-    vendorId: string,
-    filters: { name?: string; email?: string },
-  ) {
+  async searchTeamMembers(_vendorId: string, filters: { name?: string; email?: string }) {
     const name = filters.name?.trim();
     const email = filters.email?.trim();
     if (!name && !email) {
       throw new BadRequestException('Provide a name and/or email to search');
     }
 
-    let vendorObjectId: Types.ObjectId;
-    try {
-      vendorObjectId = new Types.ObjectId(vendorId);
-    } catch {
-      throw new BadRequestException('Invalid vendor ID format');
-    }
-
     const query: Record<string, unknown> = {
-      $or: [
-        { manufacturerId: vendorObjectId },
-        { vendorId: vendorObjectId },
-        { vendorId },
-      ],
       type: 'staff',
       status: { $ne: 2 },
     };
@@ -953,28 +1291,29 @@ export class AdminService {
 
     const members = await this.vendorUserModel
       .find(query)
-      .sort({ createdAt: -1, _id: -1 })
-      .select('name designation email phone status')
+      .sort({ displayOrder: 1, _id: 1 })
+      .select('name designation email phone status displayOrder team')
       .lean()
       .exec();
 
     return members.map((m, index) => ({
       s_no: index + 1,
       id: String(m._id),
+      vendorUserId: String(m._id),
       name: m.name,
       designation: m.designation ?? '',
       email: m.email,
       mobile: m.phone,
       is_active: m.status === 1,
+      displayOrder: Number((m as any).displayOrder) || 0,
+      team: String((m as any).team ?? ''),
     }));
   }
 
   /** Single team member for view modal (non-deleted partner, same vendor). */
-  async getTeamMemberById(vendorId: string, memberId: string) {
-    let vendorObjectId: Types.ObjectId;
+  async getTeamMemberById(_vendorId: string, memberId: string) {
     let memberObjectId: Types.ObjectId;
     try {
-      vendorObjectId = new Types.ObjectId(vendorId);
       memberObjectId = new Types.ObjectId(memberId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -983,16 +1322,11 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        $or: [
-          { manufacturerId: vendorObjectId },
-          { vendorId: vendorObjectId },
-          { vendorId },
-        ],
         type: 'staff',
         status: { $ne: 2 },
       })
       .select(
-        'name designation email phone status image facebookUrl twitterUrl linkedinUrl',
+        'name designation email phone status image facebookUrl twitterUrl linkedinUrl displayOrder team',
       )
       .lean()
       .exec();
@@ -1004,6 +1338,7 @@ export class AdminService {
     const st = member.status ?? 0;
     return {
       id: String(member._id),
+      vendorUserId: String(member._id),
       name: member.name,
       designation: member.designation ?? '',
       email: member.email,
@@ -1013,6 +1348,8 @@ export class AdminService {
       facebookUrl: member.facebookUrl ?? '',
       twitterUrl: member.twitterUrl ?? '',
       linkedinUrl: member.linkedinUrl ?? '',
+      displayOrder: Number((member as any).displayOrder) || 0,
+      team: String((member as any).team ?? ''),
     };
   }
 
@@ -1305,7 +1642,7 @@ export class AdminService {
   }
 
   async updateTeamMember(
-    vendorId: string,
+    _vendorId: string,
     data: {
       id: string;
       name: string;
@@ -1316,12 +1653,11 @@ export class AdminService {
       facebookUrl?: string;
       twitterUrl?: string;
       linkedinUrl?: string;
+      roleId?: string;
     },
   ) {
-    let vendorObjectId: Types.ObjectId;
     let memberObjectId: Types.ObjectId;
     try {
-      vendorObjectId = new Types.ObjectId(vendorId);
       memberObjectId = new Types.ObjectId(data.id);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -1330,11 +1666,6 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        $or: [
-          { manufacturerId: vendorObjectId },
-          { vendorId: vendorObjectId },
-          { vendorId },
-        ],
         type: 'staff',
         status: { $ne: 2 },
       })
@@ -1347,13 +1678,6 @@ export class AdminService {
     const existingOther = await this.vendorUserModel
       .findOne({
         $and: [
-          {
-            $or: [
-              { manufacturerId: vendorObjectId },
-              { vendorId: vendorObjectId },
-              { vendorId },
-            ],
-          },
           { _id: { $ne: memberObjectId } },
           { status: { $ne: 2 } },
           { type: 'staff' },
@@ -1366,14 +1690,56 @@ export class AdminService {
 
     if (existingOther) {
       if (existingOther.email === data.email) {
-        throw new ConflictException('Email already exists for this vendor');
+        throw new ConflictException('Email already exists');
       }
       if (existingOther.phone === data.mobile) {
-        throw new ConflictException(
-          'Phone number already exists for this vendor',
-        );
+        throw new ConflictException('Phone number already exists');
       }
       throw new ConflictException('Team member already exists');
+    }
+
+    const totalNonDeleted = await this.vendorUserModel
+      .countDocuments({ type: 'staff', status: { $ne: 2 } })
+      .exec();
+    const maxAllowed = Math.max(1, totalNonDeleted);
+    const desiredOrder =
+      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
+    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
+      throw new BadRequestException('Display order must be a positive integer');
+    }
+    if (desiredOrder > maxAllowed) {
+      throw new BadRequestException(
+        `Display order must be between 1 and ${maxAllowed}`,
+      );
+    }
+
+    const currentOrder = Number((member as any).displayOrder) || maxAllowed;
+    if (desiredOrder !== currentOrder) {
+      if (desiredOrder < currentOrder) {
+        await this.vendorUserModel
+          .updateMany(
+            {
+              _id: { $ne: memberObjectId },
+              type: 'staff',
+              status: { $ne: 2 },
+              displayOrder: { $gte: desiredOrder, $lt: currentOrder },
+            },
+            { $inc: { displayOrder: 1 } },
+          )
+          .exec();
+      } else {
+        await this.vendorUserModel
+          .updateMany(
+            {
+              _id: { $ne: memberObjectId },
+              type: 'staff',
+              status: { $ne: 2 },
+              displayOrder: { $gt: currentOrder, $lte: desiredOrder },
+            },
+            { $inc: { displayOrder: -1 } },
+          )
+          .exec();
+      }
     }
 
     const $set: Record<string, unknown> = {
@@ -1399,6 +1765,8 @@ export class AdminService {
     if (data.imagePath !== undefined) {
       $set.image = data.imagePath;
     }
+    $set.displayOrder = desiredOrder;
+    $set.team = data.team;
 
     const updatePayload: Record<string, unknown> = { $set };
     if (data.designation !== undefined && data.designation === '') {
@@ -1416,15 +1784,26 @@ export class AdminService {
     const obj: any = updated.toObject();
     delete obj.password;
     delete obj.otp;
-    return obj;
+
+    if (data.roleId) {
+      await this.rbacService.updateStaffRole(vendorId, {
+        vendorUserId: data.id,
+        roleId: data.roleId,
+      });
+    }
+
+    const id = String(updated._id);
+    return {
+      ...obj,
+      id,
+      vendorUserId: id,
+    };
   }
 
   /** Soft delete: status 2 (same as partners). */
-  async deleteTeamMember(vendorId: string, teamMemberId: string) {
-    let vendorObjectId: Types.ObjectId;
+  async deleteTeamMember(_vendorId: string, teamMemberId: string) {
     let memberObjectId: Types.ObjectId;
     try {
-      vendorObjectId = new Types.ObjectId(vendorId);
       memberObjectId = new Types.ObjectId(teamMemberId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -1433,11 +1812,6 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        $or: [
-          { manufacturerId: vendorObjectId },
-          { vendorId: vendorObjectId },
-          { vendorId },
-        ],
         type: 'staff',
         status: { $ne: 2 },
       })
@@ -1457,6 +1831,21 @@ export class AdminService {
 
     if (!updated) {
       throw new NotFoundException('Team member not found');
+    }
+
+    const deletedOrder = Number((member as any).displayOrder);
+    if (Number.isFinite(deletedOrder) && deletedOrder > 0) {
+      await this.vendorUserModel
+        .updateMany(
+          {
+            _id: { $ne: memberObjectId },
+            type: 'staff',
+            status: { $ne: 2 },
+            displayOrder: { $gt: deletedOrder },
+          },
+          { $inc: { displayOrder: -1 } },
+        )
+        .exec();
     }
 
     const obj: any = updated.toObject();
@@ -1677,11 +2066,9 @@ export class AdminService {
    * Toggle active flag for a team member (partner): status 1 ↔ 0.
    * Same semantics as partners PATCH /partners/status; excludes soft-deleted (2).
    */
-  async updateTeamMemberStatus(vendorId: string, teamMemberId: string) {
-    let vendorObjectId: Types.ObjectId;
+  async updateTeamMemberStatus(_vendorId: string, teamMemberId: string) {
     let memberObjectId: Types.ObjectId;
     try {
-      vendorObjectId = new Types.ObjectId(vendorId);
       memberObjectId = new Types.ObjectId(teamMemberId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -1690,11 +2077,6 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        $or: [
-          { manufacturerId: vendorObjectId },
-          { vendorId: vendorObjectId },
-          { vendorId },
-        ],
         type: 'staff',
         status: { $ne: 2 },
       })

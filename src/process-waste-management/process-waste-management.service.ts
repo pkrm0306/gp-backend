@@ -19,6 +19,7 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class ProcessWasteManagementService implements OnModuleInit {
@@ -58,56 +59,12 @@ export class ProcessWasteManagementService implements OnModuleInit {
     return new Types.ObjectId(id);
   }
 
-  /**
-   * Ensure URN folder exists, create if it doesn't
-   */
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-
-    return urnFolderPath;
-  }
-
-  /**
-   * Save file to URN-specific folder
-   */
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'waste_management_supporting',
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    // Copy file from temp location to URN folder (file.path is the temp location)
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      // Optionally remove temp file
-      try {
-        fs.unlinkSync(file.path);
-      } catch (err) {
-        // Ignore if temp file doesn't exist or can't be deleted
-      }
-    } else {
-      // If file.path doesn't exist, write buffer directly
-      if (file.buffer) {
-        fs.writeFileSync(filePath, file.buffer);
-      } else {
-        throw new BadRequestException(
-          `File data not available for ${fileType}`,
-        );
-      }
-    }
-
-    // Return relative path from uploads folder
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
 
   /**
@@ -147,7 +104,7 @@ export class ProcessWasteManagementService implements OnModuleInit {
 
       if (uploadedWmFiles.length > 0) {
         for (const wmSupportingDocumentsFile of uploadedWmFiles) {
-          const wmSupportingDocumentsFilePath = this.saveFileToUrnFolder(
+          const wmSupportingDocumentsFilePath = await this.saveFileToUrnFolder(
             wmSupportingDocumentsFile,
             createProcessWasteManagementDto.urnNo,
             'waste_management_supporting',
@@ -225,7 +182,7 @@ export class ProcessWasteManagementService implements OnModuleInit {
             formPrimaryId: savedProcessWasteManagement.processWasteManagementId,
             documentName: path.basename(wmSupportingDocumentsFilePaths[i]),
             documentOriginalName: uploadedWmFiles[i].originalname,
-            documentLink: `uploads/${wmSupportingDocumentsFilePaths[i]}`,
+            documentLink: wmSupportingDocumentsFilePaths[i],
             createdDate: now,
             updatedDate: now,
           });

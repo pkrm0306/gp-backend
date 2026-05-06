@@ -17,8 +17,10 @@ import { PERMISSIONS } from '../common/constants/permissions.constants';
 import { AllowStaffSelfRoleRead } from '../common/decorators/allow-staff-self-role-read.decorator';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+import { UpdateRoleStatusDto } from './dto/update-role-status.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
+import { UnassignStaffRoleDto } from './dto/unassign-staff-role.dto';
 import { RbacService } from './rbac.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -58,14 +60,34 @@ export class RbacController {
     return { message: 'Role updated successfully', data };
   }
 
-  @Delete('roles/:id')
+  @Patch('roles/:id/status')
   @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
-  async disableRole(
+  async updateRoleStatus(
+    @CurrentUser() user: { manufacturerId: string },
+    @Param('id') id: string,
+    @Body() dto: UpdateRoleStatusDto,
+  ) {
+    const desired =
+      dto?.status !== undefined ? String(dto.status).trim().toLowerCase() : undefined;
+    let status: number | undefined = undefined;
+    if (desired === 'active' || desired === '1') status = 1;
+    if (desired === 'inactive' || desired === '0') status = 0;
+    const data = await this.rbacService.setOrToggleRoleStatus(
+      user.manufacturerId,
+      id,
+      status,
+    );
+    return { message: 'Role status updated successfully', data };
+  }
+
+  @Delete('roles/:id/delete')
+  @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
+  async deleteRole(
     @CurrentUser() user: { manufacturerId: string },
     @Param('id') id: string,
   ) {
-    const data = await this.rbacService.disableRole(user.manufacturerId, id);
-    return { message: 'Role disabled successfully', data };
+    const data = await this.rbacService.deleteRole(user.manufacturerId, id);
+    return { message: 'Role deleted successfully', data };
   }
 
   @Post('staff')
@@ -103,6 +125,19 @@ export class RbacController {
   ) {
     const data = await this.rbacService.updateStaffRole(user.manufacturerId, dto);
     return { message: 'Staff role updated successfully', data };
+  }
+
+  @Delete('staff/roles')
+  @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
+  async unassignRole(
+    @CurrentUser() user: { manufacturerId: string },
+    @Body() dto: UnassignStaffRoleDto,
+  ) {
+    const data = await this.rbacService.unassignStaffRole(
+      user.manufacturerId,
+      dto.vendorUserId,
+    );
+    return { message: 'Staff role unassigned successfully', data };
   }
 
   @Get('staff/roles')

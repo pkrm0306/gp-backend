@@ -19,6 +19,7 @@ import {
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 type Step15Files = {
   file1?: Express.Multer.File;
@@ -56,36 +57,12 @@ export class RawMaterialsUtilizationRmcService {
     return new Types.ObjectId(id);
   }
 
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-    return urnFolderPath;
-  }
-
-  private saveFileToUrnFolder(file: Express.Multer.File, urnNo: string, fileType: string): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      try {
-        fs.unlinkSync(file.path);
-      } catch {
-        // ignore temp-file cleanup failures
-      }
-    } else if (file.buffer) {
-      fs.writeFileSync(filePath, file.buffer);
-    } else {
-      throw new BadRequestException('File data not available');
-    }
-
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  private async saveFileToUrnFolder(
+    file: Express.Multer.File,
+    urnNo: string,
+    fileType: string,
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
 
   private buildValidationError(fieldErrors: Record<string, string>): never {
@@ -468,7 +445,11 @@ export class RawMaterialsUtilizationRmcService {
       documentForm: 'raw_materials_3_15_1' | 'raw_materials_3_15_2',
       fileType: string,
     ) => {
-      const storedRelativePath = this.saveFileToUrnFolder(file, urnNo, fileType);
+      const storedRelativePath = await this.saveFileToUrnFolder(
+        file,
+        urnNo,
+        fileType,
+      );
       const productDocumentId = await this.sequenceHelper.getProductDocumentId();
       await this.allProductDocumentModel.create({
         productDocumentId,
@@ -480,7 +461,7 @@ export class RawMaterialsUtilizationRmcService {
         formPrimaryId,
         documentName: fileNameHint?.trim() || path.basename(storedRelativePath),
         documentOriginalName: file.originalname,
-        documentLink: `uploads/${storedRelativePath}`,
+        documentLink: storedRelativePath,
         createdDate: now,
         updatedDate: now,
       });

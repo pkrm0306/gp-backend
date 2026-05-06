@@ -8,7 +8,9 @@ import {
   Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { WebsiteService } from './website.service';
 import { NewsletterSubscribeDto } from './dto/newsletter-subscribe.dto';
@@ -17,6 +19,7 @@ import { ContactSubmitDto } from './dto/contact-submit.dto';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CategoriesService } from '../categories/categories.service';
 import { ProductRegistrationService } from '../product-registration/product-registration.service';
+import { AdminService } from '../admin/admin.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { ListCategoriesQueryDto } from '../categories/dto/list-categories-query.dto';
 import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
@@ -32,6 +35,7 @@ export class WebsiteController {
     private readonly manufacturersService: ManufacturersService,
     private readonly categoriesService: CategoriesService,
     private readonly productRegistrationService: ProductRegistrationService,
+    private readonly adminService: AdminService,
   ) {}
 
   @Get('public/manufacturers')
@@ -64,6 +68,35 @@ export class WebsiteController {
       message: 'Categories retrieved successfully',
       data,
     };
+  }
+
+  @Get('public/banners')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public banners for website',
+    description:
+      'Returns **all vendors’** active banners (newest first) for homepage/marketing carousel. For a vendor’s **own** banners in the admin panel, use **GET /admin/banner/list** with auth.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Banner cards data (same shape as legacy public admin list)',
+  })
+  async listPublicBanners(@Req() req: Request) {
+    const data = await this.adminService.listPublicBanners();
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = (raw ?? '').toString().trim();
+      if (!v) return v;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v;
+    };
+    const normalized = data.map((b) => ({
+      ...b,
+      imageUrl: normalizeImageUrl(b.imageUrl),
+    }));
+    return { message: 'Banners retrieved successfully', data: normalized };
   }
 
   @Post('public/products/certified/list')

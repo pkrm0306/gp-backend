@@ -94,6 +94,18 @@ export class EmailService {
     }
   }
 
+  /**
+   * Fire-and-forget wrapper used by non-critical email flows.
+   * Prevents request failures when SMTP has transient issues.
+   */
+  sendInBackground(task: () => Promise<void>): void {
+    task().catch((error) => {
+      this.logger.warn(
+        `Background email task failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    });
+  }
+
   async sendRegistrationEmail(
     email: string,
     password: string,

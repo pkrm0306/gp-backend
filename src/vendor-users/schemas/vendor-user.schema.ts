@@ -2,6 +2,13 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
 export type VendorUserDocument = VendorUser & Document;
+export const TEAM_MEMBER_TEAMS = [
+  'administrative',
+  'technical',
+  'finance',
+  'marketing',
+] as const;
+export type TeamMemberTeam = (typeof TEAM_MEMBER_TEAMS)[number];
 
 @Schema({ timestamps: true })
 export class VendorUser {
@@ -35,6 +42,12 @@ export class VendorUser {
 
   @Prop()
   linkedinUrl?: string;
+
+  @Prop({ required: false, min: 1 })
+  displayOrder?: number;
+
+  @Prop({ required: false, enum: TEAM_MEMBER_TEAMS })
+  team?: TeamMemberTeam;
 
   @Prop({ required: true })
   password: string;

@@ -19,6 +19,7 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class ProcessProductStewardshipService implements OnModuleInit {
@@ -58,56 +59,12 @@ export class ProcessProductStewardshipService implements OnModuleInit {
     return new Types.ObjectId(id);
   }
 
-  /**
-   * Ensure URN folder exists, create if it doesn't
-   */
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-
-    return urnFolderPath;
-  }
-
-  /**
-   * Save file to URN-specific folder
-   */
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'sea_supporting' | 'qm_supporting' | 'epr_supporting',
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    // Copy file from temp location to URN folder (file.path is the temp location)
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      // Optionally remove temp file
-      try {
-        fs.unlinkSync(file.path);
-      } catch (err) {
-        // Ignore if temp file doesn't exist or can't be deleted
-      }
-    } else {
-      // If file.path doesn't exist, write buffer directly
-      if (file.buffer) {
-        fs.writeFileSync(filePath, file.buffer);
-      } else {
-        throw new BadRequestException(
-          `File data not available for ${fileType}`,
-        );
-      }
-    }
-
-    // Return relative path from uploads folder
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
 
   /**
@@ -158,7 +115,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
 
       if (seaFiles.length > 0) {
         for (const seaSupportingDocumentsFile of seaFiles) {
-          const seaFilePath = this.saveFileToUrnFolder(
+          const seaFilePath = await this.saveFileToUrnFolder(
             seaSupportingDocumentsFile,
             createProcessProductStewardshipDto.urnNo,
             'sea_supporting',
@@ -174,7 +131,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
 
       if (qmFiles.length > 0) {
         for (const qmSupportingDocumentsFile of qmFiles) {
-          const qmFilePath = this.saveFileToUrnFolder(
+          const qmFilePath = await this.saveFileToUrnFolder(
             qmSupportingDocumentsFile,
             createProcessProductStewardshipDto.urnNo,
             'qm_supporting',
@@ -190,7 +147,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
 
       if (eprFiles.length > 0) {
         for (const eprSupportingDocumentsFile of eprFiles) {
-          const eprFilePath = this.saveFileToUrnFolder(
+          const eprFilePath = await this.saveFileToUrnFolder(
             eprSupportingDocumentsFile,
             createProcessProductStewardshipDto.urnNo,
             'epr_supporting',
@@ -284,7 +241,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
               savedProcessProductStewardship.processProductStewardshipId,
             documentName: path.basename(seaFilePaths[i]),
             documentOriginalName: seaFiles[i].originalname,
-            documentLink: `uploads/${seaFilePaths[i]}`,
+            documentLink: seaFilePaths[i],
             createdDate: now,
             updatedDate: now,
           });
@@ -308,7 +265,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
               savedProcessProductStewardship.processProductStewardshipId,
             documentName: path.basename(qmFilePaths[i]),
             documentOriginalName: qmFiles[i].originalname,
-            documentLink: `uploads/${qmFilePaths[i]}`,
+            documentLink: qmFilePaths[i],
             createdDate: now,
             updatedDate: now,
           });
@@ -332,7 +289,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
               savedProcessProductStewardship.processProductStewardshipId,
             documentName: path.basename(eprFilePaths[i]),
             documentOriginalName: eprFiles[i].originalname,
-            documentLink: `uploads/${eprFilePaths[i]}`,
+            documentLink: eprFilePaths[i],
             createdDate: now,
             updatedDate: now,
           });

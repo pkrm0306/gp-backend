@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   HttpException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -19,9 +20,13 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import * as crypto from 'crypto';
+import { RedisService } from '../common/redis/redis.service';
+import { RbacService } from '../rbac/rbac.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private jwtService: JwtService,
     private configService: ConfigService,
@@ -30,7 +35,63 @@ export class AuthService {
     private vendorUsersService: VendorUsersService,
     private captchaService: CaptchaService,
     private emailService: EmailService,
+    private readonly redisService: RedisService,
+    private readonly rbacService: RbacService,
   ) {}
+
+  private getRecaptchaVerifyCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('RECAPTCHA_VERIFY_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '120',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 120;
+  }
+
+  private buildRecaptchaVerifyCacheKey(token: string): string {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    return this.redisService.buildKey('auth', 'recaptcha', 'verify', tokenHash);
+  }
+
+  private buildRevokedTokenKey(jti: string): string {
+    return this.redisService.buildKey('auth', 'revoked-token', jti);
+  }
+
+  private getNowEpochSeconds(): number {
+    return Math.floor(Date.now() / 1000);
+  }
+
+  private async revokeTokenByJtiAndExp(
+    jti: string | undefined,
+    exp: number | undefined,
+  ): Promise<void> {
+    if (!jti || !exp) return;
+    const ttl = exp - this.getNowEpochSeconds();
+    if (ttl <= 0) return;
+    await this.redisService
+      .set(this.buildRevokedTokenKey(jti), { revoked: true }, ttl)
+      .catch((error) => {
+        this.logger.warn(
+          `Token revoke cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+  }
+
+  async isTokenRevoked(jti?: string): Promise<boolean> {
+    if (!jti) return false;
+    try {
+      const cached = await this.redisService.get<{ revoked?: boolean }>(
+        this.buildRevokedTokenKey(jti),
+      );
+      return Boolean(cached?.revoked);
+    } catch (error) {
+      this.logger.warn(
+        `Token revoke cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+      return false;
+    }
+  }
 
   async registerVendor(registerDto: RegisterVendorDto) {
     if (registerDto.password !== registerDto.confirmPassword) {
@@ -254,6 +315,24 @@ export class AuthService {
       }
     }
 
+    // Portal access is authoritative by RBAC role mapping presence for staff users.
+    // Active/inactive status remains independent (checked above).
+    if (user && resolvedUserType === 'staff') {
+      const manufacturerId =
+        user.manufacturerId?.toString() || user.vendorId?.toString();
+      const hasRole = manufacturerId
+        ? await this.rbacService.hasAnyActiveStaffRoleMapping(
+            manufacturerId,
+            user._id.toString(),
+          )
+        : false;
+      if (!hasRole) {
+        throw new UnauthorizedException(
+          'Portal access is disabled (no role assigned)',
+        );
+      }
+    }
+
     const payload = user
       ? {
           userId: user._id.toString(),
@@ -275,13 +354,18 @@ export class AuthService {
           email: fallbackManufacturer!.vendor_email,
         };
 
+    const accessTokenJti = crypto.randomUUID();
+    const refreshTokenJti = crypto.randomUUID();
+
     const accessToken = this.jwtService.sign(payload, {
       expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '10h',
+      jwtid: accessTokenJti,
     });
 
     const refreshToken = this.jwtService.sign(payload, {
       expiresIn:
         this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+      jwtid: refreshTokenJti,
     });
 
     return {
@@ -319,9 +403,11 @@ export class AuthService {
       password: newPassword,
     });
 
-    await this.emailService.sendPasswordResetEmail(
-      forgotPasswordDto.email,
-      newPassword,
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendPasswordResetEmail(
+        forgotPasswordDto.email,
+        newPassword,
+      ),
     );
 
     return {
@@ -339,6 +425,10 @@ export class AuthService {
       });
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    if (await this.isTokenRevoked(payload?.jti)) {
+      throw new UnauthorizedException('Refresh token has been revoked');
     }
 
     if (!payload?.userId || !payload?.role) {
@@ -365,14 +455,23 @@ export class AuthService {
       newPayload.email = payload.email;
     }
 
+    const accessTokenJti = crypto.randomUUID();
+    const newRefreshTokenJti = crypto.randomUUID();
     const accessToken = this.jwtService.sign(newPayload, {
       expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '10h',
+      jwtid: accessTokenJti,
     });
 
     const refreshToken = this.jwtService.sign(newPayload, {
       expiresIn:
         this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+      jwtid: newRefreshTokenJti,
     });
+
+    await this.revokeTokenByJtiAndExp(
+      payload?.jti,
+      typeof payload?.exp === 'number' ? payload.exp : undefined,
+    );
 
     return {
       message: 'Token refreshed successfully',
@@ -381,5 +480,55 @@ export class AuthService {
         refreshToken,
       },
     };
+  }
+
+  async verifyRecaptcha(captchaToken: string): Promise<boolean> {
+    const normalizedToken = String(captchaToken || '').trim();
+    if (!normalizedToken) {
+      return false;
+    }
+
+    const cacheKey = this.buildRecaptchaVerifyCacheKey(normalizedToken);
+    try {
+      const cached = await this.redisService.get<{ valid: boolean }>(cacheKey);
+      if (cached && typeof cached.valid === 'boolean') {
+        return cached.valid;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `reCAPTCHA cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const valid = await this.captchaService.verifyCaptcha(normalizedToken);
+    this.redisService
+      .set(cacheKey, { valid }, this.getRecaptchaVerifyCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `reCAPTCHA cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return valid;
+  }
+
+  async logout(accessToken: string, refreshToken?: string) {
+    const secret = this.configService.get<string>('JWT_SECRET') || 'secret';
+    const tokensToRevoke = [accessToken, refreshToken].filter(
+      (token): token is string => Boolean(token && token.trim()),
+    );
+
+    for (const token of tokensToRevoke) {
+      try {
+        const payload = this.jwtService.verify(token, { secret });
+        await this.revokeTokenByJtiAndExp(
+          payload?.jti,
+          typeof payload?.exp === 'number' ? payload.exp : undefined,
+        );
+      } catch {
+        // Ignore invalid/expired tokens: logout remains idempotent.
+      }
+    }
+
+    return { loggedOut: true };
   }
 }

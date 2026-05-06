@@ -2,8 +2,10 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -28,6 +30,7 @@ import {
   Notification,
   NotificationDocument,
 } from '../common/schemas/notification.schema';
+import { RedisService } from '../common/redis/redis.service';
 
 function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
   const prefs: string[] = [];
@@ -46,6 +49,8 @@ function formatDateYYYYMMDD(value: unknown): string {
 
 @Injectable()
 export class WebsiteService {
+  private readonly logger = new Logger(WebsiteService.name);
+
   constructor(
     @InjectModel(NewsletterSubscriber.name)
     private subscriberModel: Model<NewsletterSubscriberDocument>,
@@ -59,7 +64,19 @@ export class WebsiteService {
     private notificationModel: Model<NotificationDocument>,
     private manufacturersService: ManufacturersService,
     private emailService: EmailService,
+    private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private getWebsitePublicListCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('WEBSITE_PUBLIC_LIST_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '120',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 120;
+  }
 
   private async createNotification(input: {
     title: string;
@@ -291,30 +308,64 @@ export class WebsiteService {
 
   /**
    * Public website team members list.
-   * Pulls active partners from VendorUser (type=partner, status=1).
+   * Pulls active team members from shared dataset (type=staff, status=1),
+   * sorted by displayOrder so website follows admin ordering.
    */
   async listWebsiteTeamMembers() {
+    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list');
+    try {
+      const cached = await this.redisService.get<
+        Array<{
+          s_no: number;
+          id: string;
+          name: string;
+          designation: string;
+          email: string;
+          mobile: string;
+          image: string | null;
+          facebookUrl: string;
+          twitterUrl: string;
+          linkedinUrl: string;
+        }>
+      >(cacheKey);
+      if (Array.isArray(cached)) return cached;
+    } catch (error) {
+      this.logger.warn(
+        `Website team-members cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const rows = await this.vendorUserModel
-      .find({ type: 'partner', status: 1 })
-      .sort({ createdAt: -1, _id: -1 })
+      .find({ type: 'staff', status: 1 })
+      .sort({ displayOrder: 1, _id: 1 })
       .select(
-        'name designation email phone image facebookUrl twitterUrl linkedinUrl',
+        'name designation email phone image facebookUrl twitterUrl linkedinUrl displayOrder team',
       )
       .lean()
       .exec();
 
-    return (rows ?? []).map((m: any, idx: number) => ({
+    const data = (rows ?? []).map((m: any, idx: number) => ({
       s_no: idx + 1,
       id: String(m._id),
       name: String(m.name ?? ''),
       designation: String(m.designation ?? ''),
       email: String(m.email ?? ''),
       mobile: String(m.phone ?? ''),
+      displayOrder: Number((m as any).displayOrder) || 0,
+      team: String((m as any).team ?? ''),
       image: m.image ?? null,
       facebookUrl: String(m.facebookUrl ?? ''),
       twitterUrl: String(m.twitterUrl ?? ''),
       linkedinUrl: String(m.linkedinUrl ?? ''),
     }));
+    this.redisService
+      .set(cacheKey, data, this.getWebsitePublicListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Website team-members cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return data;
   }
 
   /**
@@ -414,8 +465,6 @@ export class WebsiteService {
       </html>
     `;
 
-    await this.emailService.sendEmail(dto.email, subject, htmlBody);
-
     await this.createNotification({
       title: 'New manufacturer inquiry',
       message: `${dto.name} submitted an inquiry for ${manufacturerName || 'a manufacturer'}.`,
@@ -425,6 +474,10 @@ export class WebsiteService {
       referenceId: manufacturerId,
       actorName: dto.name,
     });
+
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendEmail(dto.email, subject, htmlBody),
+    );
 
     return { sent: true, subject };
   }

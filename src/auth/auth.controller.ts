@@ -5,6 +5,8 @@ import {
   HttpCode,
   HttpStatus,
   Req,
+  UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
@@ -14,15 +16,29 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { VerifyRecaptchaDto } from './dto/verify-recaptcha.dto';
-import { CaptchaService } from '../common/services/captcha.service';
+import { LogoutDto } from './dto/logout.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-    private readonly captchaService: CaptchaService,
-  ) {}
+  constructor(private readonly authService: AuthService) {}
+
+  private extractAccessToken(req: any): string | null {
+    const authHeader = String(req?.headers?.authorization || '').trim();
+    if (/^Bearer\s+/i.test(authHeader)) {
+      return authHeader.replace(/^Bearer\s+/i, '').trim();
+    }
+    const xAccessToken = req?.headers?.['x-access-token'];
+    if (typeof xAccessToken === 'string' && xAccessToken.trim()) {
+      return xAccessToken.trim();
+    }
+    if (Array.isArray(xAccessToken) && xAccessToken[0]?.trim()) {
+      return xAccessToken[0].trim();
+    }
+    const queryToken = String(req?.query?.access_token || '').trim();
+    return queryToken || null;
+  }
 
   @Post('register-vendor')
   @HttpCode(HttpStatus.CREATED)
@@ -98,6 +114,23 @@ export class AuthController {
     return this.authService.refresh(refreshTokenDto);
   }
 
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Logout current session',
+    description:
+      'Revokes current access token and optional refresh token to prevent reuse.',
+  })
+  @ApiBody({ type: LogoutDto, required: false })
+  async logout(@Req() req: any, @Body() body?: LogoutDto) {
+    const accessToken = this.extractAccessToken(req);
+    if (!accessToken) {
+      throw new UnauthorizedException('Authorization token missing');
+    }
+    return this.authService.logout(accessToken, body?.refreshToken);
+  }
+
   @Post('verify-recaptcha')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -107,7 +140,7 @@ export class AuthController {
   })
   @ApiBody({ type: VerifyRecaptchaDto })
   async verifyRecaptcha(@Body() dto: VerifyRecaptchaDto) {
-    const valid = await this.captchaService.verifyCaptcha(dto.captchaToken);
+    const valid = await this.authService.verifyRecaptcha(dto.captchaToken);
     return {
       success: true,
       message: valid ? 'reCAPTCHA verified' : 'Invalid reCAPTCHA token',

@@ -18,6 +18,7 @@ import {
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 type ReduceEnvironmentalUnitInput = {
   location: string;
@@ -49,36 +50,12 @@ export class RawMaterialsReduceEnvironmentalService {
     return new Types.ObjectId(id);
   }
 
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-    return urnFolderPath;
-  }
-
-  private saveFileToUrnFolder(file: Express.Multer.File, urnNo: string, fileType: string): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      try {
-        fs.unlinkSync(file.path);
-      } catch {
-        // ignore temp-file cleanup failures
-      }
-    } else if (file.buffer) {
-      fs.writeFileSync(filePath, file.buffer);
-    } else {
-      throw new BadRequestException('File data not available');
-    }
-
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  private async saveFileToUrnFolder(
+    file: Express.Multer.File,
+    urnNo: string,
+    fileType: string,
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
 
   private unitSignature(unit: ReduceEnvironmentalUnitInput): string {
@@ -221,7 +198,7 @@ export class RawMaterialsReduceEnvironmentalService {
           },
         );
 
-        const storedRelativePath = this.saveFileToUrnFolder(
+        const storedRelativePath = await this.saveFileToUrnFolder(
           reduceEnvironmentalFile,
           urnNo,
           'reduce_environmental_supporting_document',
@@ -240,7 +217,7 @@ export class RawMaterialsReduceEnvironmentalService {
             0,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: reduceEnvironmentalFile.originalname,
-          documentLink: `uploads/${storedRelativePath}`,
+          documentLink: storedRelativePath,
           createdDate: now,
           updatedDate: now,
         });

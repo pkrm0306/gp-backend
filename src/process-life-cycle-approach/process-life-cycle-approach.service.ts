@@ -19,6 +19,7 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class ProcessLifeCycleApproachService implements OnModuleInit {
@@ -58,56 +59,13 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
     return new Types.ObjectId(id);
   }
 
-  /**
-   * Ensure URN folder exists, create if it doesn't
-   */
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-
-    return urnFolderPath;
-  }
-
-  /**
-   * Save file to URN-specific folder
-   */
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'lca_reports' | 'lca_implementation',
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    // Copy file from temp location to URN folder (file.path is the temp location)
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      // Optionally remove temp file
-      try {
-        fs.unlinkSync(file.path);
-      } catch (err) {
-        // Ignore if temp file doesn't exist or can't be deleted
-      }
-    } else {
-      // If file.path doesn't exist, write buffer directly
-      if (file.buffer) {
-        fs.writeFileSync(filePath, file.buffer);
-      } else {
-        throw new BadRequestException(
-          `File data not available for ${fileType}`,
-        );
-      }
-    }
-
-    // Return relative path from uploads folder
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
   }
 
   /**
@@ -150,16 +108,17 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
       let lifeCycleAssesmentReports =
         existingLifeCycle?.lifeCycleAssesmentReports ?? 0;
       const lcaReportsFilePaths: string[] = [];
+      const lcaReportsStoredNames: string[] = [];
 
       if (lcaReportsFiles.length > 0) {
         for (const lifeCycleAssesmentReportsFile of lcaReportsFiles) {
-          const lcaReportsFilePath = this.saveFileToUrnFolder(
+          const lcaReportsFilePath = await this.saveFileToUrnFolder(
             lifeCycleAssesmentReportsFile,
             createProcessLifeCycleApproachDto.urnNo,
             'lca_reports',
           );
-          lcaReportsFilePaths.push(lcaReportsFilePath);
-          createdFileFullPaths.push(path.join('uploads', lcaReportsFilePath));
+          lcaReportsFilePaths.push(lcaReportsFilePath.fileUrl);
+          lcaReportsStoredNames.push(lcaReportsFilePath.fileName);
         }
         lifeCycleAssesmentReports = 1;
       }
@@ -167,16 +126,17 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
       let lifeCycleImplementationDocuments =
         existingLifeCycle?.lifeCycleImplementationDocuments ?? 0;
       const lcaImplementationFilePaths: string[] = [];
+      const lcaImplementationStoredNames: string[] = [];
 
       if (lcaImplementationFiles.length > 0) {
         for (const lifeCycleImplementationDocumentsFile of lcaImplementationFiles) {
-          const lcaImplementationFilePath = this.saveFileToUrnFolder(
+          const lcaImplementationFilePath = await this.saveFileToUrnFolder(
             lifeCycleImplementationDocumentsFile,
             createProcessLifeCycleApproachDto.urnNo,
             'lca_implementation',
           );
-          lcaImplementationFilePaths.push(lcaImplementationFilePath);
-          createdFileFullPaths.push(path.join('uploads', lcaImplementationFilePath));
+          lcaImplementationFilePaths.push(lcaImplementationFilePath.fileUrl);
+          lcaImplementationStoredNames.push(lcaImplementationFilePath.fileName);
         }
         lifeCycleImplementationDocuments = 1;
       }
@@ -245,9 +205,9 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
           documentFormSubsection: 'life_cycle_assesment_reports',
           formPrimaryId: savedProcessLifeCycleApproach.processLifeCycleApproachId,
-          documentName: path.basename(lcaReportsFilePaths[i]),
+          documentName: lcaReportsStoredNames[i],
           documentOriginalName: lcaReportsFiles[i].originalname,
-          documentLink: `uploads/${lcaReportsFilePaths[i]}`,
+          documentLink: lcaReportsFilePaths[i],
           createdDate: now,
           updatedDate: now,
         });
@@ -262,9 +222,9 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
           documentFormSubsection: 'life_cycle_implementation_documents',
           formPrimaryId: savedProcessLifeCycleApproach.processLifeCycleApproachId,
-          documentName: path.basename(lcaImplementationFilePaths[i]),
+          documentName: lcaImplementationStoredNames[i],
           documentOriginalName: lcaImplementationFiles[i].originalname,
-          documentLink: `uploads/${lcaImplementationFilePaths[i]}`,
+          documentLink: lcaImplementationFilePaths[i],
           createdDate: now,
           updatedDate: now,
         });

@@ -36,3 +36,25 @@ export function getS3Bucket(): string {
 export function getS3Region(): string {
   return process.env.AWS_REGION!.trim();
 }
+
+export function getCloudFrontBaseUrl(): string | null {
+  const raw = process.env.AWS_CLOUDFRONT_URL?.trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = new URL(raw);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length === 0) {
+      return parsed.origin;
+    }
+
+    // If a file path is provided (e.g. /dummy.png), drop the file part.
+    const last = segments[segments.length - 1];
+    const looksLikeFile = /\.[a-zA-Z0-9]+$/.test(last);
+    const kept = looksLikeFile ? segments.slice(0, -1) : segments;
+    const path = kept.length > 0 ? `/${kept.join('/')}` : '';
+    return `${parsed.origin}${path}`;
+  } catch {
+    return null;
+  }
+}

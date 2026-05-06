@@ -1,7 +1,8 @@
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
 import {
+  getCloudFrontBaseUrl,
   getS3Bucket,
   getS3Client,
   getS3Region,
@@ -38,6 +39,18 @@ function buildS3PublicUrl(bucket: string, region: string, key: string): string {
   return `https://${bucket}.s3.${region}.amazonaws.com/${encodedKey}`;
 }
 
+function buildPublicFileUrl(bucket: string, region: string, key: string): string {
+  const encodedKey = key
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  const cloudFrontBase = getCloudFrontBaseUrl();
+  if (cloudFrontBase) {
+    return `${cloudFrontBase.replace(/\/+$/, '')}/${encodedKey}`;
+  }
+  return buildS3PublicUrl(bucket, region, key);
+}
+
 /**
  * Upload a Multer **memory** file to S3 (if configured) or to `uploads/{folderName}/`.
  */
@@ -45,8 +58,14 @@ export async function uploadFile(
   file: Express.Multer.File,
   folderName: string,
 ): Promise<UploadResult> {
-  if (!file?.buffer) {
-    throw new Error('uploadFile requires memory storage (file.buffer missing)');
+  const fileBuffer =
+    file?.buffer && file.buffer.length > 0
+      ? file.buffer
+      : file?.path && existsSync(file.path)
+        ? readFileSync(file.path)
+        : null;
+  if (!fileBuffer) {
+    throw new Error('uploadFile requires file buffer or valid file.path');
   }
 
   const folder = normalizeFolder(folderName);
@@ -62,7 +81,7 @@ export async function uploadFile(
       new PutObjectCommand({
         Bucket: bucket,
         Key: key,
-        Body: file.buffer,
+        Body: fileBuffer,
         ContentType: file.mimetype || 'application/octet-stream',
       }),
     );
@@ -71,7 +90,7 @@ export async function uploadFile(
       storage: 's3',
       fileName: baseName,
       relativePath: `${folder}/${baseName}`,
-      fileUrl: buildS3PublicUrl(bucket, region, key),
+      fileUrl: buildPublicFileUrl(bucket, region, key),
       s3Key: key,
     };
   }
@@ -79,8 +98,15 @@ export async function uploadFile(
   const dir = join(process.cwd(), 'uploads', folder);
   mkdirSync(dir, { recursive: true });
   const dest = join(dir, baseName);
-  writeFileSync(dest, file.buffer);
+  writeFileSync(dest, fileBuffer);
   const relativePath = `${folder}/${baseName}`;
+  if (file?.path && existsSync(file.path)) {
+    try {
+      unlinkSync(file.path);
+    } catch {
+      /* ignore */
+    }
+  }
 
   return {
     storage: 'local',

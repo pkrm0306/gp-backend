@@ -19,6 +19,7 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class ProcessManufacturingService implements OnModuleInit {
@@ -58,56 +59,12 @@ export class ProcessManufacturingService implements OnModuleInit {
     return new Types.ObjectId(id);
   }
 
-  /**
-   * Ensure URN folder exists, create if it doesn't
-   */
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-
-    return urnFolderPath;
-  }
-
-  /**
-   * Save file to URN-specific folder
-   */
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'energy_conservation' | 'energy_consumption',
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    // Copy file from temp location to URN folder (file.path is the temp location)
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      // Optionally remove temp file
-      try {
-        fs.unlinkSync(file.path);
-      } catch (err) {
-        // Ignore if temp file doesn't exist or can't be deleted
-      }
-    } else {
-      // If file.path doesn't exist, write buffer directly
-      if (file.buffer) {
-        fs.writeFileSync(filePath, file.buffer);
-      } else {
-        throw new BadRequestException(
-          `File data not available for ${fileType}`,
-        );
-      }
-    }
-
-    // Return relative path from uploads folder
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
 
   /**
@@ -153,7 +110,7 @@ export class ProcessManufacturingService implements OnModuleInit {
       const energyConservationFilePaths: string[] = [];
       if (energyConservationFiles.length > 0) {
         for (const energyConservationSupportingDocumentsFile of energyConservationFiles) {
-          const energyConservationFilePath = this.saveFileToUrnFolder(
+          const energyConservationFilePath = await this.saveFileToUrnFolder(
             energyConservationSupportingDocumentsFile,
             createProcessManufacturingDto.urnNo,
             'energy_conservation',
@@ -169,7 +126,7 @@ export class ProcessManufacturingService implements OnModuleInit {
       const energyConsumptionFilePaths: string[] = [];
       if (energyConsumptionFiles.length > 0) {
         for (const energyConsumptionDocumentsFile of energyConsumptionFiles) {
-          const energyConsumptionFilePath = this.saveFileToUrnFolder(
+          const energyConsumptionFilePath = await this.saveFileToUrnFolder(
             energyConsumptionDocumentsFile,
             createProcessManufacturingDto.urnNo,
             'energy_consumption',
@@ -250,7 +207,7 @@ export class ProcessManufacturingService implements OnModuleInit {
           formPrimaryId: savedProcessManufacturing.processManufacturingId,
           documentName: path.basename(energyConservationFilePaths[i]),
           documentOriginalName: energyConservationFiles[i].originalname,
-          documentLink: `uploads/${energyConservationFilePaths[i]}`,
+          documentLink: energyConservationFilePaths[i],
           createdDate: now,
           updatedDate: now,
         });
@@ -267,7 +224,7 @@ export class ProcessManufacturingService implements OnModuleInit {
           formPrimaryId: savedProcessManufacturing.processManufacturingId,
           documentName: path.basename(energyConsumptionFilePaths[i]),
           documentOriginalName: energyConsumptionFiles[i].originalname,
-          documentLink: `uploads/${energyConsumptionFilePaths[i]}`,
+          documentLink: energyConsumptionFilePaths[i],
           createdDate: now,
           updatedDate: now,
         });

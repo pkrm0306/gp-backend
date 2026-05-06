@@ -2,6 +2,15 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 export type EventDocument = Event & Document;
+export const GALLERY_TYPES = [
+  'Summits',
+  'Awards',
+  'Site Audits',
+  'Workshops',
+  'Trainings',
+  'Other',
+] as const;
+export type GalleryType = (typeof GALLERY_TYPES)[number];
 
 @Schema({ collection: 'events', timestamps: false })
 export class Event {
@@ -18,6 +27,13 @@ export class Event {
   /** Relative path stored in DB (for example: events/file.png) */
   @Prop()
   event_image?: string;
+
+  /** Multiple gallery images (local upload paths or absolute URLs) */
+  @Prop({ type: [String], default: [] })
+  galleryImages?: string[];
+
+  @Prop({ enum: GALLERY_TYPES, required: false })
+  galleryType?: GalleryType;
 
   @Prop()
   eventDescription?: string;

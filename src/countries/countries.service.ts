@@ -1,17 +1,51 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Country, CountryDocument } from './schemas/country.schema';
+import { RedisService } from '../common/redis/redis.service';
 
 @Injectable()
 export class CountriesService {
+  private readonly logger = new Logger(CountriesService.name);
+
   constructor(
     @InjectModel(Country.name)
     private countryModel: Model<CountryDocument>,
+    private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
 
+  private getCountriesListCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('COUNTRIES_LIST_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '300',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 300;
+  }
+
   async findAll() {
-    return this.countryModel.find().sort({ countryName: 1 }).exec();
+    const cacheKey = this.redisService.buildKey('countries', 'list', 'all');
+    try {
+      const cached = await this.redisService.get<CountryDocument[]>(cacheKey);
+      if (Array.isArray(cached)) return cached;
+    } catch (error) {
+      this.logger.warn(
+        `Countries list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const rows = await this.countryModel.find().sort({ countryName: 1 }).lean().exec();
+    this.redisService
+      .set(cacheKey, rows, this.getCountriesListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Countries list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return rows;
   }
 
   async findById(id: string): Promise<CountryDocument | null> {
