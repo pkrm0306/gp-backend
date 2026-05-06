@@ -14,21 +14,36 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private client: Redis;
 
   constructor(private readonly configService: ConfigService) {
+    const redisUrl = (this.configService.get<string>('REDIS_URL') || '').trim();
     const host = this.configService.get<string>('REDIS_HOST') || 'redis';
     const port = parseInt(this.configService.get<string>('REDIS_PORT') || '6379', 10);
     const password = this.configService.get<string>('REDIS_PASSWORD') || undefined;
     const db = parseInt(this.configService.get<string>('REDIS_DB') || '0', 10);
+    const redisTlsRaw = this.configService.get<string>('REDIS_TLS') || 'false';
+    const useTls =
+      redisTlsRaw.toLowerCase() === 'true' ||
+      redisUrl.toLowerCase().startsWith('rediss://');
     this.prefix = this.configService.get<string>('REDIS_KEY_PREFIX') || 'greenpro:';
 
-    this.client = new Redis({
-      host,
-      port,
-      password,
+    const commonOptions = {
       db,
       lazyConnect: true,
       maxRetriesPerRequest: 2,
       enableReadyCheck: true,
-    });
+    };
+
+    this.client = redisUrl
+      ? new Redis(redisUrl, {
+          ...commonOptions,
+          ...(useTls ? { tls: {} } : {}),
+        })
+      : new Redis({
+          host,
+          port,
+          password,
+          ...commonOptions,
+          ...(useTls ? { tls: {} } : {}),
+        });
   }
 
   async onModuleInit(): Promise<void> {

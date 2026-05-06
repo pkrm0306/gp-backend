@@ -75,17 +75,35 @@ import { RedisModule } from './common/redis/redis.module';
           };
         }
 
+        const redisUrl = (configService.get<string>('REDIS_URL') || '').trim();
         const host = configService.get<string>('REDIS_HOST') || 'redis';
         const port = parseInt(configService.get<string>('REDIS_PORT') || '6379', 10);
         const password = configService.get<string>('REDIS_PASSWORD') || undefined;
         const db = parseInt(configService.get<string>('REDIS_DB') || '0', 10);
         const prefix =
           configService.get<string>('REDIS_KEY_PREFIX') || 'greenpro:cache:';
+        const redisTlsRaw = configService.get<string>('REDIS_TLS') || 'false';
+        const useTls =
+          redisTlsRaw.toLowerCase() === 'true' ||
+          redisUrl.toLowerCase().startsWith('rediss://');
+
+        const storeConfig: any = redisUrl
+          ? {
+              url: redisUrl,
+              ...(useTls ? { socket: { tls: true as const } } : {}),
+            }
+          : {
+              socket: {
+                host,
+                port,
+                ...(useTls ? { tls: true as const } : {}),
+              },
+              password,
+            };
 
         return {
           store: await redisStore({
-            socket: { host, port },
-            password,
+            ...storeConfig,
             database: db,
             ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 60,
             keyPrefix: prefix,
