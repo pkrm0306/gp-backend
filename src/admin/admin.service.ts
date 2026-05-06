@@ -1042,6 +1042,8 @@ export class AdminService {
       designation?: string;
       email: string;
       mobile: string;
+      displayOrder?: number;
+      team: TeamMemberTeam;
       imagePath?: string;
       facebookUrl?: string;
       twitterUrl?: string;
@@ -1649,6 +1651,8 @@ export class AdminService {
       designation?: string;
       email: string;
       mobile: string;
+      displayOrder?: number;
+      team: TeamMemberTeam;
       imagePath?: string;
       facebookUrl?: string;
       twitterUrl?: string;
@@ -1786,7 +1790,7 @@ export class AdminService {
     delete obj.otp;
 
     if (data.roleId) {
-      await this.rbacService.updateStaffRole(vendorId, {
+      await this.rbacService.updateStaffRole(_vendorId, {
         vendorUserId: data.id,
         roleId: data.roleId,
       });
