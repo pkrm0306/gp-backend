@@ -120,8 +120,32 @@ export class AdminService {
     return raw;
   }
 
+  private resolveBannerImageForResponse(
+    imageUrl?: string | null,
+    bannerImage?: string | null,
+  ): string {
+    const imageRaw = String(imageUrl ?? '').trim();
+    if (imageRaw && /^https?:\/\//i.test(imageRaw)) return imageRaw;
+    const candidate = imageRaw || (bannerImage ? `/uploads/${bannerImage}` : '');
+    const normalized = String(candidate).trim();
+    if (!normalized) return '';
+    return normalized;
+  }
+
   private resolveArticleImagePath(imageUrl?: string | null): string {
     const raw = String(imageUrl ?? '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('/uploads/')) {
+      return raw.replace(/^\/uploads\//, '');
+    }
+    if (raw.startsWith('uploads/')) {
+      return raw.replace(/^uploads\//, '');
+    }
+    return raw;
+  }
+
+  private resolveArticlePdfPath(pdfUrl?: string | null): string {
+    const raw = String(pdfUrl ?? '').trim();
     if (!raw) return '';
     if (raw.startsWith('/uploads/')) {
       return raw.replace(/^\/uploads\//, '');
@@ -575,6 +599,7 @@ export class AdminService {
     date: Date;
     image?: string;
     url?: string;
+    pdf?: string;
     status?: number;
   }) {
     const doc = new this.articleModel({
@@ -584,6 +609,8 @@ export class AdminService {
       image: payload.image,
       article_image: this.resolveArticleImagePath(payload.image),
       url: String(payload.url ?? '').trim(),
+      pdf: payload.pdf,
+      article_pdf: this.resolveArticlePdfPath(payload.pdf),
       status: payload.status === 0 || payload.status === 1 ? payload.status : 1,
     });
     const saved = await doc.save();
@@ -606,6 +633,7 @@ export class AdminService {
       date?: Date;
       image?: string;
       url?: string;
+      pdf?: string;
       status?: number;
     },
   ) {
@@ -627,6 +655,10 @@ export class AdminService {
       $set.article_image = this.resolveArticleImagePath(payload.image);
     }
     if (payload.url !== undefined) $set.url = String(payload.url).trim();
+    if (payload.pdf !== undefined) {
+      $set.pdf = payload.pdf;
+      $set.article_pdf = this.resolveArticlePdfPath(payload.pdf);
+    }
     if (payload.status === 0 || payload.status === 1) $set.status = payload.status;
     if (Object.keys($set).length === 0) {
       throw new BadRequestException('No fields to update');
@@ -654,7 +686,7 @@ export class AdminService {
     const rows = await this.articleModel
       .find({})
       .sort({ createdAt: -1, _id: -1 })
-      .select('title description date image article_image url status')
+      .select('title description date image article_image url pdf article_pdf status')
       .lean()
       .exec();
 
@@ -672,6 +704,8 @@ export class AdminService {
       image: a.image ?? null,
       article_image: a.article_image ?? this.resolveArticleImagePath(a.image),
       url: String(a.url ?? ''),
+      pdf: a.pdf ?? null,
+      article_pdf: a.article_pdf ?? this.resolveArticlePdfPath(a.pdf),
       is_active: Number(a.status) === 1,
     }));
   }
@@ -701,6 +735,10 @@ export class AdminService {
         (article as any).article_image ??
         this.resolveArticleImagePath((article as any).image),
       url: String((article as any).url ?? ''),
+      pdf: (article as any).pdf ?? null,
+      article_pdf:
+        (article as any).article_pdf ??
+        this.resolveArticlePdfPath((article as any).pdf),
       is_active: Number((article as any).status) === 1,
     };
   }
@@ -1049,6 +1087,7 @@ export class AdminService {
       twitterUrl?: string;
       linkedinUrl?: string;
       roleId?: string;
+      roleIds?: string[];
     },
   ) {
     let vendorObjectId: Types.ObjectId;
@@ -1159,20 +1198,27 @@ export class AdminService {
     delete obj.password;
     delete obj.otp;
 
-    if (data.roleId) {
-      // Role assignment becomes the source of truth for portal access.
-      // Credentials email is triggered only when role is assigned for the first time.
-      await this.rbacService.updateStaffRole(vendorId, {
-        vendorUserId: String(saved._id),
-        roleId: data.roleId,
-      });
-    }
+    const normalizedRoleIds =
+      Array.isArray(data.roleIds) && data.roleIds.length > 0
+        ? Array.from(new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)))
+        : data.roleId
+          ? [String(data.roleId).trim()]
+          : [];
+
+    // Role assignments drive portal access; credentials are sent only on first transition
+    // from no-roles to any-role by RBAC service.
+    await this.rbacService.replaceStaffRoles(vendorId, {
+      vendorUserId: String(saved._id),
+      roleIds: normalizedRoleIds,
+    });
 
     const id = String(saved._id);
     return {
       ...obj,
       id,
       vendorUserId: id,
+      roleIds: normalizedRoleIds,
+      portalAccess: normalizedRoleIds.length > 0,
     };
   }
 
@@ -1413,7 +1459,7 @@ export class AdminService {
         s_no: index + 1,
         id: String(b._id),
         banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
-        imageUrl: b.imageUrl,
+        imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
         targetUrl: b.targetUrl,
         heading: b.heading,
         description: b.description,
@@ -1435,7 +1481,7 @@ export class AdminService {
       s_no: index + 1,
       id: String(b._id),
       banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
-      imageUrl: b.imageUrl,
+      imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
       targetUrl: b.targetUrl,
       heading: b.heading,
       description: b.description,
@@ -1470,7 +1516,7 @@ export class AdminService {
     return {
       id: String(b._id),
       banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
-      imageUrl: b.imageUrl,
+      imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
       targetUrl: b.targetUrl ?? '',
       heading: b.heading,
       description: b.description,
@@ -1644,7 +1690,7 @@ export class AdminService {
   }
 
   async updateTeamMember(
-    _vendorId: string,
+    vendorId: string,
     data: {
       id: string;
       name: string;
@@ -1658,6 +1704,7 @@ export class AdminService {
       twitterUrl?: string;
       linkedinUrl?: string;
       roleId?: string;
+      roleIds?: string[];
     },
   ) {
     let memberObjectId: Types.ObjectId;
@@ -1789,18 +1836,24 @@ export class AdminService {
     delete obj.password;
     delete obj.otp;
 
-    if (data.roleId) {
-      await this.rbacService.updateStaffRole(_vendorId, {
-        vendorUserId: data.id,
-        roleId: data.roleId,
-      });
-    }
+    const normalizedRoleIds =
+      Array.isArray(data.roleIds) && data.roleIds.length > 0
+        ? Array.from(new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)))
+        : data.roleId
+          ? [String(data.roleId).trim()]
+          : [];
+    await this.rbacService.replaceStaffRoles(vendorId, {
+      vendorUserId: data.id,
+      roleIds: normalizedRoleIds,
+    });
 
     const id = String(updated._id);
     return {
       ...obj,
       id,
       vendorUserId: id,
+      roleIds: normalizedRoleIds,
+      portalAccess: normalizedRoleIds.length > 0,
     };
   }
 

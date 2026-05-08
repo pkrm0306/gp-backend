@@ -123,7 +123,16 @@ export class RbacController {
     @CurrentUser() user: { manufacturerId: string },
     @Body() dto: AssignRoleDto,
   ) {
-    const data = await this.rbacService.updateStaffRole(user.manufacturerId, dto);
+    const normalizedRoleIds =
+      Array.isArray(dto.roleIds) && dto.roleIds.length > 0
+        ? dto.roleIds
+        : dto.roleId
+          ? [dto.roleId]
+          : [];
+    const data = await this.rbacService.replaceStaffRoles(user.manufacturerId, {
+      vendorUserId: dto.vendorUserId,
+      roleIds: normalizedRoleIds,
+    });
     return { message: 'Staff role updated successfully', data };
   }
 

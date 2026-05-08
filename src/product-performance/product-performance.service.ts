@@ -34,6 +34,10 @@ export class ProductPerformanceService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    const shouldSyncIndexes =
+      String(process.env.SYNC_INDEXES_ON_BOOT || 'false').toLowerCase() ===
+      'true';
+    if (!shouldSyncIndexes) return;
     try {
       await this.productPerformanceModel.syncIndexes();
     } catch (error) {

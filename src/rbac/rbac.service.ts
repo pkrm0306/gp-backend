@@ -413,6 +413,9 @@ export class RbacService {
       'manufacturerId',
     );
     const vendorUserId = this.toObjectId(dto.vendorUserId, 'vendorUserId');
+    if (!dto.roleId) {
+      throw new BadRequestException('roleId is required');
+    }
     const roleId = this.toObjectId(dto.roleId, 'roleId');
 
     const [user, role, hadAnyRoleBefore] = await Promise.all([
@@ -457,6 +460,9 @@ export class RbacService {
   }
 
   async updateStaffRole(manufacturerId: string, dto: AssignRoleDto) {
+    if (!dto.roleId) {
+      throw new BadRequestException('roleId is required');
+    }
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
       'manufacturerId',
@@ -506,6 +512,94 @@ export class RbacService {
     }
     await this.invalidateRbacCache(manufacturerId);
     return mapping;
+  }
+
+  async replaceStaffRoles(
+    manufacturerId: string,
+    dto: { vendorUserId: string; roleIds: string[] },
+  ) {
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const vendorUserId = this.toObjectId(dto.vendorUserId, 'vendorUserId');
+    const roleIds = Array.from(new Set((dto.roleIds || []).map((r) => String(r))));
+    const roleObjectIds = roleIds.map((id) => this.toObjectId(id, 'roleIds'));
+
+    const [user, hadAnyRoleBefore] = await Promise.all([
+      this.vendorUserModel
+        .findOne({ _id: vendorUserId, manufacturerId: manufacturerObjectId })
+        .exec(),
+      this.mappingModel
+        .countDocuments({
+          manufacturerId: manufacturerObjectId,
+          vendorUserId,
+          status: 1,
+        })
+        .exec()
+        .then((c) => c > 0),
+    ]);
+    if (!user) throw new NotFoundException('Staff user not found');
+    if (user.type !== 'staff') {
+      throw new BadRequestException('Role assignment only allowed for staff');
+    }
+
+    if (roleObjectIds.length > 0) {
+      const validRolesCount = await this.roleModel
+        .countDocuments({
+          _id: { $in: roleObjectIds },
+          manufacturerId: manufacturerObjectId,
+          status: 1,
+        })
+        .exec();
+      if (validRolesCount !== roleObjectIds.length) {
+        throw new NotFoundException('One or more roles not found');
+      }
+    }
+
+    const session = await this.mappingModel.db.startSession();
+    try {
+      let createdCount = 0;
+      await session.withTransaction(async () => {
+        await this.mappingModel
+          .deleteMany({
+            manufacturerId: manufacturerObjectId,
+            vendorUserId,
+          })
+          .session(session)
+          .exec();
+
+        if (roleObjectIds.length > 0) {
+          await this.mappingModel.insertMany(
+            roleObjectIds.map((roleId) => ({
+              manufacturerId: manufacturerObjectId,
+              vendorUserId,
+              roleId,
+              status: 1,
+            })),
+            { session, ordered: true },
+          );
+          createdCount = roleObjectIds.length;
+        }
+      });
+
+      if (!hadAnyRoleBefore && createdCount > 0) {
+        await this.sendFirstRoleAssignmentCredentialsIfNeeded({
+          manufacturerId,
+          vendorUserId,
+          user,
+        });
+      }
+
+      await this.invalidateRbacCache(manufacturerId);
+      return {
+        vendorUserId: String(vendorUserId),
+        roleIds,
+        createdCount,
+      };
+    } finally {
+      await session.endSession();
+    }
   }
 
   async unassignStaffRole(manufacturerId: string, vendorUserId: string) {
@@ -568,19 +662,34 @@ export class RbacService {
         | { permissions?: string[]; status?: number; [k: string]: unknown }
         | null
         | undefined;
+      const vendorUser = row.vendorUserId as
+        | { _id?: Types.ObjectId | string; [k: string]: unknown }
+        | null
+        | undefined;
       const roleActive = role && role.status !== 0;
       const raw = roleActive
         ? this.normalizePermissions(role!.permissions || [])
         : [];
       const effective = roleActive ? this.effectivePermissionsFromRaw(raw) : [];
+      const roleIdValue =
+        role && typeof role === 'object'
+          ? String((role as any)._id ?? '')
+          : String(row.roleId ?? '');
+      const vendorUserIdValue =
+        vendorUser && typeof vendorUser === 'object'
+          ? String((vendorUser as any)._id ?? '')
+          : String(row.vendorUserId ?? '');
       const roleIdPayload =
         role && typeof role === 'object'
           ? { ...role, effectivePermissions: effective }
           : role;
       return {
         ...row,
+        vendorUserId: vendorUserIdValue,
+        roleId: roleIdValue,
+        vendorUser,
+        role: roleIdPayload,
         effectivePermissions: effective,
-        roleId: roleIdPayload,
       };
     });
     this.redisService

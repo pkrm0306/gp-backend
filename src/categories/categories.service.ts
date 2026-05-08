@@ -140,6 +140,10 @@ export class CategoriesService implements OnModuleInit {
     await this.backfillCategoryNameNormalized();
     await this.dedupeCategoryNameNormalized();
     await this.syncCategoryIdCounterFromCategories();
+    const shouldSyncIndexes =
+      String(process.env.SYNC_INDEXES_ON_BOOT || 'false').toLowerCase() ===
+      'true';
+    if (!shouldSyncIndexes) return;
     try {
       await this.categoryModel.syncIndexes();
     } catch (err) {

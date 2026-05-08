@@ -8,6 +8,9 @@ describe('RbacService', () => {
   };
   const mappingModel: any = {
     findOneAndUpdate: jest.fn(),
+    countDocuments: jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue(0),
+    }),
   };
   const vendorUserModel: any = {
     findOne: jest.fn(),

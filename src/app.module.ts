@@ -1,8 +1,6 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
-import { CacheModule } from '@nestjs/cache-manager';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { redisStore } from 'cache-manager-redis-yet';
 import { AuthModule } from './auth/auth.module';
 import { ManufacturersModule } from './manufacturers/manufacturers.module';
 import { VendorUsersModule } from './vendor-users/vendor-users.module';
@@ -56,61 +54,6 @@ import { RedisModule } from './common/redis/redis.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
-    }),
-    CacheModule.registerAsync({
-      isGlobal: true,
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: async (configService: ConfigService) => {
-        const cacheEnabledRaw = configService.get<string>('CACHE_ENABLED') || 'true';
-        const cacheEnabled = cacheEnabledRaw.toLowerCase() !== 'false';
-        const ttl = parseInt(
-          configService.get<string>('CACHE_TTL_SECONDS') || '60',
-          10,
-        );
-
-        if (!cacheEnabled) {
-          return {
-            ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 60,
-          };
-        }
-
-        const redisUrl = (configService.get<string>('REDIS_URL') || '').trim();
-        const host = configService.get<string>('REDIS_HOST') || 'redis';
-        const port = parseInt(configService.get<string>('REDIS_PORT') || '6379', 10);
-        const password = configService.get<string>('REDIS_PASSWORD') || undefined;
-        const db = parseInt(configService.get<string>('REDIS_DB') || '0', 10);
-        const prefix =
-          configService.get<string>('REDIS_KEY_PREFIX') || 'greenpro:cache:';
-        const redisTlsRaw = configService.get<string>('REDIS_TLS') || 'false';
-        const useTls =
-          redisTlsRaw.toLowerCase() === 'true' ||
-          redisUrl.toLowerCase().startsWith('rediss://');
-
-        const storeConfig: any = redisUrl
-          ? {
-              url: redisUrl,
-              ...(useTls ? { socket: { tls: true as const } } : {}),
-            }
-          : {
-              socket: {
-                host,
-                port,
-                ...(useTls ? { tls: true as const } : {}),
-              },
-              password,
-            };
-
-        return {
-          store: await redisStore({
-            ...storeConfig,
-            database: db,
-            ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 60,
-            keyPrefix: prefix,
-          }),
-          ttl: Number.isFinite(ttl) && ttl > 0 ? ttl : 60,
-        };
-      },
     }),
     RedisModule,
     MongooseModule.forRootAsync({

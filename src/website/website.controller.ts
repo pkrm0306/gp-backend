@@ -70,7 +70,7 @@ export class WebsiteController {
     };
   }
 
-  @Get('public/banners')
+  @Get(['public/banners', 'banner/list', 'banners/list'])
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Public banners for website',
@@ -97,6 +97,52 @@ export class WebsiteController {
       imageUrl: normalizeImageUrl(b.imageUrl),
     }));
     return { message: 'Banners retrieved successfully', data: normalized };
+  }
+
+  @Get('public/articles/list')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public articles list',
+    description:
+      'Returns active articles for website/blog cards (newest first).',
+  })
+  @ApiResponse({ status: 200, description: 'Articles retrieved successfully' })
+  async listPublicArticles(@Req() req: Request) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = String(raw ?? '').trim();
+      if (!v) return v;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v;
+    };
+
+    const rows = await this.adminService.listArticles();
+    const data = (rows ?? [])
+      .filter((a: any) => Boolean(a?.is_active))
+      .map((a: any, idx: number) => ({
+        s_no: idx + 1,
+        id: a.id,
+        title: a.title,
+        description: a.description,
+        date: a.date,
+        image: normalizeImageUrl(a.image),
+        article_image: normalizeImageUrl(a.article_image),
+        url: a.url,
+        pdf: normalizeImageUrl(a.pdf),
+        article_pdf: normalizeImageUrl(a.article_pdf),
+        is_active: true,
+      }));
+
+    return { message: 'Articles retrieved successfully', data };
+  }
+
+  // Alias route for clients using `/website/public/articles`
+  @Get('public/articles')
+  @HttpCode(HttpStatus.OK)
+  async listPublicArticlesAlias(@Req() req: Request) {
+    return this.listPublicArticles(req);
   }
 
   @Post('public/products/certified/list')

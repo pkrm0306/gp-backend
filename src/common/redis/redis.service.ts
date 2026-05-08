@@ -5,66 +5,26 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
   private readonly prefix: string;
-  private client: Redis;
+  private readonly inMemoryStore = new Map<
+    string,
+    { value: string; expiresAt?: number }
+  >();
 
   constructor(private readonly configService: ConfigService) {
-    const redisUrl = (this.configService.get<string>('REDIS_URL') || '').trim();
-    const host = this.configService.get<string>('REDIS_HOST') || 'redis';
-    const port = parseInt(this.configService.get<string>('REDIS_PORT') || '6379', 10);
-    const password = this.configService.get<string>('REDIS_PASSWORD') || undefined;
-    const db = parseInt(this.configService.get<string>('REDIS_DB') || '0', 10);
-    const redisTlsRaw = this.configService.get<string>('REDIS_TLS') || 'false';
-    const useTls =
-      redisTlsRaw.toLowerCase() === 'true' ||
-      redisUrl.toLowerCase().startsWith('rediss://');
     this.prefix = this.configService.get<string>('REDIS_KEY_PREFIX') || 'greenpro:';
-
-    const commonOptions = {
-      db,
-      lazyConnect: true,
-      maxRetriesPerRequest: 2,
-      enableReadyCheck: true,
-    };
-
-    this.client = redisUrl
-      ? new Redis(redisUrl, {
-          ...commonOptions,
-          ...(useTls ? { tls: {} } : {}),
-        })
-      : new Redis({
-          host,
-          port,
-          password,
-          ...commonOptions,
-          ...(useTls ? { tls: {} } : {}),
-        });
   }
 
   async onModuleInit(): Promise<void> {
-    try {
-      await this.client.connect();
-      this.logger.log('Redis connected');
-    } catch (error) {
-      this.logger.warn(
-        `Redis connection failed (continuing without Redis): ${(error as Error)?.message || 'unknown error'}`,
-      );
-    }
+    this.logger.warn('Redis package unavailable; using in-memory cache fallback');
   }
 
   async onModuleDestroy(): Promise<void> {
-    try {
-      if (this.client.status !== 'end') {
-        await this.client.quit();
-      }
-    } catch {
-      // no-op
-    }
+    this.inMemoryStore.clear();
   }
 
   buildKey(...parts: Array<string | number | boolean | undefined | null>): string {
@@ -75,8 +35,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async get<T = string>(key: string): Promise<T | null> {
-    const raw = await this.client.get(key);
-    if (raw === null) return null;
+    const entry = this.inMemoryStore.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt && entry.expiresAt <= Date.now()) {
+      this.inMemoryStore.delete(key);
+      return null;
+    }
+    const raw = entry.value;
     try {
       return JSON.parse(raw) as T;
     } catch {
@@ -91,43 +56,50 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   ): Promise<'OK' | null> {
     const serialized =
       typeof value === 'string' ? value : JSON.stringify(value ?? null);
-    if (ttlSeconds && ttlSeconds > 0) {
-      return this.client.set(key, serialized, 'EX', ttlSeconds);
-    }
-    return this.client.set(key, serialized);
+    this.inMemoryStore.set(key, {
+      value: serialized,
+      ...(ttlSeconds && ttlSeconds > 0
+        ? { expiresAt: Date.now() + ttlSeconds * 1000 }
+        : {}),
+    });
+    return 'OK';
   }
 
   async del(key: string): Promise<number> {
-    return this.client.del(key);
+    const existed = this.inMemoryStore.delete(key);
+    return existed ? 1 : 0;
   }
 
   async deleteByPattern(pattern: string): Promise<number> {
-    let cursor = '0';
     let deleted = 0;
-    do {
-      const [nextCursor, keys] = await this.client.scan(
-        cursor,
-        'MATCH',
-        pattern,
-        'COUNT',
-        100,
-      );
-      cursor = nextCursor;
-      if (keys.length > 0) {
-        deleted += await this.client.del(...keys);
+    const regexPattern = new RegExp(
+      `^${String(pattern)
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*')}$`,
+    );
+    for (const key of this.inMemoryStore.keys()) {
+      if (regexPattern.test(key)) {
+        this.inMemoryStore.delete(key);
+        deleted += 1;
       }
-    } while (cursor !== '0');
+    }
     return deleted;
   }
 
   async exists(key: string): Promise<boolean> {
-    const count = await this.client.exists(key);
-    return count > 0;
+    const val = await this.get(key);
+    return val !== null;
   }
 
   async expire(key: string, ttlSeconds: number): Promise<boolean> {
-    const ok = await this.client.expire(key, ttlSeconds);
-    return ok === 1;
+    if (!this.inMemoryStore.has(key) || ttlSeconds <= 0) return false;
+    const current = this.inMemoryStore.get(key);
+    if (!current) return false;
+    this.inMemoryStore.set(key, {
+      value: current.value,
+      expiresAt: Date.now() + ttlSeconds * 1000,
+    });
+    return true;
   }
 }
 

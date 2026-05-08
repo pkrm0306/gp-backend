@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsIn,
@@ -9,7 +10,6 @@ import {
   IsString,
   Min,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
 import { TEAM_MEMBER_TEAMS, TeamMemberTeam } from '../../vendor-users/schemas/vendor-user.schema';
 
 export class CreateTeamMemberDto {

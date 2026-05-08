@@ -1,13 +1,20 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsMongoId } from 'class-validator';
+import { IsArray, IsMongoId, IsOptional } from 'class-validator';
 
 export class AssignRoleDto {
   @ApiProperty()
   @IsMongoId()
   vendorUserId: string;
 
-  @ApiProperty()
+  @ApiProperty({ required: false })
+  @IsOptional()
   @IsMongoId()
-  roleId: string;
+  roleId?: string;
+
+  @ApiProperty({ required: false, type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  roleIds?: string[];
 }
 

@@ -33,6 +33,10 @@ export class ProcessInnovationService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    const shouldSyncIndexes =
+      String(process.env.SYNC_INDEXES_ON_BOOT || 'false').toLowerCase() ===
+      'true';
+    if (!shouldSyncIndexes) return;
     try {
       await this.processInnovationModel.syncIndexes();
     } catch (error) {
@@ -213,8 +217,40 @@ export class ProcessInnovationService implements OnModuleInit {
 
       return savedProcessInnovation;
     } catch (error: any) {
+      const isUrnDuplicate =
+        Number(error?.code) === 11000 &&
+        (error?.keyPattern?.urnNo === 1 || error?.keyValue?.urnNo);
+
       await session.abortTransaction();
       session.endSession();
+
+      // Concurrent requests can race on unique urnNo upsert.
+      // Treat duplicate urnNo as idempotent update instead of failing with 500.
+      if (isUrnDuplicate) {
+        const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+        const now = new Date();
+        const recovered = await this.processInnovationModel
+          .findOneAndUpdate(
+            { urnNo: createProcessInnovationDto.urnNo },
+            {
+              $set: {
+                vendorId: vendorObjectId,
+                urnNo: createProcessInnovationDto.urnNo,
+                innovationImplementationDetails:
+                  createProcessInnovationDto.innovationImplementationDetails ||
+                  '',
+                processInnovationStatus:
+                  createProcessInnovationDto.processInnovationStatus || 0,
+                updatedDate: now,
+              },
+            },
+            { new: true },
+          )
+          .exec();
+        if (recovered) {
+          return recovered;
+        }
+      }
 
       // Clean up uploaded file if transaction fails (file was moved to URN folder)
       try {

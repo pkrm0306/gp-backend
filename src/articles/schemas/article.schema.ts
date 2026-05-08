@@ -23,6 +23,12 @@ export class Article {
   @Prop({ default: '', trim: true })
   url?: string;
 
+  @Prop({ default: '', trim: true })
+  pdf?: string;
+
+  @Prop({ default: '', trim: true })
+  article_pdf?: string;
+
   /** 1 = active, 0 = inactive */
   @Prop({ required: true, type: Number, default: 1 })
   status: number;

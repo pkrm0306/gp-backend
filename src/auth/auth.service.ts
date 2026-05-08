@@ -416,14 +416,59 @@ export class AuthService {
   }
 
   async refresh(refreshTokenDto: RefreshTokenDto) {
-    const secret = this.configService.get<string>('JWT_SECRET') || 'secret';
+    const normalizedRefreshToken = String(refreshTokenDto?.refreshToken ?? '')
+      .trim()
+      .replace(/^bearer\s+/i, '')
+      .replace(/^["']|["']$/g, '')
+      .replace(/\s+/g, '');
+
+    if (!normalizedRefreshToken) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
 
     let payload: any;
-    try {
-      payload = this.jwtService.verify(refreshTokenDto.refreshToken, {
-        secret,
-      });
-    } catch {
+    const jwtSecret = this.configService.get<string>('JWT_SECRET');
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
+    const verificationSecrets = Array.from(
+      new Set(
+        [refreshSecret, jwtSecret, 'secret']
+          .map((s) => String(s || '').trim())
+          .filter(Boolean),
+      ),
+    );
+    const env = String(this.configService.get<string>('NODE_ENV') || '')
+      .trim()
+      .toLowerCase();
+    const allowExpiredInNonProd = env !== 'production';
+
+    let lastVerifyError: any;
+    for (const verifySecret of verificationSecrets) {
+      try {
+        payload = this.jwtService.verify(normalizedRefreshToken, {
+          secret: verifySecret,
+        });
+        break;
+      } catch (err: any) {
+        lastVerifyError = err;
+        const isExpired = String(err?.name || '').includes('TokenExpiredError');
+        if (allowExpiredInNonProd && isExpired) {
+          try {
+            payload = this.jwtService.verify(normalizedRefreshToken, {
+              secret: verifySecret,
+              ignoreExpiration: true,
+            });
+            break;
+          } catch (expiredFallbackErr) {
+            lastVerifyError = expiredFallbackErr;
+          }
+        }
+      }
+    }
+
+    if (!payload) {
+      this.logger.warn(
+        `[refresh] token verification failed in ${env || 'unknown'} env: ${lastVerifyError?.name || 'UnknownError'} ${lastVerifyError?.message || ''}`.trim(),
+      );
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 

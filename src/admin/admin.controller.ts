@@ -18,7 +18,6 @@ import {
   BadRequestException,
   applyDecorators,
 } from '@nestjs/common';
-import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import {
   FileFieldsInterceptor,
   FileInterceptor,
@@ -149,6 +148,18 @@ function TeamMemberEditDocs() {
           facebookUrl: { type: 'string' },
           twitterUrl: { type: 'string' },
           linkedinUrl: { type: 'string' },
+          roleId: { type: 'string', description: 'Legacy single role id' },
+          roleIds: {
+            oneOf: [
+              { type: 'array', items: { type: 'string' } },
+              { type: 'string', description: 'JSON string array' },
+            ],
+          },
+          'roleIds[]': {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Repeated multipart fields for role ids',
+          },
         },
         required: ['id', 'name', 'email', 'mobile', 'displayOrder', 'team'],
       },
@@ -208,24 +219,74 @@ export class AdminController {
     return matched;
   }
 
+  private normalizeTeamMemberRoleIds(body: any): string[] {
+    const parseJsonArray = (value: string): string[] | null => {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed.map((v) => String(v)) : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const candidates: string[] = [];
+    const roleIdsArrayField = body?.['roleIds[]'];
+    if (Array.isArray(roleIdsArrayField)) {
+      candidates.push(...roleIdsArrayField.map((v: unknown) => String(v)));
+    } else if (roleIdsArrayField !== undefined && roleIdsArrayField !== null) {
+      candidates.push(String(roleIdsArrayField));
+    }
+
+    const roleIds = body?.roleIds;
+    if (Array.isArray(roleIds)) {
+      candidates.push(...roleIds.map((v: unknown) => String(v)));
+    } else if (typeof roleIds === 'string') {
+      const trimmed = roleIds.trim();
+      const parsed = trimmed.startsWith('[') ? parseJsonArray(trimmed) : null;
+      if (parsed) {
+        candidates.push(...parsed);
+      } else if (trimmed) {
+        candidates.push(trimmed);
+      }
+    } else if (roleIds !== undefined && roleIds !== null) {
+      candidates.push(String(roleIds));
+    }
+
+    const normalized = Array.from(
+      new Set(
+        candidates
+          .map((v) => v.trim())
+          .filter((v) => /^[a-fA-F0-9]{24}$/.test(v)),
+      ),
+    );
+    if (normalized.length > 0) return normalized;
+
+    const roleId = String(body?.roleId ?? '').trim();
+    return /^[a-fA-F0-9]{24}$/.test(roleId) ? [roleId] : [];
+  }
+
   private mapGalleryResponse(item: any) {
     const images = Array.isArray(item?.galleryImages)
       ? item.galleryImages
       : item?.eventImage
         ? [item.eventImage]
         : [];
+    const rawDate = item?.eventDate ?? item?.date;
+    const normalizedDate =
+      rawDate instanceof Date
+        ? rawDate.toISOString().slice(0, 10)
+        : rawDate
+          ? /^\d{4}-\d{2}-\d{2}$/.test(String(rawDate).trim())
+            ? String(rawDate).trim()
+            : new Date(rawDate).toISOString().slice(0, 10)
+          : '';
     return {
       id: item?.id,
       eventId: item?.eventId,
       title: item?.eventName ?? '',
       galleryType: item?.galleryType ?? '',
       description: item?.eventDescription ?? '',
-      date:
-        item?.eventDate instanceof Date
-          ? item.eventDate.toISOString().slice(0, 10)
-          : item?.eventDate
-            ? new Date(item.eventDate).toISOString().slice(0, 10)
-            : '',
+      date: normalizedDate,
       image: images[0] ?? null,
       images,
       event_image: item?.event_image ?? null,
@@ -247,6 +308,8 @@ export class AdminController {
       image: item?.image ?? null,
       article_image: item?.article_image ?? '',
       url: item?.url ?? '',
+      pdf: item?.pdf ?? null,
+      article_pdf: item?.article_pdf ?? '',
       is_active: Number(item?.status) === 1 || item?.is_active === true,
     };
   }
@@ -280,9 +343,6 @@ export class AdminController {
   @Get('banner/list')
   @Permissions(PERMISSIONS.BANNERS_VIEW)
   @HttpCode(HttpStatus.OK)
-  @Public()
-  @UseInterceptors(CacheInterceptor)
-  @CacheTTL(120)
   @ApiOperation({
     summary: 'List banners (vendor admin)',
     description:
@@ -315,13 +375,14 @@ export class AdminController {
     },
   })
   async listBanners(
-    @CurrentUser() user: { vendorId: string },
+    @CurrentUser() user: { vendorId?: string; manufacturerId?: string },
     @Req() req: Request,
   ) {
-    if (!user?.vendorId) {
+    const scopedVendorId = user?.vendorId || user?.manufacturerId;
+    if (!scopedVendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
-    const data = await this.adminService.listBanners(user.vendorId);
+    const data = await this.adminService.listBanners(scopedVendorId);
 
     const origin = `${req.protocol}://${req.get('host')}`;
     const normalizeImageUrl = (raw: unknown) => {
@@ -1296,7 +1357,12 @@ export class AdminController {
   @Permissions(PERMISSIONS.EVENTS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
-    FileInterceptor('image', {
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'pdf', maxCount: 1 },
+      ],
+      {
       storage: diskStorage({
         destination: join(process.cwd(), 'uploads', 'articles'),
         filename: (req, file, cb) => {
@@ -1311,22 +1377,31 @@ export class AdminController {
           cb(null, true);
           return;
         }
-        const allowedMimes = [
+        if (file.fieldname === 'pdf') {
+          if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+            return;
+          }
+          cb(new BadRequestException('Only PDF files are allowed for pdf field'), false);
+          return;
+        }
+        const allowedImageMimes = [
           'image/jpeg',
           'image/jpg',
           'image/png',
           'image/gif',
           'image/webp',
         ];
-        cb(null, allowedMimes.includes(file.mimetype));
+        cb(null, allowedImageMimes.includes(file.mimetype));
       },
       limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+      },
+    ),
   )
   @ApiOperation({
     summary: 'Create article',
     description:
-      'Creates an article with title, description, date, image, url and status (active/inactive).',
+      'Creates an article with title, description, date, image, PDF file, url and status (active/inactive). Only PDF is allowed for `pdf` field.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -1338,6 +1413,7 @@ export class AdminController {
         description: { type: 'string' },
         date: { type: 'string', example: '2026-05-05' },
         image: { type: 'string', format: 'binary' },
+        pdf: { type: 'string', format: 'binary' },
         url: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
       },
@@ -1345,7 +1421,14 @@ export class AdminController {
   })
   @ApiResponse({ status: 201, description: 'Article created successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })
-  async createArticle(@Body() body: any, @UploadedFile() file?: any) {
+  async createArticle(
+    @Body() body: any,
+    @UploadedFiles()
+    files?: {
+      image?: Express.Multer.File[];
+      pdf?: Express.Multer.File[];
+    },
+  ) {
     const title = String(body?.title ?? '').trim();
     if (!title) throw new BadRequestException('title is required');
     const rawDate = String(body?.date ?? '').trim();
@@ -1359,13 +1442,17 @@ export class AdminController {
       throw new BadRequestException('Invalid date (expected ISO date/datetime)');
     }
     const status = this.parseEventStatus(body?.status);
-    const image = file ? `/uploads/articles/${file.filename}` : undefined;
+    const imageFile = files?.image?.[0];
+    const pdfFile = files?.pdf?.[0];
+    const image = imageFile ? `/uploads/articles/${imageFile.filename}` : undefined;
+    const pdf = pdfFile ? `/uploads/articles/${pdfFile.filename}` : undefined;
 
     const data = await this.adminService.createArticle({
       title,
       description: body?.description,
       date,
       image,
+      pdf,
       url: body?.url,
       ...(status !== undefined ? { status } : {}),
     });
@@ -1379,7 +1466,12 @@ export class AdminController {
   @Permissions(PERMISSIONS.EVENTS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
-    FileInterceptor('image', {
+    FileFieldsInterceptor(
+      [
+        { name: 'image', maxCount: 1 },
+        { name: 'pdf', maxCount: 1 },
+      ],
+      {
       storage: diskStorage({
         destination: join(process.cwd(), 'uploads', 'articles'),
         filename: (req, file, cb) => {
@@ -1394,21 +1486,31 @@ export class AdminController {
           cb(null, true);
           return;
         }
-        const allowedMimes = [
+        if (file.fieldname === 'pdf') {
+          if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+            return;
+          }
+          cb(new BadRequestException('Only PDF files are allowed for pdf field'), false);
+          return;
+        }
+        const allowedImageMimes = [
           'image/jpeg',
           'image/jpg',
           'image/png',
           'image/gif',
           'image/webp',
         ];
-        cb(null, allowedMimes.includes(file.mimetype));
+        cb(null, allowedImageMimes.includes(file.mimetype));
       },
       limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+      },
+    ),
   )
   @ApiOperation({
     summary: 'Edit article',
-    description: 'Edits article fields: title, description, date, image, url, status.',
+    description:
+      'Edits article fields: title, description, date, image, PDF file, url, status. Only PDF is allowed for `pdf` field.',
   })
   @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
   @ApiConsumes('multipart/form-data')
@@ -1420,6 +1522,7 @@ export class AdminController {
         description: { type: 'string' },
         date: { type: 'string', example: '2026-05-05' },
         image: { type: 'string', format: 'binary' },
+        pdf: { type: 'string', format: 'binary' },
         url: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
       },
@@ -1431,7 +1534,11 @@ export class AdminController {
   async editArticle(
     @Param('id') id: string,
     @Body() body: any,
-    @UploadedFile() file?: any,
+    @UploadedFiles()
+    files?: {
+      image?: Express.Multer.File[];
+      pdf?: Express.Multer.File[];
+    },
   ) {
     let date: Date | undefined = undefined;
     if (body?.date !== undefined && String(body.date).trim() !== '') {
@@ -1447,7 +1554,10 @@ export class AdminController {
     }
 
     const status = this.parseEventStatus(body?.status);
-    const image = file ? `/uploads/articles/${file.filename}` : undefined;
+    const imageFile = files?.image?.[0];
+    const pdfFile = files?.pdf?.[0];
+    const image = imageFile ? `/uploads/articles/${imageFile.filename}` : undefined;
+    const pdf = pdfFile ? `/uploads/articles/${pdfFile.filename}` : undefined;
     const data = await this.adminService.updateArticle(id, {
       ...(body?.title !== undefined ? { title: body.title } : {}),
       ...(body?.description !== undefined ? { description: body.description } : {}),
@@ -1455,6 +1565,7 @@ export class AdminController {
       ...(body?.url !== undefined ? { url: body.url } : {}),
       ...(status !== undefined ? { status } : {}),
       ...(image !== undefined ? { image } : {}),
+      ...(pdf !== undefined ? { pdf } : {}),
     });
     return {
       message: 'Article updated successfully',
@@ -1462,8 +1573,9 @@ export class AdminController {
     };
   }
 
-  @Get('articles/list')
+  @Get(['articles/list', 'article/list'])
   @HttpCode(HttpStatus.OK)
+  @Public()
   @ApiOperation({
     summary: 'List articles',
     description:
@@ -1480,6 +1592,7 @@ export class AdminController {
 
   @Get('articles/:id')
   @HttpCode(HttpStatus.OK)
+  @Public()
   @ApiOperation({
     summary: 'Get article by id',
     description:
@@ -1816,6 +1929,18 @@ export class AdminController {
         facebookUrl: { type: 'string' },
         twitterUrl: { type: 'string' },
         linkedinUrl: { type: 'string' },
+        roleId: { type: 'string', description: 'Legacy single role id' },
+        roleIds: {
+          oneOf: [
+            { type: 'array', items: { type: 'string' } },
+            { type: 'string', description: 'JSON string array' },
+          ],
+        },
+        'roleIds[]': {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Repeated multipart fields for role ids',
+        },
       },
       required: ['name', 'email', 'mobile', 'displayOrder', 'team'],
     },
@@ -1831,12 +1956,20 @@ export class AdminController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
+    const parsedCreateDisplayOrder =
+      body.displayOrder === undefined ||
+      body.displayOrder === null ||
+      String(body.displayOrder).trim() === ''
+        ? undefined
+        : Number.parseInt(String(body.displayOrder), 10);
+
+    const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
     const dto = plainToClass(CreateTeamMemberDto, {
       name: body.name,
       designation: body.designation,
       email: body.email,
       mobile: body.mobile,
-      displayOrder: Number.parseInt(String(body.displayOrder), 10),
+      displayOrder: parsedCreateDisplayOrder,
       team: body.team ?? body.teamType,
       facebookUrl: body.facebookUrl,
       twitterUrl: body.twitterUrl,
@@ -1867,7 +2000,8 @@ export class AdminController {
       twitterUrl: dto.twitterUrl,
       linkedinUrl: dto.linkedinUrl,
       roleId: dto.roleId,
-    });
+      roleIds: normalizedRoleIds,
+    } as any);
 
     return { message: 'Team member created successfully', data: teamMember };
   }
@@ -1899,13 +2033,21 @@ export class AdminController {
     body: any,
     file?: Express.Multer.File,
   ) {
+    const parsedEditDisplayOrder =
+      body.displayOrder === undefined ||
+      body.displayOrder === null ||
+      String(body.displayOrder).trim() === ''
+        ? undefined
+        : Number.parseInt(String(body.displayOrder), 10);
+
+    const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
     const dto = plainToClass(EditTeamMemberDto, {
       id: body.id,
       name: body.name,
       designation: body.designation,
       email: body.email,
       mobile: body.mobile,
-      displayOrder: Number.parseInt(String(body.displayOrder), 10),
+      displayOrder: parsedEditDisplayOrder,
       team: body.team ?? body.teamType,
       facebookUrl: body.facebookUrl,
       twitterUrl: body.twitterUrl,
@@ -1937,7 +2079,8 @@ export class AdminController {
       twitterUrl: dto.twitterUrl,
       linkedinUrl: dto.linkedinUrl,
       roleId: dto.roleId,
-    });
+      roleIds: normalizedRoleIds,
+    } as any);
 
     return { message: 'Team member updated successfully', data: teamMember };
   }
