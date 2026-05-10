@@ -5,6 +5,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -45,6 +47,25 @@ function formatDateYYYYMMDD(value: unknown): string {
     value instanceof Date ? value : value ? new Date(value as any) : new Date();
   if (Number.isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
   return d.toISOString().slice(0, 10);
+}
+
+function sanitizeWebsiteImagePath(raw: unknown): string | null {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+
+  const normalized = value.startsWith('/') ? value : `/${value}`;
+  if (!normalized.startsWith('/uploads/')) return normalized;
+
+  const rel = normalized.replace(/^\/uploads\//, '');
+  if (!rel) return null;
+  const safeRel = rel
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => decodeURIComponent(segment))
+    .join('/');
+  const absolute = join(process.cwd(), 'uploads', safeRel);
+  return existsSync(absolute) ? normalized : null;
 }
 
 @Injectable()
@@ -328,7 +349,12 @@ export class WebsiteService {
           linkedinUrl: string;
         }>
       >(cacheKey);
-      if (Array.isArray(cached)) return cached;
+      if (Array.isArray(cached)) {
+        return cached.map((member) => ({
+          ...member,
+          image: sanitizeWebsiteImagePath(member.image),
+        }));
+      }
     } catch (error) {
       this.logger.warn(
         `Website team-members cache read failed: ${(error as Error)?.message || 'unknown error'}`,
@@ -353,7 +379,7 @@ export class WebsiteService {
       mobile: String(m.phone ?? ''),
       displayOrder: Number((m as any).displayOrder) || 0,
       team: String((m as any).team ?? ''),
-      image: m.image ?? null,
+      image: sanitizeWebsiteImagePath(m.image),
       facebookUrl: String(m.facebookUrl ?? ''),
       twitterUrl: String(m.twitterUrl ?? ''),
       linkedinUrl: String(m.linkedinUrl ?? ''),

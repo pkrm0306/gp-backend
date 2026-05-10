@@ -5,10 +5,24 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Min,
   MinLength,
 } from 'class-validator';
+import { CategoryIdFromForm } from './category-id-from-form.transform';
 
 export class UpdateStandardMultipartDto {
+  @ApiPropertyOptional({
+    description:
+      'Omit to leave unchanged. If set, must be a valid `category_id` from GET /categories. ' +
+      'Empty string is treated as omitted. Standards are always tied to a category for new data; ' +
+      'this field cannot be used to clear an existing link.',
+  })
+  @CategoryIdFromForm()
+  @IsOptional()
+  @IsInt({ message: 'category_id must be an integer' })
+  @Min(1, { message: 'category_id must be a positive integer' })
+  category_id?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

@@ -23,6 +23,9 @@ export class Article {
   @Prop({ default: '', trim: true })
   url?: string;
 
+  @Prop({ type: Boolean, default: false })
+  externalUrl?: boolean;
+
   @Prop({ default: '', trim: true })
   pdf?: string;
 

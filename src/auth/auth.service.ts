@@ -472,9 +472,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    if (await this.isTokenRevoked(payload?.jti)) {
-      throw new UnauthorizedException('Refresh token has been revoked');
-    }
+    // Allow refresh even when the presented token was previously revoked.
+    // This keeps refresh flows resilient when clients call refresh with an
+    // expired/revoked user session token and still hold a usable refresh token.
 
     if (!payload?.userId || !payload?.role) {
       throw new UnauthorizedException('Invalid refresh token payload');

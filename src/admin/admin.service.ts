@@ -599,16 +599,31 @@ export class AdminService {
     date: Date;
     image?: string;
     url?: string;
+    externalUrl?: boolean;
     pdf?: string;
     status?: number;
   }) {
+    const externalUrl = payload.externalUrl === true;
+    const description = String(payload.description ?? '').trim();
+    const url = String(payload.url ?? '').trim();
+    if (externalUrl) {
+      if (!url) {
+        throw new BadRequestException('url is required when externalUrl is true');
+      }
+    } else if (!description) {
+      throw new BadRequestException(
+        'description is required when externalUrl is false',
+      );
+    }
+
     const doc = new this.articleModel({
       title: String(payload.title ?? '').trim(),
-      description: String(payload.description ?? '').trim(),
+      description: externalUrl ? '' : description,
       date: payload.date,
       image: payload.image,
       article_image: this.resolveArticleImagePath(payload.image),
-      url: String(payload.url ?? '').trim(),
+      url: externalUrl ? url : '',
+      externalUrl,
       pdf: payload.pdf,
       article_pdf: this.resolveArticlePdfPath(payload.pdf),
       status: payload.status === 0 || payload.status === 1 ? payload.status : 1,
@@ -633,6 +648,7 @@ export class AdminService {
       date?: Date;
       image?: string;
       url?: string;
+      externalUrl?: boolean;
       pdf?: string;
       status?: number;
     },
@@ -646,15 +662,14 @@ export class AdminService {
 
     const $set: Record<string, unknown> = {};
     if (payload.title !== undefined) $set.title = String(payload.title).trim();
-    if (payload.description !== undefined) {
-      $set.description = String(payload.description).trim();
-    }
+    if (payload.description !== undefined) $set.description = String(payload.description).trim();
     if (payload.date !== undefined) $set.date = payload.date;
     if (payload.image !== undefined) {
       $set.image = payload.image;
       $set.article_image = this.resolveArticleImagePath(payload.image);
     }
     if (payload.url !== undefined) $set.url = String(payload.url).trim();
+    if (payload.externalUrl !== undefined) $set.externalUrl = payload.externalUrl === true;
     if (payload.pdf !== undefined) {
       $set.pdf = payload.pdf;
       $set.article_pdf = this.resolveArticlePdfPath(payload.pdf);
@@ -662,6 +677,44 @@ export class AdminService {
     if (payload.status === 0 || payload.status === 1) $set.status = payload.status;
     if (Object.keys($set).length === 0) {
       throw new BadRequestException('No fields to update');
+    }
+
+    const current = await this.articleModel.findById(objectId).lean().exec();
+    if (!current) throw new NotFoundException('Article not found');
+
+    const nextExternalUrl =
+      payload.externalUrl !== undefined
+        ? payload.externalUrl === true
+        : payload.url !== undefined && payload.description === undefined
+          ? true
+          : payload.description !== undefined && payload.url === undefined
+            ? false
+            : (current as any).externalUrl === true;
+    const nextDescription =
+      payload.description !== undefined
+        ? String(payload.description ?? '').trim()
+        : String((current as any).description ?? '').trim();
+    const nextUrl =
+      payload.url !== undefined
+        ? String(payload.url ?? '').trim()
+        : String((current as any).url ?? '').trim();
+
+    if (nextExternalUrl) {
+      if (!nextUrl) {
+        throw new BadRequestException('url is required when externalUrl is true');
+      }
+      $set.description = '';
+      $set.url = nextUrl;
+      $set.externalUrl = true;
+    } else {
+      if (!nextDescription) {
+        throw new BadRequestException(
+          'description is required when externalUrl is false',
+        );
+      }
+      $set.url = '';
+      $set.description = nextDescription;
+      $set.externalUrl = false;
     }
 
     const updated = await this.articleModel
@@ -686,7 +739,9 @@ export class AdminService {
     const rows = await this.articleModel
       .find({})
       .sort({ createdAt: -1, _id: -1 })
-      .select('title description date image article_image url pdf article_pdf status')
+      .select(
+        'title description date image article_image url externalUrl pdf article_pdf status',
+      )
       .lean()
       .exec();
 
@@ -703,7 +758,8 @@ export class AdminService {
             : '',
       image: a.image ?? null,
       article_image: a.article_image ?? this.resolveArticleImagePath(a.image),
-      url: String(a.url ?? ''),
+      url: a.externalUrl === true ? String(a.url ?? '') : '',
+      externalUrl: a.externalUrl === true,
       pdf: a.pdf ?? null,
       article_pdf: a.article_pdf ?? this.resolveArticlePdfPath(a.pdf),
       is_active: Number(a.status) === 1,
@@ -734,7 +790,11 @@ export class AdminService {
       article_image:
         (article as any).article_image ??
         this.resolveArticleImagePath((article as any).image),
-      url: String((article as any).url ?? ''),
+      url:
+        (article as any).externalUrl === true
+          ? String((article as any).url ?? '')
+          : '',
+      externalUrl: (article as any).externalUrl === true,
       pdf: (article as any).pdf ?? null,
       article_pdf:
         (article as any).article_pdf ??
@@ -1100,6 +1160,7 @@ export class AdminService {
     const existingActive = await this.vendorUserModel
       .findOne({
         $and: [
+          { manufacturerId: vendorObjectId },
           { status: { $ne: 2 } },
           { type: 'staff' },
           { $or: [{ email: data.email }, { phone: data.mobile }] },
@@ -1120,9 +1181,13 @@ export class AdminService {
     }
 
     const totalNonDeleted = await this.vendorUserModel
-      .countDocuments({ type: 'staff', status: { $ne: 2 } })
+      .countDocuments({
+        manufacturerId: vendorObjectId,
+        type: 'staff',
+        status: { $ne: 2 },
+      })
       .exec();
-    const maxAllowed = Math.max(1, totalNonDeleted);
+    const maxAllowed = Math.max(1, totalNonDeleted + 1);
     const desiredOrder =
       data.displayOrder === undefined ? maxAllowed : data.displayOrder;
     if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
@@ -1134,10 +1199,11 @@ export class AdminService {
       );
     }
 
-    if (desiredOrder < maxAllowed) {
+    if (desiredOrder <= totalNonDeleted) {
       await this.vendorUserModel
         .updateMany(
           {
+            manufacturerId: vendorObjectId,
             type: 'staff',
             status: { $ne: 2 },
             displayOrder: { $gte: desiredOrder },
@@ -1409,24 +1475,55 @@ export class AdminService {
       throw new BadRequestException('Invalid vendor ID format');
     }
 
+    let sequenceNumber = dto.sequenceNumber;
+    if (sequenceNumber === undefined) {
+      const latestBanner = await this.bannerModel
+        .findOne({ $or: [{ vendorId: vendorObjectId }, { vendorId }] })
+        .sort({ sequenceNumber: -1, createdAt: -1 })
+        .select('sequenceNumber')
+        .lean()
+        .exec();
+      const currentMax = Number((latestBanner as any)?.sequenceNumber ?? 0);
+      sequenceNumber = Number.isFinite(currentMax) && currentMax >= 1 ? currentMax + 1 : 1;
+    } else {
+      const duplicateSequence = await this.bannerModel
+        .exists({
+          sequenceNumber,
+          $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        })
+        .lean()
+        .exec();
+      if (duplicateSequence) {
+        throw new ConflictException(
+          `Sequence number ${sequenceNumber} already exists for another banner`,
+        );
+      }
+    }
+
     const created = new this.bannerModel({
       vendorId: vendorObjectId,
       banner_image: this.resolveBannerImagePath(dto.imageUrl),
-      imageUrl: dto.imageUrl.trim(),
-      targetUrl: (dto.targetUrl ?? '').trim(),
-      heading: dto.heading.trim(),
+      imageUrl: String(dto.imageUrl ?? '').trim(),
+      heading: dto.title.trim(),
+      sequenceNumber,
       description: dto.description.trim(),
+      status:
+        String(dto.status ?? '').trim().toLowerCase() === 'inactive' ||
+        String(dto.status ?? '').trim() === '0'
+          ? 0
+          : 1,
     });
     const saved = await created.save();
     const o = saved.toObject();
     const st = o.status ?? 1;
     return {
       id: String(o._id),
-      banner_image: o.banner_image ?? this.resolveBannerImagePath(o.imageUrl),
-      imageUrl: o.imageUrl,
-      targetUrl: o.targetUrl,
+      imageUrl: this.resolveBannerImageForResponse(o.imageUrl, o.banner_image),
       heading: o.heading,
+      title: o.heading,
+      sequenceNumber: Number(o.sequenceNumber ?? 1),
       description: o.description,
+      status: st === 1 ? 'active' : 'inactive',
       is_active: st === 1,
       createdAt: o.createdAt,
       updatedAt: o.updatedAt,
@@ -1448,8 +1545,8 @@ export class AdminService {
       .find({
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .sort({ createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl targetUrl heading description status')
+      .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
+      .select('banner_image imageUrl heading sequenceNumber description status')
       .lean()
       .exec();
 
@@ -1458,11 +1555,12 @@ export class AdminService {
       return {
         s_no: index + 1,
         id: String(b._id),
-        banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
         imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-        targetUrl: b.targetUrl,
         heading: b.heading,
+        title: b.heading,
+        sequenceNumber: Number((b as any).sequenceNumber ?? 1),
         description: b.description,
+        status: st === 1 ? 'active' : 'inactive',
         is_active: st === 1,
       };
     });
@@ -1471,20 +1569,27 @@ export class AdminService {
   /** Public banner list for website (active only, newest first). */
   async listPublicBanners() {
     const rows = await this.bannerModel
-      .find({ status: 1 })
-      .sort({ createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl targetUrl heading description status')
+      .find({
+        $or: [
+          { status: 1 },
+          { status: { $exists: false } },
+          { status: null as any },
+        ],
+      })
+      .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
+      .select('banner_image imageUrl heading sequenceNumber description status')
       .lean()
       .exec();
 
     return rows.map((b, index) => ({
       s_no: index + 1,
       id: String(b._id),
-      banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
       imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-      targetUrl: b.targetUrl,
       heading: b.heading,
+      title: b.heading,
+      sequenceNumber: Number((b as any).sequenceNumber ?? 1),
       description: b.description,
+      status: (b.status ?? 1) === 1 ? 'active' : 'inactive',
       is_active: (b.status ?? 1) === 1,
     }));
   }
@@ -1505,7 +1610,7 @@ export class AdminService {
         _id: bannerObjectId,
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .select('banner_image imageUrl targetUrl heading description')
+      .select('banner_image imageUrl heading sequenceNumber description status')
       .lean()
       .exec();
 
@@ -1515,11 +1620,12 @@ export class AdminService {
 
     return {
       id: String(b._id),
-      banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
       imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-      targetUrl: b.targetUrl ?? '',
       heading: b.heading,
+      title: b.heading,
+      sequenceNumber: Number((b as any).sequenceNumber ?? 1),
       description: b.description,
+      status: Number((b as any).status) === 1 ? 'active' : 'inactive',
     };
   }
 
@@ -1529,9 +1635,10 @@ export class AdminService {
     bannerId: string,
     payload: {
       imageUrl?: string;
-      targetUrl?: string;
-      heading: string;
-      description: string;
+      title?: string;
+      sequenceNumber?: number;
+      description?: string;
+      status?: string;
     },
   ) {
     let vendorObjectId: Types.ObjectId;
@@ -1556,17 +1663,42 @@ export class AdminService {
       throw new NotFoundException('Banner not found');
     }
 
-    const $set: Record<string, unknown> = {
-      heading: payload.heading.trim(),
-      description: payload.description.trim(),
-      updatedAt: new Date(),
-    };
+    if (payload.sequenceNumber !== undefined) {
+      const duplicateSequence = await this.bannerModel
+        .exists({
+          _id: { $ne: bannerObjectId },
+          sequenceNumber: payload.sequenceNumber,
+          $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        })
+        .lean()
+        .exec();
+      if (duplicateSequence) {
+        throw new ConflictException(
+          `Sequence number ${payload.sequenceNumber} already exists for another banner`,
+        );
+      }
+    }
+
+    const $set: Record<string, unknown> = { updatedAt: new Date() };
+    if (payload.title !== undefined) {
+      $set.heading = payload.title.trim();
+    }
+    if (payload.sequenceNumber !== undefined) {
+      $set.sequenceNumber = payload.sequenceNumber;
+    }
+    if (payload.description !== undefined) {
+      $set.description = payload.description.trim();
+    }
+    if (payload.status !== undefined) {
+      $set.status =
+        String(payload.status).trim().toLowerCase() === 'inactive' ||
+        String(payload.status).trim() === '0'
+          ? 0
+          : 1;
+    }
     if (payload.imageUrl !== undefined) {
       $set.imageUrl = payload.imageUrl.trim();
       $set.banner_image = this.resolveBannerImagePath(payload.imageUrl);
-    }
-    if (payload.targetUrl !== undefined) {
-      $set.targetUrl = payload.targetUrl.trim();
     }
 
     const updated = await this.bannerModel
@@ -1581,13 +1713,15 @@ export class AdminService {
     const st = updated.status ?? 1;
     return {
       id: String(updated._id),
-      banner_image:
-        (updated as any).banner_image ??
-        this.resolveBannerImagePath(updated.imageUrl),
-      imageUrl: updated.imageUrl,
-      targetUrl: updated.targetUrl ?? '',
+      imageUrl: this.resolveBannerImageForResponse(
+        (updated as any).imageUrl,
+        (updated as any).banner_image,
+      ),
       heading: updated.heading,
+      title: updated.heading,
+      sequenceNumber: Number((updated as any).sequenceNumber ?? 1),
       description: updated.description,
+      status: st === 1 ? 'active' : 'inactive',
       is_active: st === 1,
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,

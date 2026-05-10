@@ -26,6 +26,7 @@ import {
 } from '@nestjs/swagger';
 import { StandardsService } from './standards.service';
 import { ListStandardsQueryDto } from './dto/list-standards-query.dto';
+import { ListStandardsByCategoryQueryDto } from './dto/list-standards-by-category-query.dto';
 import { CreateStandardMultipartDto } from './dto/create-standard-multipart.dto';
 import { UpdateStandardMultipartDto } from './dto/update-standard-multipart.dto';
 import { UpdateStandardStatusDto } from './dto/update-standard-status.dto';
@@ -40,18 +41,46 @@ export class StandardsController {
   @ApiOperation({
     summary: 'List standards (paginated)',
     description:
-      'Pagination, search on name, filter by resource_standard_type and status, sort. Example: ?page=1&limit=10&search=energy&resource_standard_type=Energy&status=1',
+      'Pagination, search on name, filter by resource_standard_type, **category_id**, and status, sort. Example: ?page=1&limit=10&search=energy&resource_standard_type=Energy&category_id=1&status=1. Each row includes **category_id** and **category_name** (from GET /categories) when linked.',
   })
   @ApiResponse({ status: 200, description: 'Paginated list' })
   async findAll(@Query() query: ListStandardsQueryDto) {
     return this.standardsService.findAllPaginated(query);
   }
 
+  @Get('by-category/:categoryId')
+  @ApiOperation({
+    summary: 'List standards for a category (paginated)',
+    description:
+      'Same pagination and filters as GET /api/standards, except **do not pass category_id** in the query — the category is fixed by the path. ' +
+      '**categoryId** may be the numeric `category_id` from GET /categories or the category MongoDB `_id` (24-char hex). Returns 400 if the category does not exist.',
+  })
+  @ApiParam({
+    name: 'categoryId',
+    description:
+      'Numeric `category_id` from GET /categories, or category document `_id` (MongoDB ObjectId string)',
+  })
+  @ApiResponse({ status: 200, description: 'Paginated list' })
+  @ApiResponse({ status: 400, description: 'Invalid or unknown category id' })
+  async findByCategory(
+    @Param('categoryId') categoryId: string,
+    @Query() query: ListStandardsByCategoryQueryDto,
+  ) {
+    const cid =
+      await this.standardsService.resolveCategoryIdForByCategoryRoute(
+        categoryId,
+      );
+    return this.standardsService.findAllPaginated({
+      ...query,
+      category_id: cid,
+    });
+  }
+
   @Get('export')
   @ApiOperation({
     summary: 'Export standards as CSV',
     description:
-      'Applies search, resource_standard_type, and status filters (no pagination).',
+      'Applies search, resource_standard_type, **category_id**, and status filters (no pagination).',
   })
   @ApiResponse({ status: 200, description: 'CSV download' })
   async exportCsv(@Query() query: ListStandardsQueryDto) {
@@ -64,7 +93,11 @@ export class StandardsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get standard by id' })
+  @ApiOperation({
+    summary: 'Get standard by id',
+    description:
+      'Response includes **category_id** and **category_name** for admin edit dropdowns.',
+  })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiResponse({ status: 404, description: 'Not found' })
   async findOne(@Param('id') id: string) {
@@ -83,13 +116,18 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Create standard (file upload)',
     description:
-      'Form: name, description (optional), resource_standard_type, status (optional, default 1), file (required). PDF, JPG, or PNG, max 10MB. Uses S3 when AWS_* env vars are set, else local uploads/standards/.',
+      'Form: **category_id** (required — numeric id from GET /categories), name, description (optional), resource_standard_type, status (optional, default 1), file (required). PDF, JPG, or PNG, max 10MB. Uses S3 when AWS_* env vars are set, else local uploads/standards/. ' +
+      '**Compatibility:** Omitting category_id on create returns 400 validation. On update, omitting category_id leaves the existing link unchanged (older clients).',
   })
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['name', 'resource_standard_type', 'file'],
+      required: ['category_id', 'name', 'resource_standard_type', 'file'],
       properties: {
+        category_id: {
+          oneOf: [{ type: 'integer' }, { type: 'string' }],
+          description: 'Product category id from GET /categories (`category_id` field)',
+        },
         name: { type: 'string' },
         description: { type: 'string' },
         resource_standard_type: { type: 'string' },
@@ -126,13 +164,18 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Update standard',
     description:
-      'Optional fields: name, description, resource_standard_type, status, file (replace attachment). At least one field or file required. PDF, JPG, or PNG, max 10MB.',
+      'Optional fields: **category_id** (numeric id from GET /categories; omit to keep current), name, description, resource_standard_type, status, file (replace attachment). At least one field or file required. Empty category_id is treated as omitted. PDF, JPG, or PNG, max 10MB.',
   })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
+        category_id: {
+          oneOf: [{ type: 'integer' }, { type: 'string' }],
+          description:
+            'Optional. Must reference an existing category when provided. Omit to leave unchanged.',
+        },
         name: { type: 'string' },
         description: { type: 'string' },
         resource_standard_type: { type: 'string' },

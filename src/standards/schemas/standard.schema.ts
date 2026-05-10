@@ -36,6 +36,10 @@ export class Standard {
   @Prop({ required: true })
   resource_standard_type: string;
 
+  /** References `category_id` from GET /categories (same numeric id as the admin UI). */
+  @Prop({ type: Number, required: false })
+  category_id?: number;
+
   @Prop({ type: Number, default: 1 })
   status: number;
 

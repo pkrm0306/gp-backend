@@ -22,6 +22,7 @@ import { CreateStandardMultipartDto } from './dto/create-standard-multipart.dto'
 import { UpdateStandardMultipartDto } from './dto/update-standard-multipart.dto';
 import { UpdateStandardStatusDto } from './dto/update-standard-status.dto';
 import { RedisService } from '../common/redis/redis.service';
+import { CategoriesService } from '../categories/categories.service';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -47,6 +48,7 @@ export class StandardsService implements OnModuleInit {
     private counterModel: Model<StandardIdCounterDocument>,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
+    private readonly categoriesService: CategoriesService,
   ) {}
 
   private getStandardListCacheTtlSeconds(): number {
@@ -67,6 +69,7 @@ export class StandardsService implements OnModuleInit {
       resource_standard_type: String(query.resource_standard_type || '')
         .trim()
         .toLowerCase(),
+      category_id: query.category_id ?? null,
       status: query.status ?? null,
       sortBy: query.sortBy ?? 'id',
       order: query.order === 'desc' ? 'desc' : 'asc',
@@ -147,6 +150,11 @@ export class StandardsService implements OnModuleInit {
     return n;
   }
 
+  /** Resolves path `categoryId` to numeric `category_id` stored on standards (see CategoriesService). */
+  async resolveCategoryIdForByCategoryRoute(param: string): Promise<number> {
+    return this.categoriesService.resolveNumericCategoryKey(param);
+  }
+
   private buildListFilter(
     query: ListStandardsQueryDto,
   ): Record<string, unknown> {
@@ -171,6 +179,13 @@ export class StandardsService implements OnModuleInit {
     if (query.status !== undefined) {
       parts.push({ status: query.status });
     }
+    if (
+      query.category_id !== undefined &&
+      Number.isInteger(query.category_id) &&
+      query.category_id >= 1
+    ) {
+      parts.push({ category_id: query.category_id });
+    }
 
     if (parts.length === 0) {
       return {};
@@ -188,6 +203,44 @@ export class StandardsService implements OnModuleInit {
       ...doc,
       description: typeof doc.description === 'string' ? doc.description : '',
     };
+  }
+
+  private async attachCategoryDisplay<
+    T extends { category_id?: number | null },
+  >(doc: T): Promise<T & { category_id: number | null; category_name: string | null }> {
+    const cid =
+      typeof doc.category_id === 'number' && Number.isInteger(doc.category_id)
+        ? doc.category_id
+        : null;
+    const map = await this.categoriesService.getCategoryNamesByNumericIds(
+      cid !== null ? [cid] : [],
+    );
+    return {
+      ...doc,
+      category_id: cid,
+      category_name: cid !== null ? map.get(cid) ?? null : null,
+    };
+  }
+
+  private async attachCategoryDisplayMany<
+    T extends { category_id?: number | null },
+  >(
+    docs: T[],
+  ): Promise<Array<T & { category_id: number | null; category_name: string | null }>> {
+    const map = await this.categoriesService.getCategoryNamesByNumericIds(
+      docs.map((d) => d.category_id),
+    );
+    return docs.map((d) => {
+      const cid =
+        typeof d.category_id === 'number' && Number.isInteger(d.category_id)
+          ? d.category_id
+          : null;
+      return {
+        ...d,
+        category_id: cid,
+        category_name: cid !== null ? map.get(cid) ?? null : null,
+      };
+    });
   }
 
   async findAllPaginated(query: ListStandardsQueryDto) {
@@ -230,9 +283,10 @@ export class StandardsService implements OnModuleInit {
       this.standardModel.countDocuments(filter).exec(),
     ]);
 
-    const data = rows.map((d) =>
+    const withMeta = rows.map((d) =>
       this.ensureDescriptionField(this.enrichStandardFileUrl(d)),
     );
+    const data = await this.attachCategoryDisplayMany(withMeta);
 
     const response = {
       message: 'Standards retrieved successfully',
@@ -256,7 +310,8 @@ export class StandardsService implements OnModuleInit {
     if (!doc) {
       throw new NotFoundException('Standard not found');
     }
-    return this.ensureDescriptionField(this.enrichStandardFileUrl(doc));
+    const withMeta = this.ensureDescriptionField(this.enrichStandardFileUrl(doc));
+    return this.attachCategoryDisplay(withMeta);
   }
 
   /** Legacy rows may omit file_url; derive local URL from filename when needed. */
@@ -298,8 +353,11 @@ export class StandardsService implements OnModuleInit {
     const now = new Date();
     const numericId = await this.nextStandardId();
 
+    await this.categoriesService.assertNumericCategoryExists(dto.category_id);
+
     const doc = await this.standardModel.create({
       id: numericId,
+      category_id: dto.category_id,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? '',
       resource_standard_type: dto.resource_standard_type.trim(),
@@ -316,7 +374,7 @@ export class StandardsService implements OnModuleInit {
       this.enrichStandardFileUrl(doc.toObject()),
     );
     await this.invalidateStandardListCache();
-    return created;
+    return this.attachCategoryDisplay(created);
   }
 
   async update(
@@ -334,7 +392,8 @@ export class StandardsService implements OnModuleInit {
       dto.description !== undefined ||
       (dto.resource_standard_type !== undefined &&
         dto.resource_standard_type.trim() !== '') ||
-      dto.status !== undefined;
+      dto.status !== undefined ||
+      dto.category_id !== undefined;
     if (!hasText && !file) {
       throw new BadRequestException('No fields to update');
     }
@@ -356,6 +415,10 @@ export class StandardsService implements OnModuleInit {
     if (dto.status !== undefined) {
       set.status = dto.status;
     }
+    if (dto.category_id !== undefined) {
+      await this.categoriesService.assertNumericCategoryExists(dto.category_id);
+      set.category_id = dto.category_id;
+    }
 
     if (file) {
       await deleteUploadedFile(this.fileMetaForDelete(existing));
@@ -376,7 +439,7 @@ export class StandardsService implements OnModuleInit {
     }
     const response = this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
     await this.invalidateStandardListCache();
-    return response;
+    return this.attachCategoryDisplay(response);
   }
 
   async updateStatus(id: number, dto: UpdateStandardStatusDto) {
@@ -393,7 +456,7 @@ export class StandardsService implements OnModuleInit {
     }
     const response = this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
     await this.invalidateStandardListCache();
-    return response;
+    return this.attachCategoryDisplay(response);
   }
 
   async remove(id: number) {
@@ -414,9 +477,14 @@ export class StandardsService implements OnModuleInit {
     };
     const filter = this.buildListFilter(query);
     const rows = await this.standardModel.find(filter).sort(sort).lean().exec();
+    const nameMap = await this.categoriesService.getCategoryNamesByNumericIds(
+      rows.map((r) => r.category_id),
+    );
 
     const header = [
       'id',
+      'category_id',
+      'category_name',
       'name',
       'description',
       'filename',
@@ -432,8 +500,15 @@ export class StandardsService implements OnModuleInit {
       header.join(','),
       ...rows.map((r) => {
         const e = this.enrichStandardFileUrl(r);
+        const cid =
+          typeof e.category_id === 'number' && Number.isInteger(e.category_id)
+            ? e.category_id
+            : null;
+        const cname = cid !== null ? nameMap.get(cid) ?? '' : '';
         return [
           e.id,
+          cid ?? '',
+          cname,
           e.name,
           e.description ?? '',
           e.filename,

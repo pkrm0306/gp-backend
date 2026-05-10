@@ -15,11 +15,11 @@ export class Banner {
   @Prop({ required: true })
   imageUrl: string;
 
-  @Prop({ required: false, default: '' })
-  targetUrl?: string;
-
   @Prop({ required: true })
   heading: string;
+
+  @Prop({ required: true, min: 1 })
+  sequenceNumber: number;
 
   @Prop({ required: true })
   description: string;

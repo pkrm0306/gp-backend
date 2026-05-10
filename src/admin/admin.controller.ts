@@ -198,6 +198,32 @@ export class AdminController {
     );
   }
 
+  private parseExternalUrlToggle(
+    raw: unknown,
+    required = false,
+  ): boolean | undefined {
+    if (raw === undefined || raw === null || String(raw).trim() === '') {
+      if (required) {
+        throw new BadRequestException('externalUrl is required (true/false)');
+      }
+      return undefined;
+    }
+    const v = String(raw).trim().toLowerCase();
+    if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+    if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+    throw new BadRequestException('Invalid externalUrl. Use true/false (or 1/0)');
+  }
+
+  private resolveExternalUrlRaw(body: any): unknown {
+    return (
+      body?.externalUrl ??
+      body?.external_url ??
+      body?.externalURL ??
+      body?.isExternalUrl ??
+      body?.is_external_url
+    );
+  }
+
   private parseGalleryType(raw: unknown, required = false): GalleryType | undefined {
     if (raw === undefined || raw === null || String(raw).trim() === '') {
       if (required) {
@@ -295,10 +321,11 @@ export class AdminController {
 
   private mapArticleResponse(item: any) {
     const id = item?.id ?? (item?._id ? String(item._id) : undefined);
+    const externalUrl = item?.externalUrl === true;
     return {
       id,
       title: item?.title ?? '',
-      description: item?.description ?? '',
+      description: externalUrl ? '' : (item?.description ?? ''),
       date:
         item?.date instanceof Date
           ? item.date.toISOString().slice(0, 10)
@@ -307,7 +334,8 @@ export class AdminController {
             : '',
       image: item?.image ?? null,
       article_image: item?.article_image ?? '',
-      url: item?.url ?? '',
+      url: externalUrl ? (item?.url ?? '') : '',
+      externalUrl,
       pdf: item?.pdf ?? null,
       article_pdf: item?.article_pdf ?? '',
       is_active: Number(item?.status) === 1 || item?.is_active === true,
@@ -330,11 +358,15 @@ export class AdminController {
   })
   @ApiResponse({ status: 401, description: 'Invalid or expired token' })
   async editProfile(
-    @CurrentUser() user: { userId: string },
+    @CurrentUser() user: {
+      userId: string;
+      manufacturerId?: string;
+      vendorId?: string;
+    },
     @Body() updateProfileDto: UpdateProfileDto,
   ) {
     const profile = await this.manufacturersService.editProfile(
-      user.userId,
+      user,
       updateProfileDto,
     );
     return { message: 'Profile updated successfully', data: profile };
@@ -346,7 +378,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'List banners (vendor admin)',
     description:
-      'Returns **this vendor’s** banners for the admin grid (newest first): **imageUrl**, **heading**, **description**, **is_active**, **targetUrl**, and **id**. IDs match **GET /admin/banner/:id** (vendor-scoped). For **all** active banners on the public site, use **GET /website/public/banners**.',
+      'Returns **this vendor’s** banners for the admin grid (ordered by sequence number): **title**, **description**, **sequenceNumber**, **is_active**, and **id**. IDs match **GET /admin/banner/:id** (vendor-scoped). For **all** active banners on the public site, use **GET /website/public/banners**.',
   })
   @ApiResponse({
     status: 200,
@@ -362,9 +394,8 @@ export class AdminController {
             properties: {
               s_no: { type: 'number', example: 1 },
               id: { type: 'string' },
-              imageUrl: { type: 'string' },
-              targetUrl: { type: 'string' },
-              heading: { type: 'string' },
+              title: { type: 'string' },
+              sequenceNumber: { type: 'number' },
               description: { type: 'string' },
               is_active: { type: 'boolean' },
             },
@@ -376,29 +407,13 @@ export class AdminController {
   })
   async listBanners(
     @CurrentUser() user: { vendorId?: string; manufacturerId?: string },
-    @Req() req: Request,
   ) {
     const scopedVendorId = user?.vendorId || user?.manufacturerId;
     if (!scopedVendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const data = await this.adminService.listBanners(scopedVendorId);
-
-    const origin = `${req.protocol}://${req.get('host')}`;
-    const normalizeImageUrl = (raw: unknown) => {
-      const v = (raw ?? '').toString().trim();
-      if (!v) return v;
-      if (/^https?:\/\//i.test(v)) return v;
-      if (v.startsWith('/uploads/')) return `${origin}${v}`;
-      if (v.startsWith('uploads/')) return `${origin}/${v}`;
-      return v; // keep as-is (legacy values)
-    };
-
-    const normalized = data.map((b) => ({
-      ...b,
-      imageUrl: normalizeImageUrl(b.imageUrl),
-    }));
-    return { message: 'Banners retrieved successfully', data: normalized };
+    return { message: 'Banners retrieved successfully', data };
   }
 
   @Post('banner')
@@ -409,8 +424,7 @@ export class AdminController {
       storage: diskStorage({
         destination: join(process.cwd(), 'uploads', 'banners'),
         filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = extname(file.originalname || '');
           cb(null, `banner-${uniqueSuffix}${ext}`);
         },
@@ -420,11 +434,9 @@ export class AdminController {
           cb(null, true);
           return;
         }
-        // Accept any image/* mimetype (some browsers report webp as image/x-webp etc.)
         cb(
           null,
-          typeof file.mimetype === 'string' &&
-            file.mimetype.startsWith('image/'),
+          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
         );
       },
       limits: { fileSize: 5 * 1024 * 1024 },
@@ -433,21 +445,18 @@ export class AdminController {
   @ApiOperation({
     summary: 'Create banner',
     description:
-      'Creates a banner for the logged-in vendor. Multipart form: image (binary), optional targetUrl, heading, description. (imageUrl string is also accepted for backward compatibility).',
+      'Creates a banner for the logged-in vendor.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['heading', 'description'],
       properties: {
         image: { type: 'string', format: 'binary' },
-        imageUrl: {
-          type: 'string',
-          description: 'Optional if image is uploaded',
-        },
-        targetUrl: { type: 'string', description: 'Optional' },
-        heading: { type: 'string' },
+        imageUrl: { type: 'string', description: 'Optional if image uploaded' },
+        title: { type: 'string' },
+        status: { type: 'string', enum: ['active', 'inactive'] },
+        sequenceNumber: { type: 'number', example: 1 },
         description: { type: 'string' },
       },
     },
@@ -459,7 +468,6 @@ export class AdminController {
   })
   async createBanner(
     @CurrentUser() user: { vendorId: string },
-    @Req() req: Request,
     @Body() body: any,
     @UploadedFile() file?: any,
   ) {
@@ -468,9 +476,11 @@ export class AdminController {
     }
     const dto = plainToClass(CreateBannerDto, {
       imageUrl: body.imageUrl,
-      targetUrl: body.targetUrl,
-      heading: body.heading,
-      description: body.description,
+      title: body.title ?? body.heading,
+      status: body.status,
+      sequenceNumber:
+        body.sequenceNumber ?? body.sequence ?? body.displayOrder ?? body.order,
+      description: body.description ?? body.bannerDescription,
     });
     const errors = await validate(dto);
     if (errors.length > 0) {
@@ -480,27 +490,15 @@ export class AdminController {
       throw new BadRequestException(errorMessages.join(', '));
     }
 
-    const imageUrl = file
-      ? (await uploadFile(file, 'banners')).fileUrl
-      : dto.imageUrl;
+    const imageUrl = file ? (await uploadFile(file, 'banners')).fileUrl : dto.imageUrl;
     if (!imageUrl) {
       throw new BadRequestException('Banner image is required');
     }
-
     const data = await this.adminService.createBanner(user.vendorId, {
       ...dto,
       imageUrl,
     });
-    const origin = `${req.protocol}://${req.get('host')}`;
-    const normalized = {
-      ...data,
-      imageUrl:
-        typeof data?.imageUrl === 'string' &&
-        data.imageUrl.startsWith('/uploads/')
-          ? `${origin}${data.imageUrl}`
-          : data.imageUrl,
-    };
-    return { message: 'Banner created successfully', data: normalized };
+    return { message: 'Banner created successfully', data };
   }
 
   @Patch(['banner/:id', 'banner/:id/edit'])
@@ -511,8 +509,7 @@ export class AdminController {
       storage: diskStorage({
         destination: join(process.cwd(), 'uploads', 'banners'),
         filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = extname(file.originalname || '');
           cb(null, `banner-${uniqueSuffix}${ext}`);
         },
@@ -522,11 +519,9 @@ export class AdminController {
           cb(null, true);
           return;
         }
-        // Accept any image/* mimetype (some browsers report webp as image/x-webp etc.)
         cb(
           null,
-          typeof file.mimetype === 'string' &&
-            file.mimetype.startsWith('image/'),
+          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
         );
       },
       limits: { fileSize: 5 * 1024 * 1024 },
@@ -535,22 +530,20 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit banner',
     description:
-      'Edits a banner for the logged-in vendor. Multipart form: optional image (binary), optional targetUrl, required heading + description.',
+      'Edits a banner for the logged-in vendor.',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id (from banner list)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['heading', 'description'],
+      required: ['title', 'sequenceNumber', 'description'],
       properties: {
         image: { type: 'string', format: 'binary' },
-        imageUrl: {
-          type: 'string',
-          description: 'Optional if image is uploaded',
-        },
-        targetUrl: { type: 'string', description: 'Optional' },
-        heading: { type: 'string' },
+        imageUrl: { type: 'string', description: 'Optional if image uploaded' },
+        title: { type: 'string' },
+        status: { type: 'string', enum: ['active', 'inactive'] },
+        sequenceNumber: { type: 'number', example: 1 },
         description: { type: 'string' },
       },
     },
@@ -560,7 +553,6 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Banner not found' })
   async editBanner(
     @CurrentUser() user: { vendorId: string },
-    @Req() req: Request,
     @Param('id') id: string,
     @Body() body: any,
     @UploadedFile() file?: any,
@@ -571,12 +563,13 @@ export class AdminController {
 
     const dto = plainToClass(EditBannerDto, {
       imageUrl: body.imageUrl,
-      targetUrl: body.targetUrl,
-      heading: body.heading,
+      title: body.title ?? body.heading,
+      status: body.status,
+      sequenceNumber: body.sequenceNumber,
       description: body.description,
     });
 
-    const errors = await validate(dto);
+    const errors = await validate(dto, { skipMissingProperties: true });
     if (errors.length > 0) {
       const errorMessages = errors
         .map((error) => Object.values(error.constraints || {}))
@@ -584,28 +577,28 @@ export class AdminController {
       throw new BadRequestException(errorMessages.join(', '));
     }
 
-    // In edit: image is optional. If neither `image` (binary) nor `imageUrl` is provided,
-    // we keep the existing imageUrl stored in DB.
-    const imageUrl = file
-      ? (await uploadFile(file, 'banners')).fileUrl
-      : dto.imageUrl;
+    if (
+      !file &&
+      dto.imageUrl === undefined &&
+      dto.title === undefined &&
+      dto.status === undefined &&
+      dto.sequenceNumber === undefined &&
+      dto.description === undefined
+    ) {
+      throw new BadRequestException('Provide at least one field to update');
+    }
 
+    const imageUrl = file ? (await uploadFile(file, 'banners')).fileUrl : dto.imageUrl;
     const data = await this.adminService.updateBanner(user.vendorId, id, {
       ...(imageUrl ? { imageUrl } : {}),
-      targetUrl: dto.targetUrl,
-      heading: dto.heading,
-      description: dto.description,
+      ...(dto.title !== undefined ? { title: dto.title } : {}),
+      ...(dto.status !== undefined ? { status: dto.status } : {}),
+      ...(dto.sequenceNumber !== undefined
+        ? { sequenceNumber: dto.sequenceNumber }
+        : {}),
+      ...(dto.description !== undefined ? { description: dto.description } : {}),
     });
-    const origin = `${req.protocol}://${req.get('host')}`;
-    const normalized = {
-      ...data,
-      imageUrl:
-        typeof data?.imageUrl === 'string' &&
-        data.imageUrl.startsWith('/uploads/')
-          ? `${origin}${data.imageUrl}`
-          : data.imageUrl,
-    };
-    return { message: 'Banner updated successfully', data: normalized };
+    return { message: 'Banner updated successfully', data };
   }
 
   @Post('events/create')
@@ -1361,6 +1354,7 @@ export class AdminController {
       [
         { name: 'image', maxCount: 1 },
         { name: 'pdf', maxCount: 1 },
+        { name: 'file', maxCount: 1 },
       ],
       {
       storage: diskStorage({
@@ -1377,12 +1371,17 @@ export class AdminController {
           cb(null, true);
           return;
         }
-        if (file.fieldname === 'pdf') {
+        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
           if (file.mimetype === 'application/pdf') {
             cb(null, true);
             return;
           }
-          cb(new BadRequestException('Only PDF files are allowed for pdf field'), false);
+          cb(
+            new BadRequestException(
+              'Only PDF files are allowed for file/pdf field',
+            ),
+            false,
+          );
           return;
         }
         const allowedImageMimes = [
@@ -1401,18 +1400,20 @@ export class AdminController {
   @ApiOperation({
     summary: 'Create article',
     description:
-      'Creates an article with title, description, date, image, PDF file, url and status (active/inactive). Only PDF is allowed for `pdf` field.',
+      'Creates an article with title, date, image, file/pdf (PDF), externalUrl toggle and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url is required and description is hidden.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['title', 'date'],
+      required: ['title', 'date', 'image', 'pdf'],
       properties: {
         title: { type: 'string' },
         description: { type: 'string' },
         date: { type: 'string', example: '2026-05-05' },
+        externalUrl: { type: 'boolean', default: false },
         image: { type: 'string', format: 'binary' },
+        file: { type: 'string', format: 'binary' },
         pdf: { type: 'string', format: 'binary' },
         url: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
@@ -1427,6 +1428,7 @@ export class AdminController {
     files?: {
       image?: Express.Multer.File[];
       pdf?: Express.Multer.File[];
+      file?: Express.Multer.File[];
     },
   ) {
     const title = String(body?.title ?? '').trim();
@@ -1441,19 +1443,40 @@ export class AdminController {
     if (Number.isNaN(date.getTime())) {
       throw new BadRequestException('Invalid date (expected ISO date/datetime)');
     }
+    const description = String(body?.description ?? '').trim();
+    const url = String(body?.url ?? '').trim();
+    const explicitExternalUrl = this.parseExternalUrlToggle(
+      this.resolveExternalUrlRaw(body),
+    );
+    const inferredExternalUrl =
+      explicitExternalUrl ??
+      (url && !description ? true : description && !url ? false : false);
+    const externalUrl = inferredExternalUrl;
     const status = this.parseEventStatus(body?.status);
     const imageFile = files?.image?.[0];
-    const pdfFile = files?.pdf?.[0];
+    const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
+    if (!imageFile) throw new BadRequestException('image is required');
+    if (!pdfFile) throw new BadRequestException('pdf/file is required');
+    if (externalUrl) {
+      if (!url) {
+        throw new BadRequestException('url is required when externalUrl is true');
+      }
+    } else if (!description) {
+      throw new BadRequestException(
+        'description is required when externalUrl is false',
+      );
+    }
     const image = imageFile ? `/uploads/articles/${imageFile.filename}` : undefined;
     const pdf = pdfFile ? `/uploads/articles/${pdfFile.filename}` : undefined;
 
     const data = await this.adminService.createArticle({
       title,
-      description: body?.description,
+      description: externalUrl ? '' : description,
       date,
       image,
       pdf,
-      url: body?.url,
+      url: externalUrl ? url : '',
+      externalUrl,
       ...(status !== undefined ? { status } : {}),
     });
     return {
@@ -1470,6 +1493,7 @@ export class AdminController {
       [
         { name: 'image', maxCount: 1 },
         { name: 'pdf', maxCount: 1 },
+        { name: 'file', maxCount: 1 },
       ],
       {
       storage: diskStorage({
@@ -1486,12 +1510,17 @@ export class AdminController {
           cb(null, true);
           return;
         }
-        if (file.fieldname === 'pdf') {
+        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
           if (file.mimetype === 'application/pdf') {
             cb(null, true);
             return;
           }
-          cb(new BadRequestException('Only PDF files are allowed for pdf field'), false);
+          cb(
+            new BadRequestException(
+              'Only PDF files are allowed for file/pdf field',
+            ),
+            false,
+          );
           return;
         }
         const allowedImageMimes = [
@@ -1510,7 +1539,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit article',
     description:
-      'Edits article fields: title, description, date, image, PDF file, url, status. Only PDF is allowed for `pdf` field.',
+      'Edits article fields: title, date, image, file/pdf (PDF), externalUrl toggle, url/description and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url is required and description is hidden.',
   })
   @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
   @ApiConsumes('multipart/form-data')
@@ -1521,7 +1550,9 @@ export class AdminController {
         title: { type: 'string' },
         description: { type: 'string' },
         date: { type: 'string', example: '2026-05-05' },
+        externalUrl: { type: 'boolean' },
         image: { type: 'string', format: 'binary' },
+        file: { type: 'string', format: 'binary' },
         pdf: { type: 'string', format: 'binary' },
         url: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
@@ -1538,6 +1569,7 @@ export class AdminController {
     files?: {
       image?: Express.Multer.File[];
       pdf?: Express.Multer.File[];
+      file?: Express.Multer.File[];
     },
   ) {
     let date: Date | undefined = undefined;
@@ -1554,15 +1586,29 @@ export class AdminController {
     }
 
     const status = this.parseEventStatus(body?.status);
+    const explicitExternalUrl = this.parseExternalUrlToggle(
+      this.resolveExternalUrlRaw(body),
+    );
     const imageFile = files?.image?.[0];
-    const pdfFile = files?.pdf?.[0];
+    const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
     const image = imageFile ? `/uploads/articles/${imageFile.filename}` : undefined;
     const pdf = pdfFile ? `/uploads/articles/${pdfFile.filename}` : undefined;
+    const description =
+      body?.description !== undefined ? String(body.description).trim() : undefined;
+    const url = body?.url !== undefined ? String(body.url).trim() : undefined;
+    const inferredExternalUrl =
+      explicitExternalUrl ??
+      (url !== undefined && description === undefined
+        ? true
+        : description !== undefined && url === undefined
+          ? false
+          : undefined);
     const data = await this.adminService.updateArticle(id, {
       ...(body?.title !== undefined ? { title: body.title } : {}),
-      ...(body?.description !== undefined ? { description: body.description } : {}),
+      ...(description !== undefined ? { description } : {}),
       ...(date !== undefined ? { date } : {}),
-      ...(body?.url !== undefined ? { url: body.url } : {}),
+      ...(url !== undefined ? { url } : {}),
+      ...(inferredExternalUrl !== undefined ? { externalUrl: inferredExternalUrl } : {}),
       ...(status !== undefined ? { status } : {}),
       ...(image !== undefined ? { image } : {}),
       ...(pdf !== undefined ? { pdf } : {}),
@@ -1704,6 +1750,40 @@ export class AdminController {
     return { message: 'Event deleted successfully', data };
   }
 
+  @Delete('gallery/:id')
+  @Permissions(PERMISSIONS.EVENTS_DELETE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Delete gallery item',
+    description:
+      'Permanently deletes a gallery item. `id` can be MongoDB _id or numeric eventId.',
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
+  @ApiResponse({ status: 200, description: 'Gallery item deleted successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
+  @ApiResponse({ status: 404, description: 'Gallery item not found' })
+  async deleteGallery(@Param('id') id: string) {
+    const data = await this.adminService.deleteEvent(id);
+    return { message: 'Gallery item deleted successfully', data };
+  }
+
+  @Delete('gallery/:id/delete')
+  @Permissions(PERMISSIONS.EVENTS_DELETE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Delete gallery item (alias)',
+    description:
+      'Alias of DELETE /admin/gallery/:id for frontend convenience.',
+  })
+  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
+  @ApiResponse({ status: 200, description: 'Gallery item deleted successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
+  @ApiResponse({ status: 404, description: 'Gallery item not found' })
+  async deleteGalleryAlias(@Param('id') id: string) {
+    const data = await this.adminService.deleteEvent(id);
+    return { message: 'Gallery item deleted successfully', data };
+  }
+
   @Post('manufacturer/reply')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -1833,7 +1913,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get banner by id',
     description:
-      'Returns one banner for the **View Banner** modal: **imageUrl** (image link shown as URL in the UI), **heading**, and **banner description**. Vendor-scoped.',
+      'Returns one banner for the **View Banner** modal: **title**, **sequenceNumber**, and **banner description**. Vendor-scoped.',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id' })
   @ApiResponse({ status: 200, description: 'Banner details' })
@@ -1841,23 +1921,13 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   async getBannerById(
     @CurrentUser() user: { vendorId: string },
-    @Req() req: Request,
     @Param('id') id: string,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const data = await this.adminService.getBannerById(user.vendorId, id);
-    const origin = `${req.protocol}://${req.get('host')}`;
-    const normalized = {
-      ...data,
-      imageUrl:
-        typeof data?.imageUrl === 'string' &&
-        data.imageUrl.startsWith('/uploads/')
-          ? `${origin}${data.imageUrl}`
-          : data.imageUrl,
-    };
-    return { message: 'Banner retrieved successfully', data: normalized };
+    return { message: 'Banner retrieved successfully', data };
   }
 
   @Patch('banner/:id/status')
@@ -1974,7 +2044,7 @@ export class AdminController {
       facebookUrl: body.facebookUrl,
       twitterUrl: body.twitterUrl,
       linkedinUrl: body.linkedinUrl,
-      roleId: body.roleId,
+      roleId: normalizedRoleIds[0],
     });
 
     const errors = await validate(dto);

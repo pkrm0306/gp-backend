@@ -686,4 +686,81 @@ export class CategoriesService implements OnModuleInit {
     await this.categoryModel.deleteOne({ _id: oid }).exec();
     await this.invalidateCategoryListCache();
   }
+
+  /**
+   * Resolve `category_name` for numeric ids returned by GET /categories (`category_id`).
+   */
+  async getCategoryNamesByNumericIds(
+    categoryIds: Array<number | undefined | null>,
+  ): Promise<Map<number, string>> {
+    const unique = [
+      ...new Set(
+        categoryIds.filter(
+          (x): x is number =>
+            typeof x === 'number' && Number.isInteger(x) && x >= 1,
+        ),
+      ),
+    ];
+    if (!unique.length) {
+      return new Map();
+    }
+    const rows = await this.categoryModel
+      .find({ category_id: { $in: unique } })
+      .select('category_id category_name')
+      .lean()
+      .exec();
+    return new Map(
+      rows.map((r) => [r.category_id as number, r.category_name as string]),
+    );
+  }
+
+  /**
+   * For standards filters: numeric `category_id` from GET /categories, or MongoDB category `_id`
+   * (24-char hex) when the client uses document ids in URLs.
+   */
+  async resolveNumericCategoryKey(param: string): Promise<number> {
+    const trimmed = String(param ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('Invalid category id');
+    }
+    if (Types.ObjectId.isValid(trimmed)) {
+      const doc = await this.categoryModel
+        .findById(new Types.ObjectId(trimmed))
+        .select('category_id')
+        .lean()
+        .exec();
+      if (
+        !doc ||
+        typeof doc.category_id !== 'number' ||
+        !Number.isInteger(doc.category_id) ||
+        doc.category_id < 1
+      ) {
+        throw new BadRequestException({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Unknown category_id',
+        });
+      }
+      return doc.category_id;
+    }
+    const n = parseInt(trimmed, 10);
+    if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) {
+      throw new BadRequestException('Invalid category id');
+    }
+    await this.assertNumericCategoryExists(n);
+    return n;
+  }
+
+  /** Ensures a row exists with this numeric `category_id` (categories collection). */
+  async assertNumericCategoryExists(categoryId: number): Promise<void> {
+    const ok = await this.categoryModel.exists({ category_id: categoryId });
+    if (!ok) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'Unknown category_id',
+        category_id: categoryId,
+      });
+    }
+  }
 }

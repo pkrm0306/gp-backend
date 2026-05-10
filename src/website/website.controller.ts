@@ -75,7 +75,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public banners for website',
     description:
-      'Returns **all vendors’** active banners (newest first) for homepage/marketing carousel. For a vendor’s **own** banners in the admin panel, use **GET /admin/banner/list** with auth.',
+      'Returns **all vendors’** active banners (ordered by sequence number) for homepage/marketing carousel. For a vendor’s **own** banners in the admin panel, use **GET /admin/banner/list** with auth.',
   })
   @ApiResponse({
     status: 200,
@@ -92,7 +92,7 @@ export class WebsiteController {
       if (v.startsWith('uploads/')) return `${origin}/${v}`;
       return v;
     };
-    const normalized = data.map((b) => ({
+    const normalized = data.map((b: any) => ({
       ...b,
       imageUrl: normalizeImageUrl(b.imageUrl),
     }));
@@ -125,11 +125,12 @@ export class WebsiteController {
         s_no: idx + 1,
         id: a.id,
         title: a.title,
-        description: a.description,
+        description: a.externalUrl ? '' : a.description,
         date: a.date,
         image: normalizeImageUrl(a.image),
         article_image: normalizeImageUrl(a.article_image),
-        url: a.url,
+        url: a.externalUrl ? a.url : '',
+        externalUrl: a.externalUrl === true,
         pdf: normalizeImageUrl(a.pdf),
         article_pdf: normalizeImageUrl(a.article_pdf),
         is_active: true,

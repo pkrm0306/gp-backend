@@ -7,6 +7,7 @@ import {
   StandardIdCounter,
   StandardIdCounterSchema,
 } from './schemas/standard-id-counter.schema';
+import { CategoriesModule } from '../categories/categories.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import {
       { name: Standard.name, schema: StandardSchema },
       { name: StandardIdCounter.name, schema: StandardIdCounterSchema },
     ]),
+    CategoriesModule,
   ],
   controllers: [StandardsController],
   providers: [StandardsService],
