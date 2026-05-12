@@ -567,16 +567,18 @@ export class WebsiteService {
    */
   async submitContact(dto: ContactSubmitDto) {
     try {
-      const phoneNumber = (dto.phoneNumber ?? dto.phone ?? '').trim();
-      if (!phoneNumber) {
-        throw new BadRequestException('Phone number is required');
-      }
+      const name = String(dto.name ?? '').trim();
+      const email = String(dto.email ?? '').trim().toLowerCase();
+      const phoneNumber = String(dto.phoneNumber ?? dto.phone ?? '').trim();
+      const subject = String(dto.subject ?? '').trim();
+      const message = String(dto.message ?? '').trim();
+
       const payload: Partial<ContactMessage> = {
-        name: dto.name.trim(),
-        email: dto.email.trim().toLowerCase(),
+        name,
+        email,
         phoneNumber,
-        subject: dto.subject?.trim() || 'General',
-        message: dto.message.trim(),
+        subject,
+        message,
       };
 
       const created = new this.contactMessageModel(payload);
@@ -584,7 +586,7 @@ export class WebsiteService {
 
       await this.createNotification({
         title: 'New website inquiry',
-        message: `${payload.name} submitted a contact inquiry.`,
+        message: `${payload.name || 'Anonymous'} submitted a contact inquiry.`,
         type: 'info',
         source: 'website',
         referenceType: 'contact',

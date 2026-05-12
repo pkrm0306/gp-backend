@@ -5,19 +5,19 @@ export type ContactMessageDocument = ContactMessage & Document;
 
 @Schema({ timestamps: true })
 export class ContactMessage {
-  @Prop({ required: true, trim: true })
+  @Prop({ required: false, trim: true, default: '' })
   name: string;
 
-  @Prop({ required: true, lowercase: true, trim: true, index: true })
+  @Prop({ required: false, lowercase: true, trim: true, index: true, default: '' })
   email: string;
 
-  @Prop({ required: true, trim: true })
+  @Prop({ required: false, trim: true, default: '' })
   phoneNumber: string;
 
-  @Prop({ required: true, trim: true })
+  @Prop({ required: false, trim: true, default: '' })
   subject: string;
 
-  @Prop({ required: true, trim: true })
+  @Prop({ required: false, trim: true, default: '' })
   message: string;
 
   createdAt?: Date;

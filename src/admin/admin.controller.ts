@@ -16,6 +16,7 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  NotFoundException,
   applyDecorators,
 } from '@nestjs/common';
 import {
@@ -372,6 +373,11 @@ export class AdminController {
       images,
       event_image: item?.event_image ?? null,
     };
+  }
+
+  private isGalleryItem(item: any): boolean {
+    const type = String(item?.galleryType ?? '').trim();
+    return GALLERY_TYPES.includes(type as GalleryType);
   }
 
   private mapArticleResponse(item: any) {
@@ -1477,8 +1483,9 @@ export class AdminController {
   @Public()
   async listGallery() {
     const rows = await this.adminService.listEvents();
-    const data = rows.map((r: any) => ({
-      s_no: r.s_no,
+    const galleryRows = rows.filter((r: any) => this.isGalleryItem(r));
+    const data = galleryRows.map((r: any, index: number) => ({
+      s_no: index + 1,
       ...this.mapGalleryResponse(r),
       is_active: r.is_active,
     }));
@@ -1499,6 +1506,9 @@ export class AdminController {
   @Public()
   async getGalleryById(@Param('id') id: string) {
     const item: any = await this.adminService.getEventById(id);
+    if (!this.isGalleryItem(item)) {
+      throw new NotFoundException('Gallery item not found');
+    }
     const data = this.mapGalleryResponse(item);
     return { message: 'Gallery item retrieved successfully', data };
   }
