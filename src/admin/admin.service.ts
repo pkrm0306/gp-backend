@@ -57,6 +57,40 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Multipart/query-style truthy used for optional credential flags on team-member forms. */
+function isTruthyCredentialFlag(raw: unknown): boolean {
+  if (raw === undefined || raw === null || raw === '') return false;
+  if (raw === true || raw === 1) return true;
+  const s = String(raw).trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
+const DISPLAY_ORDER_TAKEN_BODY = {
+  error: 'DISPLAY_ORDER_TAKEN',
+  message: 'This display order is already assigned.',
+} as const;
+
+/**
+ * Upper bound only for numeric safety / BSON int — not derived from roster size.
+ */
+const TEAM_MEMBER_DISPLAY_ORDER_MAX = 2_147_483_647;
+
+function throwDisplayOrderTaken(): never {
+  throw new ConflictException(DISPLAY_ORDER_TAKEN_BODY);
+}
+
+function isMongoStaffTeamDisplayOrderDuplicate(err: unknown): boolean {
+  const e = err as {
+    code?: number;
+    keyPattern?: Record<string, unknown>;
+  };
+  if (e?.code !== 11000) return false;
+  const kp = e.keyPattern ?? {};
+  return (
+    'displayOrder' in kp && 'team' in kp && 'manufacturerId' in kp
+  );
+}
+
 function escapeHtml(input: string): string {
   return String(input ?? '')
     .replace(/&/g, '&amp;')
@@ -233,6 +267,70 @@ export class AdminService {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
+  }
+
+  /** Active staff rows for a manufacturer + team. Optional exclude (e.g. member being edited). */
+  private async countActiveStaffInTeam(
+    manufacturerId: Types.ObjectId,
+    team: TeamMemberTeam,
+    excludeId?: Types.ObjectId,
+  ): Promise<number> {
+    const q: Record<string, unknown> = {
+      manufacturerId,
+      type: 'staff',
+      status: { $ne: 2 },
+      team,
+    };
+    if (excludeId) {
+      q._id = { $ne: excludeId };
+    }
+    return this.vendorUserModel.countDocuments(q).exec();
+  }
+
+  /** Explicit orders must be positive integers within the global numeric cap (not tied to team size). */
+  private assertTeamMemberDisplayOrderAllowed(order: number): void {
+    if (!Number.isInteger(order) || order < 1) {
+      throw new BadRequestException('Display order must be a positive integer');
+    }
+    if (order > TEAM_MEMBER_DISPLAY_ORDER_MAX) {
+      throw new BadRequestException(
+        `Display order must not exceed ${TEAM_MEMBER_DISPLAY_ORDER_MAX}`,
+      );
+    }
+  }
+
+  /**
+   * When displayOrder is omitted on create: next slot after the highest existing order in this team
+   * (gaps allowed elsewhere); empty team → 1. Uses $max so rows without displayOrder do not affect the max.
+   */
+  private async nextDefaultDisplayOrderForTeam(
+    manufacturerId: Types.ObjectId,
+    team: TeamMemberTeam,
+  ): Promise<number> {
+    const rows = await this.vendorUserModel
+      .aggregate<{ maxOrd: number | null }>([
+        {
+          $match: {
+            manufacturerId,
+            type: 'staff',
+            status: { $ne: 2 },
+            team,
+          },
+        },
+        { $group: { _id: null, maxOrd: { $max: '$displayOrder' } } },
+      ])
+      .exec();
+
+    const raw = rows[0]?.maxOrd;
+    const highest =
+      typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 ? raw : 0;
+    const next = highest + 1;
+    if (next > TEAM_MEMBER_DISPLAY_ORDER_MAX) {
+      throw new BadRequestException(
+        `Display order cannot exceed ${TEAM_MEMBER_DISPLAY_ORDER_MAX}`,
+      );
+    }
+    return next;
   }
 
   private invalidateWebsiteTeamMembersListCache(): void {
@@ -1455,38 +1553,28 @@ export class AdminService {
       .exec();
 
     if (softDeleted) {
-      const totalNonDeleted = await this.vendorUserModel
-        .countDocuments({
-          manufacturerId: vendorObjectId,
-          type: 'staff',
-          status: { $ne: 2 },
-        })
-        .exec();
-      const maxAllowed = Math.max(1, totalNonDeleted + 1);
+      /**
+       * Omit displayOrder → next slot after max existing order in this team (not roster count).
+       * Explicit order: any positive integer up to TEAM_MEMBER_DISPLAY_ORDER_MAX; uniqueness per team enforced by shift + index.
+       */
       const desiredOrder =
-        data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-      if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-        throw new BadRequestException('Display order must be a positive integer');
-      }
-      if (desiredOrder > maxAllowed) {
-        throw new BadRequestException(
-          `Display order must be between 1 and ${maxAllowed}`,
-        );
-      }
+        data.displayOrder === undefined
+          ? await this.nextDefaultDisplayOrderForTeam(vendorObjectId, data.team)
+          : data.displayOrder;
+      this.assertTeamMemberDisplayOrderAllowed(desiredOrder);
 
-      if (desiredOrder <= totalNonDeleted) {
-        await this.vendorUserModel
-          .updateMany(
-            {
-              manufacturerId: vendorObjectId,
-              type: 'staff',
-              status: { $ne: 2 },
-              displayOrder: { $gte: desiredOrder },
-            },
-            { $inc: { displayOrder: 1 } },
-          )
-          .exec();
-      }
+      await this.vendorUserModel
+        .updateMany(
+          {
+            manufacturerId: vendorObjectId,
+            type: 'staff',
+            status: { $ne: 2 },
+            team: data.team,
+            displayOrder: { $gte: desiredOrder },
+          },
+          { $inc: { displayOrder: 1 } },
+        )
+        .exec();
 
       const passwordHash = await bcrypt.hash(
         crypto.randomBytes(8).toString('hex'),
@@ -1533,9 +1621,17 @@ export class AdminService {
         updatePayload.$unset = $unset;
       }
 
-      const updated = await this.vendorUserModel
-        .findByIdAndUpdate(softDeleted._id, updatePayload, { new: true })
-        .exec();
+      let updated: VendorUserDocument | null;
+      try {
+        updated = await this.vendorUserModel
+          .findByIdAndUpdate(softDeleted._id, updatePayload, { new: true })
+          .exec();
+      } catch (e: unknown) {
+        if (isMongoStaffTeamDisplayOrderDuplicate(e)) {
+          throwDisplayOrderTaken();
+        }
+        throw e;
+      }
 
       if (!updated) {
         throw new NotFoundException('Team member record could not be reactivated');
@@ -1550,7 +1646,7 @@ export class AdminService {
             ? [String(data.roleId).trim()]
             : [];
 
-      await this.rbacService.replaceStaffRoles(vendorId, {
+      const rbacResult = await this.rbacService.replaceStaffRoles(vendorId, {
         vendorUserId: String(updated._id),
         roleIds: normalizedRoleIds,
       });
@@ -1570,41 +1666,33 @@ export class AdminService {
         portalAccess: normalizedRoleIds.length > 0,
         category_ids: cat.category_ids,
         categoryIds: cat.categoryIds,
+        ...(rbacResult.temporaryPassword != null && rbacResult.email != null
+          ? {
+              temporaryPassword: rbacResult.temporaryPassword,
+              email: rbacResult.email,
+            }
+          : {}),
       };
     }
 
-    const totalNonDeleted = await this.vendorUserModel
-      .countDocuments({
-        manufacturerId: vendorObjectId,
-        type: 'staff',
-        status: { $ne: 2 },
-      })
-      .exec();
-    const maxAllowed = Math.max(1, totalNonDeleted + 1);
     const desiredOrder =
-      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-      throw new BadRequestException('Display order must be a positive integer');
-    }
-    if (desiredOrder > maxAllowed) {
-      throw new BadRequestException(
-        `Display order must be between 1 and ${maxAllowed}`,
-      );
-    }
+      data.displayOrder === undefined
+        ? await this.nextDefaultDisplayOrderForTeam(vendorObjectId, data.team)
+        : data.displayOrder;
+    this.assertTeamMemberDisplayOrderAllowed(desiredOrder);
 
-    if (desiredOrder <= totalNonDeleted) {
-      await this.vendorUserModel
-        .updateMany(
-          {
-            manufacturerId: vendorObjectId,
-            type: 'staff',
-            status: { $ne: 2 },
-            displayOrder: { $gte: desiredOrder },
-          },
-          { $inc: { displayOrder: 1 } },
-        )
-        .exec();
-    }
+    await this.vendorUserModel
+      .updateMany(
+        {
+          manufacturerId: vendorObjectId,
+          type: 'staff',
+          status: { $ne: 2 },
+          team: data.team,
+          displayOrder: { $gte: desiredOrder },
+        },
+        { $inc: { displayOrder: 1 } },
+      )
+      .exec();
 
     // Staff can log into admin portal only after a role is assigned (RBAC mapping).
     // We still store a random password hash here; on first role assignment we rotate it
@@ -1646,6 +1734,9 @@ export class AdminService {
       saved = await created.save();
     } catch (e: any) {
       if (e?.code === 11000) {
+        if (isMongoStaffTeamDisplayOrderDuplicate(e)) {
+          throwDisplayOrderTaken();
+        }
         const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
         const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
         if ('email' in pattern || keyVal.email !== undefined) {
@@ -1673,7 +1764,7 @@ export class AdminService {
 
     // Role assignments drive portal access; credentials are sent only on first transition
     // from no-roles to any-role by RBAC service.
-    await this.rbacService.replaceStaffRoles(vendorId, {
+    const rbacResult = await this.rbacService.replaceStaffRoles(vendorId, {
       vendorUserId: String(saved._id),
       roleIds: normalizedRoleIds,
     });
@@ -1690,6 +1781,12 @@ export class AdminService {
       portalAccess: normalizedRoleIds.length > 0,
       category_ids: cat.category_ids,
       categoryIds: cat.categoryIds,
+      ...(rbacResult.temporaryPassword != null && rbacResult.email != null
+        ? {
+            temporaryPassword: rbacResult.temporaryPassword,
+            email: rbacResult.email,
+          }
+        : {}),
     };
   }
 
@@ -1771,8 +1868,15 @@ export class AdminService {
 
     const [displayOrderMax, totalCount, members] = await Promise.all([
       this.vendorUserModel
-        .countDocuments({ type: 'staff', status: { $ne: 2 } })
-        .exec(),
+        .aggregate<{ maxOrd: number | null }>([
+          { $match: mongoQuery },
+          { $group: { _id: null, maxOrd: { $max: '$displayOrder' } } },
+        ])
+        .exec()
+        .then((rows) => {
+          const v = rows[0]?.maxOrd;
+          return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+        }),
       this.vendorUserModel.countDocuments(mongoQuery).exec(),
       this.vendorUserModel
         .find(mongoQuery)
@@ -2309,6 +2413,9 @@ export class AdminService {
       roleId?: string;
       roleIds?: string[];
       category_ids?: number[];
+      /** When set with sendCredentialsEmail (e.g. multipart "1"), rotate portal password after email change. */
+      autoGeneratePassword?: unknown;
+      sendCredentialsEmail?: unknown;
     },
   ) {
     let memberObjectId: Types.ObjectId;
@@ -2316,6 +2423,13 @@ export class AdminService {
       memberObjectId = new Types.ObjectId(data.id);
     } catch {
       throw new BadRequestException('Invalid ID format');
+    }
+
+    let vendorObjectId: Types.ObjectId;
+    try {
+      vendorObjectId = new Types.ObjectId(vendorId);
+    } catch {
+      throw new BadRequestException('Invalid vendor ID format');
     }
 
     const member = await this.vendorUserModel
@@ -2330,8 +2444,32 @@ export class AdminService {
       throw new NotFoundException('Team member not found');
     }
 
+    const memberManufacturerId = (member as any).manufacturerId as
+      | Types.ObjectId
+      | undefined;
+    if (!memberManufacturerId?.equals(vendorObjectId)) {
+      throw new ForbiddenException(
+        'Team member does not belong to this manufacturer',
+      );
+    }
+
+    const priorEmail = String(member.email ?? '').trim().toLowerCase();
+    const hadAnyRoleBefore = await this.rbacService.hasAnyActiveStaffRoleMapping(
+      vendorId,
+      data.id,
+    );
+
     const emailLower = data.email.trim().toLowerCase();
     const mobileTrim = data.mobile.trim();
+
+    const normalizedRoleIds =
+      Array.isArray(data.roleIds) && data.roleIds.length > 0
+        ? Array.from(new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)))
+        : data.roleId
+          ? [String(data.roleId).trim()]
+          : [];
+
+    const emailChanged = priorEmail !== emailLower;
 
     const existingOther = await this.vendorUserModel
       .findOne({
@@ -2363,47 +2501,111 @@ export class AdminService {
       throw new ConflictException('Team member already exists');
     }
 
-    const totalNonDeleted = await this.vendorUserModel
-      .countDocuments({ type: 'staff', status: { $ne: 2 } })
-      .exec();
-    const maxAllowed = Math.max(1, totalNonDeleted);
-    const desiredOrder =
-      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-      throw new BadRequestException('Display order must be a positive integer');
-    }
-    if (desiredOrder > maxAllowed) {
-      throw new BadRequestException(
-        `Display order must be between 1 and ${maxAllowed}`,
-      );
+    const manufacturerId = vendorObjectId;
+    const oldTeam = (member as any).team as TeamMemberTeam | undefined;
+    const newTeam = data.team;
+
+    const persistedOld = this.persistedTeamMemberDisplayOrder(
+      (member as any).displayOrder,
+    );
+    const oldOrder =
+      persistedOld !== null && persistedOld >= 1 ? persistedOld : null;
+
+    const explicitDisplayOrder = data.displayOrder !== undefined;
+
+    /**
+     * Omit displayOrder on edit: keep current slot in the same team; when changing team only,
+     * append to the end of the destination team (next free slot).
+     */
+    let desiredOrder: number;
+    if (!explicitDisplayOrder) {
+      if (oldTeam !== undefined && String(oldTeam) === String(newTeam)) {
+        desiredOrder =
+          oldOrder ??
+          (await this.nextDefaultDisplayOrderForTeam(manufacturerId, newTeam));
+      } else {
+        desiredOrder = await this.nextDefaultDisplayOrderForTeam(
+          manufacturerId,
+          newTeam,
+        );
+      }
+    } else {
+      desiredOrder = data.displayOrder as number;
     }
 
-    const currentOrder = Number((member as any).displayOrder) || maxAllowed;
-    if (desiredOrder !== currentOrder) {
-      if (desiredOrder < currentOrder) {
+    this.assertTeamMemberDisplayOrderAllowed(desiredOrder);
+
+    const sameTeam =
+      oldTeam !== undefined && String(oldTeam) === String(newTeam);
+
+    const nInTeamIncludingSelf = await this.countActiveStaffInTeam(
+      manufacturerId,
+      newTeam,
+    );
+    const curSlotForShift =
+      oldOrder ?? (sameTeam ? nInTeamIncludingSelf : null);
+
+    if (!sameTeam) {
+      if (oldTeam !== undefined && curSlotForShift !== null) {
         await this.vendorUserModel
           .updateMany(
             {
-              _id: { $ne: memberObjectId },
+              manufacturerId,
               type: 'staff',
               status: { $ne: 2 },
-              displayOrder: { $gte: desiredOrder, $lt: currentOrder },
-            },
-            { $inc: { displayOrder: 1 } },
-          )
-          .exec();
-      } else {
-        await this.vendorUserModel
-          .updateMany(
-            {
+              team: oldTeam,
               _id: { $ne: memberObjectId },
-              type: 'staff',
-              status: { $ne: 2 },
-              displayOrder: { $gt: currentOrder, $lte: desiredOrder },
+              displayOrder: { $gt: curSlotForShift },
             },
             { $inc: { displayOrder: -1 } },
           )
           .exec();
+      }
+      await this.vendorUserModel
+        .updateMany(
+          {
+            manufacturerId,
+            type: 'staff',
+            status: { $ne: 2 },
+            team: newTeam,
+            _id: { $ne: memberObjectId },
+            displayOrder: { $gte: desiredOrder },
+          },
+          { $inc: { displayOrder: 1 } },
+        )
+        .exec();
+    } else {
+      const cur = curSlotForShift ?? Math.max(1, nInTeamIncludingSelf);
+      if (desiredOrder !== cur) {
+        if (desiredOrder < cur) {
+          await this.vendorUserModel
+            .updateMany(
+              {
+                manufacturerId,
+                type: 'staff',
+                status: { $ne: 2 },
+                team: newTeam,
+                _id: { $ne: memberObjectId },
+                displayOrder: { $gte: desiredOrder, $lt: cur },
+              },
+              { $inc: { displayOrder: 1 } },
+            )
+            .exec();
+        } else {
+          await this.vendorUserModel
+            .updateMany(
+              {
+                manufacturerId,
+                type: 'staff',
+                status: { $ne: 2 },
+                team: newTeam,
+                _id: { $ne: memberObjectId },
+                displayOrder: { $gt: cur, $lte: desiredOrder },
+              },
+              { $inc: { displayOrder: -1 } },
+            )
+            .exec();
+        }
       }
     }
 
@@ -2460,6 +2662,9 @@ export class AdminService {
         .exec();
     } catch (e: any) {
       if (e?.code === 11000) {
+        if (isMongoStaffTeamDisplayOrderDuplicate(e)) {
+          throwDisplayOrderTaken();
+        }
         const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
         const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
         if ('email' in pattern || keyVal.email !== undefined) {
@@ -2481,16 +2686,62 @@ export class AdminService {
     delete obj.password;
     delete obj.otp;
 
-    const normalizedRoleIds =
-      Array.isArray(data.roleIds) && data.roleIds.length > 0
-        ? Array.from(new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)))
-        : data.roleId
-          ? [String(data.roleId).trim()]
-          : [];
-    await this.rbacService.replaceStaffRoles(vendorId, {
+    const rbacResult = await this.rbacService.replaceStaffRoles(vendorId, {
       vendorUserId: data.id,
       roleIds: normalizedRoleIds,
     });
+
+    /**
+     * Optional multipart flags (legacy): both false-ish explicitly → skip rotation when email changed.
+     * Otherwise, email change + at least one role behaves like delivery on create / first role assignment.
+     */
+    const explicitlySkipCredentialRotation =
+      data.autoGeneratePassword !== undefined &&
+      data.sendCredentialsEmail !== undefined &&
+      !isTruthyCredentialFlag(data.autoGeneratePassword) &&
+      !isTruthyCredentialFlag(data.sendCredentialsEmail);
+
+    const deferFirstRoleCredentialDelivery =
+      !hadAnyRoleBefore && normalizedRoleIds.length > 0;
+
+    let credentialExtras: { temporaryPassword?: string; email?: string } =
+      rbacResult.temporaryPassword != null && rbacResult.email != null
+        ? {
+            temporaryPassword: rbacResult.temporaryPassword,
+            email: rbacResult.email,
+          }
+        : {};
+
+    if (
+      !explicitlySkipCredentialRotation &&
+      normalizedRoleIds.length > 0 &&
+      emailChanged &&
+      !deferFirstRoleCredentialDelivery
+    ) {
+      const password = crypto.randomBytes(8).toString('hex');
+      const passwordHash = await bcrypt.hash(password, 10);
+      await this.vendorUserModel
+        .updateOne(
+          { _id: memberObjectId },
+          { $set: { password: passwordHash, updatedAt: new Date() } },
+        )
+        .exec();
+      try {
+        await this.emailService.sendStaffCredentialsEmail(
+          emailLower,
+          password,
+          String(data.name ?? '').trim(),
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Team member email-change credentials email failed for ${emailLower}: ${(err as Error)?.message || 'unknown error'}`,
+        );
+      }
+      credentialExtras = {
+        temporaryPassword: password,
+        email: emailLower,
+      };
+    }
 
     this.invalidateWebsiteTeamMembersListCache();
 
@@ -2504,6 +2755,7 @@ export class AdminService {
       portalAccess: normalizedRoleIds.length > 0,
       category_ids: cat.category_ids,
       categoryIds: cat.categoryIds,
+      ...(Object.keys(credentialExtras).length > 0 ? credentialExtras : {}),
     };
   }
 

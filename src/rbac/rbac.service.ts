@@ -114,10 +114,10 @@ export class RbacService {
     manufacturerId: string;
     vendorUserId: Types.ObjectId;
     user: VendorUserDocument;
-  }): Promise<void> {
+  }): Promise<{ temporaryPassword: string; email: string } | undefined> {
     const email = String(input.user.email ?? '').trim().toLowerCase();
     const name = String(input.user.name ?? '').trim();
-    if (!email) return;
+    if (!email) return undefined;
 
     const password = crypto.randomBytes(8).toString('hex');
     const passwordHash = await bcrypt.hash(password, 10);
@@ -135,6 +135,8 @@ export class RbacService {
         `First role assignment credentials email failed for ${email}: ${(error as Error)?.message || 'unknown error'}`,
       );
     }
+
+    return { temporaryPassword: password, email };
   }
 
   private canonicalizePermission(permission: string): string {
@@ -701,8 +703,11 @@ export class RbacService {
         }
       });
 
+      let credentialDelivery:
+        | { temporaryPassword: string; email: string }
+        | undefined;
       if (!hadAnyRoleBefore && createdCount > 0) {
-        await this.sendFirstRoleAssignmentCredentialsIfNeeded({
+        credentialDelivery = await this.sendFirstRoleAssignmentCredentialsIfNeeded({
           manufacturerId,
           vendorUserId,
           user,
@@ -714,6 +719,12 @@ export class RbacService {
         vendorUserId: String(vendorUserId),
         roleIds,
         createdCount,
+        ...(credentialDelivery
+          ? {
+              temporaryPassword: credentialDelivery.temporaryPassword,
+              email: credentialDelivery.email,
+            }
+          : {}),
       };
     } finally {
       await session.endSession();

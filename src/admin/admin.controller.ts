@@ -187,13 +187,24 @@ function TeamMemberEditDocs() {
             type: 'array',
             items: { type: 'integer' },
           },
+          autoGeneratePassword: {
+            type: 'string',
+            description:
+              'Optional. Legacy opt-out only: send both this and sendCredentialsEmail as false to skip credential rotation on email change when the member has roles. Otherwise email change + roles triggers rotation automatically.',
+          },
+          sendCredentialsEmail: {
+            type: 'string',
+            description:
+              'Optional. Legacy opt-out only (pair with autoGeneratePassword=false); see autoGeneratePassword.',
+          },
         },
         required: ['id', 'name', 'email', 'mobile', 'displayOrder', 'team'],
       },
     }),
     ApiResponse({
       status: 200,
-      description: 'Team member updated successfully',
+      description:
+        'Team member updated successfully. May include temporaryPassword and email when credentials were issued (first role assignment or email-change rotation).',
     }),
     ApiResponse({ status: 404, description: 'Team member not found' }),
     ApiResponse({
@@ -2380,6 +2391,8 @@ export class AdminController {
       roleId: dto.roleId,
       roleIds: normalizedRoleIds,
       category_ids: explicitCategories ? mergedCategoryIds : undefined,
+      autoGeneratePassword: body.autoGeneratePassword,
+      sendCredentialsEmail: body.sendCredentialsEmail,
     });
 
     return { message: 'Team member updated successfully', data: teamMember };

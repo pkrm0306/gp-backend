@@ -81,3 +81,21 @@ export const VendorUserSchema = SchemaFactory.createForClass(VendorUser);
 // Uniqueness should be per vendor/manufacturer (not global).
 VendorUserSchema.index({ manufacturerId: 1, email: 1 }, { unique: true });
 VendorUserSchema.index({ manufacturerId: 1, phone: 1 }, { unique: true });
+
+/**
+ * Team members: one display slot per (manufacturer, team). Requires no duplicate
+ * (manufacturerId, team, displayOrder) among active staff; resolve legacy dupes before deploying.
+ */
+VendorUserSchema.index(
+  { manufacturerId: 1, team: 1, displayOrder: 1 },
+  {
+    unique: true,
+    name: 'uniq_staff_manufacturer_team_display_order',
+    partialFilterExpression: {
+      type: 'staff',
+      status: { $ne: 2 },
+      team: { $exists: true, $type: 'string' },
+      displayOrder: { $exists: true, $gte: 1 },
+    },
+  },
+);
