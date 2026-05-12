@@ -290,7 +290,7 @@ export class CategoriesService implements OnModuleInit {
     }
   }
 
-  /** Ensures project/uploads/categories exists (matches main.ts static /uploads/) */
+  /** Ensures project/uploads/categories exists (matches main.ts /uploads static mount) */
   ensureCategoryUploadDirs(): void {
     const dir = join(process.cwd(), 'uploads', 'categories');
     if (!existsSync(dir)) {
@@ -308,7 +308,7 @@ export class CategoriesService implements OnModuleInit {
   }
 
   /**
-   * Full URL for category_image served under /uploads/ (see main.ts useStaticAssets).
+   * Full URL for category_image served under /uploads/ (see main.ts express.static mount).
    * If category_image is already an http(s) URL, returns it unchanged.
    * The file must exist on disk under project/uploads/ or the browser will get 404.
    */
@@ -760,6 +760,35 @@ export class CategoriesService implements OnModuleInit {
         error: 'Bad Request',
         message: 'Unknown category_id',
         category_id: categoryId,
+      });
+    }
+  }
+
+  /** Ensures every numeric `category_id` exists (batch). */
+  async assertNumericCategoriesExist(categoryIds: number[]): Promise<void> {
+    const unique = [
+      ...new Set(
+        categoryIds.filter(
+          (x): x is number =>
+            typeof x === 'number' && Number.isInteger(x) && x >= 1,
+        ),
+      ),
+    ];
+    if (unique.length === 0) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'At least one valid category_id is required',
+      });
+    }
+    const count = await this.categoryModel
+      .countDocuments({ category_id: { $in: unique } })
+      .exec();
+    if (count !== unique.length) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'One or more category_id values are unknown',
       });
     }
   }

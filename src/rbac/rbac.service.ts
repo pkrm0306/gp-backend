@@ -21,6 +21,7 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
+import { ListRolesQueryDto } from './dto/list-roles-query.dto';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
 import {
   expandEffectivePermissions,
@@ -32,6 +33,21 @@ import { RedisService } from '../common/redis/redis.service';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Tenant RBAC: **Role** documents hold `permissions[]`. **StaffRoleMapping** links staff
+ * `VendorUser` ↔ `Role` (many-to-many). Effective rights are always derived from current
+ * role rows + active mappings — nothing permission-related is snapshotted on the user.
+ *
+ * **Caching:** `getStaffPermissions` caches a minimized grant union per user (`RBAC_CACHE_TTL_SECONDS`).
+ * Call `invalidateRbacCache` whenever role definitions or assignments change so checks stay fresh.
+ *
+ * **JWT:** Access tokens carry identity (`userId`, `manufacturerId`, `role` type only), not permission
+ * claims. `PermissionsGuard` resolves grants via `getStaffPermissions` on each request (subject to cache TTL).
+ */
 @Injectable()
 export class RbacService {
   private readonly logger = new Logger(RbacService.name);
@@ -192,34 +208,134 @@ export class RbacService {
     }
   }
 
-  async listRoles(manufacturerId: string) {
-    const cacheKey = this.redisService.buildKey('rbac', manufacturerId, 'roles', 'list');
-    try {
-      const cached = await this.redisService.get<Record<string, unknown>[]>(cacheKey);
-      if (Array.isArray(cached)) return cached;
-    } catch (error) {
-      this.logger.warn(
-        `RBAC roles cache read failed: ${(error as Error)?.message || 'unknown error'}`,
-      );
+  private buildRolesSort(
+    sort?: ListRolesQueryDto['sort'],
+    order?: ListRolesQueryDto['order'],
+  ): Record<string, 1 | -1> {
+    const dir = (o?: ListRolesQueryDto['order']): 1 | -1 =>
+      o === 'asc' ? 1 : -1;
+    if (!sort) {
+      return { createdAt: -1, _id: 1 };
     }
+    const primary =
+      sort === 'name'
+        ? dir(order ?? 'asc')
+        : sort === 'id'
+          ? dir(order ?? 'desc')
+          : dir(order ?? 'desc');
+    switch (sort) {
+      case 'name':
+        return { name: primary, _id: 1 };
+      case 'id':
+        return { _id: primary };
+      case 'createdAt':
+        return { createdAt: primary, _id: 1 };
+      default:
+        return { createdAt: -1, _id: 1 };
+    }
+  }
 
+  /**
+   * List roles for a manufacturer.
+   * - No `page`/`limit` and no `search`: full list (Redis-cached), backward compatible.
+   * - `page` and/or `limit` set: paged DB query; caller should return `{ success, data, total, page, limit }`.
+   * - `search` only: all matches, no cache.
+   */
+  async listRoles(
+    manufacturerId: string,
+    query?: ListRolesQueryDto,
+  ): Promise<{
+    paged: boolean;
+    data: Record<string, unknown>[];
+    total: number;
+    page?: number;
+    limit?: number;
+  }> {
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
       'manufacturerId',
     );
-    const rows = await this.roleModel
-      .find({ manufacturerId: manufacturerObjectId })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
-    this.redisService
-      .set(cacheKey, rows, this.getRbacCacheTtlSeconds())
-      .catch((error) => {
-        this.logger.warn(
-          `RBAC roles cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+    const search = query?.search?.trim();
+    const pagingRequested =
+      query?.page !== undefined || query?.limit !== undefined;
+    const sortSpec = this.buildRolesSort(query?.sort, query?.order);
+
+    const filter: Record<string, unknown> = { manufacturerId: manufacturerObjectId };
+    if (search) {
+      const rx = new RegExp(escapeRegex(search), 'i');
+      filter.$or = [{ name: rx }, { description: rx }, { permissions: rx }];
+    }
+
+    const sortOrOrder =
+      query?.sort !== undefined ||
+      (query?.order !== undefined && String(query.order).trim() !== '');
+
+    if (!pagingRequested && !search && !sortOrOrder) {
+      const cacheKey = this.redisService.buildKey(
+        'rbac',
+        manufacturerId,
+        'roles',
+        'list',
+      );
+      try {
+        const cached = await this.redisService.get<Record<string, unknown>[]>(
+          cacheKey,
         );
-      });
-    return rows;
+        if (Array.isArray(cached)) {
+          return { paged: false, data: cached, total: cached.length };
+        }
+      } catch (error) {
+        this.logger.warn(
+          `RBAC roles cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      }
+
+      const rows = await this.roleModel
+        .find({ manufacturerId: manufacturerObjectId })
+        .sort(sortSpec)
+        .lean()
+        .exec();
+      this.redisService
+        .set(cacheKey, rows, this.getRbacCacheTtlSeconds())
+        .catch((error) => {
+          this.logger.warn(
+            `RBAC roles cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+          );
+        });
+      return { paged: false, data: rows, total: rows.length };
+    }
+
+    if (!pagingRequested && search) {
+      const rows = await this.roleModel
+        .find(filter)
+        .sort(sortSpec)
+        .lean()
+        .exec();
+      return { paged: false, data: rows, total: rows.length };
+    }
+
+    const page = Math.max(1, query?.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query?.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const [total, rows] = await Promise.all([
+      this.roleModel.countDocuments(filter).exec(),
+      this.roleModel
+        .find(filter)
+        .sort(sortSpec)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+    ]);
+
+    return {
+      paged: true,
+      data: rows,
+      total,
+      page,
+      limit,
+    };
   }
 
   async updateRole(manufacturerId: string, roleId: string, dto: UpdateRoleDto) {
@@ -285,6 +401,7 @@ export class RbacService {
       .exec();
     if (!row) throw new NotFoundException('Role not found');
 
+    await this.invalidateRbacCache(manufacturerId);
     return {
       id: String((row as any)._id),
       status: Number((row as any).status) === 1 ? 'active' : 'inactive',
@@ -334,6 +451,7 @@ export class RbacService {
       })
       .exec();
 
+    await this.invalidateRbacCache(manufacturerId);
     return { id: String(roleObjectId), name: String((role as any).name ?? '') };
   }
 
@@ -753,6 +871,47 @@ export class RbacService {
         );
       });
     return minimized;
+  }
+
+  /**
+   * Admin / staff UI: **union** of all assigned roles’ grants, expanded to known permission keys.
+   * Always reflects current `Role.permissions` in the database (same source as `getStaffPermissions` + guard).
+   */
+  async getStaffPermissionContext(
+    manufacturerId: string,
+    vendorUserId: string,
+  ): Promise<{
+    roleIds: string[];
+    grants: string[];
+    effectivePermissions: string[];
+  }> {
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
+
+    const [grants, mappings] = await Promise.all([
+      this.getStaffPermissions(manufacturerId, vendorUserId),
+      this.mappingModel
+        .find({
+          manufacturerId: manufacturerObjectId,
+          vendorUserId: vendorUserObjectId,
+          status: 1,
+        })
+        .select('roleId')
+        .lean()
+        .exec(),
+    ]);
+
+    const roleIds = mappings.map((m) => String(m.roleId));
+    const effectivePermissions = this.effectivePermissionsFromRaw(grants);
+
+    return {
+      roleIds,
+      grants,
+      effectivePermissions,
+    };
   }
 }
 

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -34,7 +35,6 @@ export class CreateBannerDto {
   @IsString()
   @IsReadableNotEmpty()
   @Transform(({ value }) => String(value ?? '').trim())
-  @MaxReadableLength(120)
   title: string;
 
   @ApiPropertyOptional({
@@ -61,6 +61,11 @@ export class CreateBannerDto {
   @IsOptional()
   @IsString()
   status?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['binary_upload', 'manual_url'])
+  imageSource?: 'binary_upload' | 'manual_url';
 
   @ApiProperty({
     example: 'Up to 50% off selected items.',

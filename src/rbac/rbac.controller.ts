@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -10,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
@@ -21,6 +22,7 @@ import { UpdateRoleStatusDto } from './dto/update-role-status.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UnassignStaffRoleDto } from './dto/unassign-staff-role.dto';
+import { ListRolesQueryDto } from './dto/list-roles-query.dto';
 import { RbacService } from './rbac.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -42,11 +44,45 @@ export class RbacController {
     return { message: 'Role created successfully', data };
   }
 
-  @Get('roles')
+  @Get(['roles', 'roles/list'])
   @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
-  async listRoles(@CurrentUser() user: { manufacturerId: string }) {
-    const data = await this.rbacService.listRoles(user.manufacturerId);
-    return { message: 'Roles retrieved successfully', data };
+  @ApiOperation({
+    summary: 'List roles',
+    description:
+      'Omit **page** and **limit** to return every role (backward compatible envelope with **message** + **data** + **total**). ' +
+      'Send **page** and/or **limit** for server-side pagination (**success**, **data**, **total**, **page**, **limit**). ' +
+      'Optional **search** matches name, description, or permission strings (case-insensitive). ' +
+      'Optional **sort** = `name` | `id` | `createdAt` and **order** = `asc` | `desc` (stable tie-break on `_id`).',
+  })
+  @ApiQuery({ name: 'page', required: false, description: '1-based page (enables paging when set with limit or alone)' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Page size, max 100 (default 10 when paging)' })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'sort', required: false, enum: ['name', 'id', 'createdAt'] })
+  @ApiQuery({ name: 'order', required: false, enum: ['asc', 'desc'] })
+  @ApiResponse({
+    status: 200,
+    description: 'Unpaged: { message, data, total }. Paged: { success, data, total, page, limit }.',
+  })
+  async listRoles(
+    @CurrentUser() user: { manufacturerId: string },
+    @Query() query: ListRolesQueryDto,
+  ) {
+    const result = await this.rbacService.listRoles(user.manufacturerId, query);
+    if (result.paged) {
+      return {
+        message: 'Roles retrieved successfully',
+        success: true,
+        data: result.data,
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+      };
+    }
+    return {
+      message: 'Roles retrieved successfully',
+      data: result.data,
+      total: result.total,
+    };
   }
 
   @Patch('roles/:id')
@@ -147,6 +183,39 @@ export class RbacController {
       dto.vendorUserId,
     );
     return { message: 'Staff role unassigned successfully', data };
+  }
+
+  @Get('staff/permission-context')
+  @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
+  @AllowStaffSelfRoleRead()
+  async getStaffPermissionContext(
+    @CurrentUser() user: { manufacturerId: string; userId: string; role: string },
+    @Query('vendorUserId') vendorUserId?: string,
+  ) {
+    if (user.role === 'staff') {
+      if (vendorUserId && vendorUserId !== user.userId) {
+        throw new ForbiddenException(
+          'Staff can access only their own permission context',
+        );
+      }
+      const data = await this.rbacService.getStaffPermissionContext(
+        user.manufacturerId,
+        user.userId,
+      );
+      return { message: 'Permission context retrieved successfully', data };
+    }
+
+    const targetId = String(vendorUserId ?? '').trim();
+    if (!targetId) {
+      throw new BadRequestException(
+        'vendorUserId query parameter is required for manufacturer admins',
+      );
+    }
+    const data = await this.rbacService.getStaffPermissionContext(
+      user.manufacturerId,
+      targetId,
+    );
+    return { message: 'Permission context retrieved successfully', data };
   }
 
   @Get('staff/roles')

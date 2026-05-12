@@ -43,6 +43,7 @@ import { ProcessCommentsModule } from './process-comments/process-comments.modul
 import { DashboardModule } from './dashboard/dashboard.module';
 import { SectorsModule } from './sectors/sectors.module';
 import { StandardsModule } from './standards/standards.module';
+import { TeamMembersModule } from './team-members/team-members.module';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
 import { WebsiteModule } from './website/website.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
@@ -107,6 +108,7 @@ import { RedisModule } from './common/redis/redis.module';
     DashboardModule,
     SectorsModule,
     StandardsModule,
+    TeamMembersModule,
     DocumentsModule,
   ],
 })

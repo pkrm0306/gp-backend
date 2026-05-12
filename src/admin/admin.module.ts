@@ -37,11 +37,13 @@ import {
 import { Article, ArticleSchema } from '../articles/schemas/article.schema';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { CategoriesModule } from '../categories/categories.module';
 
 @Module({
   imports: [
     ManufacturersModule,
     RbacModule,
+    CategoriesModule,
     MongooseModule.forFeature([
       { name: Manufacturer.name, schema: ManufacturerSchema },
       { name: VendorUser.name, schema: VendorUserSchema },

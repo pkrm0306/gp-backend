@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  IsDefined,
+  Allow,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -12,19 +12,30 @@ import {
 import { CategoryIdFromForm } from './category-id-from-form.transform';
 
 export class CreateStandardMultipartDto {
-  @ApiProperty({
-    example: 1,
+  @ApiPropertyOptional({
     description:
-      'Required. Numeric `category_id` from GET /categories (same id the admin UI uses).',
+      'Legacy single category (treated as a one-element set). Prefer **category_ids** / **categoryIds** for multiple.',
   })
   @CategoryIdFromForm()
-  @IsDefined({
-    message:
-      'category_id is required; use a category_id returned by GET /categories',
-  })
+  @IsOptional()
   @IsInt({ message: 'category_id must be an integer' })
   @Min(1, { message: 'category_id must be a positive integer' })
-  category_id: number;
+  category_id?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Repeated multipart fields or JSON array string of numeric category ids (GET /categories `category_id`).',
+  })
+  @Allow()
+  @IsOptional()
+  category_ids?: unknown;
+
+  @ApiPropertyOptional({
+    description: 'JSON string array of numeric category ids (admin UI).',
+  })
+  @IsOptional()
+  @IsString()
+  categoryIds?: string;
 
   @ApiProperty({ example: 'Energy Efficiency Benchmark' })
   @IsString()

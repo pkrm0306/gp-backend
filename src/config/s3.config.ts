@@ -58,3 +58,13 @@ export function getCloudFrontBaseUrl(): string | null {
     return null;
   }
 }
+
+/**
+ * When `true`, public file URLs use the S3 virtual-hosted–style URL
+ * (`https://{bucket}.s3.{region}.amazonaws.com/...`) even if `AWS_CLOUDFRONT_URL` is set.
+ * CloudFront still serves the same objects from S3; this only changes the URL string stored/returned.
+ */
+export function preferDirectS3PublicUrl(): boolean {
+  const v = process.env.AWS_S3_USE_DIRECT_PUBLIC_URL?.trim().toLowerCase();
+  return v === 'true' || v === '1' || v === 'yes';
+}

@@ -8,6 +8,7 @@ describe('RbacService', () => {
   };
   const mappingModel: any = {
     findOneAndUpdate: jest.fn(),
+    find: jest.fn(),
     countDocuments: jest.fn().mockReturnValue({
       exec: jest.fn().mockResolvedValue(0),
     }),
@@ -69,6 +70,28 @@ describe('RbacService', () => {
     expect(eff).toContain('products:certified:view');
     expect(eff).toContain('products:uncertified:view');
     expect(eff).not.toContain('products:add');
+  });
+
+  it('getStaffPermissions unions normalized grants from every active mapped role', async () => {
+    redisService.get.mockResolvedValue(null);
+    const execMappings = jest.fn().mockResolvedValue([
+      { roleId: { permissions: ['dashboard:view', 'products:view'], status: 1 } },
+      { roleId: { permissions: ['inquiries:view'], status: 1 } },
+    ]);
+    mappingModel.find.mockReturnValue({
+      populate: () => ({
+        lean: () => ({ exec: execMappings }),
+      }),
+    });
+
+    const mid = '507f1f77bcf86cd799439012';
+    const uid = '507f1f77bcf86cd799439099';
+    const grants = await service.getStaffPermissions(mid, uid);
+
+    expect(grants).toContain('dashboard:view');
+    expect(grants).toContain('products:view');
+    expect(grants).toContain('inquiries:view');
+    expect(mappingModel.find).toHaveBeenCalled();
   });
 
   it('rejects role assignment when target user is not staff', async () => {

@@ -48,6 +48,8 @@ import {
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 import * as bcrypt from 'bcryptjs';
 import { RbacService } from '../rbac/rbac.service';
+import { RedisService } from '../common/redis/redis.service';
+import { CategoriesService } from '../categories/categories.service';
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -94,7 +96,49 @@ export class AdminService {
     private articleModel: Model<ArticleDocument>,
     private readonly emailService: EmailService,
     private readonly rbacService: RbacService,
+    private readonly redisService: RedisService,
+    private readonly categoriesService: CategoriesService,
   ) {}
+
+  private teamMemberCategoryArrays(m: {
+    category_ids?: unknown;
+    category_id?: unknown;
+  }): { category_ids: number[]; categoryIds: number[] } {
+    const raw = Array.isArray(m.category_ids) ? m.category_ids : [];
+    const ids = raw.filter(
+      (x): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 1,
+    );
+    if (ids.length > 0) {
+      return { category_ids: ids, categoryIds: ids };
+    }
+    const one =
+      typeof m.category_id === 'number' &&
+      Number.isInteger(m.category_id) &&
+      m.category_id >= 1
+        ? m.category_id
+        : null;
+    if (one !== null) {
+      return { category_ids: [one], categoryIds: [one] };
+    }
+    return { category_ids: [], categoryIds: [] };
+  }
+
+  /** Raw `displayOrder` from DB for API responses (gaps allowed; do not coerce missing to 0). */
+  private persistedTeamMemberDisplayOrder(value: unknown): number | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  private invalidateWebsiteTeamMembersListCache(): void {
+    const key = this.redisService.buildKey('website', 'team-members', 'list');
+    this.redisService.del(key).catch((err) => {
+      this.logger.warn(
+        `Website team-members cache invalidation failed: ${(err as Error)?.message || 'unknown'}`,
+      );
+    });
+  }
 
   private resolveEventImagePath(eventImage?: string | null): string {
     const raw = String(eventImage ?? '').trim();
@@ -135,25 +179,28 @@ export class AdminService {
   private resolveArticleImagePath(imageUrl?: string | null): string {
     const raw = String(imageUrl ?? '').trim();
     if (!raw) return '';
-    if (raw.startsWith('/uploads/')) {
-      return raw.replace(/^\/uploads\//, '');
-    }
-    if (raw.startsWith('uploads/')) {
-      return raw.replace(/^uploads\//, '');
-    }
+    // Preserve absolute S3/CloudFront URLs as-is and keep local upload paths stable.
+    if (raw.startsWith('/uploads/')) return raw;
+    if (raw.startsWith('uploads/')) return `/${raw}`;
     return raw;
   }
 
   private resolveArticlePdfPath(pdfUrl?: string | null): string {
     const raw = String(pdfUrl ?? '').trim();
     if (!raw) return '';
-    if (raw.startsWith('/uploads/')) {
-      return raw.replace(/^\/uploads\//, '');
-    }
-    if (raw.startsWith('uploads/')) {
-      return raw.replace(/^uploads\//, '');
-    }
+    if (raw.startsWith('/uploads/')) return raw;
+    if (raw.startsWith('uploads/')) return `/${raw}`;
     return raw;
+  }
+
+  private resolveArticleAssetForResponse(rawUrl?: string | null): string {
+    const raw = String(rawUrl ?? '').trim();
+    if (!raw) return '';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith('/uploads/')) return raw;
+    if (raw.startsWith('uploads/')) return `/${raw}`;
+    if (raw.startsWith('/')) return raw;
+    return `/uploads/${raw.replace(/^\/+/, '')}`;
   }
 
   private async createNotification(input: {
@@ -234,6 +281,24 @@ export class AdminService {
     registrationLink?: string;
     brochureLink?: string;
   }) {
+    const nextName = String(payload.eventName ?? '').trim();
+    const nextType = String(payload.galleryType ?? '').trim();
+    if (nextType && nextName) {
+      const duplicate = await this.eventModel
+        .findOne({
+          eventName: new RegExp(`^${escapeRegex(nextName)}$`, 'i'),
+          galleryType: new RegExp(`^${escapeRegex(nextType)}$`, 'i'),
+        })
+        .select('_id')
+        .lean()
+        .exec();
+      if (duplicate) {
+        throw new ConflictException(
+          `A gallery item with this title already exists in "${nextType}"`,
+        );
+      }
+    }
+
     const eventId = await this.nextEventId();
     const now = new Date();
 
@@ -387,24 +452,56 @@ export class AdminService {
       $set.eventStatus = payload.eventStatus;
     }
 
-    let updated: any = null;
-    if (Types.ObjectId.isValid(raw)) {
-      updated = await this.eventModel
-        .findByIdAndUpdate(new Types.ObjectId(raw), { $set }, { new: true })
+    const findQuery: Record<string, unknown> = Types.ObjectId.isValid(raw)
+      ? { _id: new Types.ObjectId(raw) }
+      : (() => {
+          const asNumber = Number.parseInt(raw, 10);
+          if (!Number.isFinite(asNumber) || asNumber <= 0) {
+            throw new BadRequestException(
+              'Invalid event id (expected Mongo _id or numeric eventId)',
+            );
+          }
+          return { eventId: asNumber };
+        })();
+
+    const current = await this.eventModel
+      .findOne(findQuery)
+      .select('_id eventName galleryType')
+      .lean()
+      .exec();
+    if (!current) {
+      throw new NotFoundException('Event not found');
+    }
+
+    const nextName =
+      payload.eventName !== undefined
+        ? String(payload.eventName).trim()
+        : String((current as any).eventName ?? '').trim();
+    const nextType =
+      payload.galleryType !== undefined
+        ? String(payload.galleryType).trim()
+        : String((current as any).galleryType ?? '').trim();
+    if (nextType && nextName) {
+      const duplicate = await this.eventModel
+        .findOne({
+          _id: { $ne: (current as any)._id },
+          eventName: new RegExp(`^${escapeRegex(nextName)}$`, 'i'),
+          galleryType: new RegExp(`^${escapeRegex(nextType)}$`, 'i'),
+        })
+        .select('_id')
         .lean()
         .exec();
-    } else {
-      const asNumber = Number.parseInt(raw, 10);
-      if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException(
-          'Invalid event id (expected Mongo _id or numeric eventId)',
+      if (duplicate) {
+        throw new ConflictException(
+          `A gallery item with this title already exists in "${nextType}"`,
         );
       }
-      updated = await this.eventModel
-        .findOneAndUpdate({ eventId: asNumber }, { $set }, { new: true })
-        .lean()
-        .exec();
     }
+
+    const updated = await this.eventModel
+      .findOneAndUpdate(findQuery, { $set }, { new: true })
+      .lean()
+      .exec();
 
     if (!updated) {
       throw new NotFoundException('Event not found');
@@ -422,6 +519,41 @@ export class AdminService {
     return this.formatEventResponse(updated);
   }
 
+  /**
+   * Same row shape as GET /admin/events/list (omit s_no for single-item detail).
+   */
+  mapEventToAdminListItem(e: any, s_no?: number) {
+    const datePart =
+      e?.eventDate instanceof Date
+        ? e.eventDate.toISOString().slice(0, 10)
+        : e?.eventDate
+          ? new Date(e.eventDate).toISOString().slice(0, 10)
+          : '';
+    const timePart = String(e?.eventStartTime ?? '').trim();
+
+    return {
+      ...(s_no !== undefined ? { s_no } : {}),
+      id: String(e._id),
+      eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
+      image: e.eventImage ?? null,
+      galleryImages: Array.isArray(e.galleryImages)
+        ? e.galleryImages
+        : e.eventImage
+          ? [e.eventImage]
+          : [],
+      event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
+      eventName: String(e.eventName ?? ''),
+      eventDescription: String(e.eventDescription ?? ''),
+      galleryType: e.galleryType ?? '',
+      date: datePart,
+      dateTime: [datePart, timePart].filter(Boolean).join(' '),
+      location: String(e.eventLocation ?? ''),
+      is_active: Number(e.eventStatus) === 1,
+      registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
+      brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
+    };
+  }
+
   async listEvents() {
     const rows = await this.eventModel
       .find({})
@@ -432,37 +564,9 @@ export class AdminService {
       .lean()
       .exec();
 
-    return (rows ?? []).map((e: any, idx: number) => {
-      const datePart =
-        e?.eventDate instanceof Date
-          ? e.eventDate.toISOString().slice(0, 10)
-          : e?.eventDate
-            ? new Date(e.eventDate).toISOString().slice(0, 10)
-            : '';
-      const timePart = String(e?.eventStartTime ?? '').trim();
-
-      return {
-        s_no: idx + 1,
-        id: String(e._id),
-        eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
-        image: e.eventImage ?? null,
-        galleryImages: Array.isArray(e.galleryImages)
-          ? e.galleryImages
-          : e.eventImage
-            ? [e.eventImage]
-            : [],
-        event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
-        eventName: String(e.eventName ?? ''),
-        eventDescription: String(e.eventDescription ?? ''),
-        galleryType: e.galleryType ?? '',
-        date: datePart,
-        dateTime: [datePart, timePart].filter(Boolean).join(' '),
-        location: String(e.eventLocation ?? ''),
-        is_active: Number(e.eventStatus) === 1,
-        registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
-        brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
-      };
-    });
+    return (rows ?? []).map((e: any, idx: number) =>
+      this.mapEventToAdminListItem(e, idx + 1),
+    );
   }
 
   async getEventById(identifier: string) {
@@ -492,7 +596,12 @@ export class AdminService {
       throw new NotFoundException('Event not found');
     }
 
-    return this.formatEventResponse(event);
+    const listShape = this.mapEventToAdminListItem(event);
+    const formatted = this.formatEventResponse(event);
+    return {
+      ...formatted,
+      ...listShape,
+    };
   }
 
   async deleteEvent(identifier: string) {
@@ -616,8 +725,21 @@ export class AdminService {
       );
     }
 
+    const title = String(payload.title ?? '').trim();
+    if (!title) {
+      throw new BadRequestException('title is required');
+    }
+    const duplicate = await this.articleModel
+      .findOne({ title: new RegExp(`^${escapeRegex(title)}$`, 'i') })
+      .select('_id')
+      .lean()
+      .exec();
+    if (duplicate) {
+      throw new ConflictException('An article with this title already exists');
+    }
+
     const doc = new this.articleModel({
-      title: String(payload.title ?? '').trim(),
+      title,
       description: externalUrl ? '' : description,
       date: payload.date,
       image: payload.image,
@@ -661,7 +783,24 @@ export class AdminService {
     }
 
     const $set: Record<string, unknown> = {};
-    if (payload.title !== undefined) $set.title = String(payload.title).trim();
+    if (payload.title !== undefined) {
+      const nextTitle = String(payload.title).trim();
+      if (!nextTitle) {
+        throw new BadRequestException('title cannot be empty');
+      }
+      const duplicate = await this.articleModel
+        .findOne({
+          _id: { $ne: objectId },
+          title: new RegExp(`^${escapeRegex(nextTitle)}$`, 'i'),
+        })
+        .select('_id')
+        .lean()
+        .exec();
+      if (duplicate) {
+        throw new ConflictException('An article with this title already exists');
+      }
+      $set.title = nextTitle;
+    }
     if (payload.description !== undefined) $set.description = String(payload.description).trim();
     if (payload.date !== undefined) $set.date = payload.date;
     if (payload.image !== undefined) {
@@ -756,12 +895,16 @@ export class AdminService {
           : a?.date
             ? new Date(a.date).toISOString().slice(0, 10)
             : '',
-      image: a.image ?? null,
-      article_image: a.article_image ?? this.resolveArticleImagePath(a.image),
+      image: this.resolveArticleAssetForResponse(a.image) || null,
+      article_image: this.resolveArticleAssetForResponse(
+        a.article_image ?? this.resolveArticleImagePath(a.image),
+      ),
       url: a.externalUrl === true ? String(a.url ?? '') : '',
       externalUrl: a.externalUrl === true,
-      pdf: a.pdf ?? null,
-      article_pdf: a.article_pdf ?? this.resolveArticlePdfPath(a.pdf),
+      pdf: this.resolveArticleAssetForResponse(a.pdf) || null,
+      article_pdf: this.resolveArticleAssetForResponse(
+        a.article_pdf ?? this.resolveArticlePdfPath(a.pdf),
+      ),
       is_active: Number(a.status) === 1,
     }));
   }
@@ -786,19 +929,21 @@ export class AdminService {
           : (article as any)?.date
             ? new Date((article as any).date).toISOString().slice(0, 10)
             : '',
-      image: (article as any).image ?? null,
-      article_image:
+      image: this.resolveArticleAssetForResponse((article as any).image) || null,
+      article_image: this.resolveArticleAssetForResponse(
         (article as any).article_image ??
-        this.resolveArticleImagePath((article as any).image),
+          this.resolveArticleImagePath((article as any).image),
+      ),
       url:
         (article as any).externalUrl === true
           ? String((article as any).url ?? '')
           : '',
       externalUrl: (article as any).externalUrl === true,
-      pdf: (article as any).pdf ?? null,
-      article_pdf:
+      pdf: this.resolveArticleAssetForResponse((article as any).pdf) || null,
+      article_pdf: this.resolveArticleAssetForResponse(
         (article as any).article_pdf ??
-        this.resolveArticlePdfPath((article as any).pdf),
+          this.resolveArticlePdfPath((article as any).pdf),
+      ),
       is_active: Number((article as any).status) === 1,
     };
   }
@@ -1148,6 +1293,8 @@ export class AdminService {
       linkedinUrl?: string;
       roleId?: string;
       roleIds?: string[];
+      /** Optional; omit or empty = no product categories linked. */
+      category_ids?: number[];
     },
   ) {
     let vendorObjectId: Types.ObjectId;
@@ -1157,13 +1304,21 @@ export class AdminService {
       throw new BadRequestException('Invalid vendor ID format');
     }
 
+    const emailLower = data.email.trim().toLowerCase();
+    const mobileTrim = data.mobile.trim();
+
     const existingActive = await this.vendorUserModel
       .findOne({
         $and: [
           { manufacturerId: vendorObjectId },
           { status: { $ne: 2 } },
           { type: 'staff' },
-          { $or: [{ email: data.email }, { phone: data.mobile }] },
+          {
+            $or: [
+              { email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i') },
+              { phone: mobileTrim },
+            ],
+          },
         ],
       })
       .select('_id email phone')
@@ -1171,13 +1326,147 @@ export class AdminService {
       .exec();
 
     if (existingActive) {
-      if (existingActive.email === data.email) {
+      if (
+        String(existingActive.email ?? '').toLowerCase() === emailLower
+      ) {
         throw new ConflictException('Email already exists');
       }
-      if (existingActive.phone === data.mobile) {
+      if (existingActive.phone === mobileTrim) {
         throw new ConflictException('Phone number already exists');
       }
       throw new ConflictException('Team member already exists');
+    }
+
+    /** Same email/phone can still exist on a soft-deleted row (status 2); unique index blocks a second insert. */
+    const softDeleted = await this.vendorUserModel
+      .findOne({
+        manufacturerId: vendorObjectId,
+        type: 'staff',
+        status: 2,
+        $or: [
+          { email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i') },
+          { phone: mobileTrim },
+        ],
+      })
+      .exec();
+
+    if (softDeleted) {
+      const totalNonDeleted = await this.vendorUserModel
+        .countDocuments({
+          manufacturerId: vendorObjectId,
+          type: 'staff',
+          status: { $ne: 2 },
+        })
+        .exec();
+      const maxAllowed = Math.max(1, totalNonDeleted + 1);
+      const desiredOrder =
+        data.displayOrder === undefined ? maxAllowed : data.displayOrder;
+      if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
+        throw new BadRequestException('Display order must be a positive integer');
+      }
+      if (desiredOrder > maxAllowed) {
+        throw new BadRequestException(
+          `Display order must be between 1 and ${maxAllowed}`,
+        );
+      }
+
+      if (desiredOrder <= totalNonDeleted) {
+        await this.vendorUserModel
+          .updateMany(
+            {
+              manufacturerId: vendorObjectId,
+              type: 'staff',
+              status: { $ne: 2 },
+              displayOrder: { $gte: desiredOrder },
+            },
+            { $inc: { displayOrder: 1 } },
+          )
+          .exec();
+      }
+
+      const passwordHash = await bcrypt.hash(
+        crypto.randomBytes(8).toString('hex'),
+        10,
+      );
+
+      const categoryIds = data.category_ids ?? [];
+      if (categoryIds.length > 0) {
+        await this.categoriesService.assertNumericCategoriesExist(categoryIds);
+      }
+
+      const $set: Record<string, unknown> = {
+        name: data.name.trim(),
+        email: emailLower,
+        phone: mobileTrim,
+        status: 1,
+        isVerified: true,
+        password: passwordHash,
+        displayOrder: desiredOrder,
+        team: data.team,
+        image: data.imagePath,
+        facebookUrl: data.facebookUrl,
+        twitterUrl: data.twitterUrl,
+        linkedinUrl: data.linkedinUrl,
+        updatedAt: new Date(),
+        category_ids: categoryIds,
+      };
+      if (categoryIds.length > 0) {
+        $set.category_id = categoryIds[0];
+      }
+      if (data.designation !== undefined && data.designation !== '') {
+        $set.designation = data.designation;
+      }
+
+      const updatePayload: Record<string, unknown> = { $set };
+      const $unset: Record<string, string> = {};
+      if (data.designation !== undefined && data.designation === '') {
+        $unset.designation = '';
+      }
+      if (categoryIds.length === 0) {
+        $unset.category_id = '';
+      }
+      if (Object.keys($unset).length > 0) {
+        updatePayload.$unset = $unset;
+      }
+
+      const updated = await this.vendorUserModel
+        .findByIdAndUpdate(softDeleted._id, updatePayload, { new: true })
+        .exec();
+
+      if (!updated) {
+        throw new NotFoundException('Team member record could not be reactivated');
+      }
+
+      const normalizedRoleIds =
+        Array.isArray(data.roleIds) && data.roleIds.length > 0
+          ? Array.from(
+              new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)),
+            )
+          : data.roleId
+            ? [String(data.roleId).trim()]
+            : [];
+
+      await this.rbacService.replaceStaffRoles(vendorId, {
+        vendorUserId: String(updated._id),
+        roleIds: normalizedRoleIds,
+      });
+
+      this.invalidateWebsiteTeamMembersListCache();
+
+      const obj: any = updated.toObject();
+      delete obj.password;
+      delete obj.otp;
+      const id = String(updated._id);
+      const cat = this.teamMemberCategoryArrays(obj);
+      return {
+        ...obj,
+        id,
+        vendorUserId: id,
+        roleIds: normalizedRoleIds,
+        portalAccess: normalizedRoleIds.length > 0,
+        category_ids: cat.category_ids,
+        categoryIds: cat.categoryIds,
+      };
     }
 
     const totalNonDeleted = await this.vendorUserModel
@@ -1218,6 +1507,11 @@ export class AdminService {
     // and send credentials via email (see RbacService).
     const passwordHash = await bcrypt.hash(crypto.randomBytes(8).toString('hex'), 10);
 
+    const categoryIds = data.category_ids ?? [];
+    if (categoryIds.length > 0) {
+      await this.categoriesService.assertNumericCategoriesExist(categoryIds);
+    }
+
     const teamMember: Partial<VendorUser> = {
       // Canonical + legacy alias (some modules still query vendorId)
       manufacturerId: vendorObjectId,
@@ -1229,8 +1523,8 @@ export class AdminService {
       ...(data.designation !== undefined && data.designation !== ''
         ? { designation: data.designation }
         : {}),
-      email: data.email,
-      phone: data.mobile,
+      email: emailLower,
+      phone: mobileTrim,
       image: data.imagePath,
       facebookUrl: data.facebookUrl,
       twitterUrl: data.twitterUrl,
@@ -1238,6 +1532,8 @@ export class AdminService {
       displayOrder: desiredOrder,
       team: data.team,
       password: passwordHash,
+      category_ids: categoryIds,
+      ...(categoryIds.length > 0 ? { category_id: categoryIds[0] } : {}),
     };
 
     const created = new this.vendorUserModel(teamMember);
@@ -1245,13 +1541,13 @@ export class AdminService {
     try {
       saved = await created.save();
     } catch (e: any) {
-      // Handle unique index conflicts (e.g. VendorUser.email is globally unique in schema)
       if (e?.code === 11000) {
-        const key = Object.keys(e?.keyPattern ?? e?.keyValue ?? {})[0];
-        if (key === 'email') {
+        const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
+        const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
+        if ('email' in pattern || keyVal.email !== undefined) {
           throw new ConflictException('Email already exists');
         }
-        if (key === 'phone') {
+        if ('phone' in pattern || keyVal.phone !== undefined) {
           throw new ConflictException('Phone number already exists');
         }
         throw new ConflictException('Duplicate record');
@@ -1278,13 +1574,18 @@ export class AdminService {
       roleIds: normalizedRoleIds,
     });
 
+    this.invalidateWebsiteTeamMembersListCache();
+
     const id = String(saved._id);
+    const cat = this.teamMemberCategoryArrays(obj);
     return {
       ...obj,
       id,
       vendorUserId: id,
       roleIds: normalizedRoleIds,
       portalAccess: normalizedRoleIds.length > 0,
+      category_ids: cat.category_ids,
+      categoryIds: cat.categoryIds,
     };
   }
 
@@ -1299,27 +1600,35 @@ export class AdminService {
         status: { $ne: 2 },
       })
       .sort({ displayOrder: 1, _id: 1 })
-      .select('name designation email phone status displayOrder team')
+      .select(
+        'name designation email phone status displayOrder team category_ids category_id',
+      )
       .lean()
       .exec();
 
-    return members.map((m, index) => ({
-      s_no: index + 1,
-      id: String(m._id),
-      vendorUserId: String(m._id),
-      name: m.name,
-      designation: m.designation ?? '',
-      email: m.email,
-      mobile: m.phone,
-      is_active: m.status === 1,
-      displayOrder: Number((m as any).displayOrder) || 0,
-      team: String((m as any).team ?? ''),
-    }));
+    return members.map((m, index) => {
+      const cat = this.teamMemberCategoryArrays(m as any);
+      return {
+        s_no: index + 1,
+        id: String(m._id),
+        vendorUserId: String(m._id),
+        name: m.name,
+        designation: m.designation ?? '',
+        email: m.email,
+        mobile: m.phone,
+        is_active: m.status === 1,
+        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
+        team: String((m as any).team ?? ''),
+        category_ids: cat.category_ids,
+        categoryIds: cat.categoryIds,
+      };
+    });
   }
 
   async listTeamMembersPaginated(
     _vendorId: string,
     query: ListTeamMembersQueryDto,
+    opts?: { categoryNumericId?: number },
   ) {
     const page = Number(query?.page ?? 1);
     const limit = Number(query?.limit ?? 10);
@@ -1331,6 +1640,19 @@ export class AdminService {
       type: 'staff',
       status: { $ne: 2 },
     };
+
+    const catId = opts?.categoryNumericId;
+    if (
+      catId !== undefined &&
+      typeof catId === 'number' &&
+      Number.isInteger(catId) &&
+      catId >= 1
+    ) {
+      mongoQuery.$or = [
+        { category_ids: catId },
+        { category_id: catId },
+      ];
+    }
 
     const rawStatus = query?.status?.trim().toLowerCase();
     if (rawStatus) {
@@ -1353,24 +1675,31 @@ export class AdminService {
         .sort({ displayOrder: 1, _id: 1 })
         .skip(skip)
         .limit(perPage)
-        .select('name designation email phone status displayOrder team')
+        .select(
+          'name designation email phone status displayOrder team category_ids category_id',
+        )
         .lean()
         .exec(),
     ]);
 
     const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
-    const data = (members ?? []).map((m, index) => ({
-      s_no: skip + index + 1,
-      id: String(m._id),
-      vendorUserId: String(m._id),
-      name: m.name,
-      designation: m.designation ?? '',
-      email: m.email,
-      mobile: m.phone,
-      is_active: m.status === 1,
-      displayOrder: Number((m as any).displayOrder) || 0,
-      team: String((m as any).team ?? ''),
-    }));
+    const data = (members ?? []).map((m, index) => {
+      const cat = this.teamMemberCategoryArrays(m as any);
+      return {
+        s_no: skip + index + 1,
+        id: String(m._id),
+        vendorUserId: String(m._id),
+        name: m.name,
+        designation: m.designation ?? '',
+        email: m.email,
+        mobile: m.phone,
+        is_active: m.status === 1,
+        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
+        team: String((m as any).team ?? ''),
+        category_ids: cat.category_ids,
+        categoryIds: cat.categoryIds,
+      };
+    });
 
     return {
       data,
@@ -1406,22 +1735,29 @@ export class AdminService {
     const members = await this.vendorUserModel
       .find(query)
       .sort({ displayOrder: 1, _id: 1 })
-      .select('name designation email phone status displayOrder team')
+      .select(
+        'name designation email phone status displayOrder team category_ids category_id',
+      )
       .lean()
       .exec();
 
-    return members.map((m, index) => ({
-      s_no: index + 1,
-      id: String(m._id),
-      vendorUserId: String(m._id),
-      name: m.name,
-      designation: m.designation ?? '',
-      email: m.email,
-      mobile: m.phone,
-      is_active: m.status === 1,
-      displayOrder: Number((m as any).displayOrder) || 0,
-      team: String((m as any).team ?? ''),
-    }));
+    return members.map((m, index) => {
+      const cat = this.teamMemberCategoryArrays(m as any);
+      return {
+        s_no: index + 1,
+        id: String(m._id),
+        vendorUserId: String(m._id),
+        name: m.name,
+        designation: m.designation ?? '',
+        email: m.email,
+        mobile: m.phone,
+        is_active: m.status === 1,
+        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
+        team: String((m as any).team ?? ''),
+        category_ids: cat.category_ids,
+        categoryIds: cat.categoryIds,
+      };
+    });
   }
 
   /** Single team member for view modal (non-deleted partner, same vendor). */
@@ -1440,7 +1776,7 @@ export class AdminService {
         status: { $ne: 2 },
       })
       .select(
-        'name designation email phone status image facebookUrl twitterUrl linkedinUrl displayOrder team',
+        'name designation email phone status image facebookUrl twitterUrl linkedinUrl displayOrder team category_ids category_id',
       )
       .lean()
       .exec();
@@ -1450,6 +1786,7 @@ export class AdminService {
     }
 
     const st = member.status ?? 0;
+    const cat = this.teamMemberCategoryArrays(member as any);
     return {
       id: String(member._id),
       vendorUserId: String(member._id),
@@ -1462,8 +1799,10 @@ export class AdminService {
       facebookUrl: member.facebookUrl ?? '',
       twitterUrl: member.twitterUrl ?? '',
       linkedinUrl: member.linkedinUrl ?? '',
-      displayOrder: Number((member as any).displayOrder) || 0,
+      displayOrder: this.persistedTeamMemberDisplayOrder((member as any).displayOrder),
       team: String((member as any).team ?? ''),
+      category_ids: cat.category_ids,
+      categoryIds: cat.categoryIds,
     };
   }
 
@@ -1504,6 +1843,7 @@ export class AdminService {
       vendorId: vendorObjectId,
       banner_image: this.resolveBannerImagePath(dto.imageUrl),
       imageUrl: String(dto.imageUrl ?? '').trim(),
+      imageSource: dto.imageSource === 'binary_upload' ? 'binary_upload' : 'manual_url',
       heading: dto.title.trim(),
       sequenceNumber,
       description: dto.description.trim(),
@@ -1519,6 +1859,10 @@ export class AdminService {
     return {
       id: String(o._id),
       imageUrl: this.resolveBannerImageForResponse(o.imageUrl, o.banner_image),
+      imageSource:
+        String((o as any).imageSource) === 'binary_upload'
+          ? 'binary_upload'
+          : 'manual_url',
       heading: o.heading,
       title: o.heading,
       sequenceNumber: Number(o.sequenceNumber ?? 1),
@@ -1546,7 +1890,7 @@ export class AdminService {
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl heading sequenceNumber description status')
+      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
       .lean()
       .exec();
 
@@ -1556,6 +1900,10 @@ export class AdminService {
         s_no: index + 1,
         id: String(b._id),
         imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
+        imageSource:
+          String((b as any).imageSource) === 'binary_upload'
+            ? 'binary_upload'
+            : 'manual_url',
         heading: b.heading,
         title: b.heading,
         sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -1577,7 +1925,7 @@ export class AdminService {
         ],
       })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl heading sequenceNumber description status')
+      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
       .lean()
       .exec();
 
@@ -1585,6 +1933,10 @@ export class AdminService {
       s_no: index + 1,
       id: String(b._id),
       imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
+      imageSource:
+        String((b as any).imageSource) === 'binary_upload'
+          ? 'binary_upload'
+          : 'manual_url',
       heading: b.heading,
       title: b.heading,
       sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -1610,7 +1962,7 @@ export class AdminService {
         _id: bannerObjectId,
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .select('banner_image imageUrl heading sequenceNumber description status')
+      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
       .lean()
       .exec();
 
@@ -1621,6 +1973,10 @@ export class AdminService {
     return {
       id: String(b._id),
       imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
+      imageSource:
+        String((b as any).imageSource) === 'binary_upload'
+          ? 'binary_upload'
+          : 'manual_url',
       heading: b.heading,
       title: b.heading,
       sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -1635,6 +1991,7 @@ export class AdminService {
     bannerId: string,
     payload: {
       imageUrl?: string;
+      imageSource?: 'binary_upload' | 'manual_url';
       title?: string;
       sequenceNumber?: number;
       description?: string;
@@ -1700,6 +2057,10 @@ export class AdminService {
       $set.imageUrl = payload.imageUrl.trim();
       $set.banner_image = this.resolveBannerImagePath(payload.imageUrl);
     }
+    if (payload.imageSource !== undefined) {
+      $set.imageSource =
+        payload.imageSource === 'binary_upload' ? 'binary_upload' : 'manual_url';
+    }
 
     const updated = await this.bannerModel
       .findByIdAndUpdate(bannerObjectId, { $set }, { new: true })
@@ -1717,6 +2078,10 @@ export class AdminService {
         (updated as any).imageUrl,
         (updated as any).banner_image,
       ),
+      imageSource:
+        String((updated as any).imageSource) === 'binary_upload'
+          ? 'binary_upload'
+          : 'manual_url',
       heading: updated.heading,
       title: updated.heading,
       sequenceNumber: Number((updated as any).sequenceNumber ?? 1),
@@ -1839,6 +2204,7 @@ export class AdminService {
       linkedinUrl?: string;
       roleId?: string;
       roleIds?: string[];
+      category_ids?: number[];
     },
   ) {
     let memberObjectId: Types.ObjectId;
@@ -1860,13 +2226,21 @@ export class AdminService {
       throw new NotFoundException('Team member not found');
     }
 
+    const emailLower = data.email.trim().toLowerCase();
+    const mobileTrim = data.mobile.trim();
+
     const existingOther = await this.vendorUserModel
       .findOne({
         $and: [
           { _id: { $ne: memberObjectId } },
           { status: { $ne: 2 } },
           { type: 'staff' },
-          { $or: [{ email: data.email }, { phone: data.mobile }] },
+          {
+            $or: [
+              { email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i') },
+              { phone: mobileTrim },
+            ],
+          },
         ],
       })
       .select('_id email phone')
@@ -1874,10 +2248,12 @@ export class AdminService {
       .exec();
 
     if (existingOther) {
-      if (existingOther.email === data.email) {
+      if (
+        String(existingOther.email ?? '').toLowerCase() === emailLower
+      ) {
         throw new ConflictException('Email already exists');
       }
-      if (existingOther.phone === data.mobile) {
+      if (existingOther.phone === mobileTrim) {
         throw new ConflictException('Phone number already exists');
       }
       throw new ConflictException('Team member already exists');
@@ -1929,8 +2305,8 @@ export class AdminService {
 
     const $set: Record<string, unknown> = {
       name: data.name,
-      email: data.email,
-      phone: data.mobile,
+      email: emailLower,
+      phone: mobileTrim,
       updatedAt: new Date(),
     };
 
@@ -1953,14 +2329,45 @@ export class AdminService {
     $set.displayOrder = desiredOrder;
     $set.team = data.team;
 
-    const updatePayload: Record<string, unknown> = { $set };
-    if (data.designation !== undefined && data.designation === '') {
-      updatePayload.$unset = { designation: '' };
+    const unsetFields: Record<string, string> = {};
+    if (data.category_ids !== undefined) {
+      if (data.category_ids.length > 0) {
+        await this.categoriesService.assertNumericCategoriesExist(data.category_ids);
+        $set.category_ids = data.category_ids;
+        $set.category_id = data.category_ids[0];
+      } else {
+        $set.category_ids = [];
+        unsetFields.category_id = '';
+      }
     }
 
-    const updated = await this.vendorUserModel
-      .findByIdAndUpdate(memberObjectId, updatePayload, { new: true })
-      .exec();
+    const updatePayload: Record<string, unknown> = { $set };
+    if (data.designation !== undefined && data.designation === '') {
+      unsetFields.designation = '';
+    }
+    if (Object.keys(unsetFields).length > 0) {
+      updatePayload.$unset = unsetFields;
+    }
+
+    let updated: VendorUserDocument | null;
+    try {
+      updated = await this.vendorUserModel
+        .findByIdAndUpdate(memberObjectId, updatePayload, { new: true })
+        .exec();
+    } catch (e: any) {
+      if (e?.code === 11000) {
+        const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
+        const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
+        if ('email' in pattern || keyVal.email !== undefined) {
+          throw new ConflictException('Email already exists');
+        }
+        if ('phone' in pattern || keyVal.phone !== undefined) {
+          throw new ConflictException('Phone number already exists');
+        }
+        throw new ConflictException('Duplicate record');
+      }
+      throw e;
+    }
 
     if (!updated) {
       throw new NotFoundException('Team member not found');
@@ -1981,13 +2388,18 @@ export class AdminService {
       roleIds: normalizedRoleIds,
     });
 
+    this.invalidateWebsiteTeamMembersListCache();
+
     const id = String(updated._id);
+    const cat = this.teamMemberCategoryArrays(obj);
     return {
       ...obj,
       id,
       vendorUserId: id,
       roleIds: normalizedRoleIds,
       portalAccess: normalizedRoleIds.length > 0,
+      category_ids: cat.category_ids,
+      categoryIds: cat.categoryIds,
     };
   }
 
@@ -2024,24 +2436,12 @@ export class AdminService {
       throw new NotFoundException('Team member not found');
     }
 
-    const deletedOrder = Number((member as any).displayOrder);
-    if (Number.isFinite(deletedOrder) && deletedOrder > 0) {
-      await this.vendorUserModel
-        .updateMany(
-          {
-            _id: { $ne: memberObjectId },
-            type: 'staff',
-            status: { $ne: 2 },
-            displayOrder: { $gt: deletedOrder },
-          },
-          { $inc: { displayOrder: -1 } },
-        )
-        .exec();
-    }
-
     const obj: any = updated.toObject();
     delete obj.password;
     delete obj.otp;
+
+    this.invalidateWebsiteTeamMembersListCache();
+
     return obj;
   }
 
@@ -2188,7 +2588,7 @@ export class AdminService {
   async listContactMessages() {
     const rows = await this.contactMessageModel
       .find({})
-      .select('name email phoneNumber message createdAt')
+      .select('name email phoneNumber subject message createdAt')
       .sort({ createdAt: -1, _id: -1 })
       .lean()
       .exec();
@@ -2199,6 +2599,7 @@ export class AdminService {
       name: String(r.name ?? ''),
       email: String(r.email ?? ''),
       phoneNo: String((r as any).phoneNumber ?? ''),
+      subject: String((r as any).subject ?? ''),
       message:
         typeof (r as any).message === 'string'
           ? String((r as any).message).trim()

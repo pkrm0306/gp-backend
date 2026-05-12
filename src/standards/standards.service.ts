@@ -23,6 +23,14 @@ import { UpdateStandardMultipartDto } from './dto/update-standard-multipart.dto'
 import { UpdateStandardStatusDto } from './dto/update-standard-status.dto';
 import { RedisService } from '../common/redis/redis.service';
 import { CategoriesService } from '../categories/categories.service';
+import {
+  StandardCategory,
+  StandardCategoryDocument,
+} from './schemas/standard-category.schema';
+import {
+  hasExplicitCategoryIdFields,
+  mergeCategoryIdsFromFormObject,
+} from './utils/merge-category-ids.util';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -46,6 +54,8 @@ export class StandardsService implements OnModuleInit {
     private standardModel: Model<StandardDocument>,
     @InjectModel(StandardIdCounter.name)
     private counterModel: Model<StandardIdCounterDocument>,
+    @InjectModel(StandardCategory.name)
+    private standardCategoryModel: Model<StandardCategoryDocument>,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
     private readonly categoriesService: CategoriesService,
@@ -94,6 +104,11 @@ export class StandardsService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     this.ensureUploadDir();
     await this.syncStandardIdCounter();
+    await this.backfillStandardCategoriesFromLegacy().catch((error) => {
+      this.logger.warn(
+        `standard_categories backfill skipped: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    });
   }
 
   ensureUploadDir(): void {
@@ -155,9 +170,9 @@ export class StandardsService implements OnModuleInit {
     return this.categoriesService.resolveNumericCategoryKey(param);
   }
 
-  private buildListFilter(
+  private async buildListFilter(
     query: ListStandardsQueryDto,
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     const parts: Record<string, unknown>[] = [];
 
     if (query.search !== undefined && query.search.trim() !== '') {
@@ -184,7 +199,16 @@ export class StandardsService implements OnModuleInit {
       Number.isInteger(query.category_id) &&
       query.category_id >= 1
     ) {
-      parts.push({ category_id: query.category_id });
+      const cid = query.category_id;
+      const linked = await this.standardCategoryModel
+        .distinct('standard_id', { category_id: cid })
+        .exec();
+      const linkedIds = (linked ?? []).filter(
+        (x): x is number => typeof x === 'number' && Number.isInteger(x),
+      );
+      parts.push({
+        $or: [{ category_id: cid }, { id: { $in: linkedIds } }],
+      });
     }
 
     if (parts.length === 0) {
@@ -196,6 +220,150 @@ export class StandardsService implements OnModuleInit {
     return { $and: parts };
   }
 
+  private async replaceStandardCategories(
+    standardId: number,
+    categoryIds: number[],
+  ): Promise<void> {
+    await this.standardCategoryModel
+      .deleteMany({ standard_id: standardId })
+      .exec();
+    if (!categoryIds.length) {
+      return;
+    }
+    await this.standardCategoryModel.insertMany(
+      categoryIds.map((category_id) => ({
+        standard_id: standardId,
+        category_id,
+      })),
+      { ordered: true },
+    );
+  }
+
+  private async loadCategoryIdsMapByStandardIds(
+    standardIds: number[],
+  ): Promise<Map<number, number[]>> {
+    const map = new Map<number, number[]>();
+    for (const id of standardIds) {
+      map.set(id, []);
+    }
+    if (!standardIds.length) {
+      return map;
+    }
+    const rows = await this.standardCategoryModel
+      .find({ standard_id: { $in: standardIds } })
+      .sort({ _id: 1 })
+      .select('standard_id category_id')
+      .lean()
+      .exec();
+    for (const r of rows) {
+      const sid = r.standard_id as number;
+      const cur = map.get(sid) ?? [];
+      cur.push(r.category_id as number);
+      map.set(sid, cur);
+    }
+    return map;
+  }
+
+  private effectiveCategoryIdsForDoc(
+    doc: { id?: number; category_id?: number | null },
+    map: Map<number, number[]>,
+  ): number[] {
+    const sid = doc.id;
+    if (typeof sid !== 'number' || !Number.isInteger(sid)) {
+      return [];
+    }
+    const fromJoin = map.get(sid) ?? [];
+    if (fromJoin.length) {
+      return fromJoin;
+    }
+    if (
+      typeof doc.category_id === 'number' &&
+      Number.isInteger(doc.category_id) &&
+      doc.category_id >= 1
+    ) {
+      return [doc.category_id];
+    }
+    return [];
+  }
+
+  private async attachCategoriesToStandardDocs<
+    T extends { id?: number; category_id?: number | null },
+  >(
+    docs: T[],
+  ): Promise<
+    Array<
+      T & {
+        category_ids: number[];
+        categories: { id: number; name: string }[];
+        category_id: number | null;
+        category_name: string | null;
+      }
+    >
+  > {
+    const ids = docs
+      .map((d) => (typeof d.id === 'number' && Number.isInteger(d.id) ? d.id : null))
+      .filter((x): x is number => x !== null);
+    const map = await this.loadCategoryIdsMapByStandardIds(ids);
+    const allCatIds = new Set<number>();
+    for (const d of docs) {
+      for (const c of this.effectiveCategoryIdsForDoc(d, map)) {
+        allCatIds.add(c);
+      }
+    }
+    const nameMap = await this.categoriesService.getCategoryNamesByNumericIds([
+      ...allCatIds,
+    ]);
+    return docs.map((d) => {
+      const category_ids = this.effectiveCategoryIdsForDoc(d, map);
+      const categories = category_ids.map((id) => ({
+        id,
+        name: nameMap.get(id) ?? '',
+      }));
+      const primary = category_ids[0] ?? null;
+      return {
+        ...d,
+        category_ids,
+        categories,
+        category_id: primary,
+        category_name: primary !== null ? nameMap.get(primary) ?? null : null,
+      };
+    });
+  }
+
+  private async backfillStandardCategoriesFromLegacy(): Promise<void> {
+    const cursor = this.standardModel
+      .find({ category_id: { $exists: true, $ne: null } })
+      .select('id category_id')
+      .lean()
+      .cursor();
+    let upserts = 0;
+    for await (const row of cursor) {
+      const sid = row.id as number;
+      const cid = row.category_id as number;
+      if (
+        !Number.isInteger(sid) ||
+        sid < 1 ||
+        !Number.isInteger(cid) ||
+        cid < 1
+      ) {
+        continue;
+      }
+      const res = await this.standardCategoryModel.updateOne(
+        { standard_id: sid, category_id: cid },
+        { $setOnInsert: { standard_id: sid, category_id: cid } },
+        { upsert: true },
+      );
+      if (res.upsertedCount) {
+        upserts += 1;
+      }
+    }
+    if (upserts > 0) {
+      this.logger.log(
+        `Backfilled ${upserts} standard_categories row(s) from legacy category_id`,
+      );
+    }
+  }
+
   private ensureDescriptionField<T extends { description?: unknown }>(
     doc: T,
   ): Omit<T, 'description'> & { description: string } {
@@ -203,44 +371,6 @@ export class StandardsService implements OnModuleInit {
       ...doc,
       description: typeof doc.description === 'string' ? doc.description : '',
     };
-  }
-
-  private async attachCategoryDisplay<
-    T extends { category_id?: number | null },
-  >(doc: T): Promise<T & { category_id: number | null; category_name: string | null }> {
-    const cid =
-      typeof doc.category_id === 'number' && Number.isInteger(doc.category_id)
-        ? doc.category_id
-        : null;
-    const map = await this.categoriesService.getCategoryNamesByNumericIds(
-      cid !== null ? [cid] : [],
-    );
-    return {
-      ...doc,
-      category_id: cid,
-      category_name: cid !== null ? map.get(cid) ?? null : null,
-    };
-  }
-
-  private async attachCategoryDisplayMany<
-    T extends { category_id?: number | null },
-  >(
-    docs: T[],
-  ): Promise<Array<T & { category_id: number | null; category_name: string | null }>> {
-    const map = await this.categoriesService.getCategoryNamesByNumericIds(
-      docs.map((d) => d.category_id),
-    );
-    return docs.map((d) => {
-      const cid =
-        typeof d.category_id === 'number' && Number.isInteger(d.category_id)
-          ? d.category_id
-          : null;
-      return {
-        ...d,
-        category_id: cid,
-        category_name: cid !== null ? map.get(cid) ?? null : null,
-      };
-    });
   }
 
   async findAllPaginated(query: ListStandardsQueryDto) {
@@ -269,7 +399,7 @@ export class StandardsService implements OnModuleInit {
     const sortOrder = order === 'desc' ? -1 : 1;
     const sort: Record<string, 1 | -1> = { [sortBy]: sortOrder };
 
-    const filter = this.buildListFilter(query);
+    const filter = await this.buildListFilter(query);
     const skip = (page - 1) * limit;
 
     const [rows, total] = await Promise.all([
@@ -286,7 +416,7 @@ export class StandardsService implements OnModuleInit {
     const withMeta = rows.map((d) =>
       this.ensureDescriptionField(this.enrichStandardFileUrl(d)),
     );
-    const data = await this.attachCategoryDisplayMany(withMeta);
+    const data = await this.attachCategoriesToStandardDocs(withMeta);
 
     const response = {
       message: 'Standards retrieved successfully',
@@ -311,7 +441,8 @@ export class StandardsService implements OnModuleInit {
       throw new NotFoundException('Standard not found');
     }
     const withMeta = this.ensureDescriptionField(this.enrichStandardFileUrl(doc));
-    return this.attachCategoryDisplay(withMeta);
+    const [enriched] = await this.attachCategoriesToStandardDocs([withMeta]);
+    return enriched;
   }
 
   /** Legacy rows may omit file_url; derive local URL from filename when needed. */
@@ -343,7 +474,11 @@ export class StandardsService implements OnModuleInit {
     };
   }
 
-  async create(dto: CreateStandardMultipartDto, file: Express.Multer.File) {
+  async create(
+    dto: CreateStandardMultipartDto,
+    file: Express.Multer.File,
+    rawBody?: Record<string, unknown>,
+  ) {
     if (!file) {
       throw new BadRequestException(
         'File is required (field name: file). Allowed: PDF, JPG, PNG. Max 10MB.',
@@ -353,11 +488,21 @@ export class StandardsService implements OnModuleInit {
     const now = new Date();
     const numericId = await this.nextStandardId();
 
-    await this.categoriesService.assertNumericCategoryExists(dto.category_id);
+    const merged = mergeCategoryIdsFromFormObject({
+      ...(dto as object),
+      ...(rawBody ?? {}),
+    });
+    if (merged.length === 0) {
+      throw new BadRequestException(
+        'At least one category is required (category_id, category_ids[], or categoryIds).',
+      );
+    }
+    await this.categoriesService.assertNumericCategoriesExist(merged);
+    const primary = merged[0]!;
 
     const doc = await this.standardModel.create({
       id: numericId,
-      category_id: dto.category_id,
+      category_id: primary,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? '',
       resource_standard_type: dto.resource_standard_type.trim(),
@@ -370,22 +515,31 @@ export class StandardsService implements OnModuleInit {
       created_at: now,
       updated_at: now,
     });
+    await this.replaceStandardCategories(numericId, merged);
     const created = this.ensureDescriptionField(
       this.enrichStandardFileUrl(doc.toObject()),
     );
     await this.invalidateStandardListCache();
-    return this.attachCategoryDisplay(created);
+    const [enriched] = await this.attachCategoriesToStandardDocs([created]);
+    return enriched;
   }
 
   async update(
     id: number,
     dto: UpdateStandardMultipartDto,
     file?: Express.Multer.File,
+    rawBody?: Record<string, unknown>,
   ) {
     const existing = await this.standardModel.findOne({ id }).exec();
     if (!existing) {
       throw new NotFoundException('Standard not found');
     }
+
+    const explicitCategories = hasExplicitCategoryIdFields(rawBody);
+    const mergedCategories = mergeCategoryIdsFromFormObject({
+      ...(dto as object),
+      ...(rawBody ?? {}),
+    });
 
     const hasText =
       (dto.name !== undefined && dto.name.trim() !== '') ||
@@ -393,7 +547,7 @@ export class StandardsService implements OnModuleInit {
       (dto.resource_standard_type !== undefined &&
         dto.resource_standard_type.trim() !== '') ||
       dto.status !== undefined ||
-      dto.category_id !== undefined;
+      explicitCategories;
     if (!hasText && !file) {
       throw new BadRequestException('No fields to update');
     }
@@ -415,9 +569,15 @@ export class StandardsService implements OnModuleInit {
     if (dto.status !== undefined) {
       set.status = dto.status;
     }
-    if (dto.category_id !== undefined) {
-      await this.categoriesService.assertNumericCategoryExists(dto.category_id);
-      set.category_id = dto.category_id;
+
+    if (explicitCategories) {
+      if (mergedCategories.length === 0) {
+        throw new BadRequestException(
+          'At least one category is required when updating categories.',
+        );
+      }
+      await this.categoriesService.assertNumericCategoriesExist(mergedCategories);
+      set.category_id = mergedCategories[0];
     }
 
     if (file) {
@@ -437,9 +597,13 @@ export class StandardsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Standard not found');
     }
+    if (explicitCategories) {
+      await this.replaceStandardCategories(id, mergedCategories);
+    }
     const response = this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
     await this.invalidateStandardListCache();
-    return this.attachCategoryDisplay(response);
+    const [enriched] = await this.attachCategoriesToStandardDocs([response]);
+    return enriched;
   }
 
   async updateStatus(id: number, dto: UpdateStandardStatusDto) {
@@ -456,7 +620,8 @@ export class StandardsService implements OnModuleInit {
     }
     const response = this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
     await this.invalidateStandardListCache();
-    return this.attachCategoryDisplay(response);
+    const [enriched] = await this.attachCategoriesToStandardDocs([response]);
+    return enriched;
   }
 
   async remove(id: number) {
@@ -465,6 +630,7 @@ export class StandardsService implements OnModuleInit {
       throw new NotFoundException('Standard not found');
     }
     await deleteUploadedFile(this.fileMetaForDelete(existing));
+    await this.standardCategoryModel.deleteMany({ standard_id: id }).exec();
     await this.standardModel.deleteOne({ id }).exec();
     await this.invalidateStandardListCache();
   }
@@ -475,14 +641,26 @@ export class StandardsService implements OnModuleInit {
     const sort: Record<string, 1 | -1> = {
       [sortBy]: order === 'desc' ? -1 : 1,
     };
-    const filter = this.buildListFilter(query);
+    const filter = await this.buildListFilter(query);
     const rows = await this.standardModel.find(filter).sort(sort).lean().exec();
-    const nameMap = await this.categoriesService.getCategoryNamesByNumericIds(
-      rows.map((r) => r.category_id),
-    );
+    const stdIds = rows
+      .map((r) => r.id)
+      .filter((x): x is number => typeof x === 'number' && Number.isInteger(x));
+    const joinMap = await this.loadCategoryIdsMapByStandardIds(stdIds);
+    const allIds = new Set<number>();
+    for (const r of rows) {
+      for (const c of this.effectiveCategoryIdsForDoc(r, joinMap)) {
+        allIds.add(c);
+      }
+    }
+    const nameMap = await this.categoriesService.getCategoryNamesByNumericIds([
+      ...allIds,
+    ]);
 
     const header = [
       'id',
+      'category_ids',
+      'category_names',
       'category_id',
       'category_name',
       'name',
@@ -500,15 +678,16 @@ export class StandardsService implements OnModuleInit {
       header.join(','),
       ...rows.map((r) => {
         const e = this.enrichStandardFileUrl(r);
-        const cid =
-          typeof e.category_id === 'number' && Number.isInteger(e.category_id)
-            ? e.category_id
-            : null;
-        const cname = cid !== null ? nameMap.get(cid) ?? '' : '';
+        const cids = this.effectiveCategoryIdsForDoc(e, joinMap);
+        const cnames = cids.map((id) => nameMap.get(id) ?? '').join('; ');
+        const primary = cids[0] ?? null;
+        const primaryName = primary !== null ? nameMap.get(primary) ?? '' : '';
         return [
           e.id,
-          cid ?? '',
-          cname,
+          cids.join(';'),
+          cnames,
+          primary ?? '',
+          primaryName,
           e.name,
           e.description ?? '',
           e.filename,

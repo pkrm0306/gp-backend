@@ -357,6 +357,10 @@ export class AuthService {
     const accessTokenJti = crypto.randomUUID();
     const refreshTokenJti = crypto.randomUUID();
 
+    // JWT carries identity only (no permission claims). Staff effective permissions are
+    // resolved server-side from Role + StaffRoleMapping on each guarded request (see RbacService / PermissionsGuard),
+    // subject to RBAC_CACHE_TTL_SECONDS. Refresh the access token to pick up identity changes faster if needed.
+
     const accessToken = this.jwtService.sign(payload, {
       expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '10h',
       jwtid: accessTokenJti,

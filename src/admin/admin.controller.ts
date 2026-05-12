@@ -34,6 +34,10 @@ import {
   ApiHeader,
 } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
+import {
+  hasExplicitCategoryIdFields,
+  mergeCategoryIdsFromFormObject,
+} from '../standards/utils/merge-category-ids.util';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -116,7 +120,9 @@ function TeamMemberEditDocs() {
     ApiOperation({
       summary: 'Edit team member',
       description:
-        '**POST** or **PATCH** — same handler. Multipart form: **id** (team member from list), name, designation, email, mobile, optional **image** (270×400px recommended), social URLs. Same JWT workarounds as create (**x-access-token** / **access_token**) if Bearer is dropped on multipart.',
+        '**POST** or **PATCH** — same handler. Multipart form: **id** (team member from list), name, designation, email, mobile, optional **image** (270×400px recommended), social URLs. ' +
+        'Omit all category fields to leave categories unchanged; if any **category_id** / **category_ids** / **categoryIds** field is sent, the full set is replaced (empty clears all categories). ' +
+        'Same JWT workarounds as create (**x-access-token** / **access_token**) if Bearer is dropped on multipart.',
     }),
     ApiConsumes('multipart/form-data'),
     ApiHeader({
@@ -159,6 +165,25 @@ function TeamMemberEditDocs() {
             type: 'array',
             items: { type: 'string' },
             description: 'Repeated multipart fields for role ids',
+          },
+          category_id: {
+            oneOf: [{ type: 'integer' }, { type: 'string' }],
+            description: 'Legacy single numeric category id',
+          },
+          category_ids: {
+            oneOf: [
+              { type: 'array', items: { type: 'integer' } },
+              { type: 'string' },
+            ],
+          },
+          categoryIds: { type: 'string' },
+          'category_ids[]': {
+            type: 'array',
+            items: { type: 'integer' },
+          },
+          'categoryIds[]': {
+            type: 'array',
+            items: { type: 'integer' },
           },
         },
         required: ['id', 'name', 'email', 'mobile', 'displayOrder', 'team'],
@@ -289,6 +314,35 @@ export class AdminController {
 
     const roleId = String(body?.roleId ?? '').trim();
     return /^[a-fA-F0-9]{24}$/.test(roleId) ? [roleId] : [];
+  }
+
+  private parseStringArrayField(raw: unknown): string[] {
+    const collect = (value: unknown): string[] => {
+      if (Array.isArray(value)) {
+        return value
+          .map((item) => String(item ?? '').trim())
+          .filter((item) => item.length > 0);
+      }
+      const text = String(value ?? '').trim();
+      if (!text) return [];
+      if (text.startsWith('[') && text.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(text);
+          if (Array.isArray(parsed)) {
+            return parsed
+              .map((item) => String(item ?? '').trim())
+              .filter((item) => item.length > 0);
+          }
+        } catch {
+          // fall through to comma-separated parsing
+        }
+      }
+      return text
+        .split(',')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+    };
+    return Array.from(new Set(collect(raw)));
   }
 
   private mapGalleryResponse(item: any) {
@@ -497,6 +551,7 @@ export class AdminController {
     const data = await this.adminService.createBanner(user.vendorId, {
       ...dto,
       imageUrl,
+      imageSource: file ? 'binary_upload' : 'manual_url',
     });
     return { message: 'Banner created successfully', data };
   }
@@ -591,6 +646,11 @@ export class AdminController {
     const imageUrl = file ? (await uploadFile(file, 'banners')).fileUrl : dto.imageUrl;
     const data = await this.adminService.updateBanner(user.vendorId, id, {
       ...(imageUrl ? { imageUrl } : {}),
+      ...(file
+        ? { imageSource: 'binary_upload' as const }
+        : dto.imageUrl !== undefined
+          ? { imageSource: 'manual_url' as const }
+          : {}),
       ...(dto.title !== undefined ? { title: dto.title } : {}),
       ...(dto.status !== undefined ? { status: dto.status } : {}),
       ...(dto.sequenceNumber !== undefined
@@ -1112,7 +1172,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit gallery item',
     description:
-      'Edits a gallery item by id. Fields accepted: title, description, date, galleryType, image.',
+      'Edits a gallery item by id. Existing images are preserved by default; upload new files to append, send `existingImages` to control kept order, and `removeImages` to delete selected previous images.',
   })
   @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
   @ApiConsumes('multipart/form-data')
@@ -1124,6 +1184,18 @@ export class AdminController {
         description: { type: 'string' },
         date: { type: 'string', example: '2026-04-08' },
         galleryType: { type: 'string', enum: [...GALLERY_TYPES] },
+        existingImages: {
+          oneOf: [
+            { type: 'array', items: { type: 'string' } },
+            { type: 'string', description: 'JSON array or comma-separated URLs' },
+          ],
+        },
+        removeImages: {
+          oneOf: [
+            { type: 'array', items: { type: 'string' } },
+            { type: 'string', description: 'JSON array or comma-separated URLs' },
+          ],
+        },
         image: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
@@ -1192,7 +1264,85 @@ export class AdminController {
       pick(['galleryType', 'type', 'category']),
       false,
     );
-    const galleryImages = allImages.map((f) => `/uploads/events/${f.filename}`);
+    const uploadedImages = allImages.map((f) => `/uploads/events/${f.filename}`);
+    const normalizeGalleryImageRef = (raw: unknown): string => {
+      const text = String(raw ?? '').trim();
+      if (!text) return '';
+      if (/^https?:\/\//i.test(text)) {
+        try {
+          const parsed = new URL(text);
+          return parsed.pathname.trim();
+        } catch {
+          return text;
+        }
+      }
+      if (text.startsWith('uploads/')) return `/${text}`;
+      return text;
+    };
+    const existingImagesRaw = pick([
+      'existingImages',
+      'existing_images',
+      'keepImages',
+      'keep_images',
+    ]);
+    const removeImagesRaw = pick([
+      'removeImages',
+      'remove_images',
+      'deletedImages',
+      'deleted_images',
+    ]);
+    const existingImagesProvided = existingImagesRaw !== undefined;
+    const removeImagesProvided = removeImagesRaw !== undefined;
+
+    const current = await this.adminService.getEventById(id);
+    const currentImages = Array.isArray((current as any)?.galleryImages)
+      ? ((current as any).galleryImages as string[])
+      : (current as any)?.eventImage
+        ? [String((current as any).eventImage)]
+        : [];
+    const currentByNormalized = new Map<string, string>();
+    for (const image of currentImages) {
+      const normalized = normalizeGalleryImageRef(image);
+      if (normalized && !currentByNormalized.has(normalized)) {
+        currentByNormalized.set(normalized, image);
+      }
+    }
+
+    const keepImages = existingImagesProvided
+      ? this.parseStringArrayField(existingImagesRaw)
+          .map((imageRef) => {
+            const normalized = normalizeGalleryImageRef(imageRef);
+            return currentByNormalized.get(normalized) ?? imageRef;
+          })
+      : currentImages;
+    const removeImages = removeImagesProvided
+      ? this.parseStringArrayField(removeImagesRaw)
+      : [];
+    const removeImageSet = new Set(
+      removeImages.map((imagePath) => normalizeGalleryImageRef(imagePath)),
+    );
+
+    const nextImages = Array.from(
+      new Set(
+        [...keepImages, ...uploadedImages].filter(
+          (imagePath) => {
+            if (!imagePath) return false;
+            const normalized = normalizeGalleryImageRef(imagePath);
+            if (!normalized) return false;
+            const existsInCurrent = currentByNormalized.has(normalized);
+            const isUploaded = uploadedImages.some(
+              (uploaded) => normalizeGalleryImageRef(uploaded) === normalized,
+            );
+            return (existsInCurrent || isUploaded) && !removeImageSet.has(normalized);
+          },
+        ),
+      ),
+    );
+
+    const hasGalleryImageMutation =
+      uploadedImages.length > 0 ||
+      existingImagesProvided ||
+      removeImagesProvided;
     const data = await this.adminService.updateEvent(id, {
       ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
       ...(dto.eventDescription !== undefined
@@ -1200,8 +1350,11 @@ export class AdminController {
         : {}),
       ...(eventDate !== undefined ? { eventDate } : {}),
       ...(galleryType !== undefined ? { galleryType } : {}),
-      ...(galleryImages.length
-        ? { galleryImages, eventImage: galleryImages[0] }
+      ...(hasGalleryImageMutation
+        ? {
+            galleryImages: nextImages,
+            eventImage: nextImages[0] ?? '',
+          }
         : {}),
     });
     return {
@@ -1466,8 +1619,10 @@ export class AdminController {
         'description is required when externalUrl is false',
       );
     }
-    const image = imageFile ? `/uploads/articles/${imageFile.filename}` : undefined;
-    const pdf = pdfFile ? `/uploads/articles/${pdfFile.filename}` : undefined;
+    const imageUpload = imageFile ? await uploadFile(imageFile, 'articles') : undefined;
+    const pdfUpload = pdfFile ? await uploadFile(pdfFile, 'articles') : undefined;
+    const image = imageUpload?.fileUrl;
+    const pdf = pdfUpload?.fileUrl;
 
     const data = await this.adminService.createArticle({
       title,
@@ -1591,8 +1746,10 @@ export class AdminController {
     );
     const imageFile = files?.image?.[0];
     const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
-    const image = imageFile ? `/uploads/articles/${imageFile.filename}` : undefined;
-    const pdf = pdfFile ? `/uploads/articles/${pdfFile.filename}` : undefined;
+    const imageUpload = imageFile ? await uploadFile(imageFile, 'articles') : undefined;
+    const pdfUpload = pdfFile ? await uploadFile(pdfFile, 'articles') : undefined;
+    const image = imageUpload?.fileUrl;
+    const pdf = pdfUpload?.fileUrl;
     const description =
       body?.description !== undefined ? String(body.description).trim() : undefined;
     const url = body?.url !== undefined ? String(body.url).trim() : undefined;
@@ -1968,7 +2125,8 @@ export class AdminController {
   @ApiOperation({
     summary: 'Create team member',
     description:
-      'Use **Authorize** (Bearer) as usual. Swagger sometimes drops `Authorization` on multipart uploads — then send the same JWT via **x-access-token** header or **access_token** query param.',
+      'Use **Authorize** (Bearer) as usual. Swagger sometimes drops `Authorization` on multipart uploads — then send the same JWT via **x-access-token** header or **access_token** query param. ' +
+      'Optional product categories: **category_id**, repeated **category_ids[]** / **categoryIds[]**, and/or **categoryIds** JSON array string (numeric ids from GET /categories). Omit or send empty to create with no categories.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiHeader({
@@ -2011,6 +2169,30 @@ export class AdminController {
           items: { type: 'string' },
           description: 'Repeated multipart fields for role ids',
         },
+        category_id: {
+          oneOf: [{ type: 'integer' }, { type: 'string' }],
+          description: 'Legacy single numeric category id',
+        },
+        category_ids: {
+          oneOf: [
+            { type: 'array', items: { type: 'integer' } },
+            { type: 'string', description: 'JSON array string' },
+          ],
+        },
+        categoryIds: {
+          type: 'string',
+          description: 'JSON array string of numeric category ids (admin UI)',
+        },
+        'category_ids[]': {
+          type: 'array',
+          items: { type: 'integer' },
+          description: 'Repeated multipart category id fields',
+        },
+        'categoryIds[]': {
+          type: 'array',
+          items: { type: 'integer' },
+          description: 'Repeated multipart category id fields (camelCase)',
+        },
       },
       required: ['name', 'email', 'mobile', 'displayOrder', 'team'],
     },
@@ -2034,6 +2216,7 @@ export class AdminController {
         : Number.parseInt(String(body.displayOrder), 10);
 
     const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
+    const mergedCategoryIds = mergeCategoryIdsFromFormObject(body);
     const dto = plainToClass(CreateTeamMemberDto, {
       name: body.name,
       designation: body.designation,
@@ -2071,7 +2254,8 @@ export class AdminController {
       linkedinUrl: dto.linkedinUrl,
       roleId: dto.roleId,
       roleIds: normalizedRoleIds,
-    } as any);
+      category_ids: mergedCategoryIds,
+    });
 
     return { message: 'Team member created successfully', data: teamMember };
   }
@@ -2111,6 +2295,8 @@ export class AdminController {
         : Number.parseInt(String(body.displayOrder), 10);
 
     const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
+    const explicitCategories = hasExplicitCategoryIdFields(body);
+    const mergedCategoryIds = mergeCategoryIdsFromFormObject(body);
     const dto = plainToClass(EditTeamMemberDto, {
       id: body.id,
       name: body.name,
@@ -2150,7 +2336,8 @@ export class AdminController {
       linkedinUrl: dto.linkedinUrl,
       roleId: dto.roleId,
       roleIds: normalizedRoleIds,
-    } as any);
+      category_ids: explicitCategories ? mergedCategoryIds : undefined,
+    });
 
     return { message: 'Team member updated successfully', data: teamMember };
   }
@@ -2161,7 +2348,8 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete team member (soft delete)',
     description:
-      'Sets team member **status** to **2** (removed from list). Same behaviour as partner delete. **POST** or **DELETE** with JSON body `{ "id": "..." }`.',
+      'Sets team member **status** to **2** (removed from list). Same behaviour as partner delete. **POST** or **DELETE** with JSON body `{ "id": "..." }`. ' +
+      'Other members’ **displayOrder** values are **not** changed (gaps in sort order are allowed).',
   })
   @ApiBody({ type: DeleteTeamMemberDto })
   @ApiResponse({ status: 200, description: 'Team member deleted successfully' })
@@ -2179,7 +2367,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete team member (soft delete)',
     description:
-      'Same as POST **/admin/team-member/delete** — JSON body `{ "id": "..." }`.',
+      'Same as POST **/admin/team-member/delete** — JSON body `{ "id": "..." }`. Does not renumber **displayOrder** on remaining members.',
   })
   @ApiBody({ type: DeleteTeamMemberDto })
   @ApiResponse({ status: 200, description: 'Team member deleted successfully' })
@@ -2317,7 +2505,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'List team members',
     description:
-      'Returns global team members dataset for admin panel: serial number, name, designation, email, mobile, displayOrder, team, active flag, and id for actions. Excludes soft-deleted members (status 2). Sorted by displayOrder ascending.',
+      'Returns global team members dataset for admin panel: serial number (**s_no**, table row only), name, designation, email, mobile, **displayOrder** (persisted sort slot from DB; may have gaps), team, active flag, and id for actions. Excludes soft-deleted members (status 2). Sorted by displayOrder ascending.',
   })
   @ApiResponse({
     status: 200,
@@ -2433,6 +2621,7 @@ export class AdminController {
               name: { type: 'string' },
               email: { type: 'string' },
               phoneNo: { type: 'string' },
+              subject: { type: 'string' },
               message: { type: 'string' },
               createdAt: { type: 'string', format: 'date-time' },
             },
@@ -2609,7 +2798,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get team member by id',
     description:
-      'Returns one team member for the **View** modal: name, designation, email, mobile, displayOrder, team, status (**Active** / **Inactive**), image URL, Facebook / Twitter / LinkedIn URLs. Soft-deleted excluded.',
+      'Returns one team member for the **View** modal: name, designation, email, mobile, **displayOrder** (stored value from DB), team, status (**Active** / **Inactive**), image URL, Facebook / Twitter / LinkedIn URLs. Soft-deleted excluded.',
   })
   @ApiParam({ name: 'id', description: 'Team member MongoDB id' })
   @ApiResponse({ status: 200, description: 'Team member details' })

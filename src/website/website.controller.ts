@@ -16,10 +16,7 @@ import { WebsiteService } from './website.service';
 import { NewsletterSubscribeDto } from './dto/newsletter-subscribe.dto';
 import { NewsletterRecordDto } from './dto/newsletter-record.dto';
 import { ContactSubmitDto } from './dto/contact-submit.dto';
-import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CategoriesService } from '../categories/categories.service';
-import { ProductRegistrationService } from '../product-registration/product-registration.service';
-import { AdminService } from '../admin/admin.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { ListCategoriesQueryDto } from '../categories/dto/list-categories-query.dto';
 import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
@@ -32,10 +29,7 @@ import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
 export class WebsiteController {
   constructor(
     private readonly websiteService: WebsiteService,
-    private readonly manufacturersService: ManufacturersService,
     private readonly categoriesService: CategoriesService,
-    private readonly productRegistrationService: ProductRegistrationService,
-    private readonly adminService: AdminService,
   ) {}
 
   @Get('public/manufacturers')
@@ -49,7 +43,7 @@ export class WebsiteController {
     description: 'Manufacturers retrieved successfully',
   })
   async listPublicManufacturers(@Query() query: ListManufacturersQueryDto) {
-    return this.manufacturersService.findAllPaginated(query);
+    return this.websiteService.getPublicManufacturersPaginated(query);
   }
 
   @Get('public/categories')
@@ -82,21 +76,8 @@ export class WebsiteController {
     description: 'Banner cards data (same shape as legacy public admin list)',
   })
   async listPublicBanners(@Req() req: Request) {
-    const data = await this.adminService.listPublicBanners();
     const origin = `${req.protocol}://${req.get('host')}`;
-    const normalizeImageUrl = (raw: unknown) => {
-      const v = (raw ?? '').toString().trim();
-      if (!v) return v;
-      if (/^https?:\/\//i.test(v)) return v;
-      if (v.startsWith('/uploads/')) return `${origin}${v}`;
-      if (v.startsWith('uploads/')) return `${origin}/${v}`;
-      return v;
-    };
-    const normalized = data.map((b: any) => ({
-      ...b,
-      imageUrl: normalizeImageUrl(b.imageUrl),
-    }));
-    return { message: 'Banners retrieved successfully', data: normalized };
+    return this.websiteService.getPublicBannersNormalized(origin);
   }
 
   @Get('public/articles/list')
@@ -109,34 +90,7 @@ export class WebsiteController {
   @ApiResponse({ status: 200, description: 'Articles retrieved successfully' })
   async listPublicArticles(@Req() req: Request) {
     const origin = `${req.protocol}://${req.get('host')}`;
-    const normalizeImageUrl = (raw: unknown) => {
-      const v = String(raw ?? '').trim();
-      if (!v) return v;
-      if (/^https?:\/\//i.test(v)) return v;
-      if (v.startsWith('/uploads/')) return `${origin}${v}`;
-      if (v.startsWith('uploads/')) return `${origin}/${v}`;
-      return v;
-    };
-
-    const rows = await this.adminService.listArticles();
-    const data = (rows ?? [])
-      .filter((a: any) => Boolean(a?.is_active))
-      .map((a: any, idx: number) => ({
-        s_no: idx + 1,
-        id: a.id,
-        title: a.title,
-        description: a.externalUrl ? '' : a.description,
-        date: a.date,
-        image: normalizeImageUrl(a.image),
-        article_image: normalizeImageUrl(a.article_image),
-        url: a.externalUrl ? a.url : '',
-        externalUrl: a.externalUrl === true,
-        pdf: normalizeImageUrl(a.pdf),
-        article_pdf: normalizeImageUrl(a.article_pdf),
-        is_active: true,
-      }));
-
-    return { message: 'Articles retrieved successfully', data };
+    return this.websiteService.getPublicArticlesNormalized(origin);
   }
 
   // Alias route for clients using `/website/public/articles`
@@ -159,14 +113,7 @@ export class WebsiteController {
     description: 'Certified products retrieved successfully',
   })
   async listPublicCertifiedProducts(@Body() dto: AdminListProductsDto) {
-    const result = await this.productRegistrationService.adminListProducts({
-      ...dto,
-      status: [2],
-    });
-    return {
-      ...result,
-      message: 'Certified products retrieved successfully',
-    };
+    return this.websiteService.getPublicCertifiedProducts(dto);
   }
 
   @Post('public/manufacturers/by-category')
@@ -184,14 +131,7 @@ export class WebsiteController {
   async listManufacturersByCategory(
     @Body() dto: PublicCategoryManufacturersDto,
   ) {
-    const data =
-      await this.productRegistrationService.getManufacturersByCategory(
-        dto.categoryId,
-      );
-    return {
-      message: 'Manufacturers retrieved successfully',
-      ...data,
-    };
+    return this.websiteService.getManufacturersByCategoryPublic(dto);
   }
 
   @Post('public/categories/by-manufacturer')
@@ -209,14 +149,7 @@ export class WebsiteController {
   async listCategoriesByManufacturer(
     @Body() dto: PublicManufacturerCategoriesDto,
   ) {
-    const data =
-      await this.productRegistrationService.getCategoriesByManufacturer(
-        dto.manufacturerId,
-      );
-    return {
-      message: 'Categories retrieved successfully',
-      ...data,
-    };
+    return this.websiteService.getCategoriesByManufacturerPublic(dto);
   }
 
   @Post('newsletter')

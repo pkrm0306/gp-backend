@@ -11,6 +11,7 @@ import {
   Post,
   Put,
   Query,
+  Req,
   StreamableFile,
   UploadedFile,
   UseInterceptors,
@@ -41,7 +42,7 @@ export class StandardsController {
   @ApiOperation({
     summary: 'List standards (paginated)',
     description:
-      'Pagination, search on name, filter by resource_standard_type, **category_id**, and status, sort. Example: ?page=1&limit=10&search=energy&resource_standard_type=Energy&category_id=1&status=1. Each row includes **category_id** and **category_name** (from GET /categories) when linked.',
+      'Pagination, search on name, filter by resource_standard_type, **category_id** (matches legacy field or any linked category), and status, sort. Each row includes **category_ids**, **categories** `{ id, name }[]`, and legacy **category_id** / **category_name** for the primary (first) category.',
   })
   @ApiResponse({ status: 200, description: 'Paginated list' })
   async findAll(@Query() query: ListStandardsQueryDto) {
@@ -96,7 +97,7 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Get standard by id',
     description:
-      'Response includes **category_id** and **category_name** for admin edit dropdowns.',
+      'Response includes **category_ids**, **categories**, and legacy **category_id** / **category_name** (primary = first).',
   })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiResponse({ status: 404, description: 'Not found' })
@@ -116,17 +117,26 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Create standard (file upload)',
     description:
-      'Form: **category_id** (required — numeric id from GET /categories), name, description (optional), resource_standard_type, status (optional, default 1), file (required). PDF, JPG, or PNG, max 10MB. Uses S3 when AWS_* env vars are set, else local uploads/standards/. ' +
-      '**Compatibility:** Omitting category_id on create returns 400 validation. On update, omitting category_id leaves the existing link unchanged (older clients).',
+      'Form: at least one category via **category_id** (legacy), repeated **category_ids[]**, and/or **categoryIds** (JSON array string); name; description (optional); resource_standard_type; status (optional, default 1); file (required). PDF, JPG, or PNG, max 10MB. Primary **category_id** on the document is the first id in the submitted set.',
   })
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['category_id', 'name', 'resource_standard_type', 'file'],
+      required: ['name', 'resource_standard_type', 'file'],
       properties: {
         category_id: {
           oneOf: [{ type: 'integer' }, { type: 'string' }],
-          description: 'Product category id from GET /categories (`category_id` field)',
+          description: 'Legacy single category id from GET /categories',
+        },
+        category_ids: {
+          oneOf: [
+            { type: 'array', items: { type: 'integer' } },
+            { type: 'string', description: 'JSON array string' },
+          ],
+        },
+        categoryIds: {
+          type: 'string',
+          description: 'JSON array string of numeric ids (admin UI)',
         },
         name: { type: 'string' },
         description: { type: 'string' },
@@ -145,13 +155,14 @@ export class StandardsController {
   async create(
     @Body() dto: CreateStandardMultipartDto,
     @UploadedFile() file: Express.Multer.File,
+    @Req() req: { body: Record<string, unknown> },
   ) {
     if (!file) {
       throw new BadRequestException(
         'File is required (field name: file). Allowed: PDF, JPG, PNG. Max 10MB.',
       );
     }
-    const data = await this.standardsService.create(dto, file);
+    const data = await this.standardsService.create(dto, file, req.body);
     return {
       message: 'Standard created successfully',
       data,
@@ -164,7 +175,7 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Update standard',
     description:
-      'Optional fields: **category_id** (numeric id from GET /categories; omit to keep current), name, description, resource_standard_type, status, file (replace attachment). At least one field or file required. Empty category_id is treated as omitted. PDF, JPG, or PNG, max 10MB.',
+      'Optional fields: **category_id**, **category_ids[]**, **categoryIds** — when any category field is present, the full category set is replaced and at least one id is required. Omit all category fields to keep current categories. Other fields: name, description, resource_standard_type, status, file. At least one field or file required.',
   })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiBody({
@@ -173,9 +184,15 @@ export class StandardsController {
       properties: {
         category_id: {
           oneOf: [{ type: 'integer' }, { type: 'string' }],
-          description:
-            'Optional. Must reference an existing category when provided. Omit to leave unchanged.',
+          description: 'Legacy single category; merged with arrays when sent.',
         },
+        category_ids: {
+          oneOf: [
+            { type: 'array', items: { type: 'integer' } },
+            { type: 'string' },
+          ],
+        },
+        categoryIds: { type: 'string' },
         name: { type: 'string' },
         description: { type: 'string' },
         resource_standard_type: { type: 'string' },
@@ -191,10 +208,11 @@ export class StandardsController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateStandardMultipartDto,
+    @Req() req: { body: Record<string, unknown> },
     @UploadedFile() file?: Express.Multer.File,
   ) {
     const numericId = this.standardsService.parseStandardId(id);
-    const data = await this.standardsService.update(numericId, dto, file);
+    const data = await this.standardsService.update(numericId, dto, file, req.body);
     return {
       message: 'Standard updated successfully',
       data,

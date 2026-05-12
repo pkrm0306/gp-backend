@@ -36,7 +36,10 @@ export class Standard {
   @Prop({ required: true })
   resource_standard_type: string;
 
-  /** References `category_id` from GET /categories (same numeric id as the admin UI). */
+  /**
+   * Primary category (first of the multi-category set). Same numeric id as GET /categories.
+   * Full set is stored in **standard_categories**; this field is kept for legacy filters and clients.
+   */
   @Prop({ type: Number, required: false })
   category_id?: number;
 

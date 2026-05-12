@@ -7,6 +7,7 @@ import {
   getS3Client,
   getS3Region,
   isS3Configured,
+  preferDirectS3PublicUrl,
 } from '../config/s3.config';
 
 export type UploadResult = {
@@ -44,9 +45,11 @@ function buildPublicFileUrl(bucket: string, region: string, key: string): string
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
-  const cloudFrontBase = getCloudFrontBaseUrl();
-  if (cloudFrontBase) {
-    return `${cloudFrontBase.replace(/\/+$/, '')}/${encodedKey}`;
+  if (!preferDirectS3PublicUrl()) {
+    const cloudFrontBase = getCloudFrontBaseUrl();
+    if (cloudFrontBase) {
+      return `${cloudFrontBase.replace(/\/+$/, '')}/${encodedKey}`;
+    }
   }
   return buildS3PublicUrl(bucket, region, key);
 }

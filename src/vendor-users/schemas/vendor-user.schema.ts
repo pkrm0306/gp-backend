@@ -49,6 +49,14 @@ export class VendorUser {
   @Prop({ required: false, enum: TEAM_MEMBER_TEAMS })
   team?: TeamMemberTeam;
 
+  /** Product category ids (GET /categories `category_id`); full set for this team member. */
+  @Prop({ type: [Number], default: [] })
+  category_ids?: number[];
+
+  /** Legacy primary category (first entry of category_ids when set). */
+  @Prop({ required: false })
+  category_id?: number;
+
   @Prop({ required: true })
   password: string;
 

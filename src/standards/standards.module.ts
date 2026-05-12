@@ -7,6 +7,10 @@ import {
   StandardIdCounter,
   StandardIdCounterSchema,
 } from './schemas/standard-id-counter.schema';
+import {
+  StandardCategory,
+  StandardCategorySchema,
+} from './schemas/standard-category.schema';
 import { CategoriesModule } from '../categories/categories.module';
 
 @Module({
@@ -14,6 +18,7 @@ import { CategoriesModule } from '../categories/categories.module';
     MongooseModule.forFeature([
       { name: Standard.name, schema: StandardSchema },
       { name: StandardIdCounter.name, schema: StandardIdCounterSchema },
+      { name: StandardCategory.name, schema: StandardCategorySchema },
     ]),
     CategoriesModule,
   ],
