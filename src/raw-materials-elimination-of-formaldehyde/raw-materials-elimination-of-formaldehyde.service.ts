@@ -11,12 +11,22 @@ import {
 } from './schemas/raw-materials-elimination-of-formaldehyde.schema';
 import { CreateRawMaterialsEliminationOfFormaldehydeDto } from './dto/create-raw-materials-elimination-of-formaldehyde.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import {
+  AllProductDocument,
+  AllProductDocumentDocument,
+} from '../product-design/schemas/all-product-document.schema';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import * as fs from 'fs';
+import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class RawMaterialsEliminationOfFormaldehydeService {
   constructor(
     @InjectModel(RawMaterialsEliminationOfFormaldehyde.name)
     private model: Model<RawMaterialsEliminationOfFormaldehydeDocument>,
+    @InjectModel(AllProductDocument.name)
+    private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
   ) {}
 
@@ -31,9 +41,18 @@ export class RawMaterialsEliminationOfFormaldehydeService {
     return new Types.ObjectId(id);
   }
 
+  private async saveFileToUrnFolder(
+    file: Express.Multer.File,
+    urnNo: string,
+    fileType: string,
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  }
+
   async create(
     dto: CreateRawMaterialsEliminationOfFormaldehydeDto,
     vendorId: string,
+    formaldehydeFile?: Express.Multer.File,
   ): Promise<RawMaterialsEliminationOfFormaldehydeDocument> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
@@ -51,7 +70,32 @@ export class RawMaterialsEliminationOfFormaldehydeService {
         updatedDate: now,
       });
 
-      return await doc.save();
+      const saved = await doc.save();
+
+      if (formaldehydeFile) {
+        const storedRelativePath = await this.saveFileToUrnFolder(
+          formaldehydeFile,
+          dto.urnNo.trim(),
+          'formaldehyde_supporting_document',
+        );
+        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        await this.allProductDocumentModel.create({
+          productDocumentId,
+          vendorId: vendorObjectId,
+          urnNo: dto.urnNo.trim(),
+          eoiNo: '',
+          documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+          documentFormSubsection: 'supporting_documents',
+          formPrimaryId: id,
+          documentName: path.basename(storedRelativePath),
+          documentOriginalName: formaldehydeFile.originalname,
+          documentLink: storedRelativePath,
+          createdDate: now,
+          updatedDate: now,
+        });
+      }
+
+      return saved;
     } catch (error: any) {
       console.error(
         '[Raw Materials Elimination Of Formaldehyde] Create error:',

@@ -33,3 +33,7 @@ export class ProcessWasteManagement {
 export const ProcessWasteManagementSchema = SchemaFactory.createForClass(
   ProcessWasteManagement,
 );
+ProcessWasteManagementSchema.index(
+  { urnNo: 1 },
+  { unique: true, name: 'uniq_process_waste_management_urn' },
+);

@@ -146,6 +146,9 @@ export class ProductsController {
                   categoryName: { type: 'string' },
                   categoryCode: { type: 'string' },
                 },
+                additionalProperties: true,
+                description:
+                  'Complete category document from categories collection (includes all available fields).',
               },
               manufacturer: {
                 type: 'object',

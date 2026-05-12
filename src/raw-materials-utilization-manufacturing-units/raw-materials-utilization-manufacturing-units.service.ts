@@ -34,27 +34,65 @@ export class RawMaterialsUtilizationManufacturingUnitsService {
   async create(
     dto: CreateRawMaterialsUtilizationManufacturingUnitsDto,
     vendorId: string,
-  ): Promise<RawMaterialsUtilizationManufacturingUnitsDocument> {
+  ): Promise<{
+    urnNo: string;
+    vendorId: string;
+    units: RawMaterialsUtilizationManufacturingUnitsDocument[];
+  }> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const id =
-        await this.sequenceHelper.getRawMaterialsUtilizationManufacturingUnitsId();
+      const urnNo = dto.urnNo.trim();
       const now = new Date();
+      const unitsPayload = dto.units;
 
-      const doc = new this.model({
-        rawMaterialsUtilizationManufacturingUnitsId: id,
-        urnNo: dto.urnNo.trim(),
-        vendorId: vendorObjectId,
-        unitName: dto.unitName.trim(),
-        year: dto.year,
-        yeardata1: dto.yeardata1,
-        yeardata2: dto.yeardata2,
-        yeardata3: dto.yeardata3,
-        createdDate: now,
-        updatedDate: now,
-      });
+      if (!Array.isArray(unitsPayload) || unitsPayload.length === 0) {
+        throw new BadRequestException('units must be a non-empty array');
+      }
 
-      return await doc.save();
+      const rowsToInsert: Array<
+        Omit<RawMaterialsUtilizationManufacturingUnits, 'createdDate' | 'updatedDate'> & {
+          createdDate: Date;
+          updatedDate: Date;
+        }
+      > = [];
+
+      for (const unit of unitsPayload) {
+        if (
+          !unit?.unitName ||
+          unit.year === undefined ||
+          unit.yeardata1 === undefined ||
+          unit.yeardata2 === undefined ||
+          unit.yeardata3 === undefined
+        ) {
+          throw new BadRequestException(
+            'Each unit must include unitName, year, yeardata1, yeardata2, and yeardata3',
+          );
+        }
+
+        const id =
+          await this.sequenceHelper.getRawMaterialsUtilizationManufacturingUnitsId();
+        rowsToInsert.push({
+          rawMaterialsUtilizationManufacturingUnitsId: id,
+          urnNo,
+          vendorId: vendorObjectId,
+          unitName: unit.unitName.trim(),
+          year: unit.year,
+          yeardata1: unit.yeardata1,
+          yeardata2: unit.yeardata2,
+          yeardata3: unit.yeardata3,
+          createdDate: now,
+          updatedDate: now,
+        });
+      }
+
+      // Replace behavior: keep only rows from the current request for this URN+vendor.
+      await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+      const created = await this.model.insertMany(rowsToInsert);
+      return {
+        urnNo,
+        vendorId: vendorObjectId.toString(),
+        units: created,
+      };
     } catch (error: any) {
       console.error(
         '[Raw Materials Utilization Manufacturing Units] Create error:',

@@ -46,3 +46,7 @@ export class ProcessProductStewardship {
 export const ProcessProductStewardshipSchema = SchemaFactory.createForClass(
   ProcessProductStewardship,
 );
+ProcessProductStewardshipSchema.index(
+  { urnNo: 1 },
+  { unique: true, name: 'uniq_process_product_stewardship_urn' },
+);

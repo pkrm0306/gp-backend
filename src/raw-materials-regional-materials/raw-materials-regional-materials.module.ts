@@ -4,6 +4,10 @@ import {
   RawMaterialsRegionalMaterials,
   RawMaterialsRegionalMaterialsSchema,
 } from './schemas/raw-materials-regional-materials.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentSchema,
+} from '../product-design/schemas/all-product-document.schema';
 import { RawMaterialsRegionalMaterialsService } from './raw-materials-regional-materials.service';
 import { RawMaterialsRegionalMaterialsController } from './raw-materials-regional-materials.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -17,6 +21,7 @@ import { AuthModule } from '../auth/auth.module';
         name: RawMaterialsRegionalMaterials.name,
         schema: RawMaterialsRegionalMaterialsSchema,
       },
+      { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),
     ProductRegistrationModule,
     PassportModule,

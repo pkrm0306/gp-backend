@@ -3,7 +3,9 @@ import {
   BadRequestException,
   NotFoundException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, ClientSession, Connection, Types } from 'mongoose';
 import { createHash, randomUUID } from 'crypto';
@@ -30,6 +32,8 @@ import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RedisService } from '../common/redis/redis.service';
 
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
@@ -51,6 +55,7 @@ type AdminExportJob = {
 
 @Injectable()
 export class ProductRegistrationService {
+  private readonly logger = new Logger(ProductRegistrationService.name);
   private readonly exportJobs = new Map<string, AdminExportJob>();
   private readonly exportDir = join(process.cwd(), 'uploads', 'exports');
   private readonly exportTtlMs = 24 * 60 * 60 * 1000;
@@ -67,7 +72,75 @@ export class ProductRegistrationService {
     private countriesService: CountriesService,
     private statesService: StatesService,
     private activityLogService: ActivityLogService,
+    private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private getProductListCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('PRODUCT_LIST_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '60',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 60;
+  }
+
+  private buildVendorProductListCacheKey(
+    listProductsDto: ListProductsDto,
+    manufacturerId: string,
+  ): string {
+    const normalized = {
+      manufacturerId,
+      page: listProductsDto.page ?? 1,
+      limit: listProductsDto.limit ?? 10,
+      search: String(listProductsDto.search || '').trim().toLowerCase(),
+      productStatus: listProductsDto.productStatus ?? listProductsDto.status ?? null,
+      sort: listProductsDto.sort === 'asc' ? 'asc' : 'desc',
+    };
+    return this.redisService.buildKey(
+      'products',
+      'list',
+      'vendor',
+      JSON.stringify(normalized),
+    );
+  }
+
+  private buildAdminProductListCacheKey(dto: AdminListProductsDto): string {
+    const normalized = {
+      page: dto.page ?? 1,
+      limit: dto.limit ?? 10,
+      order: (dto.order ?? dto.sortOrder) === 'asc' ? 'asc' : 'desc',
+      sortBy: dto.sortBy ?? 'createdDate',
+      search: String(dto.search || '').trim().toLowerCase(),
+      product_type: dto.product_type ?? null,
+      categoryId: dto.categoryId ?? null,
+      manufacturerId: dto.manufacturerId ?? null,
+      stateId: dto.stateId ?? null,
+      city: String(dto.city || '').trim().toLowerCase(),
+      from: dto.from ?? dto.fromDate ?? null,
+      to: dto.to ?? dto.toDate ?? null,
+      validTillYear: dto.validTillYear ?? null,
+      status: Array.isArray(dto.status) ? [...dto.status].sort((a, b) => a - b) : [],
+    };
+    return this.redisService.buildKey(
+      'products',
+      'list',
+      'admin',
+      JSON.stringify(normalized),
+    );
+  }
+
+  private async invalidateProductListingsCache(): Promise<void> {
+    await Promise.all([
+      this.redisService.deleteByPattern(this.redisService.buildKey('products', 'list', 'vendor', '*')),
+      this.redisService.deleteByPattern(this.redisService.buildKey('products', 'list', 'admin', '*')),
+    ]).catch((error) => {
+      this.logger.warn(
+        `Failed to invalidate product listing caches: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    });
+  }
 
   private ensureExportDir() {
     if (!existsSync(this.exportDir)) {
@@ -547,6 +620,7 @@ export class ProductRegistrationService {
           );
         }
 
+        await this.invalidateProductListingsCache();
         return {
           ...savedProduct.toObject(),
           plants: plants.map((p) => p.toObject()),
@@ -820,6 +894,7 @@ export class ProductRegistrationService {
           results.length,
           'products',
         );
+        await this.invalidateProductListingsCache();
         return results;
       } catch (error: any) {
         await session.abortTransaction();
@@ -1028,6 +1103,7 @@ export class ProductRegistrationService {
         );
       }
 
+      await this.invalidateProductListingsCache();
       return updatedProduct.toObject();
     } catch (error: any) {
       await session.abortTransaction();
@@ -1121,6 +1197,7 @@ export class ProductRegistrationService {
         updateUrnStatusDto.updateStatusTo,
       );
 
+      await this.invalidateProductListingsCache();
       return updatedProduct;
     } catch (error: any) {
       await session.abortTransaction();
@@ -1202,8 +1279,10 @@ export class ProductRegistrationService {
         urnNo,
         dto.updateStatusTo,
       );
+      await this.invalidateProductListingsCache();
       return { urnNo, urnStatus: dto.updateStatusTo };
     }
+    await this.invalidateProductListingsCache();
     return { urnNo, productStatus: dto.updateStatusTo };
   }
 
@@ -1213,10 +1292,34 @@ export class ProductRegistrationService {
    */
   async listProducts(listProductsDto: ListProductsDto, manufacturerId: string) {
     try {
+      const cacheKey = this.buildVendorProductListCacheKey(
+        listProductsDto,
+        manufacturerId,
+      );
+      try {
+        const cached = await this.redisService.get<{
+          data: any[];
+          pagination: {
+            page: number;
+            limit: number;
+            totalCount: number;
+            totalPages: number;
+          };
+        }>(cacheKey);
+        if (cached && Array.isArray(cached.data) && cached.pagination) {
+          return cached;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Product vendor list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      }
+
       const {
         page = 1,
         limit = 10,
         search,
+        productStatus,
         status,
         sort = 'desc',
       } = listProductsDto;
@@ -1233,8 +1336,12 @@ export class ProductRegistrationService {
       };
 
       // Status filter
-      if (status !== undefined && status !== null) {
-        initialMatchConditions.productStatus = status;
+      const normalizedProductStatus = productStatus ?? status;
+      if (
+        normalizedProductStatus !== undefined &&
+        normalizedProductStatus !== null
+      ) {
+        initialMatchConditions.productStatus = normalizedProductStatus;
       }
 
       // Aggregation pipeline
@@ -1365,7 +1472,7 @@ export class ProductRegistrationService {
         );
       }
 
-      return {
+      const response = {
         data,
         pagination: {
           page,
@@ -1374,6 +1481,14 @@ export class ProductRegistrationService {
           totalPages,
         },
       };
+      this.redisService
+        .set(cacheKey, response, this.getProductListCacheTtlSeconds())
+        .catch((error) => {
+          this.logger.warn(
+            `Product vendor list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+          );
+        });
+      return response;
     } catch (error: any) {
       console.error('[List Products] Error:', error);
       console.error('[List Products] Error stack:', error.stack);
@@ -1646,7 +1761,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'product_design'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PRODUCT_DESIGN] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1686,7 +1802,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'product_performance'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PRODUCT_PERFORMANCE] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1727,12 +1844,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    {
-                      $eq: [
-                        '$documentForm',
-                        'raw_materials_hazardous_products',
-                      ],
-                    },
+                    { $eq: ['$documentForm', DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1786,6 +1899,51 @@ export class ProductRegistrationService {
         });
       }
 
+      // Stage 13B: $lookup - Join with all_product_documents (bucket for raw-materials section docs)
+      pipeline.push({
+        $lookup: {
+          from: 'all_product_documents',
+          let: { urnNo: '$urnNo' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$urnNo', '$$urnNo'] },
+                    {
+                      $in: [
+                        '$documentForm',
+                        [
+                          DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
+                          DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
+                          DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS,
+                          DocumentSectionKey.RAW_MATERIALS_UTILIZATION,
+                          DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY,
+                          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+                          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+                          DocumentSectionKey.RAW_MATERIALS_ALTERNATIVE_RAW_MATERIALS,
+                          DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+                          DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
+                          DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+                          DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+                          DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIRONMENTAL,
+                          DocumentSectionKey.RAW_MATERIALS_RECOVERY,
+                          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
+                          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
+                        ],
+                      ],
+                    },
+                    { $ne: ['$isDeleted', true] },
+                  ],
+                },
+              },
+            },
+            { $sort: { productDocumentId: -1 } },
+          ],
+          as: 'raw_materials_documents_bucket',
+        },
+      });
+
       // Stage 14: $lookup - Join with process_manufacturing collection (by urn_no)
       pipeline.push({
         $lookup: {
@@ -1815,7 +1973,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_manufacturing'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_MANUFACTURING] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1874,7 +2033,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_waste_management'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_WASTE_MANAGEMENT] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1933,7 +2093,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_life_cycle_approach'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -1973,7 +2134,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_product_stewardship'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -2013,7 +2175,8 @@ export class ProductRegistrationService {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$documentForm', 'process_innovation'] },
+                    { $eq: ['$documentForm', DocumentSectionKey.PROCESS_INNOVATION] },
+                    { $ne: ['$isDeleted', true] },
                   ],
                 },
               },
@@ -2028,14 +2191,14 @@ export class ProductRegistrationService {
       pipeline.push({
         $lookup: {
           from: 'process_comments',
-          let: { urnNo: '$urnNo', vendorId: '$vendorId' },
+          let: { urnNo: '$urnNo' },
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $and: [
-                    { $eq: ['$urnNo', '$$urnNo'] },
-                    { $eq: ['$vendorId', '$$vendorId'] },
+                  $eq: [
+                    { $rtrim: { input: { $toString: '$urnNo' }, chars: '/' } },
+                    { $rtrim: { input: { $toString: '$$urnNo' }, chars: '/' } },
                   ],
                 },
               },
@@ -2114,19 +2277,175 @@ export class ProductRegistrationService {
           raw_materials_hazardous_products: 1,
           raw_materials_hazardous_products_documents: 1,
           raw_materials_additives: 1,
+          raw_materials_additives_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_ADDITIVES],
+              },
+            },
+          },
+          raw_materials_alternative_raw_materials_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_ALTERNATIVE_RAW_MATERIALS,
+                ],
+              },
+            },
+          },
           raw_materials_elimination_of_formaldehyde: 1,
+          raw_materials_elimination_of_formaldehyde_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE],
+              },
+            },
+          },
           raw_materials_elimination_of_prohibited_flame: 1,
+          raw_materials_elimination_of_prohibited_flame_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME],
+              },
+            },
+          },
           raw_materials_elimination_of_prohibited_flame_solvents: 1,
+          raw_materials_elimination_of_prohibited_flame_solvents_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+                ],
+              },
+            },
+          },
           raw_materials_elimination_of_prohibited_flame_solvents_products: 1,
           raw_materials_green_supply: 1,
+          raw_materials_green_supply_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY],
+              },
+            },
+          },
           raw_materials_hazardous: 1,
           raw_materials_optimization_of_raw_mix: 1,
+          raw_materials_raw_mix_optimization_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+                ],
+              },
+            },
+          },
           raw_materials_rapidly_renewable_materials: 1,
+          raw_materials_rapidly_renewable_materials_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS],
+              },
+            },
+          },
           raw_materials_recovery: 1,
+          raw_materials_recovery_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_RECOVERY],
+              },
+            },
+          },
+          raw_materials_elimination_of_ozone_depleting_global_warming_substances_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
+                ],
+              },
+            },
+          },
           raw_materials_recycled_content: 1,
+          raw_materials_recycled_content_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT],
+              },
+            },
+          },
           raw_materials_reduce_environmental: 1,
+          raw_materials_reduce_environmental_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $in: [
+                  '$$doc.documentForm',
+                  [
+                    DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+                    DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIRONMENTAL,
+                  ],
+                ],
+              },
+            },
+          },
+          raw_materials_rmc_alternative_raw_materials_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: [
+                  '$$doc.documentForm',
+                  DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+                ],
+              },
+            },
+          },
           raw_materials_regional_materials: 1,
+          raw_materials_regional_materials_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS],
+              },
+            },
+          },
           raw_materials_utilization: 1,
+          raw_materials_utilization_documents: {
+            $filter: {
+              input: '$raw_materials_documents_bucket',
+              as: 'doc',
+              cond: {
+                $eq: ['$$doc.documentForm', DocumentSectionKey.RAW_MATERIALS_UTILIZATION],
+              },
+            },
+          },
           raw_materials_utilization_manufacturing_units: 1,
           raw_materials_utilization_rmc: 1,
           process_manufacturing: {
@@ -2214,15 +2533,7 @@ export class ProductRegistrationService {
           createdDate: product.createdDate,
           updatedDate: product.updatedDate,
         },
-        category: product.category
-          ? {
-              _id: product.category._id,
-              categoryName:
-                product.category.categoryName || product.category.category_name,
-              categoryCode:
-                product.category.categoryCode || product.category.category_code,
-            }
-          : null,
+        category: product.category || null,
         manufacturer: product.manufacturer
           ? {
               _id: product.manufacturer._id,
@@ -2357,33 +2668,319 @@ export class ProductRegistrationService {
           updatedDate: d.updatedDate,
         })),
         raw_materials_additives: product.raw_materials_additives || [],
+        raw_materials_additives_documents: (product.raw_materials_additives_documents || []).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_alternative_raw_materials_documents: (
+          product.raw_materials_alternative_raw_materials_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_elimination_of_formaldehyde:
           product.raw_materials_elimination_of_formaldehyde || [],
+        raw_materials_elimination_of_formaldehyde_documents: (
+          product.raw_materials_elimination_of_formaldehyde_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_elimination_of_prohibited_flame:
           product.raw_materials_elimination_of_prohibited_flame || [],
+        raw_materials_elimination_of_prohibited_flame_documents: (
+          product.raw_materials_elimination_of_prohibited_flame_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_elimination_of_prohibited_flame_solvents:
           product.raw_materials_elimination_of_prohibited_flame_solvents || [],
+        raw_materials_elimination_of_prohibited_flame_solvents_documents: (
+          product.raw_materials_elimination_of_prohibited_flame_solvents_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_elimination_of_prohibited_flame_solvents_products:
           product.raw_materials_elimination_of_prohibited_flame_solvents_products ||
           [],
         raw_materials_green_supply: product.raw_materials_green_supply || [],
+        raw_materials_green_supply_documents: (
+          product.raw_materials_green_supply_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_hazardous: product.raw_materials_hazardous || [],
         raw_materials_optimization_of_raw_mix:
           product.raw_materials_optimization_of_raw_mix || [],
+        raw_materials_raw_mix_optimization_documents: (
+          product.raw_materials_raw_mix_optimization_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_rapidly_renewable_materials:
           product.raw_materials_rapidly_renewable_materials || [],
+        raw_materials_rapidly_renewable_materials_documents: (
+          product.raw_materials_rapidly_renewable_materials_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_recovery: product.raw_materials_recovery || [],
-        raw_materials_recycled_content:
-          product.raw_materials_recycled_content || [],
+        raw_materials_recovery_documents: (
+          product.raw_materials_recovery_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_elimination_of_ozone_depleting_global_warming_substances_documents: (
+          product.raw_materials_elimination_of_ozone_depleting_global_warming_substances_documents ||
+          []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_recycled_content: product.raw_materials_recycled_content || [],
+        raw_materials_recycled_content_documents: (
+          product.raw_materials_recycled_content_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_reduce_environmental:
           product.raw_materials_reduce_environmental || [],
+        raw_materials_reduce_environmental_documents: (
+          product.raw_materials_reduce_environmental_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_reduce_enviromental_documents: (
+          product.raw_materials_reduce_environmental_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        raw_materials_rmc_alternative_raw_materials_documents: (
+          product.raw_materials_rmc_alternative_raw_materials_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_regional_materials:
           product.raw_materials_regional_materials || [],
+        raw_materials_regional_materials_documents: (
+          product.raw_materials_regional_materials_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_utilization: product.raw_materials_utilization || [],
+        raw_materials_utilization_documents: (product.raw_materials_utilization_documents || []).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         raw_materials_utilization_manufacturing_units:
           product.raw_materials_utilization_manufacturing_units || [],
-        raw_materials_utilization_rmc:
-          product.raw_materials_utilization_rmc || [],
+        raw_materials_utilization_rmc: (product.raw_materials_utilization_rmc || []).map((r) => {
+          const row: any = { ...r };
+          for (const mat of ['Iron', 'Steel', 'Copper', 'Recycled', 'Aggregate']) {
+            for (const yr of [1, 2, 3, 4]) {
+              const canonical = `percentYear${yr}Subsititution${mat}`;
+              const legacy = `percentYear${yr}Subsitution${mat}`;
+              if (row[legacy] === undefined && row[canonical] !== undefined) {
+                row[legacy] = row[canonical];
+              }
+            }
+          }
+          for (const yr of [1, 2, 3, 4]) {
+            const canonical = `plantYear${yr}PercentSubstitution`;
+            const legacy = `plantYear${yr}PercentSubsitution`;
+            if (row[legacy] === undefined && row[canonical] !== undefined) {
+              row[legacy] = row[canonical];
+            }
+          }
+          return row;
+        }),
         process_manufacturing: product.process_manufacturing
           ? {
               _id: product.process_manufacturing._id,
@@ -2689,10 +3286,23 @@ export class ProductRegistrationService {
         })),
         process_comments: product.process_comments
           ? {
+              ...product.process_comments,
               _id: product.process_comments._id,
               processCommentsId: product.process_comments.processCommentsId,
               urnNo: product.process_comments.urnNo,
               vendorId: product.process_comments.vendorId,
+              adminProcessComments:
+                product.process_comments.adminProcessComments ??
+                product.process_comments.adminComments ??
+                product.process_comments.admin_comment ??
+                product.process_comments.admin_comments ??
+                null,
+              vendorProcessComments:
+                product.process_comments.vendorProcessComments ??
+                product.process_comments.vendorComments ??
+                product.process_comments.vendor_comment ??
+                product.process_comments.vendor_comments ??
+                null,
               productDesign: product.process_comments.productDesign,
               productPerformance: product.process_comments.productPerformance,
               manfacturingProcess: product.process_comments.manfacturingProcess,
@@ -2740,6 +3350,25 @@ export class ProductRegistrationService {
   }
 
   async adminListProducts(dto: AdminListProductsDto) {
+    const cacheKey = this.buildAdminProductListCacheKey(dto);
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: any[];
+        total: number;
+        page: number;
+        limit: number;
+        statusCounts: Record<string, number>;
+      }>(cacheKey);
+      if (cached && Array.isArray(cached.data)) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Product admin list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 10;
     const skip = (page - 1) * limit;
@@ -3134,7 +3763,7 @@ export class ProductRegistrationService {
         : [],
     }));
 
-    return {
+    const response = {
       message: 'Products listed successfully',
       data: grouped,
       total,
@@ -3142,6 +3771,14 @@ export class ProductRegistrationService {
       limit,
       statusCounts,
     };
+    this.redisService
+      .set(cacheKey, response, this.getProductListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Product admin list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return response;
   }
 
   async getManufacturersByCategory(categoryId: string) {

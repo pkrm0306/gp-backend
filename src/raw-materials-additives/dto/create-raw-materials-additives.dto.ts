@@ -1,17 +1,18 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsString, MaxLength, Min } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
-export class CreateRawMaterialsAdditivesDto {
-  @ApiProperty({
-    description: 'URN number',
-    example: 'URN-20260305124230',
-  })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(20)
-  urnNo: string;
-
+export class AdditivesUnitDto {
   @ApiProperty({
     description: 'Unit name',
     example: 'Manufacturing Unit - A',
@@ -26,6 +27,17 @@ export class CreateRawMaterialsAdditivesDto {
   @Min(0)
   year1: number;
 
+  @ApiProperty({
+    description: 'Optional legacy year field from frontend payload',
+    example: 2026,
+    required: false,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  year?: number;
+
   @ApiProperty({ example: 20 })
   @Type(() => Number)
   @IsInt()
@@ -39,10 +51,11 @@ export class CreateRawMaterialsAdditivesDto {
   year1b: number;
 
   @ApiProperty({ example: 50 })
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  year1c: number;
+  year1c?: number;
 
   @ApiProperty({ example: 110 })
   @Type(() => Number)
@@ -93,6 +106,15 @@ export class CreateRawMaterialsAdditivesDto {
   year3c: number;
 
   @ApiProperty({
+    description: 'Optional PPC text value from frontend payload',
+    example: 'PPC description',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  ppc?: string;
+
+  @ApiProperty({
     description: 'PSC text value',
     example: 'PSC description',
   })
@@ -115,4 +137,34 @@ export class CreateRawMaterialsAdditivesDto {
   @IsString()
   @IsNotEmpty()
   percentcoc: string;
+}
+
+export class CreateRawMaterialsAdditivesDto {
+  @ApiProperty({
+    description: 'URN number',
+    example: 'URN-20260305124230',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  urnNo: string;
+
+  @ApiProperty({
+    description: 'Display name for uploaded supporting file',
+    example: 'Additives Supporting Document - 2026',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  additivesFileName?: string;
+
+  @ApiProperty({
+    type: [AdditivesUnitDto],
+    description: 'Manufacturing unit rows to replace in one request for this URN',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => AdditivesUnitDto)
+  units: AdditivesUnitDto[];
 }

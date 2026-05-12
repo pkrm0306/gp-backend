@@ -17,6 +17,9 @@ export class RawMaterialsAdditives {
   @Prop({ required: true })
   unitName: string;
 
+  @Prop({ required: false })
+  year?: number;
+
   @Prop({ required: true })
   year1: number;
 

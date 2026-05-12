@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Patch,
   Put,
@@ -49,6 +50,16 @@ export class ManufacturersController {
     description: 'Paginated list with total, page, limit',
   })
   async findAll(@Query() query: ListManufacturersQueryDto) {
+    if (query.id) {
+      const manufacturer = await this.manufacturersService.findById(query.id);
+      if (!manufacturer) {
+        throw new NotFoundException('Manufacturer not found');
+      }
+      return {
+        message: 'Manufacturer retrieved successfully',
+        data: manufacturer,
+      };
+    }
     return this.manufacturersService.findAllPaginated(query);
   }
 

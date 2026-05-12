@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types, ClientSession } from 'mongoose';
@@ -15,11 +16,13 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { CreateProcessManufacturingDto } from './dto/create-process-manufacturing.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
-export class ProcessManufacturingService {
+export class ProcessManufacturingService implements OnModuleInit {
   constructor(
     @InjectModel(ProcessManufacturing.name)
     private processManufacturingModel: Model<ProcessManufacturingDocument>,
@@ -28,6 +31,21 @@ export class ProcessManufacturingService {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
   ) {}
+
+  async onModuleInit() {
+    const shouldSyncIndexes =
+      String(process.env.SYNC_INDEXES_ON_BOOT || 'false').toLowerCase() ===
+      'true';
+    if (!shouldSyncIndexes) return;
+    try {
+      await this.processManufacturingModel.syncIndexes();
+    } catch (error) {
+      console.error(
+        '[process-manufacturing] syncIndexes failed (check duplicates):',
+        error,
+      );
+    }
+  }
 
   /**
    * Safely convert string to ObjectId with validation
@@ -45,56 +63,12 @@ export class ProcessManufacturingService {
     return new Types.ObjectId(id);
   }
 
-  /**
-   * Ensure URN folder exists, create if it doesn't
-   */
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-
-    return urnFolderPath;
-  }
-
-  /**
-   * Save file to URN-specific folder
-   */
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'energy_conservation' | 'energy_consumption',
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    // Copy file from temp location to URN folder (file.path is the temp location)
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      // Optionally remove temp file
-      try {
-        fs.unlinkSync(file.path);
-      } catch (err) {
-        // Ignore if temp file doesn't exist or can't be deleted
-      }
-    } else {
-      // If file.path doesn't exist, write buffer directly
-      if (file.buffer) {
-        fs.writeFileSync(filePath, file.buffer);
-      } else {
-        throw new BadRequestException(
-          `File data not available for ${fileType}`,
-        );
-      }
-    }
-
-    // Return relative path from uploads folder
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
 
   /**
@@ -103,71 +77,99 @@ export class ProcessManufacturingService {
   async createProcessManufacturing(
     createProcessManufacturingDto: CreateProcessManufacturingDto,
     vendorId: string,
-    energyConservationSupportingDocumentsFile?: Express.Multer.File,
-    energyConsumptionDocumentsFile?: Express.Multer.File,
+    energyConservationSupportingDocumentsFiles?: Express.Multer.File[],
+    energyConsumptionDocumentsFiles?: Express.Multer.File[],
   ): Promise<ProcessManufacturingDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
-    // Declare file paths outside try block for cleanup in catch
-    let energyConservationFullPath: string | undefined;
-    let energyConsumptionFullPath: string | undefined;
+    // Track file paths for cleanup/replacement
+    let createdFileFullPaths: string[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
-      // Get next process manufacturing ID
-      const processManufacturingId =
-        await this.sequenceHelper.getProcessManufacturingId();
-
       // Get current date
       const now = new Date();
+      const existingManufacturing = await this.processManufacturingModel
+        .findOne({ urnNo: createProcessManufacturingDto.urnNo })
+        .session(session);
+      const processManufacturingId =
+        existingManufacturing?.processManufacturingId ??
+        (await this.sequenceHelper.getProcessManufacturingId());
+      const energyConservationFiles = Array.isArray(
+        energyConservationSupportingDocumentsFiles,
+      )
+        ? energyConservationSupportingDocumentsFiles
+        : [];
+      const energyConsumptionFiles = Array.isArray(energyConsumptionDocumentsFiles)
+        ? energyConsumptionDocumentsFiles
+        : [];
 
       // Handle file uploads and set flags
-      let energyConservationSupportingDocuments = 0;
-      let energyConservationFilePath: string | undefined;
-      let energyConservationFileName = '';
-
-      if (energyConservationSupportingDocumentsFile) {
-        energyConservationFilePath = this.saveFileToUrnFolder(
-          energyConservationSupportingDocumentsFile,
-          createProcessManufacturingDto.urnNo,
-          'energy_conservation',
-        );
-        energyConservationFullPath = path.join(
-          'uploads',
-          energyConservationFilePath,
-        );
+      let energyConservationSupportingDocuments =
+        existingManufacturing?.energyConservationSupportingDocuments ?? 0;
+      const energyConservationFilePaths: string[] = [];
+      if (energyConservationFiles.length > 0) {
+        for (const energyConservationSupportingDocumentsFile of energyConservationFiles) {
+          const energyConservationFilePath = await this.saveFileToUrnFolder(
+            energyConservationSupportingDocumentsFile,
+            createProcessManufacturingDto.urnNo,
+            'energy_conservation',
+          );
+          energyConservationFilePaths.push(energyConservationFilePath);
+          createdFileFullPaths.push(path.join('uploads', energyConservationFilePath));
+        }
         energyConservationSupportingDocuments = 1;
-        energyConservationFileName =
-          createProcessManufacturingDto.energyConservationSupportingDocumentsFileName ||
-          path.basename(energyConservationFilePath);
       }
 
-      let energyConsumptionDocuments = 0;
-      let energyConsumptionFilePath: string | undefined;
-      let energyConsumptionFileName = '';
-
-      if (energyConsumptionDocumentsFile) {
-        energyConsumptionFilePath = this.saveFileToUrnFolder(
-          energyConsumptionDocumentsFile,
-          createProcessManufacturingDto.urnNo,
-          'energy_consumption',
-        );
-        energyConsumptionFullPath = path.join(
-          'uploads',
-          energyConsumptionFilePath,
-        );
+      let energyConsumptionDocuments =
+        existingManufacturing?.energyConsumptionDocuments ?? 0;
+      const energyConsumptionFilePaths: string[] = [];
+      if (energyConsumptionFiles.length > 0) {
+        for (const energyConsumptionDocumentsFile of energyConsumptionFiles) {
+          const energyConsumptionFilePath = await this.saveFileToUrnFolder(
+            energyConsumptionDocumentsFile,
+            createProcessManufacturingDto.urnNo,
+            'energy_consumption',
+          );
+          energyConsumptionFilePaths.push(energyConsumptionFilePath);
+          createdFileFullPaths.push(path.join('uploads', energyConsumptionFilePath));
+        }
         energyConsumptionDocuments = 1;
-        energyConsumptionFileName =
-          createProcessManufacturingDto.energyConsumptionDocumentsFileName ||
-          path.basename(energyConsumptionFilePath);
+      }
+
+      if (energyConservationFiles.length > 0 || energyConsumptionFiles.length > 0) {
+        const existingDocs = await this.allProductDocumentModel
+          .find({
+            urnNo: createProcessManufacturingDto.urnNo,
+            documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
+            isDeleted: { $ne: true },
+          })
+          .session(session);
+        oldFileLinksToDeleteAfterCommit = existingDocs
+          .map((d) => d.documentLink)
+          .filter(Boolean);
+        if (existingDocs.length) {
+          await this.allProductDocumentModel.updateMany(
+            { _id: { $in: existingDocs.map((d) => d._id) } },
+            {
+              $set: {
+                isDeleted: true,
+                deletedAt: now,
+                deletedBy: vendorObjectId,
+                updatedDate: now,
+              },
+            },
+            { session },
+          );
+        }
       }
 
       // Create process manufacturing data
       const processManufacturingData = {
-        processManufacturingId,
         vendorId: vendorObjectId,
         urnNo: createProcessManufacturingDto.urnNo,
         energyConservationSupportingDocuments,
@@ -182,70 +184,72 @@ export class ProcessManufacturingService {
         energyConsumptionDocuments,
         processManufacturingStatus:
           createProcessManufacturingDto.processManufacturingStatus || 0,
-        createdDate: now,
         updatedDate: now,
       };
-
-      const processManufacturing = new this.processManufacturingModel(
-        processManufacturingData,
-      );
-      const savedProcessManufacturing = await processManufacturing.save({
-        session,
-      });
+      const savedProcessManufacturing = await this.processManufacturingModel
+        .findOneAndUpdate(
+          { urnNo: createProcessManufacturingDto.urnNo },
+          {
+            $set: processManufacturingData,
+            $setOnInsert: { processManufacturingId, createdDate: now },
+          },
+          { upsert: true, new: true, session },
+        )
+        .exec();
 
       // Insert uploaded documents into all_product_documents (master table)
-      if (
-        energyConservationFilePath &&
-        energyConservationSupportingDocumentsFile
-      ) {
-        const productDocumentId =
-          await this.sequenceHelper.getProductDocumentId();
-        const documentLink = `uploads/${energyConservationFilePath}`;
-
-        const documentData = {
+      const docsToInsert = [];
+      for (let i = 0; i < energyConservationFilePaths.length; i++) {
+        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        docsToInsert.push({
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo: createProcessManufacturingDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_manufacturing',
+          documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
           documentFormSubsection: 'energy_conservation_supporting_documents',
-          formPrimaryId: processManufacturingId,
-          documentName: path.basename(energyConservationFilePath),
-          documentOriginalName:
-            energyConservationSupportingDocumentsFile.originalname,
-          documentLink,
+          formPrimaryId: savedProcessManufacturing.processManufacturingId,
+          documentName: path.basename(energyConservationFilePaths[i]),
+          documentOriginalName: energyConservationFiles[i].originalname,
+          documentLink: energyConservationFilePaths[i],
           createdDate: now,
           updatedDate: now,
-        };
-
-        await this.allProductDocumentModel.create([documentData], { session });
+        });
       }
-
-      if (energyConsumptionFilePath && energyConsumptionDocumentsFile) {
-        const productDocumentId =
-          await this.sequenceHelper.getProductDocumentId();
-        const documentLink = `uploads/${energyConsumptionFilePath}`;
-
-        const documentData = {
+      for (let i = 0; i < energyConsumptionFilePaths.length; i++) {
+        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        docsToInsert.push({
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo: createProcessManufacturingDto.urnNo,
           eoiNo: '',
-          documentForm: 'process_manufacturing',
+          documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
           documentFormSubsection: 'energy_consumption_documents',
-          formPrimaryId: processManufacturingId,
-          documentName: path.basename(energyConsumptionFilePath),
-          documentOriginalName: energyConsumptionDocumentsFile.originalname,
-          documentLink,
+          formPrimaryId: savedProcessManufacturing.processManufacturingId,
+          documentName: path.basename(energyConsumptionFilePaths[i]),
+          documentOriginalName: energyConsumptionFiles[i].originalname,
+          documentLink: energyConsumptionFilePaths[i],
           createdDate: now,
           updatedDate: now,
-        };
-
-        await this.allProductDocumentModel.create([documentData], { session });
+        });
+      }
+      if (docsToInsert.length) {
+        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
       }
 
       await session.commitTransaction();
       session.endSession();
+
+      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
+        const normalizedPath = String(fileLink).replace(/\\/g, '/');
+        if (normalizedPath && fs.existsSync(normalizedPath)) {
+          try {
+            fs.unlinkSync(normalizedPath);
+          } catch {
+            // Ignore post-commit cleanup issues
+          }
+        }
+      }
 
       return savedProcessManufacturing;
     } catch (error: any) {
@@ -254,17 +258,10 @@ export class ProcessManufacturingService {
 
       // Clean up uploaded files if transaction fails (files were moved to URN folder)
       try {
-        if (
-          energyConservationFullPath &&
-          fs.existsSync(energyConservationFullPath)
-        ) {
-          fs.unlinkSync(energyConservationFullPath);
-        }
-        if (
-          energyConsumptionFullPath &&
-          fs.existsSync(energyConsumptionFullPath)
-        ) {
-          fs.unlinkSync(energyConsumptionFullPath);
+        for (const fullPath of createdFileFullPaths) {
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+          }
         }
       } catch (cleanupError: any) {
         console.error(

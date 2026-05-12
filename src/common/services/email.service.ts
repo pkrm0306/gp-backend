@@ -1,13 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import SMTPTransport from 'nodemailer/lib/smtp-transport';
 
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter;
+  private escapeHtml(input: string): string {
+    return String(input ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
 
   constructor(private configService: ConfigService) {
+    const service =
+      this.configService.get<string>('SMTP_SERVER_SERVICE') ||
+      this.configService.get<string>('MAIL_SERVICE') ||
+      '';
     const host =
       this.configService.get<string>('SMTP_SERVER_HOST') ||
       this.configService.get<string>('MAIL_HOST') ||
@@ -32,15 +45,17 @@ export class EmailService {
       this.configService.get<string>('MAIL_PASSWORD') ||
       '';
 
-    this.transporter = nodemailer.createTransport({
-      host,
-      port,
+    // Prefer provider-level `service` when supplied; fallback to host/port.
+    const transportOptions: SMTPTransport.Options = {
+      ...(service ? { service } : { host, port }),
       secure,
       ...(user && pass ? { auth: { user, pass } } : {}),
       tls: {
         rejectUnauthorized: false,
       },
-    });
+    };
+
+    this.transporter = nodemailer.createTransport(transportOptions);
   }
 
   async sendEmail(
@@ -77,6 +92,18 @@ export class EmailService {
       this.logger.error(`Failed to send email to ${to}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Fire-and-forget wrapper used by non-critical email flows.
+   * Prevents request failures when SMTP has transient issues.
+   */
+  sendInBackground(task: () => Promise<void>): void {
+    task().catch((error) => {
+      this.logger.warn(
+        `Background email task failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    });
   }
 
   async sendRegistrationEmail(
@@ -183,6 +210,58 @@ Your new password is: ${newPassword}
 ⚠️ Important: Please login and change your password immediately for security reasons.
 
 If you did not request this password reset, please contact our support team immediately.
+
+Best regards,
+The GreenPro Team
+    `;
+
+    await this.sendEmail(email, subject, htmlBody, textBody);
+  }
+
+  async sendStaffCredentialsEmail(
+    email: string,
+    password: string,
+    staffName?: string,
+  ): Promise<void> {
+    const safeName = this.escapeHtml(staffName?.trim() || 'Team Member');
+    const safeEmail = this.escapeHtml(email);
+    const safePassword = this.escapeHtml(password);
+    const subject = 'GreenPro Admin - Team Member Credentials';
+    const htmlBody = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Team Member Credentials</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background-color: #166534; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+          <h1 style="margin: 0;">GreenPro Team Access</h1>
+        </div>
+        <div style="background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px;">
+          <p>Hello ${safeName},</p>
+          <p>Your team member account has been created. Use the credentials below to sign in:</p>
+          <div style="background-color: white; padding: 20px; border-left: 4px solid #16a34a; margin: 20px 0;">
+            <p style="margin: 5px 0;"><strong>Email:</strong> ${safeEmail}</p>
+            <p style="margin: 5px 0;"><strong>Password:</strong> ${safePassword}</p>
+          </div>
+          <p style="margin-top: 20px;">For security, please sign in and change your password immediately.</p>
+          <p>Best regards,<br>The GreenPro Team</p>
+        </div>
+      </body>
+      </html>
+    `;
+    const textBody = `
+GreenPro Team Access
+
+Hello ${staffName?.trim() || 'Team Member'},
+
+Your team member account has been created. Use the credentials below to sign in:
+Email: ${email}
+Password: ${password}
+
+For security, please sign in and change your password immediately.
 
 Best regards,
 The GreenPro Team

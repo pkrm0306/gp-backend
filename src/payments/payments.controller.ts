@@ -9,9 +9,10 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -423,7 +424,87 @@ export class PaymentsController {
     example: 'URN-20260409142354',
     type: String,
   })
-  @ApiBody({ type: UpdatePaymentDto })
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'cheque_or_dd_file', maxCount: 1 },
+        { name: 'tds_file', maxCount: 1 },
+      ],
+      {
+        storage,
+        fileFilter: (req, file, cb) => {
+          if (!file) {
+            cb(null, true);
+            return;
+          }
+          const allowedMimes = [
+            'image/png',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel',
+          ];
+          const allowedExtensions = ['.png', '.doc', '.docx', '.xls', '.xlsx'];
+          const fileExt = extname(file.originalname).toLowerCase();
+
+          if (allowedMimes.includes(file.mimetype) || allowedExtensions.includes(fileExt)) {
+            cb(null, true);
+          } else {
+            cb(
+              new BadRequestException(
+                'Invalid file type. Only PNG, Word (.doc, .docx), and Excel (.xls, .xlsx) files are allowed.',
+              ),
+              false,
+            );
+          }
+        },
+        limits: {
+          fileSize: 10 * 1024 * 1024,
+        },
+      },
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        urnNo: { type: 'string', example: 'URN-20260305124230' },
+        quoteAmount: { type: 'number', example: 10000.0 },
+        quoteGstAmount: { type: 'number', example: 1800.0 },
+        quoteTdsAmount: { type: 'number', example: 1000.0 },
+        quoteTotal: { type: 'number', example: 10800.0 },
+        adminGstNo: { type: 'string', example: '29ABCDE1234F1Z9' },
+        vendorGstNo: { type: 'string', example: '27ABCDE1234F1Z9' },
+        paymentType: {
+          type: 'string',
+          enum: ['registration', 'certification', 'renew'],
+          example: 'registration',
+        },
+        paymentMode: {
+          type: 'string',
+          enum: ['online', 'cheque_or_dd', 'neft_or_rtgs'],
+          example: 'cheque_or_dd',
+        },
+        onlinePaymentId: { type: 'number', example: 0 },
+        paymentReferenceNo: { type: 'string', example: 'REF123456' },
+        paymentChequeDate: { type: 'string', format: 'date-time', example: '2026-03-06T00:00:00.000Z' },
+        productsToBeCertified: { type: 'string', example: '["product1","product2"]' },
+        paymentStatus: { type: 'number', enum: [0, 1, 2, 3], example: 0 },
+        urnStatus: { type: 'number', enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], example: 1 },
+        cheque_or_dd_file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Required when paymentMode is cheque_or_dd',
+        },
+        tds_file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Required when paymentMode is cheque_or_dd',
+        },
+      },
+    },
+  })
   @ApiResponse({
     status: 200,
     description: 'Payment updated successfully',
@@ -445,7 +526,12 @@ export class PaymentsController {
   async updatePayment(
     @CurrentUser() user: any,
     @Param('urnNo') urnNoParam: string,
-    @Body() updatePaymentDto: UpdatePaymentDto,
+    @Body() body: any,
+    @UploadedFiles()
+    files?: {
+      cheque_or_dd_file?: Express.Multer.File[];
+      tds_file?: Express.Multer.File[];
+    },
   ) {
     try {
       const urnNo = String(urnNoParam ?? '').trim();
@@ -453,10 +539,35 @@ export class PaymentsController {
         throw new BadRequestException('Invalid urnNo');
       }
 
+      const updatePaymentDto: UpdatePaymentDto = {
+        urnNo: body.urnNo,
+        quoteAmount: body.quoteAmount !== undefined ? parseFloat(body.quoteAmount) : undefined,
+        quoteGstAmount: body.quoteGstAmount !== undefined ? parseFloat(body.quoteGstAmount) : undefined,
+        quoteTdsAmount: body.quoteTdsAmount !== undefined ? parseFloat(body.quoteTdsAmount) : undefined,
+        quoteTotal: body.quoteTotal !== undefined ? parseFloat(body.quoteTotal) : undefined,
+        adminGstNo: body.adminGstNo,
+        vendorGstNo: body.vendorGstNo,
+        paymentType: body.paymentType,
+        paymentMode: body.paymentMode,
+        onlinePaymentId:
+          body.onlinePaymentId !== undefined ? parseInt(body.onlinePaymentId, 10) : undefined,
+        paymentReferenceNo: body.paymentReferenceNo,
+        paymentChequeDate: body.paymentChequeDate,
+        productsToBeCertified: body.productsToBeCertified,
+        paymentStatus:
+          body.paymentStatus !== undefined ? parseInt(body.paymentStatus, 10) : undefined,
+        urnStatus: body.urnStatus !== undefined ? parseInt(body.urnStatus, 10) : undefined,
+      };
+
+      const chequeOrDdFile = files?.cheque_or_dd_file?.[0];
+      const tdsFile = files?.tds_file?.[0];
+
       const payment = await this.paymentsService.updatePaymentDetailsByUrn(
         urnNo,
         updatePaymentDto,
         user?.vendorId,
+        chequeOrDdFile,
+        tdsFile,
       );
 
       return {

@@ -144,14 +144,21 @@ export class ProcessLifeCycleApproachController {
           example: 'Life Cycle Implementation Documents - March 2026',
         },
         lifeCycleAssesmentReportsFile: {
-          type: 'string',
-          format: 'binary',
-          description: 'Life cycle assessment reports file',
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+          description: 'Life cycle assessment reports files (multiple supported)',
         },
         lifeCycleImplementationDocumentsFile: {
-          type: 'string',
-          format: 'binary',
-          description: 'Life cycle implementation documents file',
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary',
+          },
+          description:
+            'Life cycle implementation documents files (multiple supported)',
         },
       },
     },
@@ -204,16 +211,16 @@ export class ProcessLifeCycleApproachController {
 
     // Extract files by fieldname from the files array
     // AnyFilesInterceptor captures all files and stores them with their fieldname
-    const lifeCycleAssesmentReportsFile = files?.find(
+    const lifeCycleAssesmentReportsFiles = (files || []).filter(
       (f) => f.fieldname === 'lifeCycleAssesmentReportsFile',
     );
-    const lifeCycleImplementationDocumentsFile = files?.find(
+    const lifeCycleImplementationDocumentsFiles = (files || []).filter(
       (f) => f.fieldname === 'lifeCycleImplementationDocumentsFile',
     );
 
     // Validate file names if files are uploaded
     if (
-      lifeCycleAssesmentReportsFile &&
+      lifeCycleAssesmentReportsFiles.length > 0 &&
       (!dto.lifeCycleAssesmentReportsFileName ||
         dto.lifeCycleAssesmentReportsFileName.trim() === '')
     ) {
@@ -223,7 +230,7 @@ export class ProcessLifeCycleApproachController {
     }
 
     if (
-      lifeCycleImplementationDocumentsFile &&
+      lifeCycleImplementationDocumentsFiles.length > 0 &&
       (!dto.lifeCycleImplementationDocumentsFileName ||
         dto.lifeCycleImplementationDocumentsFileName.trim() === '')
     ) {
@@ -236,8 +243,8 @@ export class ProcessLifeCycleApproachController {
       await this.processLifeCycleApproachService.createProcessLifeCycleApproach(
         dto,
         user.vendorId,
-        lifeCycleAssesmentReportsFile,
-        lifeCycleImplementationDocumentsFile,
+        lifeCycleAssesmentReportsFiles,
+        lifeCycleImplementationDocumentsFiles,
       );
     return { success: true, data };
   }

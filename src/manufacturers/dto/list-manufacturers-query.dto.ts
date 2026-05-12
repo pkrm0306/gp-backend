@@ -1,8 +1,18 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsEnum, IsInt, IsMongoId, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class ListManufacturersQueryDto {
+  @ApiPropertyOptional({
+    description:
+      'Optional manufacturer MongoDB id. When provided, returns only that manufacturer (ignores pagination/search).',
+    example: '660000000000000000000000',
+  })
+  @IsOptional()
+  @IsString()
+  @IsMongoId()
+  id?: string;
+
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
   @Type(() => Number)

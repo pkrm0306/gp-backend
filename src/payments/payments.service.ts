@@ -366,6 +366,8 @@ export class PaymentsService {
     urnNo: string,
     updatePaymentDto: UpdatePaymentDto,
     vendorId?: string,
+    chequeOrDdFile?: Express.Multer.File,
+    tdsFile?: Express.Multer.File,
   ): Promise<PaymentDetailsDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -412,18 +414,18 @@ export class PaymentsService {
       const now = new Date();
       const updateData: any = { updatedDate: now };
 
-      if (updatePaymentDto.quoteAmount !== undefined)
-        updateData.quoteAmount = updatePaymentDto.quoteAmount;
-      if (updatePaymentDto.quoteGstAmount !== undefined)
-        updateData.quoteGstAmount = updatePaymentDto.quoteGstAmount;
-      if (updatePaymentDto.quoteTdsAmount !== undefined)
-        updateData.quoteTdsAmount = updatePaymentDto.quoteTdsAmount;
-      if (updatePaymentDto.quoteTotal !== undefined)
-        updateData.quoteTotal = updatePaymentDto.quoteTotal;
-      if (updatePaymentDto.adminGstNo !== undefined)
-        updateData.adminGstNo = updatePaymentDto.adminGstNo;
-      if (updatePaymentDto.vendorGstNo !== undefined)
-        updateData.vendorGstNo = updatePaymentDto.vendorGstNo;
+      if (updatePaymentDto.paymentMode === 'cheque_or_dd' && (!chequeOrDdFile || !tdsFile)) {
+        throw new BadRequestException(
+          'For paymentMode=cheque_or_dd, both cheque_or_dd_file and tds_file are required',
+        );
+      }
+
+      if (updatePaymentDto.quoteAmount !== undefined) updateData.quoteAmount = updatePaymentDto.quoteAmount;
+      if (updatePaymentDto.quoteGstAmount !== undefined) updateData.quoteGstAmount = updatePaymentDto.quoteGstAmount;
+      if (updatePaymentDto.quoteTdsAmount !== undefined) updateData.quoteTdsAmount = updatePaymentDto.quoteTdsAmount;
+      if (updatePaymentDto.quoteTotal !== undefined) updateData.quoteTotal = updatePaymentDto.quoteTotal;
+      if (updatePaymentDto.adminGstNo !== undefined) updateData.adminGstNo = updatePaymentDto.adminGstNo;
+      if (updatePaymentDto.vendorGstNo !== undefined) updateData.vendorGstNo = updatePaymentDto.vendorGstNo;
       if (updatePaymentDto.paymentType !== undefined) {
         updateData.paymentType = this.normalizePaymentType(
           updatePaymentDto.paymentType,
@@ -439,6 +441,12 @@ export class PaymentsService {
         updateData.paymentChequeDate = updatePaymentDto.paymentChequeDate
           ? new Date(updatePaymentDto.paymentChequeDate)
           : undefined;
+      }
+      if (chequeOrDdFile) {
+        updateData.chequeOrDdFile = `/uploads/payments/${chequeOrDdFile.filename}`;
+      }
+      if (tdsFile) {
+        updateData.tdsFile = `/uploads/payments/${tdsFile.filename}`;
       }
       if (updatePaymentDto.productsToBeCertified !== undefined) {
         updateData.productsToBeCertified =

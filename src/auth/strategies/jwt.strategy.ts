@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
+import { AuthService } from '../auth.service';
 
 function tokenFromAccessTokenHeader(req: Request): string | null {
   const h = req.headers['x-access-token'];
@@ -17,7 +18,10 @@ function tokenFromAccessTokenHeader(req: Request): string | null {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private readonly authService: AuthService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -26,15 +30,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ]),
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('JWT_SECRET') || 'secret',
+      passReqToCallback: true,
     });
   }
 
-  async validate(payload: any) {
-    if (!payload.userId || !payload.role) {
+  async validate(_req: Request, payload: any) {
+    if (await this.authService.isTokenRevoked(payload?.jti)) {
+      throw new UnauthorizedException('Token has been revoked');
+    }
+
+    const role = payload.role || payload.type;
+    if (!payload.userId || !role) {
       throw new UnauthorizedException('Invalid token payload');
     }
-    const isPlatformAdmin =
-      payload.role === 'admin' || payload.role === 'super_admin';
+    const isPlatformAdmin = role === 'admin';
     const manufacturerId = payload.manufacturerId || payload.vendorId;
     if (!isPlatformAdmin && !manufacturerId) {
       throw new UnauthorizedException('Invalid token payload');
@@ -43,9 +52,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       userId: payload.userId,
       manufacturerId: manufacturerId ?? undefined,
       vendorId: manufacturerId ?? undefined,
-      role: payload.role,
+      role,
+      type: role,
       name: payload.name,
       email: payload.email,
+      tokenJti: payload?.jti,
     };
   }
 }

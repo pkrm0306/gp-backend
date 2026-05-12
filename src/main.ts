@@ -1,8 +1,16 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { NestExpressApplication } from '@nestjs/platform-express';
-import { urlencoded, Request, Response, NextFunction } from 'express';
+import {
+  ExpressAdapter,
+  NestExpressApplication,
+} from '@nestjs/platform-express';
+import express, {
+  urlencoded,
+  Request,
+  Response,
+  NextFunction,
+} from 'express';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
@@ -26,6 +34,35 @@ function ensureUploadDirectories() {
   }
 }
 
+/**
+ * Serves `GET /uploads/**` from disk before Nest's router runs.
+ * Otherwise Nest answers first with 404 and static middleware never runs.
+ * Root matches every other `join(process.cwd(), 'uploads', ...)` write path.
+ */
+function mountUploadStaticOnExpress(server: express.Application) {
+  const uploadsRoot = join(process.cwd(), 'uploads');
+  server.use(
+    '/uploads',
+    express.static(uploadsRoot, { index: false, fallthrough: true }),
+  );
+  /** Legacy: DB has `/uploads/<file>` while the file lives in `uploads/categories/`. */
+  server.use('/uploads', (req: Request, res: Response, next: NextFunction) => {
+    const rel = String(req.path ?? '').replace(/^\/+/, '');
+    if (!rel || rel.includes('/')) {
+      next();
+      return;
+    }
+    const candidate = join(uploadsRoot, 'categories', rel);
+    if (existsSync(candidate)) {
+      res.sendFile(candidate, (err) => {
+        if (err) next(err);
+      });
+      return;
+    }
+    next();
+  });
+}
+
 const ALLOWED_CORS_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:3001',
@@ -42,44 +79,39 @@ const ALLOWED_CORS_ORIGINS = [
   'https://cursor-greenpro-admin-mern-cyan.vercel.app',
   'https://cursor-greenpro-website-mern-seven.vercel.app',
   'https://cursor-greenpro-admin-mern-dun.vercel.app',
+  'https://greenpro-portals.vercel.app',
+  'https://admin-nine-beta-48.vercel.app',
+  'https://vendor-five-zeta.vercel.app',
 ];
 
 function buildCorsOrigins(): string[] {
+  const deploymentOrigins = [
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.APP_URL,
+    process.env.FRONTEND_URL,
+    process.env.ADMIN_URL,
+  ]
+    .map((o) => String(o || '').trim())
+    .filter(Boolean);
   const fromEnv =
     process.env.CORS_ORIGINS?.split(',')
       .map((o) => o.trim())
       .filter(Boolean) ?? [];
-  return [...new Set([...ALLOWED_CORS_ORIGINS, ...fromEnv])];
+  return [
+    ...new Set([...ALLOWED_CORS_ORIGINS, ...deploymentOrigins, ...fromEnv]),
+  ];
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
-
   ensureUploadDirectories();
 
-  app.useStaticAssets(join(__dirname, '..', 'uploads'), {
-    prefix: '/uploads/',
-  });
+  const server = express();
+  mountUploadStaticOnExpress(server);
 
-  /**
-   * Legacy static fallback:
-   * Some older records store category images as `/uploads/<filename>` but the actual file
-   * may live under `uploads/categories/<filename>`. If the request is a plain filename
-   * (no nested path), try serving it from `uploads/categories` as a fallback.
-   */
-  app.use('/uploads', (req: Request, res: Response, next: NextFunction) => {
-    const rel = String(req.path ?? '').replace(/^\/+/, '');
-    if (!rel || rel.includes('/')) {
-      next();
-      return;
-    }
-    const candidate = join(process.cwd(), 'uploads', 'categories', rel);
-    if (existsSync(candidate)) {
-      res.sendFile(candidate);
-      return;
-    }
-    next();
-  });
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule,
+    new ExpressAdapter(server),
+  );
 
   app.use(urlencoded({ extended: true, limit: '1mb' }));
 
@@ -96,6 +128,11 @@ async function bootstrap() {
 
       // Allow known deployed/admin origins
       if (corsOrigins.includes(origin)) return callback(null, true);
+
+      // Allow Render-hosted callers (Swagger previews, staging frontends)
+      if (/^https:\/\/([a-z0-9-]+\.)*onrender\.com$/i.test(origin)) {
+        return callback(null, true);
+      }
 
       return callback(new Error(`CORS blocked for origin: ${origin}`), false);
     },

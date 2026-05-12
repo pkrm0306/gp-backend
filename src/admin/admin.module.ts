@@ -34,10 +34,16 @@ import {
   Notification,
   NotificationSchema,
 } from '../common/schemas/notification.schema';
+import { Article, ArticleSchema } from '../articles/schemas/article.schema';
+import { RbacModule } from '../rbac/rbac.module';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { CategoriesModule } from '../categories/categories.module';
 
 @Module({
   imports: [
     ManufacturersModule,
+    RbacModule,
+    CategoriesModule,
     MongooseModule.forFeature([
       { name: Manufacturer.name, schema: ManufacturerSchema },
       { name: VendorUser.name, schema: VendorUserSchema },
@@ -48,10 +54,11 @@ import {
       { name: Notification.name, schema: NotificationSchema },
       { name: Event.name, schema: EventSchema },
       { name: EventIdCounter.name, schema: EventIdCounterSchema },
+      { name: Article.name, schema: ArticleSchema },
     ]),
   ],
   controllers: [AdminController],
-  providers: [AdminService, EmailService],
+  providers: [AdminService, EmailService, PermissionsGuard],
   exports: [AdminService],
 })
 export class AdminModule {}

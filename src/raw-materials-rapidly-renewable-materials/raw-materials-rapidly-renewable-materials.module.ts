@@ -4,6 +4,10 @@ import {
   RawMaterialsRapidlyRenewableMaterials,
   RawMaterialsRapidlyRenewableMaterialsSchema,
 } from './schemas/raw-materials-rapidly-renewable-materials.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentSchema,
+} from '../product-design/schemas/all-product-document.schema';
 import { RawMaterialsRapidlyRenewableMaterialsService } from './raw-materials-rapidly-renewable-materials.service';
 import { RawMaterialsRapidlyRenewableMaterialsController } from './raw-materials-rapidly-renewable-materials.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -17,6 +21,7 @@ import { AuthModule } from '../auth/auth.module';
         name: RawMaterialsRapidlyRenewableMaterials.name,
         schema: RawMaterialsRapidlyRenewableMaterialsSchema,
       },
+      { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),
     ProductRegistrationModule,
     PassportModule,

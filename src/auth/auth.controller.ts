@@ -1,4 +1,13 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  Req,
+  UseGuards,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
@@ -7,15 +16,29 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { VerifyRecaptchaDto } from './dto/verify-recaptcha.dto';
-import { CaptchaService } from '../common/services/captcha.service';
+import { LogoutDto } from './dto/logout.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-    private readonly captchaService: CaptchaService,
-  ) {}
+  constructor(private readonly authService: AuthService) {}
+
+  private extractAccessToken(req: any): string | null {
+    const authHeader = String(req?.headers?.authorization || '').trim();
+    if (/^Bearer\s+/i.test(authHeader)) {
+      return authHeader.replace(/^Bearer\s+/i, '').trim();
+    }
+    const xAccessToken = req?.headers?.['x-access-token'];
+    if (typeof xAccessToken === 'string' && xAccessToken.trim()) {
+      return xAccessToken.trim();
+    }
+    if (Array.isArray(xAccessToken) && xAccessToken[0]?.trim()) {
+      return xAccessToken[0].trim();
+    }
+    const queryToken = String(req?.query?.access_token || '').trim();
+    return queryToken || null;
+  }
 
   @Post('register-vendor')
   @HttpCode(HttpStatus.CREATED)
@@ -36,28 +59,86 @@ export class AuthController {
   @ApiOperation({
     summary: 'Login user',
     description:
-      'Requires a **body**. In Postman/Thunder Client: Body → **raw** → **JSON**, `Content-Type: application/json`, e.g. `{"email":"you@example.com","password":"yourPassword"}`. Or Body → **x-www-form-urlencoded** with keys `email` and `password`. Do not leave Body as **none**.',
+      'Requires a **body**. For the **admin portal**, send **`portal`: `"admin"`** (recommended) so unknown emails return **Email id is not registered** instead of generic invalid credentials. ' +
+      'If the API runs on a different port than the SPA, also send header **`x-admin-portal`: `1`** when `Origin` may not identify the admin app. ' +
+      'Success responses for admin/staff include **designation**, **mobile**, **vendorUserId** on **`user`**.',
   })
   @ApiBody({
     type: LoginDto,
     examples: {
-      default: {
+      vendor: {
+        summary: 'Vendor portal',
         value: {
           email: 'user@example.com',
           password: 'YourPassword123',
+          portal: 'vendor',
+        },
+      },
+      admin: {
+        summary: 'Admin portal',
+        value: {
+          email: 'staff@example.com',
+          password: 'YourPassword123',
+          portal: 'admin',
         },
       },
     },
   })
-  async login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto);
+  async login(@Body() loginDto: LoginDto, @Req() req: any) {
+    const portal = this.resolvePortal(req, loginDto.portal);
+    return this.authService.login(loginDto, portal);
+  }
+
+  private resolvePortal(
+    req: any,
+    dtoPortal?: 'admin' | 'vendor',
+  ): 'admin' | 'vendor' | undefined {
+    if (dtoPortal) return dtoPortal;
+
+    /** Admin SPA often calls API on another port; Origin may be omitted — clients may send this header. */
+    const xAdminPortal = String(req?.headers?.['x-admin-portal'] ?? '')
+      .trim()
+      .toLowerCase();
+    if (['1', 'true', 'yes', 'admin'].includes(xAdminPortal)) {
+      return 'admin';
+    }
+
+    const host = String(req?.headers?.host || '')
+      .trim()
+      .toLowerCase();
+    const origin = String(req?.headers?.origin || '')
+      .trim()
+      .toLowerCase();
+    const referer = String(req?.headers?.referer || '')
+      .trim()
+      .toLowerCase();
+    const combined = `${host} ${origin} ${referer}`;
+
+    if (combined.includes('localhost:3004')) return 'admin';
+    if (combined.includes('localhost:3001')) return 'vendor';
+    if (combined.includes('admin/login')) return 'admin';
+    if (
+      combined.includes('greenpro-portals') &&
+      combined.includes('admin')
+    ) {
+      return 'admin';
+    }
+    return undefined;
   }
 
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Request password reset' })
-  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(forgotPasswordDto);
+  @ApiOperation({
+    summary: 'Request password reset',
+    description:
+      'Send **`portal`: `"admin"`** (or header **`x-admin-portal`: `1`**) for the admin app: unknown emails → **Email id is not registered**; **staff** without RBAC roles or non–admin/staff accounts → **Portal access restricted** (same rules as admin login). Vendor portal keeps the generic success message when the email is unknown.',
+  })
+  async forgotPassword(
+    @Body() forgotPasswordDto: ForgotPasswordDto,
+    @Req() req: any,
+  ) {
+    const portal = this.resolvePortal(req, forgotPasswordDto.portal);
+    return this.authService.forgotPassword(forgotPasswordDto, portal);
   }
 
   @Post('refresh')
@@ -65,6 +146,23 @@ export class AuthController {
   @ApiOperation({ summary: 'Refresh access token' })
   async refresh(@Body() refreshTokenDto: RefreshTokenDto) {
     return this.authService.refresh(refreshTokenDto);
+  }
+
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Logout current session',
+    description:
+      'Revokes current access token and optional refresh token to prevent reuse.',
+  })
+  @ApiBody({ type: LogoutDto, required: false })
+  async logout(@Req() req: any, @Body() body?: LogoutDto) {
+    const accessToken = this.extractAccessToken(req);
+    if (!accessToken) {
+      throw new UnauthorizedException('Authorization token missing');
+    }
+    return this.authService.logout(accessToken, body?.refreshToken);
   }
 
   @Post('verify-recaptcha')
@@ -76,7 +174,7 @@ export class AuthController {
   })
   @ApiBody({ type: VerifyRecaptchaDto })
   async verifyRecaptcha(@Body() dto: VerifyRecaptchaDto) {
-    const valid = await this.captchaService.verifyCaptcha(dto.captchaToken);
+    const valid = await this.authService.verifyRecaptcha(dto.captchaToken);
     return {
       success: true,
       message: valid ? 'reCAPTCHA verified' : 'Invalid reCAPTCHA token',

@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   InternalServerErrorException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types } from 'mongoose';
@@ -16,11 +17,13 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { CreateProductPerformanceDto } from './dto/create-product-performance.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
-export class ProductPerformanceService {
+export class ProductPerformanceService implements OnModuleInit {
   constructor(
     @InjectModel(ProductPerformance.name)
     private productPerformanceModel: Model<ProductPerformanceDocument>,
@@ -29,6 +32,21 @@ export class ProductPerformanceService {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
   ) {}
+
+  async onModuleInit() {
+    const shouldSyncIndexes =
+      String(process.env.SYNC_INDEXES_ON_BOOT || 'false').toLowerCase() ===
+      'true';
+    if (!shouldSyncIndexes) return;
+    try {
+      await this.productPerformanceModel.syncIndexes();
+    } catch (error) {
+      console.error(
+        '[product-performance] syncIndexes failed (check existing duplicates):',
+        error,
+      );
+    }
+  }
 
   /**
    * Safely convert string to ObjectId with validation
@@ -46,56 +64,17 @@ export class ProductPerformanceService {
     return new Types.ObjectId(id);
   }
 
-  /**
-   * Ensure URN folder exists, create if it doesn't
-   */
-  private ensureUrnFolder(urnNo: string): string {
-    const urnFolderPath = path.join('uploads', 'urns', urnNo);
-
-    if (!fs.existsSync(urnFolderPath)) {
-      fs.mkdirSync(urnFolderPath, { recursive: true });
-    }
-
-    return urnFolderPath;
+  private normalizeText(value?: string): string {
+    return String(value ?? '').trim().toLowerCase();
   }
 
-  /**
-   * Save file to URN-specific folder
-   */
-  private saveFileToUrnFolder(
+  private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'test_report',
-  ): string {
-    const urnFolderPath = this.ensureUrnFolder(urnNo);
-    const fileExt = path.extname(file.originalname);
-    const timestamp = Date.now();
-    const randomSuffix = Math.round(Math.random() * 1e9);
-    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
-    const filePath = path.join(urnFolderPath, fileName);
-
-    // Copy file from temp location to URN folder (file.path is the temp location)
-    if (file.path && fs.existsSync(file.path)) {
-      fs.copyFileSync(file.path, filePath);
-      // Optionally remove temp file
-      try {
-        fs.unlinkSync(file.path);
-      } catch (err) {
-        // Ignore if temp file doesn't exist or can't be deleted
-      }
-    } else {
-      // If file.path doesn't exist, write buffer directly
-      if (file.buffer) {
-        fs.writeFileSync(filePath, file.buffer);
-      } else {
-        throw new BadRequestException(
-          `File data not available for ${fileType}`,
-        );
-      }
-    }
-
-    // Return relative path from uploads folder
-    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
   }
 
   /**
@@ -104,95 +83,169 @@ export class ProductPerformanceService {
   async createProductPerformance(
     createProductPerformanceDto: CreateProductPerformanceDto,
     vendorId: string,
-    testReportFile?: Express.Multer.File,
+    testReportFilesInput?: Express.Multer.File[],
   ): Promise<ProductPerformanceDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
-    // Declare file paths outside try block for cleanup in catch
-    let testReportFullPath: string | undefined;
+    // Track file paths for cleanup/replacement
+    let createdFileFullPaths: string[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
-      // Get next product performance ID
-      const processProductPerformanceId =
-        await this.sequenceHelper.getProductPerformanceId();
-
       // Get current date
       const now = new Date();
+      const normalizedProductName = this.normalizeText(
+        createProductPerformanceDto.productName,
+      );
+      const normalizedTestReportFileName = this.normalizeText(
+        createProductPerformanceDto.testReportFileName,
+      );
+
+      const existingProductPerformance = await this.productPerformanceModel
+        .findOne({
+          urnNo: createProductPerformanceDto.urnNo,
+          normalizedProductName,
+          normalizedTestReportFileName,
+        })
+        .session(session);
+
+      const processProductPerformanceId =
+        existingProductPerformance?.processProductPerformanceId ??
+        (await this.sequenceHelper.getProductPerformanceId());
+
+      const uploadedTestReportFiles = Array.isArray(testReportFilesInput)
+        ? testReportFilesInput
+        : [];
 
       // Handle file uploads and set flags
-      let testReportFiles = 0;
-      let testReportFilePath: string | undefined;
-      let storedFileName = '';
+      let testReportFiles = existingProductPerformance?.testReportFiles ?? 0;
+      const testReportFilePaths: string[] = [];
+      const testReportStoredNames: string[] = [];
+      let storedFileName = existingProductPerformance?.testReportFileName ?? '';
 
-      if (testReportFile) {
-        testReportFilePath = this.saveFileToUrnFolder(
-          testReportFile,
-          createProductPerformanceDto.urnNo,
-          'test_report',
-        );
-        testReportFullPath = path.join('uploads', testReportFilePath);
+      if (uploadedTestReportFiles.length > 0) {
+        for (const testReportFile of uploadedTestReportFiles) {
+          const testReportFilePath = await this.saveFileToUrnFolder(
+            testReportFile,
+            createProductPerformanceDto.urnNo,
+            'test_report',
+          );
+          testReportFilePaths.push(testReportFilePath.fileUrl);
+          testReportStoredNames.push(testReportFilePath.fileName);
+        }
         testReportFiles = 1;
-        storedFileName = path.basename(testReportFilePath);
+        storedFileName = testReportStoredNames[0] || storedFileName;
       }
 
-      // Create product performance data
+      // Replace existing performance docs on re-upload
+      if (uploadedTestReportFiles.length > 0) {
+        const existingDocs = await this.allProductDocumentModel
+          .find({
+            urnNo: createProductPerformanceDto.urnNo,
+            documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE,
+            isDeleted: { $ne: true },
+          })
+          .session(session);
+
+        oldFileLinksToDeleteAfterCommit = existingDocs
+          .map((d) => d.documentLink)
+          .filter(Boolean);
+
+        if (existingDocs.length) {
+          await this.allProductDocumentModel.updateMany(
+            { _id: { $in: existingDocs.map((d) => d._id) } },
+            {
+              $set: {
+                isDeleted: true,
+                deletedAt: now,
+                deletedBy: vendorObjectId,
+                updatedDate: now,
+              },
+            },
+            { session },
+          );
+        }
+      }
+
       const productPerformanceData = {
-        processProductPerformanceId,
         urnNo: createProductPerformanceDto.urnNo,
         vendorId: vendorObjectId,
         eoiNo: createProductPerformanceDto.eoiNo || '',
         productName: createProductPerformanceDto.productName || '',
+        normalizedProductName,
         // Store user-provided display name when present; fallback to stored filename if file exists
         testReportFileName:
           createProductPerformanceDto.testReportFileName?.trim() ||
-          '' ||
           storedFileName ||
           '',
+        normalizedTestReportFileName,
         testReportFiles,
         renewalType: createProductPerformanceDto.renewalType || 0,
         productPerformanceStatus:
           createProductPerformanceDto.productPerformanceStatus || 0,
-        createdDate: now,
         updatedDate: now,
       };
 
-      const productPerformance = new this.productPerformanceModel(
-        productPerformanceData,
-      );
-      const savedProductPerformance = await productPerformance.save({
-        session,
-      });
+      const savedProductPerformance = await this.productPerformanceModel
+        .findOneAndUpdate(
+          {
+            urnNo: createProductPerformanceDto.urnNo,
+            normalizedProductName,
+            normalizedTestReportFileName,
+          },
+          {
+            $set: productPerformanceData,
+            $setOnInsert: {
+              processProductPerformanceId,
+              createdDate: now,
+            },
+          },
+          { upsert: true, new: true, session },
+        )
+        .exec();
 
       // Insert uploaded document into all_product_documents (master table)
-      if (testReportFilePath && testReportFile) {
-        const productDocumentId =
-          await this.sequenceHelper.getProductDocumentId();
-        const documentLink = `uploads/${testReportFilePath}`;
-
-        const documentData = {
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo: createProductPerformanceDto.urnNo,
-          eoiNo: createProductPerformanceDto.eoiNo || '',
-          documentForm: 'product_performance',
-          documentFormSubsection: 'test_report_files',
-          formPrimaryId: processProductPerformanceId,
-          documentName: path.basename(testReportFilePath),
-          documentOriginalName: testReportFile.originalname,
-          documentLink,
-          createdDate: now,
-          updatedDate: now,
-        };
-
-        await this.allProductDocumentModel.create([documentData], { session });
+      if (testReportFilePaths.length > 0) {
+        const docsToInsert = [];
+        for (let i = 0; i < testReportFilePaths.length; i++) {
+          const productDocumentId =
+            await this.sequenceHelper.getProductDocumentId();
+          const documentLink = testReportFilePaths[i];
+          docsToInsert.push({
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo: createProductPerformanceDto.urnNo,
+            eoiNo: createProductPerformanceDto.eoiNo || '',
+            documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE,
+            documentFormSubsection: 'test_report_files',
+            formPrimaryId: savedProductPerformance.processProductPerformanceId,
+            documentName: testReportStoredNames[i] || storedFileName,
+            documentOriginalName: uploadedTestReportFiles[i].originalname,
+            documentLink,
+            createdDate: now,
+            updatedDate: now,
+          });
+        }
+        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
       }
 
       await session.commitTransaction();
       session.endSession();
+
+      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
+        const normalizedPath = String(fileLink).replace(/\\/g, '/');
+        if (normalizedPath && fs.existsSync(normalizedPath)) {
+          try {
+            fs.unlinkSync(normalizedPath);
+          } catch {
+            // Ignore cleanup issues after successful commit
+          }
+        }
+      }
 
       return savedProductPerformance;
     } catch (error: any) {
@@ -201,8 +254,10 @@ export class ProductPerformanceService {
 
       // Clean up uploaded files if transaction fails (files were moved to URN folder)
       try {
-        if (testReportFullPath && fs.existsSync(testReportFullPath)) {
-          fs.unlinkSync(testReportFullPath);
+        for (const fullPath of createdFileFullPaths) {
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+          }
         }
       } catch (cleanupError) {
         // Ignore cleanup errors

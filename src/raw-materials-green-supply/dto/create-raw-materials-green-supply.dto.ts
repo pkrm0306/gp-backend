@@ -28,4 +28,13 @@ export class CreateRawMaterialsGreenSupplyDto {
   @IsString()
   @IsOptional()
   measuresImplemented?: string;
+
+  @ApiProperty({
+    description: 'Display name for uploaded supporting file',
+    example: 'Green Supply Supporting Document - 2026',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  greenSupplyFileName?: string;
 }

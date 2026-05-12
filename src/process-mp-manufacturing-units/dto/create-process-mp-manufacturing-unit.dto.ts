@@ -248,20 +248,9 @@ export class CreateProcessMpManufacturingUnitDto {
   @IsOptional()
   calculateBulkSwc?: number;
 
-  @ApiProperty({ required: false })
-  @IsString()
-  @IsOptional()
-  calculateBulkSecMultipled?: string;
-  @ApiProperty({ required: false })
-  @IsString()
-  @IsOptional()
-  calculateBulkSwcMultipled?: string;
-  @ApiProperty({ required: false })
-  @IsString()
-  @IsOptional()
-  measuresImplementedMpUnits?: string;
-  @ApiProperty({ required: false })
-  @IsString()
-  @IsOptional()
-  detailsOfRainWaterHarvestingMpUnits?: string;
+  @ApiProperty({ required: false }) @IsString() @IsOptional() calculateBulkSecMultipled?: string;
+  @ApiProperty({ required: false }) @IsString() @IsOptional() calculateBulkSwcMultipled?: string;
+  @ApiProperty({ required: false }) @IsString() @IsOptional() measuresImplementedMpUnits?: string;
+  @ApiProperty({ required: false }) @IsString() @IsOptional() detailsOfRainWaterHarvestingMpUnits?: string;
+
 }

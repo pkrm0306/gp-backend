@@ -11,12 +11,38 @@ import {
 } from './schemas/raw-materials-optimization-of-raw-mix.schema';
 import { CreateRawMaterialsOptimizationOfRawMixDto } from './dto/create-raw-materials-optimization-of-raw-mix.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import {
+  AllProductDocument,
+  AllProductDocumentDocument,
+} from '../product-design/schemas/all-product-document.schema';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import * as fs from 'fs';
+import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
+
+type RawMixProductDocumentRow = {
+  _id: unknown;
+  productDocumentId: number;
+  vendorId: Types.ObjectId;
+  urnNo: string;
+  eoiNo?: string;
+  documentForm: string;
+  documentFormSubsection?: string;
+  formPrimaryId: number;
+  documentName: string;
+  documentOriginalName: string;
+  documentLink: string;
+  createdDate: Date;
+  updatedDate: Date;
+};
 
 @Injectable()
 export class RawMaterialsOptimizationOfRawMixService {
   constructor(
     @InjectModel(RawMaterialsOptimizationOfRawMix.name)
     private model: Model<RawMaterialsOptimizationOfRawMixDocument>,
+    @InjectModel(AllProductDocument.name)
+    private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
   ) {}
 
@@ -31,30 +57,135 @@ export class RawMaterialsOptimizationOfRawMixService {
     return new Types.ObjectId(id);
   }
 
+  private async saveFileToUrnFolder(
+    file: Express.Multer.File,
+    urnNo: string,
+    fileType: string,
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  }
+
+  private toResponseUnit(row: Partial<RawMaterialsOptimizationOfRawMix>) {
+    return {
+      rawMaterialsOptimizationOfRawMixId: row.rawMaterialsOptimizationOfRawMixId,
+      unitName: row.unitName,
+      year: row.year,
+      yeardata1: row.yeardata1,
+      yeardata2: row.yeardata2,
+      yeardata3: row.yeardata3,
+    };
+  }
+
+  private mapProductDocument(d: AllProductDocumentDocument): RawMixProductDocumentRow {
+    const o = typeof d.toObject === 'function' ? d.toObject() : d;
+    return {
+      _id: o._id,
+      productDocumentId: o.productDocumentId,
+      vendorId: o.vendorId,
+      urnNo: o.urnNo,
+      eoiNo: o.eoiNo,
+      documentForm: o.documentForm,
+      documentFormSubsection: o.documentFormSubsection,
+      formPrimaryId: o.formPrimaryId,
+      documentName: o.documentName,
+      documentOriginalName: o.documentOriginalName,
+      documentLink: o.documentLink,
+      createdDate: o.createdDate,
+      updatedDate: o.updatedDate,
+    };
+  }
+
   async create(
     dto: CreateRawMaterialsOptimizationOfRawMixDto,
     vendorId: string,
-  ): Promise<RawMaterialsOptimizationOfRawMixDocument> {
+    optimizationOfRawMixFile?: Express.Multer.File,
+  ): Promise<{
+    urnNo: string;
+    vendorId: string;
+    units: Array<{
+      rawMaterialsOptimizationOfRawMixId: number;
+      unitName: string;
+      year: number;
+      yeardata1: number;
+      yeardata2: number;
+      yeardata3: number;
+    }>;
+    documents: RawMixProductDocumentRow[];
+  }> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const id =
-        await this.sequenceHelper.getRawMaterialsOptimizationOfRawMixId();
+      const urnNo = dto.urnNo.trim();
       const now = new Date();
+      const docsToCreate: Array<
+        Omit<RawMaterialsOptimizationOfRawMix, 'createdDate' | 'updatedDate'> & {
+          createdDate: Date;
+          updatedDate: Date;
+        }
+      > = [];
 
-      const doc = new this.model({
-        rawMaterialsOptimizationOfRawMixId: id,
-        urnNo: dto.urnNo.trim(),
-        vendorId: vendorObjectId,
-        unitName: dto.unitName.trim(),
-        year: dto.year,
-        yeardata1: dto.yeardata1,
-        yeardata2: dto.yeardata2,
-        yeardata3: dto.yeardata3,
-        createdDate: now,
-        updatedDate: now,
-      });
+      for (const unit of dto.units) {
+        if (
+          !unit?.unitName ||
+          unit.year === undefined ||
+          unit.yeardata1 === undefined ||
+          unit.yeardata2 === undefined ||
+          unit.yeardata3 === undefined
+        ) {
+          throw new BadRequestException(
+            'Each unit must include unitName, year, yeardata1, yeardata2, and yeardata3',
+          );
+        }
 
-      return await doc.save();
+        const id = await this.sequenceHelper.getRawMaterialsOptimizationOfRawMixId();
+        docsToCreate.push({
+          rawMaterialsOptimizationOfRawMixId: id,
+          urnNo,
+          vendorId: vendorObjectId,
+          unitName: unit.unitName.trim(),
+          year: unit.year,
+          yeardata1: unit.yeardata1,
+          yeardata2: unit.yeardata2,
+          yeardata3: unit.yeardata3,
+          createdDate: now,
+          updatedDate: now,
+        });
+      }
+
+      // Replace behavior: keep only the units coming in current request for this URN+vendor.
+      await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+      const created = await this.model.insertMany(docsToCreate);
+      const documents: RawMixProductDocumentRow[] = [];
+
+      if (optimizationOfRawMixFile) {
+        const storedRelativePath = await this.saveFileToUrnFolder(
+          optimizationOfRawMixFile,
+          urnNo,
+          'raw_mix_optimization_supporting_document',
+        );
+        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const masterDoc = await this.allProductDocumentModel.create({
+          productDocumentId,
+          vendorId: vendorObjectId,
+          urnNo,
+          eoiNo: '',
+          documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+          documentFormSubsection: 'supporting_documents',
+          formPrimaryId: created[0].rawMaterialsOptimizationOfRawMixId,
+          documentName: path.basename(storedRelativePath),
+          documentOriginalName: optimizationOfRawMixFile.originalname,
+          documentLink: storedRelativePath,
+          createdDate: now,
+          updatedDate: now,
+        });
+        documents.push(this.mapProductDocument(masterDoc));
+      }
+
+      return {
+        urnNo,
+        vendorId: vendorObjectId.toString(),
+        units: created.map((row) => this.toResponseUnit(row.toObject())),
+        documents,
+      };
     } catch (error: any) {
       console.error(
         '[Raw Materials Optimization Of Raw Mix] Create error:',
@@ -73,10 +204,28 @@ export class RawMaterialsOptimizationOfRawMixService {
   async listByUrn(urnNo: string, vendorId: string) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      return await this.model
-        .find({ urnNo: urnNo.trim(), vendorId: vendorObjectId })
-        .sort({ createdDate: 1 })
+      const trimmedUrn = urnNo.trim();
+      const rows = await this.model
+        .find({ urnNo: trimmedUrn, vendorId: vendorObjectId })
+        .sort({ rawMaterialsOptimizationOfRawMixId: 1 })
         .exec();
+
+      const docRows = await this.allProductDocumentModel
+        .find({
+          urnNo: trimmedUrn,
+          vendorId: vendorObjectId,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+          $or: [{ isDeleted: { $ne: true } }, { isDeleted: { $exists: false } }],
+        })
+        .sort({ productDocumentId: -1 })
+        .exec();
+
+      return {
+        urnNo: trimmedUrn,
+        vendorId: vendorObjectId.toString(),
+        units: rows.map((row) => this.toResponseUnit(row.toObject())),
+        documents: docRows.map((d) => this.mapProductDocument(d)),
+      };
     } catch (error: any) {
       console.error(
         '[Raw Materials Optimization Of Raw Mix] List error:',

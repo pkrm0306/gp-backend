@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsInt, Min, IsString, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -42,6 +42,18 @@ export class ListProductsDto {
     example: 0,
     required: false,
     enum: [0, 1, 2, 3],
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsIn([0, 1, 2, 3])
+  productStatus?: number;
+
+  @ApiPropertyOptional({
+    description: 'Deprecated alias for productStatus',
+    example: 0,
+    enum: [0, 1, 2, 3],
+    deprecated: true,
   })
   @IsOptional()
   @Type(() => Number)

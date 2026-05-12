@@ -1,15 +1,26 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
+import {
+  IsReadableNotEmpty,
+  MaxReadableLength,
+} from '../../common/validators/readable-text.validator';
 
 export class CreateBannerDto {
   @ApiPropertyOptional({
     example: '/uploads/banners/banner-123.jpg',
     description:
-      'Optional legacy field. When uploading a file, send it as multipart field `image` (binary) instead of `imageUrl`.',
+      'Banner image URL/path. Optional when uploading multipart file `image`.',
   })
   @IsOptional()
-  // We treat empty string as "not provided" so file upload works without sending imageUrl.
   @Transform(({ value }) => {
     if (value === undefined || value === null) return undefined;
     const v = String(value).trim();
@@ -20,27 +31,49 @@ export class CreateBannerDto {
   })
   imageUrl?: string;
 
-  @ApiPropertyOptional({
-    example: 'https://example.com/promo',
-    description: 'Link opened when the banner is clicked (optional)',
-  })
+  @ApiProperty({ example: 'Summer sale', description: 'Title of your banner' })
   @IsString()
-  @IsOptional()
-  @Matches(/^https?:\/\/.+/i, {
-    message: 'targetUrl must be a full http(s) URL',
-  })
-  targetUrl?: string;
+  @IsReadableNotEmpty()
+  @Transform(({ value }) => String(value ?? '').trim())
+  title: string;
 
-  @ApiProperty({ example: 'Summer sale', description: 'Banner heading' })
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Display sequence number for this banner (optional)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    const raw = String(value).trim();
+    if (!raw) return undefined;
+    return Number(raw);
+  })
+  @IsInt()
+  @Min(1)
+  @Max(9999)
+  sequenceNumber: number;
+
+  @ApiPropertyOptional({
+    example: 'active',
+    description: 'Initial banner status',
+    enum: ['active', 'inactive', '1', '0'],
+  })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  heading: string;
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['binary_upload', 'manual_url'])
+  imageSource?: 'binary_upload' | 'manual_url';
 
   @ApiProperty({
     example: 'Up to 50% off selected items.',
-    description: 'Banner description',
+    description: 'Banner description (max 1000 readable characters)',
   })
   @IsString()
-  @IsNotEmpty()
+  @IsReadableNotEmpty()
+  @MaxReadableLength(1000)
+  @Transform(({ value }) => String(value ?? '').trim())
   description: string;
 }

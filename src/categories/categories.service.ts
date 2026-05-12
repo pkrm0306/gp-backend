@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -33,6 +34,8 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
 import { UpdateCategoryStatusDto } from './dto/update-category-status.dto';
 import { UpdateCategoryMultipartDto } from './dto/update-category-multipart.dto';
+import { RedisService } from '../common/redis/redis.service';
+import { uploadFile } from '../utils/upload-file.util';
 
 /** Listing row: Mongo lean doc plus computed image URL */
 export type CategoryListItem = Record<string, unknown> & {
@@ -76,6 +79,8 @@ function escapeRegex(text: string): string {
 
 @Injectable()
 export class CategoriesService implements OnModuleInit {
+  private readonly logger = new Logger(CategoriesService.name);
+
   constructor(
     @InjectModel(Category.name)
     private categoryModel: Model<CategoryDocument>,
@@ -86,13 +91,59 @@ export class CategoriesService implements OnModuleInit {
     @InjectModel(ProductPlant.name)
     private productPlantModel: Model<ProductPlantDocument>,
     private configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
+
+  private getCategoryListCacheTtlSeconds(): number {
+    const ttl = parseInt(
+      this.configService.get<string>('CATEGORY_LIST_CACHE_TTL_SECONDS') ||
+        this.configService.get<string>('CACHE_TTL_SECONDS') ||
+        '60',
+      10,
+    );
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 60;
+  }
+
+  private buildCategoryListCacheKey(query: ListCategoriesQueryDto): string {
+    const normalized = {
+      sector: query.sector ?? null,
+      sectors: String(query.sectors || '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .sort()
+        .join(','),
+      status: query.status ?? null,
+      raw_material: String(query.raw_material || '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .sort()
+        .join(','),
+      sort: query.sort === 'desc' ? 'desc' : 'asc',
+    };
+    return this.redisService.buildKey('categories', 'list', JSON.stringify(normalized));
+  }
+
+  private async invalidateCategoryListCache(): Promise<void> {
+    await this.redisService
+      .deleteByPattern(this.redisService.buildKey('categories', 'list', '*'))
+      .catch((error) => {
+      this.logger.warn(
+        `Failed to invalidate category list cache: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    });
+  }
 
   async onModuleInit(): Promise<void> {
     this.ensureCategoryUploadDirs();
     await this.backfillCategoryNameNormalized();
     await this.dedupeCategoryNameNormalized();
     await this.syncCategoryIdCounterFromCategories();
+    const shouldSyncIndexes =
+      String(process.env.SYNC_INDEXES_ON_BOOT || 'false').toLowerCase() ===
+      'true';
+    if (!shouldSyncIndexes) return;
     try {
       await this.categoryModel.syncIndexes();
     } catch (err) {
@@ -239,7 +290,7 @@ export class CategoriesService implements OnModuleInit {
     }
   }
 
-  /** Ensures project/uploads/categories exists (matches main.ts static /uploads/) */
+  /** Ensures project/uploads/categories exists (matches main.ts /uploads static mount) */
   ensureCategoryUploadDirs(): void {
     const dir = join(process.cwd(), 'uploads', 'categories');
     if (!existsSync(dir)) {
@@ -257,7 +308,7 @@ export class CategoriesService implements OnModuleInit {
   }
 
   /**
-   * Full URL for category_image served under /uploads/ (see main.ts useStaticAssets).
+   * Full URL for category_image served under /uploads/ (see main.ts express.static mount).
    * If category_image is already an http(s) URL, returns it unchanged.
    * The file must exist on disk under project/uploads/ or the browser will get 404.
    */
@@ -318,6 +369,18 @@ export class CategoriesService implements OnModuleInit {
   }
 
   async findAll(query: ListCategoriesQueryDto): Promise<CategoryListItem[]> {
+    const cacheKey = this.buildCategoryListCacheKey(query);
+    try {
+      const cached = await this.redisService.get<CategoryListItem[]>(cacheKey);
+      if (Array.isArray(cached)) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Category list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
     const filter = this.buildFindFilter(query, { enableMultiSector: true });
     const sortOrder = query.sort === 'desc' ? -1 : 1;
     const rows = await this.categoryModel
@@ -332,6 +395,13 @@ export class CategoriesService implements OnModuleInit {
         category_image_url: this.resolveCategoryImageUrl(doc.category_image),
       });
     }
+    this.redisService
+      .set(cacheKey, out, this.getCategoryListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Category list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
     return out;
   }
 
@@ -477,6 +547,7 @@ export class CategoriesService implements OnModuleInit {
       throw err;
     }
     const plain = doc.toObject();
+    await this.invalidateCategoryListCache();
     return {
       ...plain,
       category_image_url: this.resolveCategoryImageUrl(plain.category_image),
@@ -517,6 +588,7 @@ export class CategoriesService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Category not found');
     }
+    await this.invalidateCategoryListCache();
     return this.toCategoryResponse(
       updated.toObject() as unknown as Record<string, unknown>,
     );
@@ -525,7 +597,7 @@ export class CategoriesService implements OnModuleInit {
   async update(
     id: string,
     dto: UpdateCategoryMultipartDto,
-    image?: { filename: string },
+    image?: Express.Multer.File,
   ) {
     const oid = this.parseCategoryObjectId(id);
     const existing = await this.categoryModel.findById(oid).exec();
@@ -572,7 +644,8 @@ export class CategoriesService implements OnModuleInit {
       set.sector = dto.sector;
     }
     if (image) {
-      set.category_image = `categories/${image.filename}`;
+      const uploaded = await uploadFile(image, 'categories');
+      set.category_image = uploaded.fileUrl;
     }
 
     let updated: CategoryDocument | null;
@@ -587,6 +660,7 @@ export class CategoriesService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Category not found');
     }
+    await this.invalidateCategoryListCache();
     return this.toCategoryResponse(
       updated.toObject() as unknown as Record<string, unknown>,
     );
@@ -610,5 +684,112 @@ export class CategoriesService implements OnModuleInit {
     }
 
     await this.categoryModel.deleteOne({ _id: oid }).exec();
+    await this.invalidateCategoryListCache();
+  }
+
+  /**
+   * Resolve `category_name` for numeric ids returned by GET /categories (`category_id`).
+   */
+  async getCategoryNamesByNumericIds(
+    categoryIds: Array<number | undefined | null>,
+  ): Promise<Map<number, string>> {
+    const unique = [
+      ...new Set(
+        categoryIds.filter(
+          (x): x is number =>
+            typeof x === 'number' && Number.isInteger(x) && x >= 1,
+        ),
+      ),
+    ];
+    if (!unique.length) {
+      return new Map();
+    }
+    const rows = await this.categoryModel
+      .find({ category_id: { $in: unique } })
+      .select('category_id category_name')
+      .lean()
+      .exec();
+    return new Map(
+      rows.map((r) => [r.category_id as number, r.category_name as string]),
+    );
+  }
+
+  /**
+   * For standards filters: numeric `category_id` from GET /categories, or MongoDB category `_id`
+   * (24-char hex) when the client uses document ids in URLs.
+   */
+  async resolveNumericCategoryKey(param: string): Promise<number> {
+    const trimmed = String(param ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('Invalid category id');
+    }
+    if (Types.ObjectId.isValid(trimmed)) {
+      const doc = await this.categoryModel
+        .findById(new Types.ObjectId(trimmed))
+        .select('category_id')
+        .lean()
+        .exec();
+      if (
+        !doc ||
+        typeof doc.category_id !== 'number' ||
+        !Number.isInteger(doc.category_id) ||
+        doc.category_id < 1
+      ) {
+        throw new BadRequestException({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Unknown category_id',
+        });
+      }
+      return doc.category_id;
+    }
+    const n = parseInt(trimmed, 10);
+    if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) {
+      throw new BadRequestException('Invalid category id');
+    }
+    await this.assertNumericCategoryExists(n);
+    return n;
+  }
+
+  /** Ensures a row exists with this numeric `category_id` (categories collection). */
+  async assertNumericCategoryExists(categoryId: number): Promise<void> {
+    const ok = await this.categoryModel.exists({ category_id: categoryId });
+    if (!ok) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'Unknown category_id',
+        category_id: categoryId,
+      });
+    }
+  }
+
+  /** Ensures every numeric `category_id` exists (batch). */
+  async assertNumericCategoriesExist(categoryIds: number[]): Promise<void> {
+    const unique = [
+      ...new Set(
+        categoryIds.filter(
+          (x): x is number =>
+            typeof x === 'number' && Number.isInteger(x) && x >= 1,
+        ),
+      ),
+    ];
+    if (unique.length === 0) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'At least one valid category_id is required',
+      });
+    }
+    const count = await this.categoryModel
+      .countDocuments({ category_id: { $in: unique } })
+      .exec();
+    if (count !== unique.length) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'One or more category_id values are unknown',
+      });
+    }
   }
 }

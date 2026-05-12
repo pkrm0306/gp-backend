@@ -11,12 +11,22 @@ import {
 } from './schemas/raw-materials-utilization.schema';
 import { CreateRawMaterialsUtilizationDto } from './dto/create-raw-materials-utilization.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import {
+  AllProductDocument,
+  AllProductDocumentDocument,
+} from '../product-design/schemas/all-product-document.schema';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import * as fs from 'fs';
+import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class RawMaterialsUtilizationService {
   constructor(
     @InjectModel(RawMaterialsUtilization.name)
     private model: Model<RawMaterialsUtilizationDocument>,
+    @InjectModel(AllProductDocument.name)
+    private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
   ) {}
 
@@ -31,25 +41,60 @@ export class RawMaterialsUtilizationService {
     return new Types.ObjectId(id);
   }
 
+  private async saveFileToUrnFolder(
+    file: Express.Multer.File,
+    urnNo: string,
+    fileType: string,
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  }
+
   async create(
     dto: CreateRawMaterialsUtilizationDto,
     vendorId: string,
+    utilizationFile?: Express.Multer.File,
   ): Promise<RawMaterialsUtilizationDocument> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const id = await this.sequenceHelper.getRawMaterialsUtilizationId();
       const now = new Date();
+      const urnNo = dto.urnNo.trim();
 
       const doc = new this.model({
         rawMaterialsUtilizationId: id,
-        urnNo: dto.urnNo.trim(),
+        urnNo,
         vendorId: vendorObjectId,
         details: dto.details?.trim() || '',
         createdDate: now,
         updatedDate: now,
       });
 
-      return await doc.save();
+      const saved = await doc.save();
+
+      if (utilizationFile) {
+        const storedRelativePath = await this.saveFileToUrnFolder(
+          utilizationFile,
+          urnNo,
+          'raw_materials_utilization_supporting_document',
+        );
+        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        await this.allProductDocumentModel.create({
+          productDocumentId,
+          vendorId: vendorObjectId,
+          urnNo,
+          eoiNo: '',
+          documentForm: DocumentSectionKey.RAW_MATERIALS_UTILIZATION,
+          documentFormSubsection: 'supporting_documents',
+          formPrimaryId: id,
+          documentName: path.basename(storedRelativePath),
+          documentOriginalName: utilizationFile.originalname,
+          documentLink: storedRelativePath,
+          createdDate: now,
+          updatedDate: now,
+        });
+      }
+
+      return saved;
     } catch (error: any) {
       console.error('[Raw Materials Utilization] Create error:', error);
       if (error instanceof BadRequestException) {

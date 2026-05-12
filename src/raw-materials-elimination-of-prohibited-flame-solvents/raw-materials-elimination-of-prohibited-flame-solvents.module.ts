@@ -4,6 +4,10 @@ import {
   RawMaterialsEliminationOfProhibitedFlameSolvents,
   RawMaterialsEliminationOfProhibitedFlameSolventsSchema,
 } from './schemas/raw-materials-elimination-of-prohibited-flame-solvents.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentSchema,
+} from '../product-design/schemas/all-product-document.schema';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsService } from './raw-materials-elimination-of-prohibited-flame-solvents.service';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsController } from './raw-materials-elimination-of-prohibited-flame-solvents.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -17,6 +21,7 @@ import { AuthModule } from '../auth/auth.module';
         name: RawMaterialsEliminationOfProhibitedFlameSolvents.name,
         schema: RawMaterialsEliminationOfProhibitedFlameSolventsSchema,
       },
+      { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),
     ProductRegistrationModule,
     PassportModule,

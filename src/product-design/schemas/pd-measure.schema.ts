@@ -24,6 +24,12 @@ export class PdMeasure {
   benefits?: string;
 
   @Prop({ required: true })
+  normalizedMeasures: string;
+
+  @Prop({ required: true })
+  normalizedBenefits: string;
+
+  @Prop({ required: true })
   createdDate: Date;
 
   @Prop({ required: true })
@@ -31,3 +37,7 @@ export class PdMeasure {
 }
 
 export const PdMeasureSchema = SchemaFactory.createForClass(PdMeasure);
+PdMeasureSchema.index(
+  { urnNo: 1, normalizedMeasures: 1, normalizedBenefits: 1 },
+  { unique: true, name: 'uniq_pd_measure_per_urn_normalized_pair' },
+);

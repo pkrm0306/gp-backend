@@ -11,12 +11,22 @@ import {
 } from './schemas/raw-materials-elimination-of-prohibited-flame.schema';
 import { CreateRawMaterialsEliminationOfProhibitedFlameDto } from './dto/create-raw-materials-elimination-of-prohibited-flame.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import {
+  AllProductDocument,
+  AllProductDocumentDocument,
+} from '../product-design/schemas/all-product-document.schema';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import * as fs from 'fs';
+import * as path from 'path';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class RawMaterialsEliminationOfProhibitedFlameService {
   constructor(
     @InjectModel(RawMaterialsEliminationOfProhibitedFlame.name)
     private model: Model<RawMaterialsEliminationOfProhibitedFlameDocument>,
+    @InjectModel(AllProductDocument.name)
+    private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
   ) {}
 
@@ -31,9 +41,18 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
     return new Types.ObjectId(id);
   }
 
+  private async saveFileToUrnFolder(
+    file: Express.Multer.File,
+    urnNo: string,
+    fileType: string,
+  ): Promise<string> {
+    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  }
+
   async create(
     dto: CreateRawMaterialsEliminationOfProhibitedFlameDto,
     vendorId: string,
+    prohibitedFlameFile?: Express.Multer.File,
   ): Promise<RawMaterialsEliminationOfProhibitedFlameDocument> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
@@ -50,7 +69,32 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
         updatedDate: now,
       });
 
-      return await doc.save();
+      const saved = await doc.save();
+
+      if (prohibitedFlameFile) {
+        const storedRelativePath = await this.saveFileToUrnFolder(
+          prohibitedFlameFile,
+          dto.urnNo.trim(),
+          'prohibited_flame_supporting_document',
+        );
+        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        await this.allProductDocumentModel.create({
+          productDocumentId,
+          vendorId: vendorObjectId,
+          urnNo: dto.urnNo.trim(),
+          eoiNo: '',
+          documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
+          documentFormSubsection: 'supporting_documents',
+          formPrimaryId: id,
+          documentName: path.basename(storedRelativePath),
+          documentOriginalName: prohibitedFlameFile.originalname,
+          documentLink: storedRelativePath,
+          createdDate: now,
+          updatedDate: now,
+        });
+      }
+
+      return saved;
     } catch (error: any) {
       console.error(
         '[Raw Materials Elimination Of Prohibited Flame] Create error:',

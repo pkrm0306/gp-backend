@@ -6,7 +6,10 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { AdminService } from '../admin/admin.service';
+import {
+  AdminService,
+  type TeamMembersPaginatedResult,
+} from '../admin/admin.service';
 import { CategoriesService } from '../categories/categories.service';
 import { ListTeamMembersQueryDto } from '../admin/dto/list-team-members-query.dto';
 
@@ -50,9 +53,10 @@ export class TeamMembersController {
     @Query() query: ListTeamMembersQueryDto,
   ) {
     const cid = await this.categoriesService.resolveNumericCategoryKey(categoryId);
-    const result = await this.adminService.listTeamMembersPaginated('', query, {
-      categoryNumericId: cid,
-    });
+    const result: TeamMembersPaginatedResult =
+      await this.adminService.listTeamMembersPaginated('', query, {
+        categoryNumericId: cid,
+      });
     return {
       message: 'Team members retrieved successfully',
       data: result.data,

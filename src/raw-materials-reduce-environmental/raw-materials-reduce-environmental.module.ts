@@ -4,6 +4,10 @@ import {
   RawMaterialsReduceEnvironmental,
   RawMaterialsReduceEnvironmentalSchema,
 } from './schemas/raw-materials-reduce-environmental.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentSchema,
+} from '../product-design/schemas/all-product-document.schema';
 import { RawMaterialsReduceEnvironmentalService } from './raw-materials-reduce-environmental.service';
 import { RawMaterialsReduceEnvironmentalController } from './raw-materials-reduce-environmental.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -17,6 +21,7 @@ import { AuthModule } from '../auth/auth.module';
         name: RawMaterialsReduceEnvironmental.name,
         schema: RawMaterialsReduceEnvironmentalSchema,
       },
+      { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),
     ProductRegistrationModule,
     PassportModule,
