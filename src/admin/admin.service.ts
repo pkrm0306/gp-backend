@@ -22,7 +22,11 @@ import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
-import { Event, EventDocument } from '../events/schemas/event.schema';
+import {
+  Event,
+  EventDocument,
+  GALLERY_TYPES,
+} from '../events/schemas/event.schema';
 import { Article, ArticleDocument } from '../articles/schemas/article.schema';
 import {
   EventIdCounter,
@@ -104,6 +108,11 @@ const DEFAULT_EVENT_REGISTRATION_LINK =
   'https://cam.mycii.in/OR/OnlineRegistrationLogin.html?EventId=E000069218';
 const DEFAULT_EVENT_BROCHURE_LINK =
   'https://www.linkedin.com/posts/cii-greenpro-ecolabelling_greenpro-summit-2025-brochure-03062025-activity-7335663123154014208-2ScV?utm_source=share&utm_medium=member_desktop&rcm=ACoAAB-BYukBl9XKRWqUfyykOlftYFSgtIQGafI';
+
+/** Rows with `galleryType` in this set are gallery items, not calendar events. */
+const EVENT_LISTING_FILTER = { galleryType: { $nin: [...GALLERY_TYPES] } };
+
+const GALLERY_LISTING_FILTER = { galleryType: { $in: [...GALLERY_TYPES] } };
 
 /** Paginated team member list (`GET /admin/team-members/list`, `GET /api/team-members/by-category/...`). */
 export interface TeamMembersPaginatedResult {
@@ -758,7 +767,7 @@ export class AdminService {
 
   async listEvents() {
     const rows = await this.eventModel
-      .find({})
+      .find(EVENT_LISTING_FILTER)
       .sort({ createdDate: -1, _id: -1 })
       .select(
         'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
@@ -771,7 +780,26 @@ export class AdminService {
     );
   }
 
-  async getEventById(identifier: string) {
+  /** Gallery-only rows (same collection as events, filtered by `galleryType`). */
+  async listGalleryItems() {
+    const rows = await this.eventModel
+      .find(GALLERY_LISTING_FILTER)
+      .sort({ createdDate: -1, _id: -1 })
+      .select(
+        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+      )
+      .lean()
+      .exec();
+
+    return (rows ?? []).map((e: any, idx: number) =>
+      this.mapEventToAdminListItem(e, idx + 1),
+    );
+  }
+
+  async getEventById(
+    identifier: string,
+    options?: { scope?: 'event' | 'any' },
+  ) {
     const raw = String(identifier ?? '').trim();
     if (!raw) throw new BadRequestException('Event id is required');
 
@@ -796,6 +824,14 @@ export class AdminService {
 
     if (!event) {
       throw new NotFoundException('Event not found');
+    }
+
+    const scope = options?.scope ?? 'any';
+    if (scope === 'event') {
+      const t = String(event.galleryType ?? '').trim();
+      if ((GALLERY_TYPES as readonly string[]).includes(t)) {
+        throw new NotFoundException('Event not found');
+      }
     }
 
     const listShape = this.mapEventToAdminListItem(event);

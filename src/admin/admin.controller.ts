@@ -1493,9 +1493,8 @@ export class AdminController {
   })
   @Public()
   async listGallery() {
-    const rows = await this.adminService.listEvents();
-    const galleryRows = rows.filter((r: any) => this.isGalleryItem(r));
-    const data = galleryRows.map((r: any, index: number) => ({
+    const rows = await this.adminService.listGalleryItems();
+    const data = rows.map((r: any, index: number) => ({
       s_no: index + 1,
       ...this.mapGalleryResponse(r),
       is_active: r.is_active,
@@ -1940,7 +1939,7 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Event not found' })
   @Public()
   async getEventById(@Param('id') id: string) {
-    const data = await this.adminService.getEventById(id);
+    const data = await this.adminService.getEventById(id, { scope: 'event' });
     return { message: 'Event retrieved successfully', data };
   }
 
