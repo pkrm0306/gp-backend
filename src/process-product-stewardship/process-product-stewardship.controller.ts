@@ -159,29 +159,19 @@ export class ProcessProductStewardshipController {
           example: 'EPR Supporting Documents - March 2026',
         },
         seaSupportingDocumentsFile: {
-          type: 'array',
-          items: {
-            type: 'string',
-            format: 'binary',
-          },
-          description: 'SEA supporting documents files (multiple supported)',
+          type: 'string',
+          format: 'binary',
+          description: 'SEA supporting documents file',
         },
         qmSupportingDocumentsFile: {
-          type: 'array',
-          items: {
-            type: 'string',
-            format: 'binary',
-          },
-          description:
-            'Quality Management supporting documents files (multiple supported)',
+          type: 'string',
+          format: 'binary',
+          description: 'Quality Management supporting documents file',
         },
         eprSupportingDocumentsFile: {
-          type: 'array',
-          items: {
-            type: 'string',
-            format: 'binary',
-          },
-          description: 'EPR supporting documents files (multiple supported)',
+          type: 'string',
+          format: 'binary',
+          description: 'EPR supporting documents file',
         },
       },
     },
@@ -239,19 +229,19 @@ export class ProcessProductStewardshipController {
 
     // Extract files by fieldname from the files array
     // AnyFilesInterceptor captures all files and stores them with their fieldname
-    const seaSupportingDocumentsFiles = (files || []).filter(
+    const seaSupportingDocumentsFile = files?.find(
       (f) => f.fieldname === 'seaSupportingDocumentsFile',
     );
-    const qmSupportingDocumentsFiles = (files || []).filter(
+    const qmSupportingDocumentsFile = files?.find(
       (f) => f.fieldname === 'qmSupportingDocumentsFile',
     );
-    const eprSupportingDocumentsFiles = (files || []).filter(
+    const eprSupportingDocumentsFile = files?.find(
       (f) => f.fieldname === 'eprSupportingDocumentsFile',
     );
 
     // Validate file names if files are uploaded
     if (
-      seaSupportingDocumentsFiles.length > 0 &&
+      seaSupportingDocumentsFile &&
       (!dto.seaSupportingDocumentsFileName ||
         dto.seaSupportingDocumentsFileName.trim() === '')
     ) {
@@ -261,7 +251,7 @@ export class ProcessProductStewardshipController {
     }
 
     if (
-      qmSupportingDocumentsFiles.length > 0 &&
+      qmSupportingDocumentsFile &&
       (!dto.qmSupportingDocumentsFileName ||
         dto.qmSupportingDocumentsFileName.trim() === '')
     ) {
@@ -271,7 +261,7 @@ export class ProcessProductStewardshipController {
     }
 
     if (
-      eprSupportingDocumentsFiles.length > 0 &&
+      eprSupportingDocumentsFile &&
       (!dto.eprSupportingDocumentsFileName ||
         dto.eprSupportingDocumentsFileName.trim() === '')
     ) {
@@ -284,9 +274,9 @@ export class ProcessProductStewardshipController {
       await this.processProductStewardshipService.createProcessProductStewardship(
         dto,
         user.vendorId,
-        seaSupportingDocumentsFiles,
-        qmSupportingDocumentsFiles,
-        eprSupportingDocumentsFiles,
+        seaSupportingDocumentsFile,
+        qmSupportingDocumentsFile,
+        eprSupportingDocumentsFile,
       );
     return { success: true, data };
   }

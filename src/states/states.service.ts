@@ -1,48 +1,18 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { State, StateDocument } from './schemas/state.schema';
 import { CountriesService } from '../countries/countries.service';
-import { RedisService } from '../common/redis/redis.service';
 
 @Injectable()
 export class StatesService {
-  private readonly logger = new Logger(StatesService.name);
-
   constructor(
     @InjectModel(State.name)
     private stateModel: Model<StateDocument>,
     private countriesService: CountriesService,
-    private readonly configService: ConfigService,
-    private readonly redisService: RedisService,
   ) {}
 
-  private getStatesListCacheTtlSeconds(): number {
-    const ttl = parseInt(
-      this.configService.get<string>('STATES_LIST_CACHE_TTL_SECONDS') ||
-        this.configService.get<string>('CACHE_TTL_SECONDS') ||
-        '300',
-      10,
-    );
-    return Number.isFinite(ttl) && ttl > 0 ? ttl : 300;
-  }
-
   async findAll(countryId?: string) {
-    const cacheKey = this.redisService.buildKey(
-      'states',
-      'list',
-      countryId ? `country:${countryId}` : 'all',
-    );
-    try {
-      const cached = await this.redisService.get<StateDocument[]>(cacheKey);
-      if (Array.isArray(cached)) return cached;
-    } catch (error) {
-      this.logger.warn(
-        `States list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
-      );
-    }
-
     const query: any = {};
 
     if (countryId) {
@@ -78,15 +48,7 @@ export class StatesService {
       }
     }
 
-    const rows = await this.stateModel.find(query).sort({ stateName: 1 }).lean().exec();
-    this.redisService
-      .set(cacheKey, rows, this.getStatesListCacheTtlSeconds())
-      .catch((error) => {
-        this.logger.warn(
-          `States list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
-        );
-      });
-    return rows;
+    return this.stateModel.find(query).sort({ stateName: 1 }).exec();
   }
 
   async findById(id: string) {

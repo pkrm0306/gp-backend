@@ -34,13 +34,8 @@ import {
   ApiHeader,
 } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
-import {
-  hasExplicitCategoryIdFields,
-  mergeCategoryIdsFromFormObject,
-} from '../standards/utils/merge-category-ids.util';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import { ChangePasswordDto } from '../manufacturers/dto/change-password.dto';
@@ -67,10 +62,6 @@ import { extname, join } from 'path';
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
 import type { Request } from 'express';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
-import { GALLERY_TYPES, GalleryType } from '../events/schemas/event.schema';
-import { uploadFile } from '../utils/upload-file.util';
 
 const storage = diskStorage({
   destination: join(process.cwd(), 'uploads', 'manufacturers'),
@@ -120,9 +111,7 @@ function TeamMemberEditDocs() {
     ApiOperation({
       summary: 'Edit team member',
       description:
-        '**POST** or **PATCH** — same handler. Multipart form: **id** (team member from list), name, designation, email, mobile, optional **image** (270×400px recommended), social URLs. ' +
-        'Omit all category fields to leave categories unchanged; if any **category_id** / **category_ids** / **categoryIds** field is sent, the full set is replaced (empty clears all categories). ' +
-        'Same JWT workarounds as create (**x-access-token** / **access_token**) if Bearer is dropped on multipart.',
+        '**POST** or **PATCH** — same handler. Multipart form: **id** (team member from list), name, designation, email, mobile, optional **image** (270×400px recommended), social URLs. Same JWT workarounds as create (**x-access-token** / **access_token**) if Bearer is dropped on multipart.',
     }),
     ApiConsumes('multipart/form-data'),
     ApiHeader({
@@ -145,48 +134,12 @@ function TeamMemberEditDocs() {
           designation: { type: 'string' },
           email: { type: 'string' },
           mobile: { type: 'string' },
-          displayOrder: { type: 'number', minimum: 1 },
-          team: {
-            type: 'string',
-            enum: ['administrative', 'technical', 'finance', 'marketing'],
-          },
           image: { type: 'string', format: 'binary' },
           facebookUrl: { type: 'string' },
           twitterUrl: { type: 'string' },
           linkedinUrl: { type: 'string' },
-          roleId: { type: 'string', description: 'Legacy single role id' },
-          roleIds: {
-            oneOf: [
-              { type: 'array', items: { type: 'string' } },
-              { type: 'string', description: 'JSON string array' },
-            ],
-          },
-          'roleIds[]': {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Repeated multipart fields for role ids',
-          },
-          category_id: {
-            oneOf: [{ type: 'integer' }, { type: 'string' }],
-            description: 'Legacy single numeric category id',
-          },
-          category_ids: {
-            oneOf: [
-              { type: 'array', items: { type: 'integer' } },
-              { type: 'string' },
-            ],
-          },
-          categoryIds: { type: 'string' },
-          'category_ids[]': {
-            type: 'array',
-            items: { type: 'integer' },
-          },
-          'categoryIds[]': {
-            type: 'array',
-            items: { type: 'integer' },
-          },
         },
-        required: ['id', 'name', 'email', 'mobile', 'displayOrder', 'team'],
+        required: ['id', 'name', 'email', 'mobile'],
       },
     }),
     ApiResponse({
@@ -203,7 +156,7 @@ function TeamMemberEditDocs() {
 
 @ApiTags('Admin')
 @Controller('admin')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class AdminController {
   constructor(
@@ -211,193 +164,7 @@ export class AdminController {
     private readonly manufacturersService: ManufacturersService,
   ) {}
 
-  private parseEventStatus(raw: unknown): number | undefined {
-    if (raw === undefined || raw === null || String(raw).trim() === '') {
-      return undefined;
-    }
-    const v = String(raw).trim().toLowerCase();
-    if (v === '1' || v === 'active' || v === 'true') return 1;
-    if (v === '0' || v === 'inactive' || v === 'false') return 0;
-    throw new BadRequestException(
-      'Invalid status. Use active/inactive (or 1/0)',
-    );
-  }
-
-  private parseExternalUrlToggle(
-    raw: unknown,
-    required = false,
-  ): boolean | undefined {
-    if (raw === undefined || raw === null || String(raw).trim() === '') {
-      if (required) {
-        throw new BadRequestException('externalUrl is required (true/false)');
-      }
-      return undefined;
-    }
-    const v = String(raw).trim().toLowerCase();
-    if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
-    if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
-    throw new BadRequestException('Invalid externalUrl. Use true/false (or 1/0)');
-  }
-
-  private resolveExternalUrlRaw(body: any): unknown {
-    return (
-      body?.externalUrl ??
-      body?.external_url ??
-      body?.externalURL ??
-      body?.isExternalUrl ??
-      body?.is_external_url
-    );
-  }
-
-  private parseGalleryType(raw: unknown, required = false): GalleryType | undefined {
-    if (raw === undefined || raw === null || String(raw).trim() === '') {
-      if (required) {
-        throw new BadRequestException(
-          `galleryType is required. Use one of: ${GALLERY_TYPES.join(', ')}`,
-        );
-      }
-      return undefined;
-    }
-    const value = String(raw).trim();
-    const matched = GALLERY_TYPES.find(
-      (t) => t.toLowerCase() === value.toLowerCase(),
-    );
-    if (!matched) {
-      throw new BadRequestException(
-        `Invalid galleryType. Use one of: ${GALLERY_TYPES.join(', ')}`,
-      );
-    }
-    return matched;
-  }
-
-  private normalizeTeamMemberRoleIds(body: any): string[] {
-    const parseJsonArray = (value: string): string[] | null => {
-      try {
-        const parsed = JSON.parse(value);
-        return Array.isArray(parsed) ? parsed.map((v) => String(v)) : null;
-      } catch {
-        return null;
-      }
-    };
-
-    const candidates: string[] = [];
-    const roleIdsArrayField = body?.['roleIds[]'];
-    if (Array.isArray(roleIdsArrayField)) {
-      candidates.push(...roleIdsArrayField.map((v: unknown) => String(v)));
-    } else if (roleIdsArrayField !== undefined && roleIdsArrayField !== null) {
-      candidates.push(String(roleIdsArrayField));
-    }
-
-    const roleIds = body?.roleIds;
-    if (Array.isArray(roleIds)) {
-      candidates.push(...roleIds.map((v: unknown) => String(v)));
-    } else if (typeof roleIds === 'string') {
-      const trimmed = roleIds.trim();
-      const parsed = trimmed.startsWith('[') ? parseJsonArray(trimmed) : null;
-      if (parsed) {
-        candidates.push(...parsed);
-      } else if (trimmed) {
-        candidates.push(trimmed);
-      }
-    } else if (roleIds !== undefined && roleIds !== null) {
-      candidates.push(String(roleIds));
-    }
-
-    const normalized = Array.from(
-      new Set(
-        candidates
-          .map((v) => v.trim())
-          .filter((v) => /^[a-fA-F0-9]{24}$/.test(v)),
-      ),
-    );
-    if (normalized.length > 0) return normalized;
-
-    const roleId = String(body?.roleId ?? '').trim();
-    return /^[a-fA-F0-9]{24}$/.test(roleId) ? [roleId] : [];
-  }
-
-  private parseStringArrayField(raw: unknown): string[] {
-    const collect = (value: unknown): string[] => {
-      if (Array.isArray(value)) {
-        return value
-          .map((item) => String(item ?? '').trim())
-          .filter((item) => item.length > 0);
-      }
-      const text = String(value ?? '').trim();
-      if (!text) return [];
-      if (text.startsWith('[') && text.endsWith(']')) {
-        try {
-          const parsed = JSON.parse(text);
-          if (Array.isArray(parsed)) {
-            return parsed
-              .map((item) => String(item ?? '').trim())
-              .filter((item) => item.length > 0);
-          }
-        } catch {
-          // fall through to comma-separated parsing
-        }
-      }
-      return text
-        .split(',')
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
-    };
-    return Array.from(new Set(collect(raw)));
-  }
-
-  private mapGalleryResponse(item: any) {
-    const images = Array.isArray(item?.galleryImages)
-      ? item.galleryImages
-      : item?.eventImage
-        ? [item.eventImage]
-        : [];
-    const rawDate = item?.eventDate ?? item?.date;
-    const normalizedDate =
-      rawDate instanceof Date
-        ? rawDate.toISOString().slice(0, 10)
-        : rawDate
-          ? /^\d{4}-\d{2}-\d{2}$/.test(String(rawDate).trim())
-            ? String(rawDate).trim()
-            : new Date(rawDate).toISOString().slice(0, 10)
-          : '';
-    return {
-      id: item?.id,
-      eventId: item?.eventId,
-      title: item?.eventName ?? '',
-      galleryType: item?.galleryType ?? '',
-      description: item?.eventDescription ?? '',
-      date: normalizedDate,
-      image: images[0] ?? null,
-      images,
-      event_image: item?.event_image ?? null,
-    };
-  }
-
-  private mapArticleResponse(item: any) {
-    const id = item?.id ?? (item?._id ? String(item._id) : undefined);
-    const externalUrl = item?.externalUrl === true;
-    return {
-      id,
-      title: item?.title ?? '',
-      description: externalUrl ? '' : (item?.description ?? ''),
-      date:
-        item?.date instanceof Date
-          ? item.date.toISOString().slice(0, 10)
-          : item?.date
-            ? new Date(item.date).toISOString().slice(0, 10)
-            : '',
-      image: item?.image ?? null,
-      article_image: item?.article_image ?? '',
-      url: externalUrl ? (item?.url ?? '') : '',
-      externalUrl,
-      pdf: item?.pdf ?? null,
-      article_pdf: item?.article_pdf ?? '',
-      is_active: Number(item?.status) === 1 || item?.is_active === true,
-    };
-  }
-
   @Patch('profile/edit')
-  @Permissions(PERMISSIONS.PROFILE_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Edit profile (unique GST + phone)',
@@ -412,27 +179,23 @@ export class AdminController {
   })
   @ApiResponse({ status: 401, description: 'Invalid or expired token' })
   async editProfile(
-    @CurrentUser() user: {
-      userId: string;
-      manufacturerId?: string;
-      vendorId?: string;
-    },
+    @CurrentUser() user: { userId: string },
     @Body() updateProfileDto: UpdateProfileDto,
   ) {
     const profile = await this.manufacturersService.editProfile(
-      user,
+      user.userId,
       updateProfileDto,
     );
     return { message: 'Profile updated successfully', data: profile };
   }
 
   @Get('banner/list')
-  @Permissions(PERMISSIONS.BANNERS_VIEW)
   @HttpCode(HttpStatus.OK)
+  @Public()
   @ApiOperation({
-    summary: 'List banners (vendor admin)',
+    summary: 'List banners',
     description:
-      'Returns **this vendor’s** banners for the admin grid (ordered by sequence number): **title**, **description**, **sequenceNumber**, **is_active**, and **id**. IDs match **GET /admin/banner/:id** (vendor-scoped). For **all** active banners on the public site, use **GET /website/public/banners**.',
+      'Returns active banners for website display (newest first): **imageUrl**, **heading**, **description** (full text — use CSS **line-clamp: 3** in the card), **is_active**, **targetUrl**, and **id**.',
   })
   @ApiResponse({
     status: 200,
@@ -448,37 +211,46 @@ export class AdminController {
             properties: {
               s_no: { type: 'number', example: 1 },
               id: { type: 'string' },
-              title: { type: 'string' },
-              sequenceNumber: { type: 'number' },
+              imageUrl: { type: 'string' },
+              targetUrl: { type: 'string' },
+              heading: { type: 'string' },
               description: { type: 'string' },
               is_active: { type: 'boolean' },
             },
           },
         },
-        displayOrderMax: { type: 'number', example: 6 },
       },
     },
   })
-  async listBanners(
-    @CurrentUser() user: { vendorId?: string; manufacturerId?: string },
-  ) {
-    const scopedVendorId = user?.vendorId || user?.manufacturerId;
-    if (!scopedVendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
-    const data = await this.adminService.listBanners(scopedVendorId);
-    return { message: 'Banners retrieved successfully', data };
+  async listBanners(@Req() req: Request) {
+    const data = await this.adminService.listPublicBanners();
+
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = (raw ?? '').toString().trim();
+      if (!v) return v;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v; // keep as-is (legacy values)
+    };
+
+    const normalized = data.map((b) => ({
+      ...b,
+      imageUrl: normalizeImageUrl(b.imageUrl),
+    }));
+    return { message: 'Banners retrieved successfully', data: normalized };
   }
 
   @Post('banner')
-  @Permissions(PERMISSIONS.BANNERS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileInterceptor('image', {
       storage: diskStorage({
         destination: join(process.cwd(), 'uploads', 'banners'),
         filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = extname(file.originalname || '');
           cb(null, `banner-${uniqueSuffix}${ext}`);
         },
@@ -488,9 +260,11 @@ export class AdminController {
           cb(null, true);
           return;
         }
+        // Accept any image/* mimetype (some browsers report webp as image/x-webp etc.)
         cb(
           null,
-          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
+          typeof file.mimetype === 'string' &&
+            file.mimetype.startsWith('image/'),
         );
       },
       limits: { fileSize: 5 * 1024 * 1024 },
@@ -499,18 +273,21 @@ export class AdminController {
   @ApiOperation({
     summary: 'Create banner',
     description:
-      'Creates a banner for the logged-in vendor.',
+      'Creates a banner for the logged-in vendor. Multipart form: image (binary), optional targetUrl, heading, description. (imageUrl string is also accepted for backward compatibility).',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
+      required: ['heading', 'description'],
       properties: {
         image: { type: 'string', format: 'binary' },
-        imageUrl: { type: 'string', description: 'Optional if image uploaded' },
-        title: { type: 'string' },
-        status: { type: 'string', enum: ['active', 'inactive'] },
-        sequenceNumber: { type: 'number', example: 1 },
+        imageUrl: {
+          type: 'string',
+          description: 'Optional if image is uploaded',
+        },
+        targetUrl: { type: 'string', description: 'Optional' },
+        heading: { type: 'string' },
         description: { type: 'string' },
       },
     },
@@ -522,6 +299,7 @@ export class AdminController {
   })
   async createBanner(
     @CurrentUser() user: { vendorId: string },
+    @Req() req: Request,
     @Body() body: any,
     @UploadedFile() file?: any,
   ) {
@@ -530,11 +308,9 @@ export class AdminController {
     }
     const dto = plainToClass(CreateBannerDto, {
       imageUrl: body.imageUrl,
-      title: body.title ?? body.heading,
-      status: body.status,
-      sequenceNumber:
-        body.sequenceNumber ?? body.sequence ?? body.displayOrder ?? body.order,
-      description: body.description ?? body.bannerDescription,
+      targetUrl: body.targetUrl,
+      heading: body.heading,
+      description: body.description,
     });
     const errors = await validate(dto);
     if (errors.length > 0) {
@@ -544,27 +320,36 @@ export class AdminController {
       throw new BadRequestException(errorMessages.join(', '));
     }
 
-    const imageUrl = file ? (await uploadFile(file, 'banners')).fileUrl : dto.imageUrl;
+    const imageUrl = file ? `/uploads/banners/${file.filename}` : dto.imageUrl;
     if (!imageUrl) {
       throw new BadRequestException('Banner image is required');
     }
+
     const data = await this.adminService.createBanner(user.vendorId, {
       ...dto,
       imageUrl,
-      imageSource: file ? 'binary_upload' : 'manual_url',
     });
-    return { message: 'Banner created successfully', data };
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalized = {
+      ...data,
+      imageUrl:
+        typeof data?.imageUrl === 'string' &&
+        data.imageUrl.startsWith('/uploads/')
+          ? `${origin}${data.imageUrl}`
+          : data.imageUrl,
+    };
+    return { message: 'Banner created successfully', data: normalized };
   }
 
   @Patch(['banner/:id', 'banner/:id/edit'])
-  @Permissions(PERMISSIONS.BANNERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileInterceptor('image', {
       storage: diskStorage({
         destination: join(process.cwd(), 'uploads', 'banners'),
         filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = extname(file.originalname || '');
           cb(null, `banner-${uniqueSuffix}${ext}`);
         },
@@ -574,9 +359,11 @@ export class AdminController {
           cb(null, true);
           return;
         }
+        // Accept any image/* mimetype (some browsers report webp as image/x-webp etc.)
         cb(
           null,
-          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
+          typeof file.mimetype === 'string' &&
+            file.mimetype.startsWith('image/'),
         );
       },
       limits: { fileSize: 5 * 1024 * 1024 },
@@ -585,20 +372,22 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit banner',
     description:
-      'Edits a banner for the logged-in vendor.',
+      'Edits a banner for the logged-in vendor. Multipart form: optional image (binary), optional targetUrl, required heading + description.',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id (from banner list)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['title', 'sequenceNumber', 'description'],
+      required: ['heading', 'description'],
       properties: {
         image: { type: 'string', format: 'binary' },
-        imageUrl: { type: 'string', description: 'Optional if image uploaded' },
-        title: { type: 'string' },
-        status: { type: 'string', enum: ['active', 'inactive'] },
-        sequenceNumber: { type: 'number', example: 1 },
+        imageUrl: {
+          type: 'string',
+          description: 'Optional if image is uploaded',
+        },
+        targetUrl: { type: 'string', description: 'Optional' },
+        heading: { type: 'string' },
         description: { type: 'string' },
       },
     },
@@ -608,6 +397,7 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Banner not found' })
   async editBanner(
     @CurrentUser() user: { vendorId: string },
+    @Req() req: Request,
     @Param('id') id: string,
     @Body() body: any,
     @UploadedFile() file?: any,
@@ -618,13 +408,12 @@ export class AdminController {
 
     const dto = plainToClass(EditBannerDto, {
       imageUrl: body.imageUrl,
-      title: body.title ?? body.heading,
-      status: body.status,
-      sequenceNumber: body.sequenceNumber,
+      targetUrl: body.targetUrl,
+      heading: body.heading,
       description: body.description,
     });
 
-    const errors = await validate(dto, { skipMissingProperties: true });
+    const errors = await validate(dto);
     if (errors.length > 0) {
       const errorMessages = errors
         .map((error) => Object.values(error.constraints || {}))
@@ -632,37 +421,29 @@ export class AdminController {
       throw new BadRequestException(errorMessages.join(', '));
     }
 
-    if (
-      !file &&
-      dto.imageUrl === undefined &&
-      dto.title === undefined &&
-      dto.status === undefined &&
-      dto.sequenceNumber === undefined &&
-      dto.description === undefined
-    ) {
-      throw new BadRequestException('Provide at least one field to update');
-    }
+    // In edit: image is optional. If neither `image` (binary) nor `imageUrl` is provided,
+    // we keep the existing imageUrl stored in DB.
+    const imageUrl = file ? `/uploads/banners/${file.filename}` : dto.imageUrl;
 
-    const imageUrl = file ? (await uploadFile(file, 'banners')).fileUrl : dto.imageUrl;
     const data = await this.adminService.updateBanner(user.vendorId, id, {
       ...(imageUrl ? { imageUrl } : {}),
-      ...(file
-        ? { imageSource: 'binary_upload' as const }
-        : dto.imageUrl !== undefined
-          ? { imageSource: 'manual_url' as const }
-          : {}),
-      ...(dto.title !== undefined ? { title: dto.title } : {}),
-      ...(dto.status !== undefined ? { status: dto.status } : {}),
-      ...(dto.sequenceNumber !== undefined
-        ? { sequenceNumber: dto.sequenceNumber }
-        : {}),
-      ...(dto.description !== undefined ? { description: dto.description } : {}),
+      targetUrl: dto.targetUrl,
+      heading: dto.heading,
+      description: dto.description,
     });
-    return { message: 'Banner updated successfully', data };
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalized = {
+      ...data,
+      imageUrl:
+        typeof data?.imageUrl === 'string' &&
+        data.imageUrl.startsWith('/uploads/')
+          ? `${origin}${data.imageUrl}`
+          : data.imageUrl,
+    };
+    return { message: 'Banner updated successfully', data: normalized };
   }
 
   @Post('events/create')
-  @Permissions(PERMISSIONS.EVENTS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileInterceptor('image', {
@@ -720,47 +501,19 @@ export class AdminController {
   @ApiResponse({ status: 201, description: 'Event created successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })
   async createEvent(@Body() body: any, @UploadedFile() file?: any) {
-    const pick = (keys: string[]) => {
-      for (const k of keys) {
-        if (body?.[k] !== undefined) return body[k];
-      }
-      return undefined;
-    };
-
     const dto = plainToClass(CreateEventDto, {
-      eventName: pick(['eventName', 'title', 'name', 'event_name', 'event_title']),
-      eventDate: pick(['eventDate', 'date', 'event_date']),
-      eventStartTime: pick(['eventStartTime', 'startTime', 'event_start_time']),
-      eventEndTime: pick(['eventEndTime', 'endTime', 'event_end_time']),
-      eventLocation: pick(['eventLocation', 'location', 'event_location']),
-      eventDescription: pick([
-        'eventDescription',
-        'description',
-        'event_description',
-      ]),
-      contactPersonName: pick([
-        'contactPersonName',
-        'contact_person_name',
-        'contactName',
-      ]),
-      contactPersonDesignation: pick([
-        'contactPersonDesignation',
-        'contact_person_designation',
-        'contactDesignation',
-      ]),
-      contactPersonEmail: pick([
-        'contactPersonEmail',
-        'contactPersonemail',
-        'contact_person_email',
-        'contactEmail',
-      ]),
-      contactPersonPhone: pick([
-        'contactPersonPhone',
-        'contact_person_phone',
-        'contactPhone',
-      ]),
-      registrationLink: pick(['registrationLink', 'registration_link']),
-      brochureLink: pick(['brochureLink', 'brochure_link']),
+      eventName: body.eventName,
+      eventDate: body.eventDate,
+      eventStartTime: body.eventStartTime,
+      eventEndTime: body.eventEndTime,
+      eventLocation: body.eventLocation,
+      eventDescription: body.eventDescription,
+      contactPersonName: body.contactPersonName,
+      contactPersonDesignation: body.contactPersonDesignation,
+      contactPersonEmail: body.contactPersonEmail,
+      contactPersonPhone: body.contactPersonPhone,
+      registrationLink: body.registrationLink,
+      brochureLink: body.brochureLink,
     });
 
     const errors = await validate(dto);
@@ -782,13 +535,8 @@ export class AdminController {
         'Invalid eventDate (expected ISO date/datetime)',
       );
     }
-    const eventStatus = this.parseEventStatus(
-      pick(['eventStatus', 'status', 'is_active', 'active']),
-    );
 
-    const eventImage = file
-      ? (await uploadFile(file, 'events')).fileUrl
-      : undefined;
+    const eventImage = file ? `/uploads/events/${file.filename}` : undefined;
     const data = await this.adminService.createEvent({
       eventName: dto.eventName,
       eventDate,
@@ -803,22 +551,19 @@ export class AdminController {
       registrationLink: dto.registrationLink,
       brochureLink: dto.brochureLink,
       eventImage,
-      ...(eventStatus !== undefined ? { eventStatus } : {}),
     });
 
     return { message: 'Event created successfully', data };
   }
 
   @Patch('events/:id/edit')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileFieldsInterceptor(
       [
-        { name: 'image', maxCount: 20 },
-        { name: 'images', maxCount: 20 },
-        { name: 'eventImage', maxCount: 20 },
-        { name: 'event_image', maxCount: 20 },
+        { name: 'image', maxCount: 1 },
+        { name: 'eventImage', maxCount: 1 },
+        { name: 'event_image', maxCount: 1 },
       ],
       {
         storage: diskStorage({
@@ -894,7 +639,7 @@ export class AdminController {
     };
 
     const dto = plainToClass(UpdateEventDto, {
-      eventName: pick(['eventName', 'title', 'name', 'event_name', 'event_title']),
+      eventName: pick(['eventName', 'name', 'event_name']),
       eventDate: pick(['eventDate', 'date', 'event_date']),
       eventStartTime: pick(['eventStartTime', 'startTime', 'event_start_time']),
       eventEndTime: pick(['eventEndTime', 'endTime', 'event_end_time']),
@@ -949,9 +694,6 @@ export class AdminController {
         );
       }
     }
-    const eventStatus = this.parseEventStatus(
-      pick(['eventStatus', 'status', 'is_active', 'active']),
-    );
 
     const picked =
       files?.image?.[0] ||
@@ -959,7 +701,7 @@ export class AdminController {
       files?.event_image?.[0] ||
       null;
     const eventImage = picked
-      ? (await uploadFile(picked, 'events')).fileUrl
+      ? `/uploads/events/${picked.filename}`
       : undefined;
     const data = await this.adminService.updateEvent(id, {
       ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
@@ -994,373 +736,10 @@ export class AdminController {
       ...(dto.brochureLink !== undefined
         ? { brochureLink: dto.brochureLink }
         : {}),
-      ...(eventStatus !== undefined ? { eventStatus } : {}),
       ...(eventImage ? { eventImage } : {}),
     });
 
     return { message: 'Event updated successfully', data };
-  }
-
-  @Post('gallery/create')
-  @Permissions(PERMISSIONS.EVENTS_ADD)
-  @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(
-    FileFieldsInterceptor(
-      [
-        { name: 'image', maxCount: 20 },
-        { name: 'image[]', maxCount: 20 },
-        { name: 'images', maxCount: 20 },
-      ],
-      {
-        storage: diskStorage({
-          destination: join(process.cwd(), 'uploads', 'events'),
-          filename: (req, file, cb) => {
-            const uniqueSuffix =
-              Date.now() + '-' + Math.round(Math.random() * 1e9);
-            const ext = extname(file.originalname || '');
-            cb(null, `event-${uniqueSuffix}${ext}`);
-          },
-        }),
-        fileFilter: (req, file, cb) => {
-          if (!file?.originalname) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-          ];
-          cb(null, allowedMimes.includes(file.mimetype));
-        },
-        limits: { fileSize: 5 * 1024 * 1024 },
-      },
-    ),
-  )
-  @ApiOperation({
-    summary: 'Create gallery item',
-    description:
-      'Creates a gallery item. Fields accepted: title, description, date, galleryType, image.',
-  })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['title', 'date', 'galleryType'],
-      properties: {
-        title: { type: 'string' },
-        description: { type: 'string' },
-        date: { type: 'string', example: '2026-04-08' },
-        galleryType: { type: 'string', enum: [...GALLERY_TYPES] },
-        image: {
-          type: 'array',
-          items: { type: 'string', format: 'binary' },
-          description: 'Upload one or more images with field name "image"',
-        },
-      },
-    },
-  })
-  @ApiResponse({ status: 201, description: 'Gallery item created successfully' })
-  @ApiResponse({ status: 400, description: 'Validation error' })
-  async createGallery(
-    @Body() body: any,
-    @UploadedFiles()
-    files?: {
-      image?: Express.Multer.File[];
-      'image[]'?: Express.Multer.File[];
-      images?: Express.Multer.File[];
-    },
-  ) {
-    const allImages = [
-      ...(files?.image ?? []),
-      ...(files?.['image[]'] ?? []),
-      ...(files?.images ?? []),
-    ];
-    const pick = (keys: string[]) => {
-      for (const k of keys) {
-        if (body?.[k] !== undefined) return body[k];
-      }
-      return undefined;
-    };
-    const dto = plainToClass(CreateEventDto, {
-      eventName: pick(['eventName', 'title', 'name', 'event_name', 'event_title']),
-      eventDate: pick(['eventDate', 'date', 'event_date']),
-      eventDescription: pick([
-        'eventDescription',
-        'description',
-        'event_description',
-      ]),
-    });
-    const errors = await validate(dto);
-    if (errors.length > 0) {
-      const errorMessages = errors
-        .map((error) => Object.values(error.constraints || {}))
-        .flat();
-      throw new BadRequestException(errorMessages.join(', '));
-    }
-    const rawDate = String(dto.eventDate ?? '').trim();
-    const eventDate = /^\d{2}-\d{2}-\d{4}$/.test(rawDate)
-      ? new Date(
-          `${rawDate.slice(6, 10)}-${rawDate.slice(3, 5)}-${rawDate.slice(0, 2)}`,
-        )
-      : new Date(rawDate);
-    if (Number.isNaN(eventDate.getTime())) {
-      throw new BadRequestException(
-        'Invalid eventDate (expected ISO date/datetime)',
-      );
-    }
-    const galleryImages = allImages.map((f) => `/uploads/events/${f.filename}`);
-    const galleryType = this.parseGalleryType(
-      pick(['galleryType', 'type', 'category']),
-      true,
-    );
-    const data = await this.adminService.createEvent({
-      eventName: dto.eventName,
-      eventDate,
-      eventDescription: dto.eventDescription,
-      galleryType,
-      ...(galleryImages.length ? { galleryImages, eventImage: galleryImages[0] } : {}),
-    });
-    return {
-      message: 'Gallery item created successfully',
-      data: this.mapGalleryResponse(data),
-    };
-  }
-
-  @Patch('gallery/:id/edit')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
-  @HttpCode(HttpStatus.OK)
-  @UseInterceptors(
-    FileFieldsInterceptor(
-      [
-        { name: 'image', maxCount: 20 },
-        { name: 'image[]', maxCount: 20 },
-        { name: 'images', maxCount: 20 },
-        { name: 'eventImage', maxCount: 20 },
-        { name: 'event_image', maxCount: 20 },
-      ],
-      {
-        storage: diskStorage({
-          destination: join(process.cwd(), 'uploads', 'events'),
-          filename: (req, file, cb) => {
-            const uniqueSuffix =
-              Date.now() + '-' + Math.round(Math.random() * 1e9);
-            const ext = extname(file.originalname || '');
-            cb(null, `event-${uniqueSuffix}${ext}`);
-          },
-        }),
-        fileFilter: (req, file, cb) => {
-          if (!file?.originalname) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-          ];
-          cb(null, allowedMimes.includes(file.mimetype));
-        },
-        limits: { fileSize: 5 * 1024 * 1024 },
-      },
-    ),
-  )
-  @ApiOperation({
-    summary: 'Edit gallery item',
-    description:
-      'Edits a gallery item by id. Existing images are preserved by default; upload new files to append, send `existingImages` to control kept order, and `removeImages` to delete selected previous images.',
-  })
-  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string' },
-        description: { type: 'string' },
-        date: { type: 'string', example: '2026-04-08' },
-        galleryType: { type: 'string', enum: [...GALLERY_TYPES] },
-        existingImages: {
-          oneOf: [
-            { type: 'array', items: { type: 'string' } },
-            { type: 'string', description: 'JSON array or comma-separated URLs' },
-          ],
-        },
-        removeImages: {
-          oneOf: [
-            { type: 'array', items: { type: 'string' } },
-            { type: 'string', description: 'JSON array or comma-separated URLs' },
-          ],
-        },
-        image: {
-          type: 'array',
-          items: { type: 'string', format: 'binary' },
-          description: 'Upload one or more images with field name "image"',
-        },
-      },
-    },
-  })
-  @ApiResponse({ status: 200, description: 'Gallery item updated successfully' })
-  @ApiResponse({ status: 400, description: 'Validation error' })
-  @ApiResponse({ status: 404, description: 'Gallery item not found' })
-  async editGallery(
-    @Param('id') id: string,
-    @Body() body: any,
-    @UploadedFiles()
-    files?: {
-      image?: Express.Multer.File[];
-      'image[]'?: Express.Multer.File[];
-      images?: Express.Multer.File[];
-      eventImage?: Express.Multer.File[];
-      event_image?: Express.Multer.File[];
-    },
-  ) {
-    const allImages = [
-      ...(files?.image ?? []),
-      ...(files?.['image[]'] ?? []),
-      ...(files?.images ?? []),
-      ...(files?.eventImage ?? []),
-      ...(files?.event_image ?? []),
-    ];
-    const pick = (keys: string[]) => {
-      for (const k of keys) {
-        if (body?.[k] !== undefined) return body[k];
-      }
-      return undefined;
-    };
-    const dto = plainToClass(UpdateEventDto, {
-      eventName: pick(['eventName', 'title', 'name', 'event_name', 'event_title']),
-      eventDate: pick(['eventDate', 'date', 'event_date']),
-      eventDescription: pick([
-        'eventDescription',
-        'description',
-        'event_description',
-      ]),
-    });
-    const errors = await validate(dto);
-    if (errors.length > 0) {
-      const errorMessages = errors
-        .map((error) => Object.values(error.constraints || {}))
-        .flat();
-      throw new BadRequestException(errorMessages.join(', '));
-    }
-    let eventDate: Date | undefined = undefined;
-    if (dto.eventDate !== undefined) {
-      const raw = String(dto.eventDate ?? '').trim();
-      eventDate = /^\d{2}-\d{2}-\d{4}$/.test(raw)
-        ? new Date(`${raw.slice(6, 10)}-${raw.slice(3, 5)}-${raw.slice(0, 2)}`)
-        : new Date(raw);
-      if (Number.isNaN(eventDate.getTime())) {
-        throw new BadRequestException(
-          'Invalid eventDate (expected ISO date/datetime)',
-        );
-      }
-    }
-    const galleryType = this.parseGalleryType(
-      pick(['galleryType', 'type', 'category']),
-      false,
-    );
-    const uploadedImages = allImages.map((f) => `/uploads/events/${f.filename}`);
-    const normalizeGalleryImageRef = (raw: unknown): string => {
-      const text = String(raw ?? '').trim();
-      if (!text) return '';
-      if (/^https?:\/\//i.test(text)) {
-        try {
-          const parsed = new URL(text);
-          return parsed.pathname.trim();
-        } catch {
-          return text;
-        }
-      }
-      if (text.startsWith('uploads/')) return `/${text}`;
-      return text;
-    };
-    const existingImagesRaw = pick([
-      'existingImages',
-      'existing_images',
-      'keepImages',
-      'keep_images',
-    ]);
-    const removeImagesRaw = pick([
-      'removeImages',
-      'remove_images',
-      'deletedImages',
-      'deleted_images',
-    ]);
-    const existingImagesProvided = existingImagesRaw !== undefined;
-    const removeImagesProvided = removeImagesRaw !== undefined;
-
-    const current = await this.adminService.getEventById(id);
-    const currentImages = Array.isArray((current as any)?.galleryImages)
-      ? ((current as any).galleryImages as string[])
-      : (current as any)?.eventImage
-        ? [String((current as any).eventImage)]
-        : [];
-    const currentByNormalized = new Map<string, string>();
-    for (const image of currentImages) {
-      const normalized = normalizeGalleryImageRef(image);
-      if (normalized && !currentByNormalized.has(normalized)) {
-        currentByNormalized.set(normalized, image);
-      }
-    }
-
-    const keepImages = existingImagesProvided
-      ? this.parseStringArrayField(existingImagesRaw)
-          .map((imageRef) => {
-            const normalized = normalizeGalleryImageRef(imageRef);
-            return currentByNormalized.get(normalized) ?? imageRef;
-          })
-      : currentImages;
-    const removeImages = removeImagesProvided
-      ? this.parseStringArrayField(removeImagesRaw)
-      : [];
-    const removeImageSet = new Set(
-      removeImages.map((imagePath) => normalizeGalleryImageRef(imagePath)),
-    );
-
-    const nextImages = Array.from(
-      new Set(
-        [...keepImages, ...uploadedImages].filter(
-          (imagePath) => {
-            if (!imagePath) return false;
-            const normalized = normalizeGalleryImageRef(imagePath);
-            if (!normalized) return false;
-            const existsInCurrent = currentByNormalized.has(normalized);
-            const isUploaded = uploadedImages.some(
-              (uploaded) => normalizeGalleryImageRef(uploaded) === normalized,
-            );
-            return (existsInCurrent || isUploaded) && !removeImageSet.has(normalized);
-          },
-        ),
-      ),
-    );
-
-    const hasGalleryImageMutation =
-      uploadedImages.length > 0 ||
-      existingImagesProvided ||
-      removeImagesProvided;
-    const data = await this.adminService.updateEvent(id, {
-      ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
-      ...(dto.eventDescription !== undefined
-        ? { eventDescription: dto.eventDescription }
-        : {}),
-      ...(eventDate !== undefined ? { eventDate } : {}),
-      ...(galleryType !== undefined ? { galleryType } : {}),
-      ...(hasGalleryImageMutation
-        ? {
-            galleryImages: nextImages,
-            eventImage: nextImages[0] ?? '',
-          }
-        : {}),
-    });
-    return {
-      message: 'Gallery item updated successfully',
-      data: this.mapGalleryResponse(data),
-    };
   }
 
   @Get('events/list')
@@ -1402,477 +781,6 @@ export class AdminController {
     return { message: 'Events retrieved successfully', data };
   }
 
-  @Get('gallery/list')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'List gallery items',
-    description:
-      'Returns gallery list with gallery-friendly fields: title, description, date, image, active flag, and id.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Gallery list',
-    schema: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', example: 'Gallery retrieved successfully' },
-        data: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              s_no: { type: 'number', example: 1 },
-              id: { type: 'string' },
-              eventId: { type: 'number', nullable: true },
-              title: { type: 'string' },
-              galleryType: { type: 'string', enum: [...GALLERY_TYPES] },
-              description: { type: 'string' },
-              date: { type: 'string', example: '2026-03-25' },
-              image: { type: 'string', nullable: true },
-              images: {
-                type: 'array',
-                items: { type: 'string' },
-              },
-              event_image: { type: 'string', nullable: true },
-              is_active: { type: 'boolean' },
-            },
-          },
-        },
-      },
-    },
-  })
-  @Public()
-  async listGallery() {
-    const rows = await this.adminService.listEvents();
-    const data = rows.map((r: any) => ({
-      s_no: r.s_no,
-      ...this.mapGalleryResponse(r),
-      is_active: r.is_active,
-    }));
-    return { message: 'Gallery retrieved successfully', data };
-  }
-
-  @Get('gallery/:id')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Get gallery item by id',
-    description:
-      'Returns one gallery item for edit/view with fields: title, description, date, image, images.',
-  })
-  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
-  @ApiResponse({ status: 200, description: 'Gallery item retrieved successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid id' })
-  @ApiResponse({ status: 404, description: 'Gallery item not found' })
-  @Public()
-  async getGalleryById(@Param('id') id: string) {
-    const item: any = await this.adminService.getEventById(id);
-    const data = this.mapGalleryResponse(item);
-    return { message: 'Gallery item retrieved successfully', data };
-  }
-
-  @Patch('gallery/:id/status')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Set/toggle gallery status',
-    description:
-      'Sets gallery item status to active/inactive. If body status is omitted, backend toggles current status.',
-  })
-  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', enum: ['active', 'inactive'] },
-      },
-    },
-  })
-  @ApiResponse({ status: 200, description: 'Gallery status updated successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid id/status' })
-  @ApiResponse({ status: 404, description: 'Gallery item not found' })
-  async updateGalleryStatus(
-    @Param('id') id: string,
-    @Body() body: { status?: string },
-  ) {
-    const status = this.parseEventStatus(body?.status);
-    const data = await this.adminService.setOrToggleEventStatus(id, status);
-    return { message: 'Gallery status updated successfully', data };
-  }
-
-  @Post('articles/create')
-  @Permissions(PERMISSIONS.EVENTS_ADD)
-  @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(
-    FileFieldsInterceptor(
-      [
-        { name: 'image', maxCount: 1 },
-        { name: 'pdf', maxCount: 1 },
-        { name: 'file', maxCount: 1 },
-      ],
-      {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'articles'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `article-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-          if (file.mimetype === 'application/pdf') {
-            cb(null, true);
-            return;
-          }
-          cb(
-            new BadRequestException(
-              'Only PDF files are allowed for file/pdf field',
-            ),
-            false,
-          );
-          return;
-        }
-        const allowedImageMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-        ];
-        cb(null, allowedImageMimes.includes(file.mimetype));
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-      },
-    ),
-  )
-  @ApiOperation({
-    summary: 'Create article',
-    description:
-      'Creates an article with title, date, image, file/pdf (PDF), externalUrl toggle and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url is required and description is hidden.',
-  })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['title', 'date', 'image', 'pdf'],
-      properties: {
-        title: { type: 'string' },
-        description: { type: 'string' },
-        date: { type: 'string', example: '2026-05-05' },
-        externalUrl: { type: 'boolean', default: false },
-        image: { type: 'string', format: 'binary' },
-        file: { type: 'string', format: 'binary' },
-        pdf: { type: 'string', format: 'binary' },
-        url: { type: 'string' },
-        status: { type: 'string', enum: ['active', 'inactive'] },
-      },
-    },
-  })
-  @ApiResponse({ status: 201, description: 'Article created successfully' })
-  @ApiResponse({ status: 400, description: 'Validation error' })
-  async createArticle(
-    @Body() body: any,
-    @UploadedFiles()
-    files?: {
-      image?: Express.Multer.File[];
-      pdf?: Express.Multer.File[];
-      file?: Express.Multer.File[];
-    },
-  ) {
-    const title = String(body?.title ?? '').trim();
-    if (!title) throw new BadRequestException('title is required');
-    const rawDate = String(body?.date ?? '').trim();
-    if (!rawDate) throw new BadRequestException('date is required');
-    const date = /^\d{2}-\d{2}-\d{4}$/.test(rawDate)
-      ? new Date(
-          `${rawDate.slice(6, 10)}-${rawDate.slice(3, 5)}-${rawDate.slice(0, 2)}`,
-        )
-      : new Date(rawDate);
-    if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException('Invalid date (expected ISO date/datetime)');
-    }
-    const description = String(body?.description ?? '').trim();
-    const url = String(body?.url ?? '').trim();
-    const explicitExternalUrl = this.parseExternalUrlToggle(
-      this.resolveExternalUrlRaw(body),
-    );
-    const inferredExternalUrl =
-      explicitExternalUrl ??
-      (url && !description ? true : description && !url ? false : false);
-    const externalUrl = inferredExternalUrl;
-    const status = this.parseEventStatus(body?.status);
-    const imageFile = files?.image?.[0];
-    const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
-    if (!imageFile) throw new BadRequestException('image is required');
-    if (!pdfFile) throw new BadRequestException('pdf/file is required');
-    if (externalUrl) {
-      if (!url) {
-        throw new BadRequestException('url is required when externalUrl is true');
-      }
-    } else if (!description) {
-      throw new BadRequestException(
-        'description is required when externalUrl is false',
-      );
-    }
-    const imageUpload = imageFile ? await uploadFile(imageFile, 'articles') : undefined;
-    const pdfUpload = pdfFile ? await uploadFile(pdfFile, 'articles') : undefined;
-    const image = imageUpload?.fileUrl;
-    const pdf = pdfUpload?.fileUrl;
-
-    const data = await this.adminService.createArticle({
-      title,
-      description: externalUrl ? '' : description,
-      date,
-      image,
-      pdf,
-      url: externalUrl ? url : '',
-      externalUrl,
-      ...(status !== undefined ? { status } : {}),
-    });
-    return {
-      message: 'Article created successfully',
-      data: this.mapArticleResponse(data),
-    };
-  }
-
-  @Patch('articles/:id/edit')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
-  @HttpCode(HttpStatus.OK)
-  @UseInterceptors(
-    FileFieldsInterceptor(
-      [
-        { name: 'image', maxCount: 1 },
-        { name: 'pdf', maxCount: 1 },
-        { name: 'file', maxCount: 1 },
-      ],
-      {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'articles'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `article-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-          if (file.mimetype === 'application/pdf') {
-            cb(null, true);
-            return;
-          }
-          cb(
-            new BadRequestException(
-              'Only PDF files are allowed for file/pdf field',
-            ),
-            false,
-          );
-          return;
-        }
-        const allowedImageMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-        ];
-        cb(null, allowedImageMimes.includes(file.mimetype));
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-      },
-    ),
-  )
-  @ApiOperation({
-    summary: 'Edit article',
-    description:
-      'Edits article fields: title, date, image, file/pdf (PDF), externalUrl toggle, url/description and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url is required and description is hidden.',
-  })
-  @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string' },
-        description: { type: 'string' },
-        date: { type: 'string', example: '2026-05-05' },
-        externalUrl: { type: 'boolean' },
-        image: { type: 'string', format: 'binary' },
-        file: { type: 'string', format: 'binary' },
-        pdf: { type: 'string', format: 'binary' },
-        url: { type: 'string' },
-        status: { type: 'string', enum: ['active', 'inactive'] },
-      },
-    },
-  })
-  @ApiResponse({ status: 200, description: 'Article updated successfully' })
-  @ApiResponse({ status: 400, description: 'Validation error' })
-  @ApiResponse({ status: 404, description: 'Article not found' })
-  async editArticle(
-    @Param('id') id: string,
-    @Body() body: any,
-    @UploadedFiles()
-    files?: {
-      image?: Express.Multer.File[];
-      pdf?: Express.Multer.File[];
-      file?: Express.Multer.File[];
-    },
-  ) {
-    let date: Date | undefined = undefined;
-    if (body?.date !== undefined && String(body.date).trim() !== '') {
-      const rawDate = String(body.date).trim();
-      date = /^\d{2}-\d{2}-\d{4}$/.test(rawDate)
-        ? new Date(
-            `${rawDate.slice(6, 10)}-${rawDate.slice(3, 5)}-${rawDate.slice(0, 2)}`,
-          )
-        : new Date(rawDate);
-      if (Number.isNaN(date.getTime())) {
-        throw new BadRequestException('Invalid date (expected ISO date/datetime)');
-      }
-    }
-
-    const status = this.parseEventStatus(body?.status);
-    const explicitExternalUrl = this.parseExternalUrlToggle(
-      this.resolveExternalUrlRaw(body),
-    );
-    const imageFile = files?.image?.[0];
-    const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
-    const imageUpload = imageFile ? await uploadFile(imageFile, 'articles') : undefined;
-    const pdfUpload = pdfFile ? await uploadFile(pdfFile, 'articles') : undefined;
-    const image = imageUpload?.fileUrl;
-    const pdf = pdfUpload?.fileUrl;
-    const description =
-      body?.description !== undefined ? String(body.description).trim() : undefined;
-    const url = body?.url !== undefined ? String(body.url).trim() : undefined;
-    const inferredExternalUrl =
-      explicitExternalUrl ??
-      (url !== undefined && description === undefined
-        ? true
-        : description !== undefined && url === undefined
-          ? false
-          : undefined);
-    const data = await this.adminService.updateArticle(id, {
-      ...(body?.title !== undefined ? { title: body.title } : {}),
-      ...(description !== undefined ? { description } : {}),
-      ...(date !== undefined ? { date } : {}),
-      ...(url !== undefined ? { url } : {}),
-      ...(inferredExternalUrl !== undefined ? { externalUrl: inferredExternalUrl } : {}),
-      ...(status !== undefined ? { status } : {}),
-      ...(image !== undefined ? { image } : {}),
-      ...(pdf !== undefined ? { pdf } : {}),
-    });
-    return {
-      message: 'Article updated successfully',
-      data: this.mapArticleResponse(data),
-    };
-  }
-
-  @Get(['articles/list', 'article/list'])
-  @HttpCode(HttpStatus.OK)
-  @Public()
-  @ApiOperation({
-    summary: 'List articles',
-    description:
-      'Returns articles with title, description, date, image, url and active flag (newest first).',
-  })
-  @ApiResponse({ status: 200, description: 'Articles retrieved successfully' })
-  async listArticles() {
-    const data = (await this.adminService.listArticles()).map((a: any) => ({
-      s_no: a.s_no,
-      ...this.mapArticleResponse(a),
-    }));
-    return { message: 'Articles retrieved successfully', data };
-  }
-
-  @Get('articles/:id')
-  @HttpCode(HttpStatus.OK)
-  @Public()
-  @ApiOperation({
-    summary: 'Get article by id',
-    description:
-      'Returns one article for view/edit with title, description, date, image, url and active flag.',
-  })
-  @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
-  @ApiResponse({ status: 200, description: 'Article retrieved successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid id' })
-  @ApiResponse({ status: 404, description: 'Article not found' })
-  async getArticleById(@Param('id') id: string) {
-    const data = this.mapArticleResponse(await this.adminService.getArticleById(id));
-    return { message: 'Article retrieved successfully', data };
-  }
-
-  @Patch('articles/:id/status')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Set/toggle article status',
-    description:
-      'Sets article status to active/inactive. If body status is omitted, backend toggles current status.',
-  })
-  @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', enum: ['active', 'inactive'] },
-      },
-    },
-  })
-  @ApiResponse({ status: 200, description: 'Article status updated successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid id/status' })
-  @ApiResponse({ status: 404, description: 'Article not found' })
-  async updateArticleStatus(
-    @Param('id') id: string,
-    @Body() body: { status?: string },
-  ) {
-    const status = this.parseEventStatus(body?.status);
-    const data = await this.adminService.setOrToggleArticleStatus(id, status);
-    return { message: 'Article status updated successfully', data };
-  }
-
-  @Delete('articles/:id/delete')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Delete article',
-    description:
-      'Deletes an article by id. This is an alias route for frontend convenience.',
-  })
-  @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
-  @ApiResponse({ status: 200, description: 'Article deleted successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid id' })
-  @ApiResponse({ status: 404, description: 'Article not found' })
-  async deleteArticleAlias(@Param('id') id: string) {
-    const data = await this.adminService.deleteArticle(id);
-    return { message: 'Article deleted successfully', data };
-  }
-
-  @Delete('articles/:id')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Delete article',
-    description:
-      'Deletes an article by id. Same behavior as DELETE /admin/articles/:id/delete.',
-  })
-  @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
-  @ApiResponse({ status: 200, description: 'Article deleted successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid id' })
-  @ApiResponse({ status: 404, description: 'Article not found' })
-  async deleteArticle(@Param('id') id: string) {
-    const data = await this.adminService.deleteArticle(id);
-    return { message: 'Article deleted successfully', data };
-  }
-
   @Get('events/:id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -1891,7 +799,6 @@ export class AdminController {
   }
 
   @Delete('events/:id')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete event',
@@ -1905,40 +812,6 @@ export class AdminController {
   async deleteEvent(@Param('id') id: string) {
     const data = await this.adminService.deleteEvent(id);
     return { message: 'Event deleted successfully', data };
-  }
-
-  @Delete('gallery/:id')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Delete gallery item',
-    description:
-      'Permanently deletes a gallery item. `id` can be MongoDB _id or numeric eventId.',
-  })
-  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
-  @ApiResponse({ status: 200, description: 'Gallery item deleted successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid id' })
-  @ApiResponse({ status: 404, description: 'Gallery item not found' })
-  async deleteGallery(@Param('id') id: string) {
-    const data = await this.adminService.deleteEvent(id);
-    return { message: 'Gallery item deleted successfully', data };
-  }
-
-  @Delete('gallery/:id/delete')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Delete gallery item (alias)',
-    description:
-      'Alias of DELETE /admin/gallery/:id for frontend convenience.',
-  })
-  @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
-  @ApiResponse({ status: 200, description: 'Gallery item deleted successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid id' })
-  @ApiResponse({ status: 404, description: 'Gallery item not found' })
-  async deleteGalleryAlias(@Param('id') id: string) {
-    const data = await this.adminService.deleteEvent(id);
-    return { message: 'Gallery item deleted successfully', data };
   }
 
   @Post('manufacturer/reply')
@@ -1957,7 +830,6 @@ export class AdminController {
   }
 
   @Post('contact/:id/reply')
-  @Permissions(PERMISSIONS.INQUIRIES_REPLY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Reply to contact message (store history)',
@@ -1975,7 +847,6 @@ export class AdminController {
   }
 
   @Get('contact/:id/replies')
-  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get contact reply history',
@@ -1991,7 +862,6 @@ export class AdminController {
   }
 
   @Get('notifications')
-  @Permissions(PERMISSIONS.PROFILE_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List notifications',
@@ -2070,7 +940,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get banner by id',
     description:
-      'Returns one banner for the **View Banner** modal: **title**, **sequenceNumber**, and **banner description**. Vendor-scoped.',
+      'Returns one banner for the **View Banner** modal: **imageUrl** (image link shown as URL in the UI), **heading**, and **banner description**. Vendor-scoped.',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id' })
   @ApiResponse({ status: 200, description: 'Banner details' })
@@ -2078,13 +948,23 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   async getBannerById(
     @CurrentUser() user: { vendorId: string },
+    @Req() req: Request,
     @Param('id') id: string,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const data = await this.adminService.getBannerById(user.vendorId, id);
-    return { message: 'Banner retrieved successfully', data };
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const normalized = {
+      ...data,
+      imageUrl:
+        typeof data?.imageUrl === 'string' &&
+        data.imageUrl.startsWith('/uploads/')
+          ? `${origin}${data.imageUrl}`
+          : data.imageUrl,
+    };
+    return { message: 'Banner retrieved successfully', data: normalized };
   }
 
   @Patch('banner/:id/status')
@@ -2119,14 +999,12 @@ export class AdminController {
   }
 
   @Post('team-member/create')
-  @Permissions(PERMISSIONS.TEAM_MEMBERS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(teamMemberImageInterceptor)
   @ApiOperation({
     summary: 'Create team member',
     description:
-      'Use **Authorize** (Bearer) as usual. Swagger sometimes drops `Authorization` on multipart uploads — then send the same JWT via **x-access-token** header or **access_token** query param. ' +
-      'Optional product categories: **category_id**, repeated **category_ids[]** / **categoryIds[]**, and/or **categoryIds** JSON array string (numeric ids from GET /categories). Omit or send empty to create with no categories.',
+      'Use **Authorize** (Bearer) as usual. Swagger sometimes drops `Authorization` on multipart uploads — then send the same JWT via **x-access-token** header or **access_token** query param.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiHeader({
@@ -2148,53 +1026,12 @@ export class AdminController {
         designation: { type: 'string' },
         email: { type: 'string' },
         mobile: { type: 'string' },
-        displayOrder: { type: 'number', minimum: 1 },
-        team: {
-          type: 'string',
-          enum: ['administrative', 'technical', 'finance', 'marketing'],
-        },
         image: { type: 'string', format: 'binary' },
         facebookUrl: { type: 'string' },
         twitterUrl: { type: 'string' },
         linkedinUrl: { type: 'string' },
-        roleId: { type: 'string', description: 'Legacy single role id' },
-        roleIds: {
-          oneOf: [
-            { type: 'array', items: { type: 'string' } },
-            { type: 'string', description: 'JSON string array' },
-          ],
-        },
-        'roleIds[]': {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Repeated multipart fields for role ids',
-        },
-        category_id: {
-          oneOf: [{ type: 'integer' }, { type: 'string' }],
-          description: 'Legacy single numeric category id',
-        },
-        category_ids: {
-          oneOf: [
-            { type: 'array', items: { type: 'integer' } },
-            { type: 'string', description: 'JSON array string' },
-          ],
-        },
-        categoryIds: {
-          type: 'string',
-          description: 'JSON array string of numeric category ids (admin UI)',
-        },
-        'category_ids[]': {
-          type: 'array',
-          items: { type: 'integer' },
-          description: 'Repeated multipart category id fields',
-        },
-        'categoryIds[]': {
-          type: 'array',
-          items: { type: 'integer' },
-          description: 'Repeated multipart category id fields (camelCase)',
-        },
       },
-      required: ['name', 'email', 'mobile', 'displayOrder', 'team'],
+      required: ['name', 'email', 'mobile'],
     },
   })
   @ApiResponse({ status: 201, description: 'Team member created successfully' })
@@ -2202,32 +1039,31 @@ export class AdminController {
   async createTeamMember(
     @CurrentUser() user: { vendorId: string },
     @Body() body: any,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFile()
+    file?: {
+      fieldname: string;
+      originalname: string;
+      encoding: string;
+      mimetype: string;
+      size: number;
+      destination: string;
+      filename: string;
+      path: string;
+      buffer: Buffer;
+    },
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    const parsedCreateDisplayOrder =
-      body.displayOrder === undefined ||
-      body.displayOrder === null ||
-      String(body.displayOrder).trim() === ''
-        ? undefined
-        : Number.parseInt(String(body.displayOrder), 10);
-
-    const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
-    const mergedCategoryIds = mergeCategoryIdsFromFormObject(body);
     const dto = plainToClass(CreateTeamMemberDto, {
       name: body.name,
       designation: body.designation,
       email: body.email,
       mobile: body.mobile,
-      displayOrder: parsedCreateDisplayOrder,
-      team: body.team ?? body.teamType,
       facebookUrl: body.facebookUrl,
       twitterUrl: body.twitterUrl,
       linkedinUrl: body.linkedinUrl,
-      roleId: normalizedRoleIds[0],
     });
 
     const errors = await validate(dto);
@@ -2239,22 +1075,17 @@ export class AdminController {
     }
 
     const imagePath = file
-      ? (await uploadFile(file, 'team-members')).fileUrl
+      ? `/uploads/team-members/${file.filename}`
       : undefined;
     const teamMember = await this.adminService.createTeamMember(user.vendorId, {
       name: dto.name,
       designation: dto.designation,
       email: dto.email,
       mobile: dto.mobile,
-      displayOrder: dto.displayOrder,
-      team: dto.team,
       imagePath,
       facebookUrl: dto.facebookUrl,
       twitterUrl: dto.twitterUrl,
       linkedinUrl: dto.linkedinUrl,
-      roleId: dto.roleId,
-      roleIds: normalizedRoleIds,
-      category_ids: mergedCategoryIds,
     });
 
     return { message: 'Team member created successfully', data: teamMember };
@@ -2262,22 +1093,42 @@ export class AdminController {
 
   @TeamMemberEditDocs()
   @Post('team-member/edit')
-  @Permissions(PERMISSIONS.TEAM_MEMBERS_UPDATE)
   async editTeamMemberPost(
     @CurrentUser() user: { vendorId: string },
     @Body() body: any,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFile()
+    file?: {
+      fieldname: string;
+      originalname: string;
+      encoding: string;
+      mimetype: string;
+      size: number;
+      destination: string;
+      filename: string;
+      path: string;
+      buffer: Buffer;
+    },
   ) {
     return this.executeTeamMemberEdit(user, body, file);
   }
 
   @TeamMemberEditDocs()
   @Patch('team-member/edit')
-  @Permissions(PERMISSIONS.TEAM_MEMBERS_UPDATE)
   async editTeamMemberPatch(
     @CurrentUser() user: { vendorId: string },
     @Body() body: any,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFile()
+    file?: {
+      fieldname: string;
+      originalname: string;
+      encoding: string;
+      mimetype: string;
+      size: number;
+      destination: string;
+      filename: string;
+      path: string;
+      buffer: Buffer;
+    },
   ) {
     return this.executeTeamMemberEdit(user, body, file);
   }
@@ -2285,30 +1136,31 @@ export class AdminController {
   private async executeTeamMemberEdit(
     user: { vendorId: string },
     body: any,
-    file?: Express.Multer.File,
+    file?: {
+      fieldname: string;
+      originalname: string;
+      encoding: string;
+      mimetype: string;
+      size: number;
+      destination: string;
+      filename: string;
+      path: string;
+      buffer: Buffer;
+    },
   ) {
-    const parsedEditDisplayOrder =
-      body.displayOrder === undefined ||
-      body.displayOrder === null ||
-      String(body.displayOrder).trim() === ''
-        ? undefined
-        : Number.parseInt(String(body.displayOrder), 10);
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
 
-    const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
-    const explicitCategories = hasExplicitCategoryIdFields(body);
-    const mergedCategoryIds = mergeCategoryIdsFromFormObject(body);
     const dto = plainToClass(EditTeamMemberDto, {
       id: body.id,
       name: body.name,
       designation: body.designation,
       email: body.email,
       mobile: body.mobile,
-      displayOrder: parsedEditDisplayOrder,
-      team: body.team ?? body.teamType,
       facebookUrl: body.facebookUrl,
       twitterUrl: body.twitterUrl,
       linkedinUrl: body.linkedinUrl,
-      roleId: body.roleId,
     });
 
     const errors = await validate(dto);
@@ -2320,36 +1172,29 @@ export class AdminController {
     }
 
     const imagePath = file
-      ? (await uploadFile(file, 'team-members')).fileUrl
+      ? `/uploads/team-members/${file.filename}`
       : undefined;
-    const teamMember = await this.adminService.updateTeamMember(user?.vendorId ?? '', {
+    const teamMember = await this.adminService.updateTeamMember(user.vendorId, {
       id: dto.id,
       name: dto.name,
       designation: dto.designation,
       email: dto.email,
       mobile: dto.mobile,
-      displayOrder: dto.displayOrder,
-      team: dto.team,
       imagePath,
       facebookUrl: dto.facebookUrl,
       twitterUrl: dto.twitterUrl,
       linkedinUrl: dto.linkedinUrl,
-      roleId: dto.roleId,
-      roleIds: normalizedRoleIds,
-      category_ids: explicitCategories ? mergedCategoryIds : undefined,
     });
 
     return { message: 'Team member updated successfully', data: teamMember };
   }
 
   @Post('team-member/delete')
-  @Permissions(PERMISSIONS.TEAM_MEMBERS_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete team member (soft delete)',
     description:
-      'Sets team member **status** to **2** (removed from list). Same behaviour as partner delete. **POST** or **DELETE** with JSON body `{ "id": "..." }`. ' +
-      'Other members’ **displayOrder** values are **not** changed (gaps in sort order are allowed).',
+      'Sets team member **status** to **2** (removed from list). Same behaviour as partner delete. **POST** or **DELETE** with JSON body `{ "id": "..." }`.',
   })
   @ApiBody({ type: DeleteTeamMemberDto })
   @ApiResponse({ status: 200, description: 'Team member deleted successfully' })
@@ -2362,12 +1207,11 @@ export class AdminController {
   }
 
   @Delete('team-member/delete')
-  @Permissions(PERMISSIONS.TEAM_MEMBERS_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete team member (soft delete)',
     description:
-      'Same as POST **/admin/team-member/delete** — JSON body `{ "id": "..." }`. Does not renumber **displayOrder** on remaining members.',
+      'Same as POST **/admin/team-member/delete** — JSON body `{ "id": "..." }`.',
   })
   @ApiBody({ type: DeleteTeamMemberDto })
   @ApiResponse({ status: 200, description: 'Team member deleted successfully' })
@@ -2383,8 +1227,11 @@ export class AdminController {
     user: { vendorId: string },
     body: DeleteTeamMemberDto,
   ) {
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
     const data = await this.adminService.deleteTeamMember(
-      user?.vendorId ?? '',
+      user.vendorId,
       body.id,
     );
     return { message: 'Team member deleted successfully', data };
@@ -2500,12 +1347,11 @@ export class AdminController {
   }
 
   @Get('team-member/list')
-  @Permissions(PERMISSIONS.TEAM_MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List team members',
     description:
-      'Returns global team members dataset for admin panel: serial number (**s_no**, table row only), name, designation, email, mobile, **displayOrder** (persisted sort slot from DB; may have gaps), team, active flag, and id for actions. Excludes soft-deleted members (status 2). Sorted by displayOrder ascending.',
+      'Returns team members for the logged-in vendor: serial number, name, designation, email, mobile, active flag, and id for actions. Excludes soft-deleted members (status 2). Newest first.',
   })
   @ApiResponse({
     status: 200,
@@ -2528,12 +1374,6 @@ export class AdminController {
               designation: { type: 'string' },
               email: { type: 'string' },
               mobile: { type: 'string' },
-              displayOrder: { type: 'number', example: 1 },
-              team: {
-                type: 'string',
-                example: 'technical',
-                enum: ['administrative', 'technical', 'finance', 'marketing'],
-              },
               is_active: { type: 'boolean' },
             },
           },
@@ -2549,12 +1389,11 @@ export class AdminController {
   }
 
   @Get('team-members/list')
-  @Permissions(PERMISSIONS.TEAM_MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List team members (filters + pagination)',
     description:
-      'Supports filters (status, designation) and pagination (page, limit). Uses global team-members dataset and displayOrder sorting.',
+      'Supports filters (status, designation) and pagination (page, limit). Vendor-scoped.',
   })
   @ApiQuery({
     name: 'status',
@@ -2579,14 +1418,16 @@ export class AdminController {
     user: { vendorId: string },
     query: ListTeamMembersQueryDto,
   ) {
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
     const result = await this.adminService.listTeamMembersPaginated(
-      user?.vendorId ?? '',
+      user.vendorId,
       query,
     );
     return {
       message: 'Team members retrieved successfully',
       data: result.data,
-      displayOrderMax: result.displayOrderMax,
       totalCount: result.totalCount,
       currentPage: result.currentPage,
       totalPages: result.totalPages,
@@ -2594,7 +1435,6 @@ export class AdminController {
   }
 
   @Get('contact/list')
-  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List contact messages',
@@ -2621,7 +1461,6 @@ export class AdminController {
               name: { type: 'string' },
               email: { type: 'string' },
               phoneNo: { type: 'string' },
-              subject: { type: 'string' },
               message: { type: 'string' },
               createdAt: { type: 'string', format: 'date-time' },
             },
@@ -2636,7 +1475,6 @@ export class AdminController {
   }
 
   @Get('contact/:id/view')
-  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'View contact message',
@@ -2656,7 +1494,6 @@ export class AdminController {
   }
 
   @Post('contact/delete')
-  @Permissions(PERMISSIONS.INQUIRIES_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete contact message',
@@ -2676,7 +1513,6 @@ export class AdminController {
   }
 
   @Delete('contact/delete')
-  @Permissions(PERMISSIONS.INQUIRIES_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete contact message',
@@ -2700,7 +1536,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Search team members by name',
     description:
-      'Case-insensitive partial match on **name** (global, non-deleted team members). Response shape matches **GET /admin/team-member/list**.',
+      'Case-insensitive partial match on **name** (same vendor, non-deleted partners). Response shape matches **GET /admin/team-member/list**.',
   })
   @ApiQuery({
     name: 'name',
@@ -2717,11 +1553,14 @@ export class AdminController {
     @CurrentUser() user: { vendorId: string },
     @Query('name') name: string,
   ) {
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
     const trimmed = name?.trim();
     if (!trimmed) {
       throw new BadRequestException('Query parameter "name" is required');
     }
-    const data = await this.adminService.searchTeamMembers(user?.vendorId ?? '', {
+    const data = await this.adminService.searchTeamMembers(user.vendorId, {
       name: trimmed,
     });
     return { message: 'Team members search completed successfully', data };
@@ -2732,7 +1571,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Search team members by email',
     description:
-      'Case-insensitive partial match on **email** (global, non-deleted team members). Response shape matches **GET /admin/team-member/list**.',
+      'Case-insensitive partial match on **email** (same vendor, non-deleted partners). Response shape matches **GET /admin/team-member/list**.',
   })
   @ApiQuery({
     name: 'email',
@@ -2749,11 +1588,14 @@ export class AdminController {
     @CurrentUser() user: { vendorId: string },
     @Query('email') email: string,
   ) {
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
     const trimmed = email?.trim();
     if (!trimmed) {
       throw new BadRequestException('Query parameter "email" is required');
     }
-    const data = await this.adminService.searchTeamMembers(user?.vendorId ?? '', {
+    const data = await this.adminService.searchTeamMembers(user.vendorId, {
       email: trimmed,
     });
     return { message: 'Team members search completed successfully', data };
@@ -2786,7 +1628,10 @@ export class AdminController {
     @Query('name') name?: string,
     @Query('email') email?: string,
   ) {
-    const data = await this.adminService.searchTeamMembers(user?.vendorId ?? '', {
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
+    const data = await this.adminService.searchTeamMembers(user.vendorId, {
       name: name?.trim() || undefined,
       email: email?.trim() || undefined,
     });
@@ -2798,7 +1643,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get team member by id',
     description:
-      'Returns one team member for the **View** modal: name, designation, email, mobile, **displayOrder** (stored value from DB), team, status (**Active** / **Inactive**), image URL, Facebook / Twitter / LinkedIn URLs. Soft-deleted excluded.',
+      'Returns one team member for the **View** modal: name, designation, email, mobile, status (**Active** / **Inactive**), image URL, Facebook / Twitter / LinkedIn URLs. Same vendor only; soft-deleted excluded.',
   })
   @ApiParam({ name: 'id', description: 'Team member MongoDB id' })
   @ApiResponse({ status: 200, description: 'Team member details' })
@@ -2808,7 +1653,10 @@ export class AdminController {
     @CurrentUser() user: { vendorId: string },
     @Param('id') id: string,
   ) {
-    const data = await this.adminService.getTeamMemberById(user?.vendorId ?? '', id);
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
+    const data = await this.adminService.getTeamMemberById(user.vendorId, id);
     return { message: 'Team member retrieved successfully', data };
   }
 
@@ -2830,15 +1678,17 @@ export class AdminController {
     @CurrentUser() user: { vendorId: string },
     @Param('id') id: string,
   ) {
+    if (!user?.vendorId) {
+      throw new BadRequestException('Vendor ID not found in token');
+    }
     const data = await this.adminService.updateTeamMemberStatus(
-      user?.vendorId ?? '',
+      user.vendorId,
       id,
     );
     return { message: 'Team member status updated successfully', data };
   }
 
   @Patch('change-password')
-  @Permissions(PERMISSIONS.PROFILE_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Change password',
@@ -2936,7 +1786,18 @@ export class AdminController {
   async updateManufacturer(
     @Param('id') id: string,
     @Body() body: any,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFile()
+    file?: {
+      fieldname: string;
+      originalname: string;
+      encoding: string;
+      mimetype: string;
+      size: number;
+      destination: string;
+      filename: string;
+      path: string;
+      buffer: Buffer;
+    },
   ) {
     const updateDto = plainToClass(UpdateManufacturerDto, {
       manufacturerName: body.manufacturerName,
@@ -2953,7 +1814,7 @@ export class AdminController {
     }
 
     const imagePath = file
-      ? (await uploadFile(file, 'manufacturers')).fileUrl
+      ? `/uploads/manufacturers/${file.filename}`
       : undefined;
     const manufacturer = await this.adminService.updateManufacturer(
       id,

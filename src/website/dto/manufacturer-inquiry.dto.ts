@@ -1,31 +1,23 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
+  IsMongoId,
   IsNotEmpty,
   IsOptional,
   IsString,
   Length,
   Matches,
-  ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 
-/**
- * Manufacturer inquiry POST body — only visitor fields.
- * reCAPTCHA is supplied via `x-recaptcha-token` header.
- * Manufacturer can be provided via body/query `manufacturerId`.
- */
 export class ManufacturerInquiryDto {
   @ApiProperty({
-    required: false,
-    example: '680c9ccbe5fce6d879ec4aa1',
-    description:
-      'Manufacturer id (Mongo ObjectId). Preferred in body for API clients.',
+    description: 'Manufacturer MongoDB id',
+    example: '661157aa2b2d2b2d2b2d2b2d',
   })
-  @IsOptional()
-  @IsString()
-  @Transform(({ value }) => String(value ?? '').trim())
-  manufacturerId?: string;
+  @IsMongoId()
+  @IsNotEmpty()
+  manufacturerId: string;
 
   @ApiProperty({ example: 'John Doe' })
   @IsString()
@@ -44,27 +36,7 @@ export class ManufacturerInquiryDto {
   )
   email: string;
 
-  @ApiProperty({
-    example: '9876543210',
-    description:
-      'Prefer `phone`. `contact` is accepted as an older alias.',
-  })
-  @ValidateIf((o) => o.phone !== undefined || o.contact === undefined)
-  @IsString()
-  @IsNotEmpty()
-  @Transform(({ value }) => String(value ?? '').trim())
-  @Length(7, 20)
-  @Matches(/^[0-9+\-\s()]+$/, {
-    message: 'phone contains invalid characters',
-  })
-  phone?: string;
-
-  @ApiProperty({
-    required: false,
-    example: '9876543210',
-    description: 'Deprecated alias for `phone` (backward compatibility).',
-  })
-  @ValidateIf((o) => o.contact !== undefined || o.phone === undefined)
+  @ApiProperty({ example: '9876543210' })
   @IsString()
   @IsNotEmpty()
   @Transform(({ value }) => String(value ?? '').trim())
@@ -72,25 +44,33 @@ export class ManufacturerInquiryDto {
   @Matches(/^[0-9+\-\s()]+$/, {
     message: 'contact contains invalid characters',
   })
-  contact?: string;
+  contact: string;
 
-  @ApiProperty({
-    example: 'I would like more details about your products.',
-  })
-  @IsString()
-  @IsNotEmpty()
-  @Transform(({ value }) => String(value ?? '').trim())
-  @Length(5, 2000)
-  message: string;
-
-  @ApiProperty({
-    required: false,
-    example: 'Inquiry regarding your catalog',
-    description: 'Optional custom subject line for customer email.',
+  @ApiPropertyOptional({
+    example: 'Subject (optional)',
+    description: 'Optional subject for the inquiry (can be empty).',
   })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => String(value ?? '').trim())
-  @Length(3, 200)
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    const s = String(value).trim();
+    return s === '' ? undefined : s;
+  })
+  @Length(0, 200)
   subject?: string;
+
+  @ApiPropertyOptional({
+    example: 'I would like more details about your products.',
+    description: 'Optional message body (can be empty).',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    const s = String(value).trim();
+    return s === '' ? undefined : s;
+  })
+  @Length(0, 2000)
+  message?: string;
 }

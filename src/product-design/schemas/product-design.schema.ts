@@ -49,7 +49,3 @@ export class ProductDesign {
 }
 
 export const ProductDesignSchema = SchemaFactory.createForClass(ProductDesign);
-ProductDesignSchema.index(
-  { urnNo: 1, vendorId: 1 },
-  { unique: true, name: 'uniq_product_design_per_vendor_urn' },
-);

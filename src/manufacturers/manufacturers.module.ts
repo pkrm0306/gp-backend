@@ -17,8 +17,6 @@ import {
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
 import { AdminManufacturerActionsController } from './manufacturers.admin.controller';
 import { VendorController } from './vendor.controller';
-import { RbacModule } from '../rbac/rbac.module';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
 
 @Module({
   imports: [
@@ -28,14 +26,13 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
       { name: VendorUser.name, schema: VendorUserSchema },
     ]),
     VendorUsersModule,
-    RbacModule,
   ],
   controllers: [
     ManufacturersController,
     VendorController,
     AdminManufacturerActionsController,
   ],
-  providers: [ManufacturersService, PermissionsGuard],
+  providers: [ManufacturersService],
   exports: [ManufacturersService],
 })
 export class ManufacturersModule {}

@@ -4,10 +4,6 @@ import {
   RawMaterialsEliminationOfFormaldehyde,
   RawMaterialsEliminationOfFormaldehydeSchema,
 } from './schemas/raw-materials-elimination-of-formaldehyde.schema';
-import {
-  AllProductDocument,
-  AllProductDocumentSchema,
-} from '../product-design/schemas/all-product-document.schema';
 import { RawMaterialsEliminationOfFormaldehydeService } from './raw-materials-elimination-of-formaldehyde.service';
 import { RawMaterialsEliminationOfFormaldehydeController } from './raw-materials-elimination-of-formaldehyde.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -21,7 +17,6 @@ import { AuthModule } from '../auth/auth.module';
         name: RawMaterialsEliminationOfFormaldehyde.name,
         schema: RawMaterialsEliminationOfFormaldehydeSchema,
       },
-      { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),
     ProductRegistrationModule,
     PassportModule,

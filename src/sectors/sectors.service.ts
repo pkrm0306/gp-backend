@@ -1,11 +1,9 @@
 import {
   BadRequestException,
   Injectable,
-  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Sector, SectorDocument } from './schemas/sector.schema';
@@ -18,7 +16,6 @@ import { ListSectorsQueryDto } from './dto/list-sectors-query.dto';
 import { CreateSectorDto } from './dto/create-sector.dto';
 import { UpdateSectorDto } from './dto/update-sector.dto';
 import { UpdateSectorStatusDto } from './dto/update-sector-status.dto';
-import { RedisService } from '../common/redis/redis.service';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -35,48 +32,12 @@ function csvEscape(value: string | number | Date | null | undefined): string {
 
 @Injectable()
 export class SectorsService implements OnModuleInit {
-  private readonly logger = new Logger(SectorsService.name);
-
   constructor(
     @InjectModel(Sector.name)
     private sectorModel: Model<SectorDocument>,
     @InjectModel(SectorIdCounter.name)
     private counterModel: Model<SectorIdCounterDocument>,
-    private readonly configService: ConfigService,
-    private readonly redisService: RedisService,
   ) {}
-
-  private getSectorListCacheTtlSeconds(): number {
-    const ttl = parseInt(
-      this.configService.get<string>('SECTOR_LIST_CACHE_TTL_SECONDS') ||
-        this.configService.get<string>('CACHE_TTL_SECONDS') ||
-        '60',
-      10,
-    );
-    return Number.isFinite(ttl) && ttl > 0 ? ttl : 60;
-  }
-
-  private buildSectorListCacheKey(query: ListSectorsQueryDto): string {
-    const normalized = {
-      page: query.page ?? 1,
-      limit: query.limit ?? 10,
-      search: String(query.search || '').trim().toLowerCase(),
-      status: query.status ?? null,
-      sortBy: query.sortBy ?? 'id',
-      order: query.order === 'desc' ? 'desc' : 'asc',
-    };
-    return this.redisService.buildKey('sectors', 'list', JSON.stringify(normalized));
-  }
-
-  private async invalidateSectorListCache(): Promise<void> {
-    await this.redisService
-      .deleteByPattern(this.redisService.buildKey('sectors', 'list', '*'))
-      .catch((error) => {
-        this.logger.warn(
-          `Failed to invalidate sector list cache: ${(error as Error)?.message || 'unknown error'}`,
-        );
-      });
-  }
 
   async onModuleInit(): Promise<void> {
     await this.syncSectorIdCounter();
@@ -155,24 +116,6 @@ export class SectorsService implements OnModuleInit {
   }
 
   async findAllPaginated(query: ListSectorsQueryDto) {
-    const cacheKey = this.buildSectorListCacheKey(query);
-    try {
-      const cached = await this.redisService.get<{
-        message: string;
-        data: unknown[];
-        total: number;
-        page: number;
-        limit: number;
-      }>(cacheKey);
-      if (cached && Array.isArray(cached.data)) {
-        return cached;
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Sector list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
-      );
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const sortBy = query.sortBy ?? 'id';
@@ -194,21 +137,13 @@ export class SectorsService implements OnModuleInit {
       this.sectorModel.countDocuments(filter).exec(),
     ]);
 
-    const response = {
+    return {
       message: 'Sectors retrieved successfully',
       data,
       total,
       page,
       limit,
     };
-    this.redisService
-      .set(cacheKey, response, this.getSectorListCacheTtlSeconds())
-      .catch((error) => {
-        this.logger.warn(
-          `Sector list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
-        );
-      });
-    return response;
   }
 
   async findOneById(id: number) {
@@ -234,9 +169,7 @@ export class SectorsService implements OnModuleInit {
       updated_at: now,
       deleted_at: null,
     });
-    const created = doc.toObject();
-    await this.invalidateSectorListCache();
-    return created;
+    return doc.toObject();
   }
 
   async update(id: number, dto: UpdateSectorDto) {
@@ -271,7 +204,6 @@ export class SectorsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Sector not found');
     }
-    await this.invalidateSectorListCache();
     return updated;
   }
 
@@ -287,7 +219,6 @@ export class SectorsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Sector not found');
     }
-    await this.invalidateSectorListCache();
     return updated;
   }
 
@@ -303,7 +234,6 @@ export class SectorsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Sector not found');
     }
-    await this.invalidateSectorListCache();
     return updated;
   }
 

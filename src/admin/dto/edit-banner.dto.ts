@@ -1,87 +1,56 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsIn,
-  IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
+  Length,
   Matches,
-  Max,
-  Min,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
-import {
-  IsReadableNotEmpty,
-  MaxReadableLength,
-} from '../../common/validators/readable-text.validator';
 
 export class EditBannerDto {
   @ApiPropertyOptional({
-    description: 'Banner image URL/path. Optional if file is uploaded.',
+    description:
+      'Banner image URL/path. Optional if an image file is uploaded.',
     example: '/uploads/banners/banner-123.jpg',
   })
   @IsOptional()
+  // NOTE: On edit/view the image already exists in DB; frontend may send ''.
+  // So we intentionally avoid strict validation here and treat empty as "not provided".
   @Transform(({ value }) => {
     if (value === undefined || value === null) return undefined;
     const v = String(value).trim();
     return v === '' ? undefined : v;
   })
-  @Matches(/^(https?:\/\/.+|\/uploads\/.+)$/i, {
-    message: 'imageUrl must be a full http(s) URL or a /uploads/... path',
-  })
   imageUrl?: string;
 
   @ApiPropertyOptional({
-    example: 'Summer sale',
-    description: 'Title of your banner',
+    example: 'https://example.com/promo',
+    description: 'Link opened when the banner is clicked (optional)',
   })
   @IsOptional()
   @IsString()
-  @IsReadableNotEmpty()
   @Transform(({ value }) =>
     value === undefined || value === null ? undefined : String(value).trim(),
   )
-  title?: string;
+  @Matches(/^https?:\/\/.+/i, {
+    message: 'targetUrl must be a full http(s) URL',
+  })
+  targetUrl?: string;
 
-  @ApiPropertyOptional({
-    example: 1,
-    description: 'Display sequence number for this banner',
-  })
-  @IsOptional()
-  @Transform(({ value }) => {
-    if (value === undefined || value === null) return undefined;
-    const raw = String(value).trim();
-    if (!raw) return undefined;
-    return Number(raw);
-  })
-  @IsInt()
-  @Min(1)
-  @Max(9999)
-  sequenceNumber?: number;
-
-  @ApiPropertyOptional({
-    example: 'active',
-    description: 'Banner status',
-    enum: ['active', 'inactive', '1', '0'],
-  })
-  @IsOptional()
+  @ApiProperty({ example: 'Summer sale', description: 'Banner heading' })
   @IsString()
-  status?: string;
+  @IsNotEmpty()
+  @Transform(({ value }) => String(value ?? '').trim())
+  @Length(2, 120)
+  heading: string;
 
-  @IsOptional()
-  @IsString()
-  @IsIn(['binary_upload', 'manual_url'])
-  imageSource?: 'binary_upload' | 'manual_url';
-
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 'Up to 50% off selected items.',
-    description: 'Banner description (max 1000 readable characters)',
+    description: 'Banner description',
   })
-  @IsOptional()
   @IsString()
-  @IsReadableNotEmpty()
-  @MaxReadableLength(1000)
-  @Transform(({ value }) =>
-    value === undefined || value === null ? undefined : String(value).trim(),
-  )
-  description?: string;
+  @IsNotEmpty()
+  @Transform(({ value }) => String(value ?? '').trim())
+  description: string;
 }

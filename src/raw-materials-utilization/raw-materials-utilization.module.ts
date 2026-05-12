@@ -4,10 +4,6 @@ import {
   RawMaterialsUtilization,
   RawMaterialsUtilizationSchema,
 } from './schemas/raw-materials-utilization.schema';
-import {
-  AllProductDocument,
-  AllProductDocumentSchema,
-} from '../product-design/schemas/all-product-document.schema';
 import { RawMaterialsUtilizationService } from './raw-materials-utilization.service';
 import { RawMaterialsUtilizationController } from './raw-materials-utilization.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -17,8 +13,10 @@ import { AuthModule } from '../auth/auth.module';
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: RawMaterialsUtilization.name, schema: RawMaterialsUtilizationSchema },
-      { name: AllProductDocument.name, schema: AllProductDocumentSchema },
+      {
+        name: RawMaterialsUtilization.name,
+        schema: RawMaterialsUtilizationSchema,
+      },
     ]),
     ProductRegistrationModule,
     PassportModule,

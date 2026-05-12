@@ -18,7 +18,6 @@ import {
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
-import { AdminModule } from '../admin/admin.module';
 import { EmailService } from '../common/services/email.service';
 import {
   Notification,
@@ -37,7 +36,6 @@ import {
     ManufacturersModule,
     CategoriesModule,
     ProductRegistrationModule,
-    AdminModule,
   ],
   controllers: [WebsiteController],
   providers: [WebsiteService, EmailService],

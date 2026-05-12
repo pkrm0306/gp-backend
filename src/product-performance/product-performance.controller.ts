@@ -4,10 +4,10 @@ import {
   Body,
   UseGuards,
   UseInterceptors,
-  UploadedFiles,
+  UploadedFile,
   BadRequestException,
 } from '@nestjs/common';
-import { AnyFilesInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -53,7 +53,7 @@ export class ProductPerformanceController {
 
   @Post()
   @UseInterceptors(
-    AnyFilesInterceptor({
+    FileInterceptor('testReportFile', {
       storage,
       fileFilter: (req, file, cb) => {
         if (!file) {
@@ -147,13 +147,9 @@ export class ProductPerformanceController {
           enum: [0, 1],
         },
         testReportFile: {
-          type: 'array',
-          items: {
-            type: 'string',
-            format: 'binary',
-          },
-          description:
-            'Multiple test report files (field name: testReportFile).',
+          type: 'string',
+          format: 'binary',
+          description: 'Test report file',
         },
       },
     },
@@ -193,7 +189,7 @@ export class ProductPerformanceController {
   async createProductPerformance(
     @CurrentUser() user: any,
     @Body() body: any,
-    @UploadedFiles() files?: Express.Multer.File[],
+    @UploadedFile() testReportFile?: Express.Multer.File,
   ) {
     try {
       if (!user?.vendorId) {
@@ -217,13 +213,9 @@ export class ProductPerformanceController {
         throw new BadRequestException('URN number is required');
       }
 
-      const testReportFiles = (files || []).filter(
-        (f) => f.fieldname === 'testReportFile' || f.fieldname === 'testReportFiles',
-      );
-
       // If file is uploaded, require a display name
       if (
-        testReportFiles.length > 0 &&
+        testReportFile &&
         (!createProductPerformanceDto.testReportFileName ||
           createProductPerformanceDto.testReportFileName.trim() === '')
       ) {
@@ -236,7 +228,7 @@ export class ProductPerformanceController {
         await this.productPerformanceService.createProductPerformance(
           createProductPerformanceDto,
           user.vendorId,
-          testReportFiles,
+          testReportFile,
         );
 
       return {

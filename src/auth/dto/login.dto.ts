@@ -1,5 +1,5 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsEmail, IsNotEmpty, IsIn, IsOptional } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsEmail, IsNotEmpty } from 'class-validator';
 
 export class LoginDto {
   @ApiProperty()
@@ -11,14 +11,4 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty()
   password: string;
-
-  @ApiPropertyOptional({
-    enum: ['admin', 'vendor'],
-    description:
-      'Portal context for login. admin portal allows admin/staff only; vendor portal allows vendor/partner only.',
-  })
-  @IsOptional()
-  @IsString()
-  @IsIn(['admin', 'vendor'])
-  portal?: 'admin' | 'vendor';
 }

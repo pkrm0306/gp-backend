@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
 export class CreateRawMaterialsEliminationOfFormaldehydeDto {
   @ApiProperty({
@@ -26,13 +26,4 @@ export class CreateRawMaterialsEliminationOfFormaldehydeDto {
   @IsString()
   @IsNotEmpty()
   productsTestReport: string;
-
-  @ApiProperty({
-    description: 'Display name for uploaded supporting file',
-    example: 'Formaldehyde Test Report - 2026',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  formaldehydeFileName?: string;
 }

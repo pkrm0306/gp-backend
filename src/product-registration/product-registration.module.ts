@@ -17,8 +17,6 @@ import { StatesModule } from '../states/states.module';
 import { AuthModule } from '../auth/auth.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
-import { RbacModule } from '../rbac/rbac.module';
-import { PermissionsGuard } from '../common/guards/permissions.guard';
 
 @Module({
   imports: [
@@ -33,14 +31,13 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
     StatesModule,
     CategoriesModule,
     ActivityLogModule,
-    RbacModule,
   ],
   controllers: [
     ProductRegistrationController,
     ProductsController,
     AdminProductsController,
   ],
-  providers: [ProductRegistrationService, SequenceHelper, PermissionsGuard],
+  providers: [ProductRegistrationService, SequenceHelper],
   exports: [ProductRegistrationService, SequenceHelper],
 })
 export class ProductRegistrationModule {}

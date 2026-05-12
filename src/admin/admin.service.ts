@@ -3,7 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -15,14 +14,12 @@ import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import {
   VendorUser,
   VendorUserDocument,
-  TeamMemberTeam,
 } from '../vendor-users/schemas/vendor-user.schema';
 import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
 import { Event, EventDocument } from '../events/schemas/event.schema';
-import { Article, ArticleDocument } from '../articles/schemas/article.schema';
 import {
   EventIdCounter,
   EventIdCounterDocument,
@@ -46,10 +43,6 @@ import {
   NotificationDocument,
 } from '../common/schemas/notification.schema';
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
-import * as bcrypt from 'bcryptjs';
-import { RbacService } from '../rbac/rbac.service';
-import { RedisService } from '../common/redis/redis.service';
-import { CategoriesService } from '../categories/categories.service';
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -71,8 +64,6 @@ const DEFAULT_EVENT_BROCHURE_LINK =
 
 @Injectable()
 export class AdminService {
-  private readonly logger = new Logger(AdminService.name);
-
   constructor(
     @InjectModel(Manufacturer.name)
     private manufacturerModel: Model<ManufacturerDocument>,
@@ -92,53 +83,8 @@ export class AdminService {
     private contactReplyThreadModel: Model<ContactReplyThreadDocument>,
     @InjectModel(Notification.name)
     private notificationModel: Model<NotificationDocument>,
-    @InjectModel(Article.name)
-    private articleModel: Model<ArticleDocument>,
     private readonly emailService: EmailService,
-    private readonly rbacService: RbacService,
-    private readonly redisService: RedisService,
-    private readonly categoriesService: CategoriesService,
   ) {}
-
-  private teamMemberCategoryArrays(m: {
-    category_ids?: unknown;
-    category_id?: unknown;
-  }): { category_ids: number[]; categoryIds: number[] } {
-    const raw = Array.isArray(m.category_ids) ? m.category_ids : [];
-    const ids = raw.filter(
-      (x): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 1,
-    );
-    if (ids.length > 0) {
-      return { category_ids: ids, categoryIds: ids };
-    }
-    const one =
-      typeof m.category_id === 'number' &&
-      Number.isInteger(m.category_id) &&
-      m.category_id >= 1
-        ? m.category_id
-        : null;
-    if (one !== null) {
-      return { category_ids: [one], categoryIds: [one] };
-    }
-    return { category_ids: [], categoryIds: [] };
-  }
-
-  /** Raw `displayOrder` from DB for API responses (gaps allowed; do not coerce missing to 0). */
-  private persistedTeamMemberDisplayOrder(value: unknown): number | null {
-    if (value === null || value === undefined) return null;
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  private invalidateWebsiteTeamMembersListCache(): void {
-    const key = this.redisService.buildKey('website', 'team-members', 'list');
-    this.redisService.del(key).catch((err) => {
-      this.logger.warn(
-        `Website team-members cache invalidation failed: ${(err as Error)?.message || 'unknown'}`,
-      );
-    });
-  }
 
   private resolveEventImagePath(eventImage?: string | null): string {
     const raw = String(eventImage ?? '').trim();
@@ -162,45 +108,6 @@ export class AdminService {
       return raw.replace(/^uploads\//, '');
     }
     return raw;
-  }
-
-  private resolveBannerImageForResponse(
-    imageUrl?: string | null,
-    bannerImage?: string | null,
-  ): string {
-    const imageRaw = String(imageUrl ?? '').trim();
-    if (imageRaw && /^https?:\/\//i.test(imageRaw)) return imageRaw;
-    const candidate = imageRaw || (bannerImage ? `/uploads/${bannerImage}` : '');
-    const normalized = String(candidate).trim();
-    if (!normalized) return '';
-    return normalized;
-  }
-
-  private resolveArticleImagePath(imageUrl?: string | null): string {
-    const raw = String(imageUrl ?? '').trim();
-    if (!raw) return '';
-    // Preserve absolute S3/CloudFront URLs as-is and keep local upload paths stable.
-    if (raw.startsWith('/uploads/')) return raw;
-    if (raw.startsWith('uploads/')) return `/${raw}`;
-    return raw;
-  }
-
-  private resolveArticlePdfPath(pdfUrl?: string | null): string {
-    const raw = String(pdfUrl ?? '').trim();
-    if (!raw) return '';
-    if (raw.startsWith('/uploads/')) return raw;
-    if (raw.startsWith('uploads/')) return `/${raw}`;
-    return raw;
-  }
-
-  private resolveArticleAssetForResponse(rawUrl?: string | null): string {
-    const raw = String(rawUrl ?? '').trim();
-    if (!raw) return '';
-    if (/^https?:\/\//i.test(raw)) return raw;
-    if (raw.startsWith('/uploads/')) return raw;
-    if (raw.startsWith('uploads/')) return `/${raw}`;
-    if (raw.startsWith('/')) return raw;
-    return `/uploads/${raw.replace(/^\/+/, '')}`;
   }
 
   private async createNotification(input: {
@@ -248,11 +155,6 @@ export class AdminService {
     const { _id, __v, ...rest } = obj ?? {};
     return {
       ...rest,
-      galleryImages: Array.isArray((rest as any)?.galleryImages)
-        ? (rest as any).galleryImages
-        : (rest as any)?.eventImage
-          ? [(rest as any).eventImage]
-          : [],
       event_image:
         (rest as any)?.event_image ??
         this.resolveEventImagePath((rest as any)?.eventImage),
@@ -266,7 +168,6 @@ export class AdminService {
   async createEvent(payload: {
     eventName: string;
     eventDate: Date;
-    eventStatus?: number;
     eventStartTime?: string;
     eventEndTime?: string;
     eventLocation?: string;
@@ -276,29 +177,9 @@ export class AdminService {
     contactPersonEmail?: string;
     contactPersonPhone?: string;
     eventImage?: string;
-    galleryImages?: string[];
-    galleryType?: string;
     registrationLink?: string;
     brochureLink?: string;
   }) {
-    const nextName = String(payload.eventName ?? '').trim();
-    const nextType = String(payload.galleryType ?? '').trim();
-    if (nextType && nextName) {
-      const duplicate = await this.eventModel
-        .findOne({
-          eventName: new RegExp(`^${escapeRegex(nextName)}$`, 'i'),
-          galleryType: new RegExp(`^${escapeRegex(nextType)}$`, 'i'),
-        })
-        .select('_id')
-        .lean()
-        .exec();
-      if (duplicate) {
-        throw new ConflictException(
-          `A gallery item with this title already exists in "${nextType}"`,
-        );
-      }
-    }
-
     const eventId = await this.nextEventId();
     const now = new Date();
 
@@ -307,13 +188,6 @@ export class AdminService {
       eventName: payload.eventName,
       eventImage: payload.eventImage,
       event_image: this.resolveEventImagePath(payload.eventImage),
-      galleryImages:
-        Array.isArray(payload.galleryImages) && payload.galleryImages.length
-          ? payload.galleryImages
-          : payload.eventImage
-            ? [payload.eventImage]
-            : [],
-      galleryType: payload.galleryType,
       eventDescription: payload.eventDescription,
       eventDate: payload.eventDate,
       eventStartTime: payload.eventStartTime,
@@ -325,10 +199,7 @@ export class AdminService {
       contactPersonPhone: payload.contactPersonPhone,
       registrationLink: payload.registrationLink,
       brochureLink: payload.brochureLink,
-      eventStatus:
-        payload.eventStatus === 0 || payload.eventStatus === 1
-          ? payload.eventStatus
-          : 1,
+      eventStatus: 1,
       createdDate: now,
       updatedDate: now,
     });
@@ -359,11 +230,8 @@ export class AdminService {
       contactPersonEmail?: string;
       contactPersonPhone?: string;
       eventImage?: string;
-      galleryImages?: string[];
-      galleryType?: string;
       registrationLink?: string;
       brochureLink?: string;
-      eventStatus?: number;
     },
   ) {
     const raw = String(identifier ?? '').trim();
@@ -420,24 +288,6 @@ export class AdminService {
       $set.eventImage = payload.eventImage;
       $set.event_image = this.resolveEventImagePath(payload.eventImage);
     }
-    if (payload.galleryImages !== undefined) {
-      $set.galleryImages = Array.isArray(payload.galleryImages)
-        ? payload.galleryImages
-        : [];
-      const first = Array.isArray(payload.galleryImages)
-        ? payload.galleryImages[0]
-        : undefined;
-      if (first) {
-        $set.eventImage = first;
-        $set.event_image = this.resolveEventImagePath(first);
-      }
-    }
-    if (
-      payload.galleryType !== undefined &&
-      String(payload.galleryType).trim() !== ''
-    ) {
-      $set.galleryType = payload.galleryType;
-    }
     if (
       payload.registrationLink !== undefined &&
       String(payload.registrationLink).trim() !== ''
@@ -448,60 +298,25 @@ export class AdminService {
       String(payload.brochureLink).trim() !== ''
     )
       $set.brochureLink = payload.brochureLink;
-    if (payload.eventStatus === 0 || payload.eventStatus === 1) {
-      $set.eventStatus = payload.eventStatus;
-    }
 
-    const findQuery: Record<string, unknown> = Types.ObjectId.isValid(raw)
-      ? { _id: new Types.ObjectId(raw) }
-      : (() => {
-          const asNumber = Number.parseInt(raw, 10);
-          if (!Number.isFinite(asNumber) || asNumber <= 0) {
-            throw new BadRequestException(
-              'Invalid event id (expected Mongo _id or numeric eventId)',
-            );
-          }
-          return { eventId: asNumber };
-        })();
-
-    const current = await this.eventModel
-      .findOne(findQuery)
-      .select('_id eventName galleryType')
-      .lean()
-      .exec();
-    if (!current) {
-      throw new NotFoundException('Event not found');
-    }
-
-    const nextName =
-      payload.eventName !== undefined
-        ? String(payload.eventName).trim()
-        : String((current as any).eventName ?? '').trim();
-    const nextType =
-      payload.galleryType !== undefined
-        ? String(payload.galleryType).trim()
-        : String((current as any).galleryType ?? '').trim();
-    if (nextType && nextName) {
-      const duplicate = await this.eventModel
-        .findOne({
-          _id: { $ne: (current as any)._id },
-          eventName: new RegExp(`^${escapeRegex(nextName)}$`, 'i'),
-          galleryType: new RegExp(`^${escapeRegex(nextType)}$`, 'i'),
-        })
-        .select('_id')
+    let updated: any = null;
+    if (Types.ObjectId.isValid(raw)) {
+      updated = await this.eventModel
+        .findByIdAndUpdate(new Types.ObjectId(raw), { $set }, { new: true })
         .lean()
         .exec();
-      if (duplicate) {
-        throw new ConflictException(
-          `A gallery item with this title already exists in "${nextType}"`,
+    } else {
+      const asNumber = Number.parseInt(raw, 10);
+      if (!Number.isFinite(asNumber) || asNumber <= 0) {
+        throw new BadRequestException(
+          'Invalid event id (expected Mongo _id or numeric eventId)',
         );
       }
+      updated = await this.eventModel
+        .findOneAndUpdate({ eventId: asNumber }, { $set }, { new: true })
+        .lean()
+        .exec();
     }
-
-    const updated = await this.eventModel
-      .findOneAndUpdate(findQuery, { $set }, { new: true })
-      .lean()
-      .exec();
 
     if (!updated) {
       throw new NotFoundException('Event not found');
@@ -519,54 +334,39 @@ export class AdminService {
     return this.formatEventResponse(updated);
   }
 
-  /**
-   * Same row shape as GET /admin/events/list (omit s_no for single-item detail).
-   */
-  mapEventToAdminListItem(e: any, s_no?: number) {
-    const datePart =
-      e?.eventDate instanceof Date
-        ? e.eventDate.toISOString().slice(0, 10)
-        : e?.eventDate
-          ? new Date(e.eventDate).toISOString().slice(0, 10)
-          : '';
-    const timePart = String(e?.eventStartTime ?? '').trim();
-
-    return {
-      ...(s_no !== undefined ? { s_no } : {}),
-      id: String(e._id),
-      eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
-      image: e.eventImage ?? null,
-      galleryImages: Array.isArray(e.galleryImages)
-        ? e.galleryImages
-        : e.eventImage
-          ? [e.eventImage]
-          : [],
-      event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
-      eventName: String(e.eventName ?? ''),
-      eventDescription: String(e.eventDescription ?? ''),
-      galleryType: e.galleryType ?? '',
-      date: datePart,
-      dateTime: [datePart, timePart].filter(Boolean).join(' '),
-      location: String(e.eventLocation ?? ''),
-      is_active: Number(e.eventStatus) === 1,
-      registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
-      brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
-    };
-  }
-
   async listEvents() {
     const rows = await this.eventModel
       .find({})
       .sort({ createdDate: -1, _id: -1 })
       .select(
-        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+        'eventName eventImage event_image eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
       )
       .lean()
       .exec();
 
-    return (rows ?? []).map((e: any, idx: number) =>
-      this.mapEventToAdminListItem(e, idx + 1),
-    );
+    return (rows ?? []).map((e: any, idx: number) => {
+      const datePart =
+        e?.eventDate instanceof Date
+          ? e.eventDate.toISOString().slice(0, 10)
+          : e?.eventDate
+            ? new Date(e.eventDate).toISOString().slice(0, 10)
+            : '';
+      const timePart = String(e?.eventStartTime ?? '').trim();
+
+      return {
+        s_no: idx + 1,
+        id: String(e._id),
+        eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
+        image: e.eventImage ?? null,
+        event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
+        eventName: String(e.eventName ?? ''),
+        dateTime: [datePart, timePart].filter(Boolean).join(' '),
+        location: String(e.eventLocation ?? ''),
+        is_active: Number(e.eventStatus) === 1,
+        registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
+        brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
+      };
+    });
   }
 
   async getEventById(identifier: string) {
@@ -596,12 +396,7 @@ export class AdminService {
       throw new NotFoundException('Event not found');
     }
 
-    const listShape = this.mapEventToAdminListItem(event);
-    const formatted = this.formatEventResponse(event);
-    return {
-      ...formatted,
-      ...listShape,
-    };
+    return this.formatEventResponse(event);
   }
 
   async deleteEvent(identifier: string) {
@@ -637,387 +432,6 @@ export class AdminService {
     });
 
     return { id: raw };
-  }
-
-  async setOrToggleEventStatus(identifier: string, status?: number) {
-    const raw = String(identifier ?? '').trim();
-    if (!raw) throw new BadRequestException('Event id is required');
-
-    const where: Record<string, unknown> = {};
-    if (Types.ObjectId.isValid(raw)) {
-      where._id = new Types.ObjectId(raw);
-    } else {
-      const asNumber = Number.parseInt(raw, 10);
-      if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException(
-          'Invalid event id (expected Mongo _id or numeric eventId)',
-        );
-      }
-      where.eventId = asNumber;
-    }
-
-    let nextStatus: number;
-    if (status === 0 || status === 1) {
-      nextStatus = status;
-    } else {
-      const current = await this.eventModel
-        .findOne(where)
-        .select('eventStatus')
-        .lean()
-        .exec();
-      if (!current) {
-        throw new NotFoundException('Event not found');
-      }
-      const cur = Number((current as any).eventStatus) === 1 ? 1 : 0;
-      nextStatus = cur === 1 ? 0 : 1;
-    }
-
-    const updated = await this.eventModel
-      .findOneAndUpdate(
-        where,
-        { $set: { eventStatus: nextStatus, updatedDate: new Date() } },
-        { new: true },
-      )
-      .select('_id eventId eventStatus')
-      .lean()
-      .exec();
-    if (!updated) {
-      throw new NotFoundException('Event not found');
-    }
-
-    await this.createNotification({
-      title: 'Gallery status updated',
-      message: `Gallery item (${String((updated as any).eventId ?? (updated as any)._id)}) status updated to ${nextStatus === 1 ? 'active' : 'inactive'}.`,
-      type: 'info',
-      source: 'admin',
-      referenceType: 'event',
-      referenceId: String((updated as any)._id),
-    });
-
-    return {
-      id: String((updated as any)._id),
-      eventId: (updated as any).eventId,
-      status: Number((updated as any).eventStatus) === 1 ? 'active' : 'inactive',
-      is_active: Number((updated as any).eventStatus) === 1,
-    };
-  }
-
-  async createArticle(payload: {
-    title: string;
-    description?: string;
-    date: Date;
-    image?: string;
-    url?: string;
-    externalUrl?: boolean;
-    pdf?: string;
-    status?: number;
-  }) {
-    const externalUrl = payload.externalUrl === true;
-    const description = String(payload.description ?? '').trim();
-    const url = String(payload.url ?? '').trim();
-    if (externalUrl) {
-      if (!url) {
-        throw new BadRequestException('url is required when externalUrl is true');
-      }
-    } else if (!description) {
-      throw new BadRequestException(
-        'description is required when externalUrl is false',
-      );
-    }
-
-    const title = String(payload.title ?? '').trim();
-    if (!title) {
-      throw new BadRequestException('title is required');
-    }
-    const duplicate = await this.articleModel
-      .findOne({ title: new RegExp(`^${escapeRegex(title)}$`, 'i') })
-      .select('_id')
-      .lean()
-      .exec();
-    if (duplicate) {
-      throw new ConflictException('An article with this title already exists');
-    }
-
-    const doc = new this.articleModel({
-      title,
-      description: externalUrl ? '' : description,
-      date: payload.date,
-      image: payload.image,
-      article_image: this.resolveArticleImagePath(payload.image),
-      url: externalUrl ? url : '',
-      externalUrl,
-      pdf: payload.pdf,
-      article_pdf: this.resolveArticlePdfPath(payload.pdf),
-      status: payload.status === 0 || payload.status === 1 ? payload.status : 1,
-    });
-    const saved = await doc.save();
-    await this.createNotification({
-      title: 'Article created',
-      message: `Article "${String((saved as any).title ?? '')}" was created.`,
-      type: 'success',
-      source: 'admin',
-      referenceType: 'article',
-      referenceId: String((saved as any)._id),
-    });
-    return saved.toObject();
-  }
-
-  async updateArticle(
-    id: string,
-    payload: {
-      title?: string;
-      description?: string;
-      date?: Date;
-      image?: string;
-      url?: string;
-      externalUrl?: boolean;
-      pdf?: string;
-      status?: number;
-    },
-  ) {
-    let objectId: Types.ObjectId;
-    try {
-      objectId = new Types.ObjectId(id);
-    } catch {
-      throw new BadRequestException('Invalid article id');
-    }
-
-    const $set: Record<string, unknown> = {};
-    if (payload.title !== undefined) {
-      const nextTitle = String(payload.title).trim();
-      if (!nextTitle) {
-        throw new BadRequestException('title cannot be empty');
-      }
-      const duplicate = await this.articleModel
-        .findOne({
-          _id: { $ne: objectId },
-          title: new RegExp(`^${escapeRegex(nextTitle)}$`, 'i'),
-        })
-        .select('_id')
-        .lean()
-        .exec();
-      if (duplicate) {
-        throw new ConflictException('An article with this title already exists');
-      }
-      $set.title = nextTitle;
-    }
-    if (payload.description !== undefined) $set.description = String(payload.description).trim();
-    if (payload.date !== undefined) $set.date = payload.date;
-    if (payload.image !== undefined) {
-      $set.image = payload.image;
-      $set.article_image = this.resolveArticleImagePath(payload.image);
-    }
-    if (payload.url !== undefined) $set.url = String(payload.url).trim();
-    if (payload.externalUrl !== undefined) $set.externalUrl = payload.externalUrl === true;
-    if (payload.pdf !== undefined) {
-      $set.pdf = payload.pdf;
-      $set.article_pdf = this.resolveArticlePdfPath(payload.pdf);
-    }
-    if (payload.status === 0 || payload.status === 1) $set.status = payload.status;
-    if (Object.keys($set).length === 0) {
-      throw new BadRequestException('No fields to update');
-    }
-
-    const current = await this.articleModel.findById(objectId).lean().exec();
-    if (!current) throw new NotFoundException('Article not found');
-
-    const nextExternalUrl =
-      payload.externalUrl !== undefined
-        ? payload.externalUrl === true
-        : payload.url !== undefined && payload.description === undefined
-          ? true
-          : payload.description !== undefined && payload.url === undefined
-            ? false
-            : (current as any).externalUrl === true;
-    const nextDescription =
-      payload.description !== undefined
-        ? String(payload.description ?? '').trim()
-        : String((current as any).description ?? '').trim();
-    const nextUrl =
-      payload.url !== undefined
-        ? String(payload.url ?? '').trim()
-        : String((current as any).url ?? '').trim();
-
-    if (nextExternalUrl) {
-      if (!nextUrl) {
-        throw new BadRequestException('url is required when externalUrl is true');
-      }
-      $set.description = '';
-      $set.url = nextUrl;
-      $set.externalUrl = true;
-    } else {
-      if (!nextDescription) {
-        throw new BadRequestException(
-          'description is required when externalUrl is false',
-        );
-      }
-      $set.url = '';
-      $set.description = nextDescription;
-      $set.externalUrl = false;
-    }
-
-    const updated = await this.articleModel
-      .findByIdAndUpdate(objectId, { $set }, { new: true })
-      .lean()
-      .exec();
-    if (!updated) throw new NotFoundException('Article not found');
-
-    await this.createNotification({
-      title: 'Article updated',
-      message: `Article "${String((updated as any).title ?? '')}" was updated.`,
-      type: 'info',
-      source: 'admin',
-      referenceType: 'article',
-      referenceId: String((updated as any)._id),
-    });
-
-    return updated;
-  }
-
-  async listArticles() {
-    const rows = await this.articleModel
-      .find({})
-      .sort({ createdAt: -1, _id: -1 })
-      .select(
-        'title description date image article_image url externalUrl pdf article_pdf status',
-      )
-      .lean()
-      .exec();
-
-    return (rows ?? []).map((a: any, idx: number) => ({
-      s_no: idx + 1,
-      id: String(a._id),
-      title: String(a.title ?? ''),
-      description: String(a.description ?? ''),
-      date:
-        a?.date instanceof Date
-          ? a.date.toISOString().slice(0, 10)
-          : a?.date
-            ? new Date(a.date).toISOString().slice(0, 10)
-            : '',
-      image: this.resolveArticleAssetForResponse(a.image) || null,
-      article_image: this.resolveArticleAssetForResponse(
-        a.article_image ?? this.resolveArticleImagePath(a.image),
-      ),
-      url: a.externalUrl === true ? String(a.url ?? '') : '',
-      externalUrl: a.externalUrl === true,
-      pdf: this.resolveArticleAssetForResponse(a.pdf) || null,
-      article_pdf: this.resolveArticleAssetForResponse(
-        a.article_pdf ?? this.resolveArticlePdfPath(a.pdf),
-      ),
-      is_active: Number(a.status) === 1,
-    }));
-  }
-
-  async getArticleById(id: string) {
-    let objectId: Types.ObjectId;
-    try {
-      objectId = new Types.ObjectId(id);
-    } catch {
-      throw new BadRequestException('Invalid article id');
-    }
-    const article = await this.articleModel.findById(objectId).lean().exec();
-    if (!article) throw new NotFoundException('Article not found');
-
-    return {
-      id: String((article as any)._id),
-      title: String((article as any).title ?? ''),
-      description: String((article as any).description ?? ''),
-      date:
-        (article as any)?.date instanceof Date
-          ? (article as any).date.toISOString().slice(0, 10)
-          : (article as any)?.date
-            ? new Date((article as any).date).toISOString().slice(0, 10)
-            : '',
-      image: this.resolveArticleAssetForResponse((article as any).image) || null,
-      article_image: this.resolveArticleAssetForResponse(
-        (article as any).article_image ??
-          this.resolveArticleImagePath((article as any).image),
-      ),
-      url:
-        (article as any).externalUrl === true
-          ? String((article as any).url ?? '')
-          : '',
-      externalUrl: (article as any).externalUrl === true,
-      pdf: this.resolveArticleAssetForResponse((article as any).pdf) || null,
-      article_pdf: this.resolveArticleAssetForResponse(
-        (article as any).article_pdf ??
-          this.resolveArticlePdfPath((article as any).pdf),
-      ),
-      is_active: Number((article as any).status) === 1,
-    };
-  }
-
-  async setOrToggleArticleStatus(id: string, status?: number) {
-    let objectId: Types.ObjectId;
-    try {
-      objectId = new Types.ObjectId(id);
-    } catch {
-      throw new BadRequestException('Invalid article id');
-    }
-
-    let nextStatus: number;
-    if (status === 0 || status === 1) {
-      nextStatus = status;
-    } else {
-      const current = await this.articleModel
-        .findById(objectId)
-        .select('status')
-        .lean()
-        .exec();
-      if (!current) throw new NotFoundException('Article not found');
-      nextStatus = Number((current as any).status) === 1 ? 0 : 1;
-    }
-
-    const updated = await this.articleModel
-      .findByIdAndUpdate(
-        objectId,
-        { $set: { status: nextStatus } },
-        { new: true },
-      )
-      .lean()
-      .exec();
-    if (!updated) throw new NotFoundException('Article not found');
-
-    return {
-      id: String((updated as any)._id),
-      status: Number((updated as any).status) === 1 ? 'active' : 'inactive',
-      is_active: Number((updated as any).status) === 1,
-    };
-  }
-
-  async deleteArticle(id: string) {
-    let objectId: Types.ObjectId;
-    try {
-      objectId = new Types.ObjectId(id);
-    } catch {
-      throw new BadRequestException('Invalid article id');
-    }
-
-    const existing = await this.articleModel
-      .findById(objectId)
-      .select('title')
-      .lean()
-      .exec();
-    if (!existing) {
-      throw new NotFoundException('Article not found');
-    }
-
-    const res = await this.articleModel.deleteOne({ _id: objectId }).exec();
-    if (!res || res.deletedCount === 0) {
-      throw new NotFoundException('Article not found');
-    }
-
-    await this.createNotification({
-      title: 'Article deleted',
-      message: `Article "${String((existing as any).title ?? '')}" was deleted.`,
-      type: 'warning',
-      source: 'admin',
-      referenceType: 'article',
-      referenceId: id,
-    });
-
-    return { id };
   }
 
   async replyToCustomerViaManufacturer(payload: {
@@ -1069,13 +483,11 @@ export class AdminService {
 
     const textBody = `Hello,\n\nPlease find our response below.\n\n${cleanReply}\n\nRegards,\n${brand} Support Team`;
 
-    this.emailService.sendInBackground(() =>
-      this.emailService.sendEmail(
-        payload.email,
-        subject,
-        htmlBody,
-        textBody,
-      ),
+    await this.emailService.sendEmail(
+      payload.email,
+      subject,
+      htmlBody,
+      textBody,
     );
 
     return { to: payload.email, subject };
@@ -1152,6 +564,8 @@ export class AdminService {
 
     const textBody = `${greeting}\n\nThank you for contacting us. Please find our response below.\n\n${cleanReply}\n\nRegards,\nGreenPro Support Team`;
 
+    await this.emailService.sendEmail(to, subject, htmlBody, textBody);
+
     const entry = {
       adminReply: replyMessage,
       repliedAt: new Date(),
@@ -1166,7 +580,7 @@ export class AdminService {
         },
         { upsert: true },
       )
-      .exec(); 
+      .exec();
 
     await this.createNotification({
       title: 'Contact replied',
@@ -1176,10 +590,6 @@ export class AdminService {
       referenceType: 'contact',
       referenceId: String(objectId),
     });
-
-    this.emailService.sendInBackground(() =>
-      this.emailService.sendEmail(to, subject, htmlBody, textBody),
-    );
 
     return { sent: true };
   }
@@ -1285,16 +695,10 @@ export class AdminService {
       designation?: string;
       email: string;
       mobile: string;
-      displayOrder?: number;
-      team: TeamMemberTeam;
       imagePath?: string;
       facebookUrl?: string;
       twitterUrl?: string;
       linkedinUrl?: string;
-      roleId?: string;
-      roleIds?: string[];
-      /** Optional; omit or empty = no product categories linked. */
-      category_ids?: number[];
     },
   ) {
     let vendorObjectId: Types.ObjectId;
@@ -1304,21 +708,19 @@ export class AdminService {
       throw new BadRequestException('Invalid vendor ID format');
     }
 
-    const emailLower = data.email.trim().toLowerCase();
-    const mobileTrim = data.mobile.trim();
-
     const existingActive = await this.vendorUserModel
       .findOne({
         $and: [
-          { manufacturerId: vendorObjectId },
-          { status: { $ne: 2 } },
-          { type: 'staff' },
+          // Support both the new canonical field (`manufacturerId`) and legacy alias (`vendorId`)
           {
             $or: [
-              { email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i') },
-              { phone: mobileTrim },
+              { manufacturerId: vendorObjectId },
+              { vendorId: vendorObjectId },
             ],
           },
+          { status: { $ne: 2 } },
+          { type: 'partner' },
+          { $or: [{ email: data.email }, { phone: data.mobile }] },
         ],
       })
       .select('_id email phone')
@@ -1326,214 +728,37 @@ export class AdminService {
       .exec();
 
     if (existingActive) {
-      if (
-        String(existingActive.email ?? '').toLowerCase() === emailLower
-      ) {
-        throw new ConflictException('Email already exists');
+      if (existingActive.email === data.email) {
+        throw new ConflictException('Email already exists for this vendor');
       }
-      if (existingActive.phone === mobileTrim) {
-        throw new ConflictException('Phone number already exists');
+      if (existingActive.phone === data.mobile) {
+        throw new ConflictException(
+          'Phone number already exists for this vendor',
+        );
       }
       throw new ConflictException('Team member already exists');
     }
 
-    /** Same email/phone can still exist on a soft-deleted row (status 2); unique index blocks a second insert. */
-    const softDeleted = await this.vendorUserModel
-      .findOne({
-        manufacturerId: vendorObjectId,
-        type: 'staff',
-        status: 2,
-        $or: [
-          { email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i') },
-          { phone: mobileTrim },
-        ],
-      })
-      .exec();
-
-    if (softDeleted) {
-      const totalNonDeleted = await this.vendorUserModel
-        .countDocuments({
-          manufacturerId: vendorObjectId,
-          type: 'staff',
-          status: { $ne: 2 },
-        })
-        .exec();
-      const maxAllowed = Math.max(1, totalNonDeleted + 1);
-      const desiredOrder =
-        data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-      if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-        throw new BadRequestException('Display order must be a positive integer');
-      }
-      if (desiredOrder > maxAllowed) {
-        throw new BadRequestException(
-          `Display order must be between 1 and ${maxAllowed}`,
-        );
-      }
-
-      if (desiredOrder <= totalNonDeleted) {
-        await this.vendorUserModel
-          .updateMany(
-            {
-              manufacturerId: vendorObjectId,
-              type: 'staff',
-              status: { $ne: 2 },
-              displayOrder: { $gte: desiredOrder },
-            },
-            { $inc: { displayOrder: 1 } },
-          )
-          .exec();
-      }
-
-      const passwordHash = await bcrypt.hash(
-        crypto.randomBytes(8).toString('hex'),
-        10,
-      );
-
-      const categoryIds = data.category_ids ?? [];
-      if (categoryIds.length > 0) {
-        await this.categoriesService.assertNumericCategoriesExist(categoryIds);
-      }
-
-      const $set: Record<string, unknown> = {
-        name: data.name.trim(),
-        email: emailLower,
-        phone: mobileTrim,
-        status: 1,
-        isVerified: true,
-        password: passwordHash,
-        displayOrder: desiredOrder,
-        team: data.team,
-        image: data.imagePath,
-        facebookUrl: data.facebookUrl,
-        twitterUrl: data.twitterUrl,
-        linkedinUrl: data.linkedinUrl,
-        updatedAt: new Date(),
-        category_ids: categoryIds,
-      };
-      if (categoryIds.length > 0) {
-        $set.category_id = categoryIds[0];
-      }
-      if (data.designation !== undefined && data.designation !== '') {
-        $set.designation = data.designation;
-      }
-
-      const updatePayload: Record<string, unknown> = { $set };
-      const $unset: Record<string, string> = {};
-      if (data.designation !== undefined && data.designation === '') {
-        $unset.designation = '';
-      }
-      if (categoryIds.length === 0) {
-        $unset.category_id = '';
-      }
-      if (Object.keys($unset).length > 0) {
-        updatePayload.$unset = $unset;
-      }
-
-      const updated = await this.vendorUserModel
-        .findByIdAndUpdate(softDeleted._id, updatePayload, { new: true })
-        .exec();
-
-      if (!updated) {
-        throw new NotFoundException('Team member record could not be reactivated');
-      }
-
-      const normalizedRoleIds =
-        Array.isArray(data.roleIds) && data.roleIds.length > 0
-          ? Array.from(
-              new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)),
-            )
-          : data.roleId
-            ? [String(data.roleId).trim()]
-            : [];
-
-      await this.rbacService.replaceStaffRoles(vendorId, {
-        vendorUserId: String(updated._id),
-        roleIds: normalizedRoleIds,
-      });
-
-      this.invalidateWebsiteTeamMembersListCache();
-
-      const obj: any = updated.toObject();
-      delete obj.password;
-      delete obj.otp;
-      const id = String(updated._id);
-      const cat = this.teamMemberCategoryArrays(obj);
-      return {
-        ...obj,
-        id,
-        vendorUserId: id,
-        roleIds: normalizedRoleIds,
-        portalAccess: normalizedRoleIds.length > 0,
-        category_ids: cat.category_ids,
-        categoryIds: cat.categoryIds,
-      };
-    }
-
-    const totalNonDeleted = await this.vendorUserModel
-      .countDocuments({
-        manufacturerId: vendorObjectId,
-        type: 'staff',
-        status: { $ne: 2 },
-      })
-      .exec();
-    const maxAllowed = Math.max(1, totalNonDeleted + 1);
-    const desiredOrder =
-      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-      throw new BadRequestException('Display order must be a positive integer');
-    }
-    if (desiredOrder > maxAllowed) {
-      throw new BadRequestException(
-        `Display order must be between 1 and ${maxAllowed}`,
-      );
-    }
-
-    if (desiredOrder <= totalNonDeleted) {
-      await this.vendorUserModel
-        .updateMany(
-          {
-            manufacturerId: vendorObjectId,
-            type: 'staff',
-            status: { $ne: 2 },
-            displayOrder: { $gte: desiredOrder },
-          },
-          { $inc: { displayOrder: 1 } },
-        )
-        .exec();
-    }
-
-    // Staff can log into admin portal only after a role is assigned (RBAC mapping).
-    // We still store a random password hash here; on first role assignment we rotate it
-    // and send credentials via email (see RbacService).
-    const passwordHash = await bcrypt.hash(crypto.randomBytes(8).toString('hex'), 10);
-
-    const categoryIds = data.category_ids ?? [];
-    if (categoryIds.length > 0) {
-      await this.categoriesService.assertNumericCategoriesExist(categoryIds);
-    }
+    const password = crypto.randomBytes(8).toString('hex');
 
     const teamMember: Partial<VendorUser> = {
       // Canonical + legacy alias (some modules still query vendorId)
       manufacturerId: vendorObjectId,
       vendorId: vendorObjectId,
-      type: 'staff',
+      type: 'partner',
       status: 1,
       isVerified: true,
       name: data.name,
       ...(data.designation !== undefined && data.designation !== ''
         ? { designation: data.designation }
         : {}),
-      email: emailLower,
-      phone: mobileTrim,
+      email: data.email,
+      phone: data.mobile,
       image: data.imagePath,
       facebookUrl: data.facebookUrl,
       twitterUrl: data.twitterUrl,
       linkedinUrl: data.linkedinUrl,
-      displayOrder: desiredOrder,
-      team: data.team,
-      password: passwordHash,
-      category_ids: categoryIds,
-      ...(categoryIds.length > 0 ? { category_id: categoryIds[0] } : {}),
+      password,
     };
 
     const created = new this.vendorUserModel(teamMember);
@@ -1541,13 +766,13 @@ export class AdminService {
     try {
       saved = await created.save();
     } catch (e: any) {
+      // Handle unique index conflicts (e.g. VendorUser.email is globally unique in schema)
       if (e?.code === 11000) {
-        const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
-        const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
-        if ('email' in pattern || keyVal.email !== undefined) {
+        const key = Object.keys(e?.keyPattern ?? e?.keyValue ?? {})[0];
+        if (key === 'email') {
           throw new ConflictException('Email already exists');
         }
-        if ('phone' in pattern || keyVal.phone !== undefined) {
+        if (key === 'phone') {
           throw new ConflictException('Phone number already exists');
         }
         throw new ConflictException('Duplicate record');
@@ -1559,76 +784,51 @@ export class AdminService {
     const obj: any = saved.toObject();
     delete obj.password;
     delete obj.otp;
-
-    const normalizedRoleIds =
-      Array.isArray(data.roleIds) && data.roleIds.length > 0
-        ? Array.from(new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)))
-        : data.roleId
-          ? [String(data.roleId).trim()]
-          : [];
-
-    // Role assignments drive portal access; credentials are sent only on first transition
-    // from no-roles to any-role by RBAC service.
-    await this.rbacService.replaceStaffRoles(vendorId, {
-      vendorUserId: String(saved._id),
-      roleIds: normalizedRoleIds,
-    });
-
-    this.invalidateWebsiteTeamMembersListCache();
-
-    const id = String(saved._id);
-    const cat = this.teamMemberCategoryArrays(obj);
-    return {
-      ...obj,
-      id,
-      vendorUserId: id,
-      roleIds: normalizedRoleIds,
-      portalAccess: normalizedRoleIds.length > 0,
-      category_ids: cat.category_ids,
-      categoryIds: cat.categoryIds,
-    };
+    return obj;
   }
 
   /**
    * Team members for the admin table: non-deleted partners (status !== 2).
    * status 1 = active, 0 = inactive (matches partner toggle).
    */
-  async listTeamMembers(_vendorId: string) {
+  async listTeamMembers(vendorId: string) {
+    let vendorObjectId: Types.ObjectId;
+    try {
+      vendorObjectId = new Types.ObjectId(vendorId);
+    } catch {
+      throw new BadRequestException('Invalid vendor ID format');
+    }
+
     const members = await this.vendorUserModel
       .find({
-        type: 'staff',
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
+        type: 'partner',
         status: { $ne: 2 },
       })
-      .sort({ displayOrder: 1, _id: 1 })
-      .select(
-        'name designation email phone status displayOrder team category_ids category_id',
-      )
+      // Newest team members first (do not change to ascending).
+      .sort({ createdAt: -1, _id: -1 })
+      .select('name designation email phone status')
       .lean()
       .exec();
 
-    return members.map((m, index) => {
-      const cat = this.teamMemberCategoryArrays(m as any);
-      return {
-        s_no: index + 1,
-        id: String(m._id),
-        vendorUserId: String(m._id),
-        name: m.name,
-        designation: m.designation ?? '',
-        email: m.email,
-        mobile: m.phone,
-        is_active: m.status === 1,
-        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
-        team: String((m as any).team ?? ''),
-        category_ids: cat.category_ids,
-        categoryIds: cat.categoryIds,
-      };
-    });
+    return members.map((m, index) => ({
+      s_no: index + 1,
+      id: String(m._id),
+      name: m.name,
+      designation: m.designation ?? '',
+      email: m.email,
+      mobile: m.phone,
+      is_active: m.status === 1,
+    }));
   }
 
   async listTeamMembersPaginated(
-    _vendorId: string,
+    vendorId: string,
     query: ListTeamMembersQueryDto,
-    opts?: { categoryNumericId?: number },
   ) {
     const page = Number(query?.page ?? 1);
     const limit = Number(query?.limit ?? 10);
@@ -1636,23 +836,22 @@ export class AdminService {
     const perPage = Number.isFinite(limit) && limit > 0 ? limit : 10;
     const skip = (currentPage - 1) * perPage;
 
+    let vendorObjectId: Types.ObjectId;
+    try {
+      vendorObjectId = new Types.ObjectId(vendorId);
+    } catch {
+      throw new BadRequestException('Invalid vendor ID format');
+    }
+
     const mongoQuery: Record<string, unknown> = {
-      type: 'staff',
+      $or: [
+        { manufacturerId: vendorObjectId },
+        { vendorId: vendorObjectId },
+        { vendorId },
+      ],
+      type: 'partner',
       status: { $ne: 2 },
     };
-
-    const catId = opts?.categoryNumericId;
-    if (
-      catId !== undefined &&
-      typeof catId === 'number' &&
-      Number.isInteger(catId) &&
-      catId >= 1
-    ) {
-      mongoQuery.$or = [
-        { category_ids: catId },
-        { category_id: catId },
-      ];
-    }
 
     const rawStatus = query?.status?.trim().toLowerCase();
     if (rawStatus) {
@@ -1665,45 +864,31 @@ export class AdminService {
       mongoQuery.designation = new RegExp(`^${escapeRegex(designation)}$`, 'i');
     }
 
-    const [displayOrderMax, totalCount, members] = await Promise.all([
-      this.vendorUserModel
-        .countDocuments({ type: 'staff', status: { $ne: 2 } })
-        .exec(),
+    const [totalCount, members] = await Promise.all([
       this.vendorUserModel.countDocuments(mongoQuery).exec(),
       this.vendorUserModel
         .find(mongoQuery)
-        .sort({ displayOrder: 1, _id: 1 })
+        .sort({ createdAt: -1, _id: -1 })
         .skip(skip)
         .limit(perPage)
-        .select(
-          'name designation email phone status displayOrder team category_ids category_id',
-        )
+        .select('name designation email phone status')
         .lean()
         .exec(),
     ]);
 
     const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
-    const data = (members ?? []).map((m, index) => {
-      const cat = this.teamMemberCategoryArrays(m as any);
-      return {
-        s_no: skip + index + 1,
-        id: String(m._id),
-        vendorUserId: String(m._id),
-        name: m.name,
-        designation: m.designation ?? '',
-        email: m.email,
-        mobile: m.phone,
-        is_active: m.status === 1,
-        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
-        team: String((m as any).team ?? ''),
-        category_ids: cat.category_ids,
-        categoryIds: cat.categoryIds,
-      };
-    });
+    const data = (members ?? []).map((m, index) => ({
+      s_no: skip + index + 1,
+      id: String(m._id),
+      name: m.name,
+      designation: m.designation ?? '',
+      email: m.email,
+      mobile: m.phone,
+      is_active: m.status === 1,
+    }));
 
     return {
       data,
-      displayOrderMax: Math.max(1, displayOrderMax),
       totalCount,
       currentPage,
       totalPages,
@@ -1714,15 +899,30 @@ export class AdminService {
    * Partial, case-insensitive match on name and/or email (non-deleted partners only).
    * When both filters are set, both must match (AND).
    */
-  async searchTeamMembers(_vendorId: string, filters: { name?: string; email?: string }) {
+  async searchTeamMembers(
+    vendorId: string,
+    filters: { name?: string; email?: string },
+  ) {
     const name = filters.name?.trim();
     const email = filters.email?.trim();
     if (!name && !email) {
       throw new BadRequestException('Provide a name and/or email to search');
     }
 
+    let vendorObjectId: Types.ObjectId;
+    try {
+      vendorObjectId = new Types.ObjectId(vendorId);
+    } catch {
+      throw new BadRequestException('Invalid vendor ID format');
+    }
+
     const query: Record<string, unknown> = {
-      type: 'staff',
+      $or: [
+        { manufacturerId: vendorObjectId },
+        { vendorId: vendorObjectId },
+        { vendorId },
+      ],
+      type: 'partner',
       status: { $ne: 2 },
     };
     if (name) {
@@ -1734,36 +934,28 @@ export class AdminService {
 
     const members = await this.vendorUserModel
       .find(query)
-      .sort({ displayOrder: 1, _id: 1 })
-      .select(
-        'name designation email phone status displayOrder team category_ids category_id',
-      )
+      .sort({ createdAt: -1, _id: -1 })
+      .select('name designation email phone status')
       .lean()
       .exec();
 
-    return members.map((m, index) => {
-      const cat = this.teamMemberCategoryArrays(m as any);
-      return {
-        s_no: index + 1,
-        id: String(m._id),
-        vendorUserId: String(m._id),
-        name: m.name,
-        designation: m.designation ?? '',
-        email: m.email,
-        mobile: m.phone,
-        is_active: m.status === 1,
-        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
-        team: String((m as any).team ?? ''),
-        category_ids: cat.category_ids,
-        categoryIds: cat.categoryIds,
-      };
-    });
+    return members.map((m, index) => ({
+      s_no: index + 1,
+      id: String(m._id),
+      name: m.name,
+      designation: m.designation ?? '',
+      email: m.email,
+      mobile: m.phone,
+      is_active: m.status === 1,
+    }));
   }
 
   /** Single team member for view modal (non-deleted partner, same vendor). */
-  async getTeamMemberById(_vendorId: string, memberId: string) {
+  async getTeamMemberById(vendorId: string, memberId: string) {
+    let vendorObjectId: Types.ObjectId;
     let memberObjectId: Types.ObjectId;
     try {
+      vendorObjectId = new Types.ObjectId(vendorId);
       memberObjectId = new Types.ObjectId(memberId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -1772,11 +964,16 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        type: 'staff',
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
+        type: 'partner',
         status: { $ne: 2 },
       })
       .select(
-        'name designation email phone status image facebookUrl twitterUrl linkedinUrl displayOrder team category_ids category_id',
+        'name designation email phone status image facebookUrl twitterUrl linkedinUrl',
       )
       .lean()
       .exec();
@@ -1786,10 +983,8 @@ export class AdminService {
     }
 
     const st = member.status ?? 0;
-    const cat = this.teamMemberCategoryArrays(member as any);
     return {
       id: String(member._id),
-      vendorUserId: String(member._id),
       name: member.name,
       designation: member.designation ?? '',
       email: member.email,
@@ -1799,10 +994,6 @@ export class AdminService {
       facebookUrl: member.facebookUrl ?? '',
       twitterUrl: member.twitterUrl ?? '',
       linkedinUrl: member.linkedinUrl ?? '',
-      displayOrder: this.persistedTeamMemberDisplayOrder((member as any).displayOrder),
-      team: String((member as any).team ?? ''),
-      category_ids: cat.category_ids,
-      categoryIds: cat.categoryIds,
     };
   }
 
@@ -1814,60 +1005,24 @@ export class AdminService {
       throw new BadRequestException('Invalid vendor ID format');
     }
 
-    let sequenceNumber = dto.sequenceNumber;
-    if (sequenceNumber === undefined) {
-      const latestBanner = await this.bannerModel
-        .findOne({ $or: [{ vendorId: vendorObjectId }, { vendorId }] })
-        .sort({ sequenceNumber: -1, createdAt: -1 })
-        .select('sequenceNumber')
-        .lean()
-        .exec();
-      const currentMax = Number((latestBanner as any)?.sequenceNumber ?? 0);
-      sequenceNumber = Number.isFinite(currentMax) && currentMax >= 1 ? currentMax + 1 : 1;
-    } else {
-      const duplicateSequence = await this.bannerModel
-        .exists({
-          sequenceNumber,
-          $or: [{ vendorId: vendorObjectId }, { vendorId }],
-        })
-        .lean()
-        .exec();
-      if (duplicateSequence) {
-        throw new ConflictException(
-          `Sequence number ${sequenceNumber} already exists for another banner`,
-        );
-      }
-    }
-
     const created = new this.bannerModel({
       vendorId: vendorObjectId,
       banner_image: this.resolveBannerImagePath(dto.imageUrl),
-      imageUrl: String(dto.imageUrl ?? '').trim(),
-      imageSource: dto.imageSource === 'binary_upload' ? 'binary_upload' : 'manual_url',
-      heading: dto.title.trim(),
-      sequenceNumber,
+      imageUrl: dto.imageUrl.trim(),
+      targetUrl: (dto.targetUrl ?? '').trim(),
+      heading: dto.heading.trim(),
       description: dto.description.trim(),
-      status:
-        String(dto.status ?? '').trim().toLowerCase() === 'inactive' ||
-        String(dto.status ?? '').trim() === '0'
-          ? 0
-          : 1,
     });
     const saved = await created.save();
     const o = saved.toObject();
     const st = o.status ?? 1;
     return {
       id: String(o._id),
-      imageUrl: this.resolveBannerImageForResponse(o.imageUrl, o.banner_image),
-      imageSource:
-        String((o as any).imageSource) === 'binary_upload'
-          ? 'binary_upload'
-          : 'manual_url',
+      banner_image: o.banner_image ?? this.resolveBannerImagePath(o.imageUrl),
+      imageUrl: o.imageUrl,
+      targetUrl: o.targetUrl,
       heading: o.heading,
-      title: o.heading,
-      sequenceNumber: Number(o.sequenceNumber ?? 1),
       description: o.description,
-      status: st === 1 ? 'active' : 'inactive',
       is_active: st === 1,
       createdAt: o.createdAt,
       updatedAt: o.updatedAt,
@@ -1889,8 +1044,8 @@ export class AdminService {
       .find({
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
+      .sort({ createdAt: -1, _id: -1 })
+      .select('banner_image imageUrl targetUrl heading description status')
       .lean()
       .exec();
 
@@ -1899,16 +1054,11 @@ export class AdminService {
       return {
         s_no: index + 1,
         id: String(b._id),
-        imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-        imageSource:
-          String((b as any).imageSource) === 'binary_upload'
-            ? 'binary_upload'
-            : 'manual_url',
+        banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
+        imageUrl: b.imageUrl,
+        targetUrl: b.targetUrl,
         heading: b.heading,
-        title: b.heading,
-        sequenceNumber: Number((b as any).sequenceNumber ?? 1),
         description: b.description,
-        status: st === 1 ? 'active' : 'inactive',
         is_active: st === 1,
       };
     });
@@ -1917,31 +1067,20 @@ export class AdminService {
   /** Public banner list for website (active only, newest first). */
   async listPublicBanners() {
     const rows = await this.bannerModel
-      .find({
-        $or: [
-          { status: 1 },
-          { status: { $exists: false } },
-          { status: null as any },
-        ],
-      })
-      .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
+      .find({ status: 1 })
+      .sort({ createdAt: -1, _id: -1 })
+      .select('banner_image imageUrl targetUrl heading description status')
       .lean()
       .exec();
 
     return rows.map((b, index) => ({
       s_no: index + 1,
       id: String(b._id),
-      imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-      imageSource:
-        String((b as any).imageSource) === 'binary_upload'
-          ? 'binary_upload'
-          : 'manual_url',
+      banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
+      imageUrl: b.imageUrl,
+      targetUrl: b.targetUrl,
       heading: b.heading,
-      title: b.heading,
-      sequenceNumber: Number((b as any).sequenceNumber ?? 1),
       description: b.description,
-      status: (b.status ?? 1) === 1 ? 'active' : 'inactive',
       is_active: (b.status ?? 1) === 1,
     }));
   }
@@ -1962,7 +1101,7 @@ export class AdminService {
         _id: bannerObjectId,
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
+      .select('banner_image imageUrl targetUrl heading description')
       .lean()
       .exec();
 
@@ -1972,16 +1111,11 @@ export class AdminService {
 
     return {
       id: String(b._id),
-      imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-      imageSource:
-        String((b as any).imageSource) === 'binary_upload'
-          ? 'binary_upload'
-          : 'manual_url',
+      banner_image: b.banner_image ?? this.resolveBannerImagePath(b.imageUrl),
+      imageUrl: b.imageUrl,
+      targetUrl: b.targetUrl ?? '',
       heading: b.heading,
-      title: b.heading,
-      sequenceNumber: Number((b as any).sequenceNumber ?? 1),
       description: b.description,
-      status: Number((b as any).status) === 1 ? 'active' : 'inactive',
     };
   }
 
@@ -1991,11 +1125,9 @@ export class AdminService {
     bannerId: string,
     payload: {
       imageUrl?: string;
-      imageSource?: 'binary_upload' | 'manual_url';
-      title?: string;
-      sequenceNumber?: number;
-      description?: string;
-      status?: string;
+      targetUrl?: string;
+      heading: string;
+      description: string;
     },
   ) {
     let vendorObjectId: Types.ObjectId;
@@ -2020,46 +1152,17 @@ export class AdminService {
       throw new NotFoundException('Banner not found');
     }
 
-    if (payload.sequenceNumber !== undefined) {
-      const duplicateSequence = await this.bannerModel
-        .exists({
-          _id: { $ne: bannerObjectId },
-          sequenceNumber: payload.sequenceNumber,
-          $or: [{ vendorId: vendorObjectId }, { vendorId }],
-        })
-        .lean()
-        .exec();
-      if (duplicateSequence) {
-        throw new ConflictException(
-          `Sequence number ${payload.sequenceNumber} already exists for another banner`,
-        );
-      }
-    }
-
-    const $set: Record<string, unknown> = { updatedAt: new Date() };
-    if (payload.title !== undefined) {
-      $set.heading = payload.title.trim();
-    }
-    if (payload.sequenceNumber !== undefined) {
-      $set.sequenceNumber = payload.sequenceNumber;
-    }
-    if (payload.description !== undefined) {
-      $set.description = payload.description.trim();
-    }
-    if (payload.status !== undefined) {
-      $set.status =
-        String(payload.status).trim().toLowerCase() === 'inactive' ||
-        String(payload.status).trim() === '0'
-          ? 0
-          : 1;
-    }
+    const $set: Record<string, unknown> = {
+      heading: payload.heading.trim(),
+      description: payload.description.trim(),
+      updatedAt: new Date(),
+    };
     if (payload.imageUrl !== undefined) {
       $set.imageUrl = payload.imageUrl.trim();
       $set.banner_image = this.resolveBannerImagePath(payload.imageUrl);
     }
-    if (payload.imageSource !== undefined) {
-      $set.imageSource =
-        payload.imageSource === 'binary_upload' ? 'binary_upload' : 'manual_url';
+    if (payload.targetUrl !== undefined) {
+      $set.targetUrl = payload.targetUrl.trim();
     }
 
     const updated = await this.bannerModel
@@ -2074,19 +1177,13 @@ export class AdminService {
     const st = updated.status ?? 1;
     return {
       id: String(updated._id),
-      imageUrl: this.resolveBannerImageForResponse(
-        (updated as any).imageUrl,
-        (updated as any).banner_image,
-      ),
-      imageSource:
-        String((updated as any).imageSource) === 'binary_upload'
-          ? 'binary_upload'
-          : 'manual_url',
+      banner_image:
+        (updated as any).banner_image ??
+        this.resolveBannerImagePath(updated.imageUrl),
+      imageUrl: updated.imageUrl,
+      targetUrl: updated.targetUrl ?? '',
       heading: updated.heading,
-      title: updated.heading,
-      sequenceNumber: Number((updated as any).sequenceNumber ?? 1),
       description: updated.description,
-      status: st === 1 ? 'active' : 'inactive',
       is_active: st === 1,
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
@@ -2196,19 +1293,16 @@ export class AdminService {
       designation?: string;
       email: string;
       mobile: string;
-      displayOrder?: number;
-      team: TeamMemberTeam;
       imagePath?: string;
       facebookUrl?: string;
       twitterUrl?: string;
       linkedinUrl?: string;
-      roleId?: string;
-      roleIds?: string[];
-      category_ids?: number[];
     },
   ) {
+    let vendorObjectId: Types.ObjectId;
     let memberObjectId: Types.ObjectId;
     try {
+      vendorObjectId = new Types.ObjectId(vendorId);
       memberObjectId = new Types.ObjectId(data.id);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -2217,7 +1311,12 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        type: 'staff',
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
+        type: 'partner',
         status: { $ne: 2 },
       })
       .exec();
@@ -2226,21 +1325,20 @@ export class AdminService {
       throw new NotFoundException('Team member not found');
     }
 
-    const emailLower = data.email.trim().toLowerCase();
-    const mobileTrim = data.mobile.trim();
-
     const existingOther = await this.vendorUserModel
       .findOne({
         $and: [
-          { _id: { $ne: memberObjectId } },
-          { status: { $ne: 2 } },
-          { type: 'staff' },
           {
             $or: [
-              { email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i') },
-              { phone: mobileTrim },
+              { manufacturerId: vendorObjectId },
+              { vendorId: vendorObjectId },
+              { vendorId },
             ],
           },
+          { _id: { $ne: memberObjectId } },
+          { status: { $ne: 2 } },
+          { type: 'partner' },
+          { $or: [{ email: data.email }, { phone: data.mobile }] },
         ],
       })
       .select('_id email phone')
@@ -2248,65 +1346,21 @@ export class AdminService {
       .exec();
 
     if (existingOther) {
-      if (
-        String(existingOther.email ?? '').toLowerCase() === emailLower
-      ) {
-        throw new ConflictException('Email already exists');
+      if (existingOther.email === data.email) {
+        throw new ConflictException('Email already exists for this vendor');
       }
-      if (existingOther.phone === mobileTrim) {
-        throw new ConflictException('Phone number already exists');
+      if (existingOther.phone === data.mobile) {
+        throw new ConflictException(
+          'Phone number already exists for this vendor',
+        );
       }
       throw new ConflictException('Team member already exists');
     }
 
-    const totalNonDeleted = await this.vendorUserModel
-      .countDocuments({ type: 'staff', status: { $ne: 2 } })
-      .exec();
-    const maxAllowed = Math.max(1, totalNonDeleted);
-    const desiredOrder =
-      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-      throw new BadRequestException('Display order must be a positive integer');
-    }
-    if (desiredOrder > maxAllowed) {
-      throw new BadRequestException(
-        `Display order must be between 1 and ${maxAllowed}`,
-      );
-    }
-
-    const currentOrder = Number((member as any).displayOrder) || maxAllowed;
-    if (desiredOrder !== currentOrder) {
-      if (desiredOrder < currentOrder) {
-        await this.vendorUserModel
-          .updateMany(
-            {
-              _id: { $ne: memberObjectId },
-              type: 'staff',
-              status: { $ne: 2 },
-              displayOrder: { $gte: desiredOrder, $lt: currentOrder },
-            },
-            { $inc: { displayOrder: 1 } },
-          )
-          .exec();
-      } else {
-        await this.vendorUserModel
-          .updateMany(
-            {
-              _id: { $ne: memberObjectId },
-              type: 'staff',
-              status: { $ne: 2 },
-              displayOrder: { $gt: currentOrder, $lte: desiredOrder },
-            },
-            { $inc: { displayOrder: -1 } },
-          )
-          .exec();
-      }
-    }
-
     const $set: Record<string, unknown> = {
       name: data.name,
-      email: emailLower,
-      phone: mobileTrim,
+      email: data.email,
+      phone: data.mobile,
       updatedAt: new Date(),
     };
 
@@ -2326,48 +1380,15 @@ export class AdminService {
     if (data.imagePath !== undefined) {
       $set.image = data.imagePath;
     }
-    $set.displayOrder = desiredOrder;
-    $set.team = data.team;
-
-    const unsetFields: Record<string, string> = {};
-    if (data.category_ids !== undefined) {
-      if (data.category_ids.length > 0) {
-        await this.categoriesService.assertNumericCategoriesExist(data.category_ids);
-        $set.category_ids = data.category_ids;
-        $set.category_id = data.category_ids[0];
-      } else {
-        $set.category_ids = [];
-        unsetFields.category_id = '';
-      }
-    }
 
     const updatePayload: Record<string, unknown> = { $set };
     if (data.designation !== undefined && data.designation === '') {
-      unsetFields.designation = '';
-    }
-    if (Object.keys(unsetFields).length > 0) {
-      updatePayload.$unset = unsetFields;
+      updatePayload.$unset = { designation: '' };
     }
 
-    let updated: VendorUserDocument | null;
-    try {
-      updated = await this.vendorUserModel
-        .findByIdAndUpdate(memberObjectId, updatePayload, { new: true })
-        .exec();
-    } catch (e: any) {
-      if (e?.code === 11000) {
-        const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
-        const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
-        if ('email' in pattern || keyVal.email !== undefined) {
-          throw new ConflictException('Email already exists');
-        }
-        if ('phone' in pattern || keyVal.phone !== undefined) {
-          throw new ConflictException('Phone number already exists');
-        }
-        throw new ConflictException('Duplicate record');
-      }
-      throw e;
-    }
+    const updated = await this.vendorUserModel
+      .findByIdAndUpdate(memberObjectId, updatePayload, { new: true })
+      .exec();
 
     if (!updated) {
       throw new NotFoundException('Team member not found');
@@ -2376,37 +1397,15 @@ export class AdminService {
     const obj: any = updated.toObject();
     delete obj.password;
     delete obj.otp;
-
-    const normalizedRoleIds =
-      Array.isArray(data.roleIds) && data.roleIds.length > 0
-        ? Array.from(new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)))
-        : data.roleId
-          ? [String(data.roleId).trim()]
-          : [];
-    await this.rbacService.replaceStaffRoles(vendorId, {
-      vendorUserId: data.id,
-      roleIds: normalizedRoleIds,
-    });
-
-    this.invalidateWebsiteTeamMembersListCache();
-
-    const id = String(updated._id);
-    const cat = this.teamMemberCategoryArrays(obj);
-    return {
-      ...obj,
-      id,
-      vendorUserId: id,
-      roleIds: normalizedRoleIds,
-      portalAccess: normalizedRoleIds.length > 0,
-      category_ids: cat.category_ids,
-      categoryIds: cat.categoryIds,
-    };
+    return obj;
   }
 
   /** Soft delete: status 2 (same as partners). */
-  async deleteTeamMember(_vendorId: string, teamMemberId: string) {
+  async deleteTeamMember(vendorId: string, teamMemberId: string) {
+    let vendorObjectId: Types.ObjectId;
     let memberObjectId: Types.ObjectId;
     try {
+      vendorObjectId = new Types.ObjectId(vendorId);
       memberObjectId = new Types.ObjectId(teamMemberId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -2415,7 +1414,12 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        type: 'staff',
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
+        type: 'partner',
         status: { $ne: 2 },
       })
       .exec();
@@ -2439,9 +1443,6 @@ export class AdminService {
     const obj: any = updated.toObject();
     delete obj.password;
     delete obj.otp;
-
-    this.invalidateWebsiteTeamMembersListCache();
-
     return obj;
   }
 
@@ -2588,7 +1589,7 @@ export class AdminService {
   async listContactMessages() {
     const rows = await this.contactMessageModel
       .find({})
-      .select('name email phoneNumber subject message createdAt')
+      .select('name email phoneNumber message createdAt')
       .sort({ createdAt: -1, _id: -1 })
       .lean()
       .exec();
@@ -2599,7 +1600,6 @@ export class AdminService {
       name: String(r.name ?? ''),
       email: String(r.email ?? ''),
       phoneNo: String((r as any).phoneNumber ?? ''),
-      subject: String((r as any).subject ?? ''),
       message:
         typeof (r as any).message === 'string'
           ? String((r as any).message).trim()
@@ -2658,9 +1658,11 @@ export class AdminService {
    * Toggle active flag for a team member (partner): status 1 ↔ 0.
    * Same semantics as partners PATCH /partners/status; excludes soft-deleted (2).
    */
-  async updateTeamMemberStatus(_vendorId: string, teamMemberId: string) {
+  async updateTeamMemberStatus(vendorId: string, teamMemberId: string) {
+    let vendorObjectId: Types.ObjectId;
     let memberObjectId: Types.ObjectId;
     try {
+      vendorObjectId = new Types.ObjectId(vendorId);
       memberObjectId = new Types.ObjectId(teamMemberId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -2669,7 +1671,12 @@ export class AdminService {
     const member = await this.vendorUserModel
       .findOne({
         _id: memberObjectId,
-        type: 'staff',
+        $or: [
+          { manufacturerId: vendorObjectId },
+          { vendorId: vendorObjectId },
+          { vendorId },
+        ],
+        type: 'partner',
         status: { $ne: 2 },
       })
       .exec();

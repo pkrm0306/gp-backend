@@ -11,22 +11,12 @@ import {
 } from './schemas/raw-materials-elimination-of-prohibited-flame-solvents.schema';
 import { CreateRawMaterialsEliminationOfProhibitedFlameSolventsDto } from './dto/create-raw-materials-elimination-of-prohibited-flame-solvents.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
-import {
-  AllProductDocument,
-  AllProductDocumentDocument,
-} from '../product-design/schemas/all-product-document.schema';
-import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
-import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
   constructor(
     @InjectModel(RawMaterialsEliminationOfProhibitedFlameSolvents.name)
     private model: Model<RawMaterialsEliminationOfProhibitedFlameSolventsDocument>,
-    @InjectModel(AllProductDocument.name)
-    private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
   ) {}
 
@@ -41,18 +31,9 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
     return new Types.ObjectId(id);
   }
 
-  private async saveFileToUrnFolder(
-    file: Express.Multer.File,
-    urnNo: string,
-    fileType: string,
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
-  }
-
   async create(
     dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsDto,
     vendorId: string,
-    prohibitedFlameSolventsFile?: Express.Multer.File,
   ): Promise<RawMaterialsEliminationOfProhibitedFlameSolventsDocument> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
@@ -69,32 +50,7 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
         updatedDate: now,
       });
 
-      const saved = await doc.save();
-
-      if (prohibitedFlameSolventsFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          prohibitedFlameSolventsFile,
-          dto.urnNo.trim(),
-          'prohibited_flame_solvents_supporting_document',
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo: dto.urnNo.trim(),
-          eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId: id,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: prohibitedFlameSolventsFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
-        });
-      }
-
-      return saved;
+      return await doc.save();
     } catch (error: any) {
       console.error(
         '[Raw Materials Elimination Of Prohibited Flame Solvents] Create error:',

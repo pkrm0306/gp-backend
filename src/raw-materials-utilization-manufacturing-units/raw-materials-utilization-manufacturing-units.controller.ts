@@ -34,62 +34,15 @@ export class RawMaterialsUtilizationManufacturingUnitsController {
     summary:
       'Create raw materials utilization manufacturing units record (per URN)',
   })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['urnNo', 'units'],
-      properties: {
-        urnNo: { type: 'string', example: 'URN-20260305124230' },
-        units: {
-          oneOf: [
-            {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  unitName: { type: 'string', example: 'Manufacturing Unit A' },
-                  year: { type: 'number', example: 2026 },
-                  yeardata1: { type: 'number', example: 10 },
-                  yeardata2: { type: 'number', example: 20 },
-                  yeardata3: { type: 'number', example: 30 },
-                },
-              },
-            },
-            {
-              type: 'string',
-              description: 'JSON stringified units array',
-            },
-          ],
-        },
-      },
-    },
-  })
+  @ApiBody({ type: CreateRawMaterialsUtilizationManufacturingUnitsDto })
   @ApiResponse({ status: 201, description: 'Created successfully' })
   async create(
     @CurrentUser() user: any,
-    @Body() body: any,
+    @Body() dto: CreateRawMaterialsUtilizationManufacturingUnitsDto,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
-
-    let units = body.units;
-    if (typeof body.units === 'string') {
-      try {
-        units = JSON.parse(body.units);
-      } catch {
-        throw new BadRequestException('Invalid units format. Expected JSON array.');
-      }
-    }
-    if (!Array.isArray(units) || units.length === 0) {
-      throw new BadRequestException('units must be a non-empty array');
-    }
-
-    const dto: CreateRawMaterialsUtilizationManufacturingUnitsDto = {
-      urnNo: body.urnNo,
-      units,
-    };
-
     const data = await this.service.create(dto, user.vendorId);
     return { success: true, data };
   }

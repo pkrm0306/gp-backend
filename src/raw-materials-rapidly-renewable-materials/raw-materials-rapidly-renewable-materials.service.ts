@@ -11,38 +11,12 @@ import {
 } from './schemas/raw-materials-rapidly-renewable-materials.schema';
 import { CreateRawMaterialsRapidlyRenewableMaterialsDto } from './dto/create-raw-materials-rapidly-renewable-materials.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
-import {
-  AllProductDocument,
-  AllProductDocumentDocument,
-} from '../product-design/schemas/all-product-document.schema';
-import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
-import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
-
-type RapidlyRenewableProductDocumentRow = {
-  _id: unknown;
-  productDocumentId: number;
-  vendorId: Types.ObjectId;
-  urnNo: string;
-  eoiNo?: string;
-  documentForm: string;
-  documentFormSubsection?: string;
-  formPrimaryId: number;
-  documentName: string;
-  documentOriginalName: string;
-  documentLink: string;
-  createdDate: Date;
-  updatedDate: Date;
-};
 
 @Injectable()
 export class RawMaterialsRapidlyRenewableMaterialsService {
   constructor(
     @InjectModel(RawMaterialsRapidlyRenewableMaterials.name)
     private model: Model<RawMaterialsRapidlyRenewableMaterialsDocument>,
-    @InjectModel(AllProductDocument.name)
-    private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
   ) {}
 
@@ -57,138 +31,32 @@ export class RawMaterialsRapidlyRenewableMaterialsService {
     return new Types.ObjectId(id);
   }
 
-  private roundToTwo(value: number): number {
-    return Math.round(value * 100) / 100;
-  }
-
-  private async saveFileToUrnFolder(
-    file: Express.Multer.File,
-    urnNo: string,
-    fileType: string,
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
-  }
-
-  private toResponseUnit(row: Partial<RawMaterialsRapidlyRenewableMaterials>) {
-    return {
-      rawMaterialsRapidlyRenewableMaterialsId: row.rawMaterialsRapidlyRenewableMaterialsId,
-      unitName: row.unitName,
-      year: row.year,
-      unit1: row.unit1,
-      yeardata1: row.yeardata1,
-      unit2: row.unit2,
-      yeardata2: row.yeardata2,
-      yeardata3: this.roundToTwo(Number(row.yeardata3 ?? 0)),
-    };
-  }
-
-  private mapProductDocument(d: AllProductDocumentDocument): RapidlyRenewableProductDocumentRow {
-    const o = typeof d.toObject === 'function' ? d.toObject() : d;
-    return {
-      _id: o._id,
-      productDocumentId: o.productDocumentId,
-      vendorId: o.vendorId,
-      urnNo: o.urnNo,
-      eoiNo: o.eoiNo,
-      documentForm: o.documentForm,
-      documentFormSubsection: o.documentFormSubsection,
-      formPrimaryId: o.formPrimaryId,
-      documentName: o.documentName,
-      documentOriginalName: o.documentOriginalName,
-      documentLink: o.documentLink,
-      createdDate: o.createdDate,
-      updatedDate: o.updatedDate,
-    };
-  }
-
   async create(
     dto: CreateRawMaterialsRapidlyRenewableMaterialsDto,
     vendorId: string,
-    rapidlyRenewableFile?: Express.Multer.File,
-  ): Promise<{
-    urnNo: string;
-    vendorId: string;
-    units: Array<{
-      rawMaterialsRapidlyRenewableMaterialsId: number;
-      unitName: string;
-      year: number;
-      unit1: number;
-      yeardata1: number;
-      unit2: number;
-      yeardata2: number;
-      yeardata3: number;
-    }>;
-    documents: RapidlyRenewableProductDocumentRow[];
-  }> {
+  ): Promise<RawMaterialsRapidlyRenewableMaterialsDocument> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const urnNo = dto.urnNo.trim();
+      const id =
+        await this.sequenceHelper.getRawMaterialsRapidlyRenewableMaterialsId();
       const now = new Date();
-      const docsToCreate: Array<
-        Omit<RawMaterialsRapidlyRenewableMaterials, 'createdDate' | 'updatedDate'> & {
-          createdDate: Date;
-          updatedDate: Date;
-        }
-      > = [];
 
-      for (const unit of dto.units) {
-        if (unit.yeardata1 <= 0) {
-          throw new BadRequestException('yeardata1 must be greater than 0 for each unit');
-        }
+      const doc = new this.model({
+        rawMaterialsRapidlyRenewableMaterialsId: id,
+        urnNo: dto.urnNo.trim(),
+        vendorId: vendorObjectId,
+        unitName: dto.unitName.trim(),
+        year: dto.year,
+        unit1: dto.unit1,
+        yeardata1: dto.yeardata1,
+        unit2: dto.unit2,
+        yeardata2: dto.yeardata2,
+        yeardata3: dto.yeardata3,
+        createdDate: now,
+        updatedDate: now,
+      });
 
-        const yeardata3 = (unit.yeardata2 / unit.yeardata1) * 100;
-        const id = await this.sequenceHelper.getRawMaterialsRapidlyRenewableMaterialsId();
-        docsToCreate.push({
-          rawMaterialsRapidlyRenewableMaterialsId: id,
-          urnNo,
-          vendorId: vendorObjectId,
-          unitName: unit.unitName.trim(),
-          year: unit.year,
-          unit1: unit.unit1,
-          yeardata1: unit.yeardata1,
-          unit2: unit.unit2,
-          yeardata2: unit.yeardata2,
-          yeardata3,
-          createdDate: now,
-          updatedDate: now,
-        });
-      }
-
-      // Replace behavior: keep only the units coming in current request for this URN+vendor.
-      await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
-      const created = await this.model.insertMany(docsToCreate);
-      const documents: RapidlyRenewableProductDocumentRow[] = [];
-
-      if (rapidlyRenewableFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          rapidlyRenewableFile,
-          urnNo,
-          'rapidly_renewable_supporting_document',
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        const masterDoc = await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId: created[0].rawMaterialsRapidlyRenewableMaterialsId,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: rapidlyRenewableFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
-        });
-        documents.push(this.mapProductDocument(masterDoc));
-      }
-
-      return {
-        urnNo,
-        vendorId: vendorObjectId.toString(),
-        units: created.map((row) => this.toResponseUnit(row.toObject())),
-        documents,
-      };
+      return await doc.save();
     } catch (error: any) {
       console.error(
         '[Raw Materials Rapidly Renewable Materials] Create error:',
@@ -207,28 +75,10 @@ export class RawMaterialsRapidlyRenewableMaterialsService {
   async listByUrn(urnNo: string, vendorId: string) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const trimmedUrn = urnNo.trim();
-      const rows = await this.model
-        .find({ urnNo: trimmedUrn, vendorId: vendorObjectId })
-        .sort({ rawMaterialsRapidlyRenewableMaterialsId: 1 })
+      return await this.model
+        .find({ urnNo: urnNo.trim(), vendorId: vendorObjectId })
+        .sort({ createdDate: 1 })
         .exec();
-
-      const docRows = await this.allProductDocumentModel
-        .find({
-          urnNo: trimmedUrn,
-          vendorId: vendorObjectId,
-          documentForm: DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS,
-          $or: [{ isDeleted: { $ne: true } }, { isDeleted: { $exists: false } }],
-        })
-        .sort({ productDocumentId: -1 })
-        .exec();
-
-      return {
-        urnNo: trimmedUrn,
-        vendorId: vendorObjectId.toString(),
-        units: rows.map((row) => this.toResponseUnit(row.toObject())),
-        documents: docRows.map((d) => this.mapProductDocument(d)),
-      };
     } catch (error: any) {
       console.error(
         '[Raw Materials Rapidly Renewable Materials] List error:',

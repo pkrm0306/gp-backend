@@ -9,7 +9,6 @@ import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
 import { CaptchaService } from '../common/services/captcha.service';
 import { EmailService } from '../common/services/email.service';
-import { RbacModule } from '../rbac/rbac.module';
 
 @Module({
   imports: [
@@ -26,7 +25,6 @@ import { RbacModule } from '../rbac/rbac.module';
     }),
     ManufacturersModule,
     VendorUsersModule,
-    RbacModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, CaptchaService, EmailService],

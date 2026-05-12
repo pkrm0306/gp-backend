@@ -30,7 +30,6 @@ import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
 import { UpdateCategoryStatusDto } from './dto/update-category-status.dto';
 import { UpdateCategoryMultipartDto } from './dto/update-category-multipart.dto';
 import { categoryImageMulterOptions } from './category-image-upload.config';
-import { uploadFile } from '../utils/upload-file.util';
 
 @ApiTags('Categories')
 @Controller()
@@ -233,13 +232,13 @@ export class CategoriesController {
         'file is required (multipart field name: file)',
       );
     }
-    const uploaded = await uploadFile(file, 'categories');
+    const relative = `categories/${file.filename}`;
     return {
       message: 'Image uploaded successfully',
       data: {
-        category_image: uploaded.fileUrl,
+        category_image: relative,
         category_image_url:
-          this.categoriesService.resolveCategoryImageUrl(uploaded.fileUrl),
+          this.categoriesService.resolveCategoryImageUrl(relative),
       },
     };
   }
@@ -283,10 +282,9 @@ export class CategoriesController {
     @Body() dto: CreateCategoryMultipartDto,
     @UploadedFile() image?: Express.Multer.File,
   ) {
-    const uploaded = image ? await uploadFile(image, 'categories') : undefined;
     const category = await this.categoriesService.create({
       category_name: dto.category_name,
-      category_image: uploaded?.fileUrl,
+      category_image: image ? `categories/${image.filename}` : undefined,
       category_raw_material_forms: dto.category_raw_material_forms,
       category_status: dto.category_status,
       sector: dto.sector,

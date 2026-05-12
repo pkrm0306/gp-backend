@@ -1,17 +1,17 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import {
-  ArrayMinSize,
-  IsArray,
-  IsInt,
-  IsNotEmpty,
-  IsString,
-  MaxLength,
-  Min,
-  ValidateNested,
-} from 'class-validator';
+import { IsInt, IsNotEmpty, IsString, MaxLength, Min } from 'class-validator';
 
-export class UtilizationManufacturingUnitDto {
+export class CreateRawMaterialsUtilizationManufacturingUnitsDto {
+  @ApiProperty({
+    description: 'URN number',
+    example: 'URN-20260305124230',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  urnNo: string;
+
   @ApiProperty({
     description: 'Unit name',
     example: 'Manufacturing Unit A',
@@ -43,27 +43,4 @@ export class UtilizationManufacturingUnitDto {
   @IsInt()
   @Min(0)
   yeardata3: number;
-}
-
-export class CreateRawMaterialsUtilizationManufacturingUnitsDto {
-  @ApiProperty({
-    description: 'URN number',
-    example: 'URN-20260305124230',
-  })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(20)
-  urnNo: string;
-
-  @ApiProperty({
-    type: [UtilizationManufacturingUnitDto],
-    description:
-      'Manufacturing unit rows to create in one request. Preferred over legacy single-row fields.',
-    required: true,
-  })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => UtilizationManufacturingUnitDto)
-  units: UtilizationManufacturingUnitDto[];
 }

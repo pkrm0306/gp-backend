@@ -30,17 +30,6 @@ export class ListStandardsQueryDto {
   @IsString()
   resource_standard_type?: string;
 
-  @ApiPropertyOptional({
-    example: 1,
-    description:
-      'Numeric `category_id` from GET /categories; limits results to that category.',
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  category_id?: number;
-
   @ApiPropertyOptional({ enum: [0, 1] })
   @IsOptional()
   @Type(() => Number)

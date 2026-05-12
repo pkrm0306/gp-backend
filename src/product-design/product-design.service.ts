@@ -3,7 +3,6 @@ import {
   BadRequestException,
   NotFoundException,
   InternalServerErrorException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types, ClientSession } from 'mongoose';
@@ -18,13 +17,11 @@ import {
 } from './schemas/all-product-document.schema';
 import { CreateProductDesignDto } from './dto/create-product-design.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
-import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
-export class ProductDesignService implements OnModuleInit {
+export class ProductDesignService {
   constructor(
     @InjectModel(ProductDesign.name)
     private productDesignModel: Model<ProductDesignDocument>,
@@ -35,22 +32,6 @@ export class ProductDesignService implements OnModuleInit {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
   ) {}
-
-  async onModuleInit() {
-    const shouldSyncIndexes =
-      String(process.env.SYNC_INDEXES_ON_BOOT || 'false').toLowerCase() ===
-      'true';
-    if (!shouldSyncIndexes) return;
-    try {
-      await this.productDesignModel.syncIndexes();
-      await this.pdMeasureModel.syncIndexes();
-    } catch (error) {
-      console.error(
-        '[product-design] syncIndexes failed (check existing duplicates):',
-        error,
-      );
-    }
-  }
 
   /**
    * Safely convert string to ObjectId with validation
@@ -69,125 +50,55 @@ export class ProductDesignService implements OnModuleInit {
   }
 
   /**
-   * Normalize and deduplicate measures rows from multipart payload.
-   * This prevents duplicate inserts when clients accidentally append
-   * the same measures for each uploaded file.
+   * Ensure URN folder exists, create if it doesn't
    */
-  private normalizeUniqueMeasures(
-    rows?: Array<{ measuresImplemented?: string; benefitsAchieved?: string }>,
-  ): Array<{
-    measuresImplemented: string;
-    benefitsAchieved: string;
-    normalizedMeasures: string;
-    normalizedBenefits: string;
-  }> {
-    if (!Array.isArray(rows) || rows.length === 0) return [];
+  private ensureUrnFolder(urnNo: string): string {
+    const urnFolderPath = path.join('uploads', 'urns', urnNo);
 
-    const seen = new Set<string>();
-    const unique: Array<{
-      measuresImplemented: string;
-      benefitsAchieved: string;
-      normalizedMeasures: string;
-      normalizedBenefits: string;
-    }> = [];
-
-    for (const row of rows) {
-      const measuresImplemented = String(row?.measuresImplemented ?? '').trim();
-      const benefitsAchieved = String(row?.benefitsAchieved ?? '').trim();
-      const normalizedMeasures = measuresImplemented.toLowerCase();
-      const normalizedBenefits = benefitsAchieved.toLowerCase();
-
-      // Skip fully empty rows
-      if (!measuresImplemented && !benefitsAchieved) continue;
-
-      const key = `${normalizedMeasures}__${normalizedBenefits}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      unique.push({
-        measuresImplemented,
-        benefitsAchieved,
-        normalizedMeasures,
-        normalizedBenefits,
-      });
+    if (!fs.existsSync(urnFolderPath)) {
+      fs.mkdirSync(urnFolderPath, { recursive: true });
     }
 
-    return unique;
+    return urnFolderPath;
   }
 
-  private async upsertMeasuresByUrn(params: {
-    urnNo: string;
-    vendorObjectId: Types.ObjectId;
-    effectiveProductDesignId: number;
-    normalizedMeasures: Array<{
-      measuresImplemented: string;
-      benefitsAchieved: string;
-      normalizedMeasures: string;
-      normalizedBenefits: string;
-    }>;
-    now: Date;
-    session: ClientSession;
-  }): Promise<{ inserted: number; skipped: number }> {
-    const {
-      urnNo,
-      vendorObjectId,
-      effectiveProductDesignId,
-      normalizedMeasures,
-      now,
-      session,
-    } = params;
-    if (!normalizedMeasures.length) {
-      return { inserted: 0, skipped: 0 };
-    }
-
-    const existingRows = await this.pdMeasureModel
-      .find({ urnNo }, { normalizedMeasures: 1, normalizedBenefits: 1 })
-      .session(session);
-    const existingKeys = new Set(
-      existingRows.map(
-        (row) => `${row.normalizedMeasures}__${row.normalizedBenefits}`,
-      ),
-    );
-
-    const measureDocs = [];
-    for (const row of normalizedMeasures) {
-      const key = `${row.normalizedMeasures}__${row.normalizedBenefits}`;
-      if (existingKeys.has(key)) continue;
-
-      existingKeys.add(key);
-      const productDesignMeasureId =
-        await this.sequenceHelper.getProductDesignMeasureId();
-      measureDocs.push({
-        productDesignMeasureId,
-        urnNo,
-        vendorId: vendorObjectId,
-        productDesignId: effectiveProductDesignId,
-        measures: row.measuresImplemented,
-        benefits: row.benefitsAchieved,
-        normalizedMeasures: row.normalizedMeasures,
-        normalizedBenefits: row.normalizedBenefits,
-        createdDate: now,
-        updatedDate: now,
-      });
-    }
-
-    if (measureDocs.length) {
-      await this.pdMeasureModel.insertMany(measureDocs, { session });
-    }
-
-    return {
-      inserted: measureDocs.length,
-      skipped: normalizedMeasures.length - measureDocs.length,
-    };
-  }
-
-  private async saveFileToUrnFolder(
+  /**
+   * Save file to URN-specific folder
+   */
+  private saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: 'eco_vision' | 'supporting_document',
-  ): Promise<{ fileUrl: string; fileName: string }> {
-    const uploaded = await uploadFile(file, `urns/${urnNo}`);
-    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
+  ): string {
+    const urnFolderPath = this.ensureUrnFolder(urnNo);
+    const fileExt = path.extname(file.originalname);
+    const timestamp = Date.now();
+    const randomSuffix = Math.round(Math.random() * 1e9);
+    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
+    const filePath = path.join(urnFolderPath, fileName);
+
+    // Copy file from temp location to URN folder (file.path is the temp location)
+    if (file.path && fs.existsSync(file.path)) {
+      fs.copyFileSync(file.path, filePath);
+      // Optionally remove temp file
+      try {
+        fs.unlinkSync(file.path);
+      } catch (err) {
+        // Ignore if temp file doesn't exist or can't be deleted
+      }
+    } else {
+      // If file.path doesn't exist, write buffer directly
+      if (file.buffer) {
+        fs.writeFileSync(filePath, file.buffer);
+      } else {
+        throw new BadRequestException(
+          `File data not available for ${fileType}`,
+        );
+      }
+    }
+
+    // Return relative path from uploads folder
+    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
   }
 
   /**
@@ -196,30 +107,25 @@ export class ProductDesignService implements OnModuleInit {
   async createProductDesign(
     createProductDesignDto: CreateProductDesignDto,
     vendorId: string,
-    files?: Express.Multer.File[],
-  ): Promise<{
-    productDesign: ProductDesignDocument;
-    measureStats: { inserted: number; skipped: number };
-  }> {
+    ecoVisionFile?: Express.Multer.File,
+    supportingDocumentFile?: Express.Multer.File,
+  ): Promise<ProductDesignDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
-    // Track new files created in this request for rollback cleanup
-    let createdFileFullPaths: string[] = [];
-    // Track old files to delete only after successful commit
-    let oldFileLinksToDeleteAfterCommit: string[] = [];
+    // Declare file paths outside try block for cleanup in catch
+    let ecoVisionFullPath: string | undefined;
+    let supportingDocumentFullPath: string | undefined;
 
     try {
       // Convert vendorId to ObjectId
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
+      // Get next product design ID
+      const productDesignId = await this.sequenceHelper.getProductDesignId();
+
       // Get current date
       const now = new Date();
-      const normalizedMeasures = this.normalizeUniqueMeasures(
-        createProductDesignDto.measuresAndBenefits,
-      );
-      const uploadedFiles = Array.isArray(files) ? files : [];
-      const hasNewUploads = uploadedFiles.length > 0;
 
       // Fetch EOI no (optional) for master document table
       const productRow = await this.connection
@@ -229,97 +135,36 @@ export class ProductDesignService implements OnModuleInit {
           { projection: { eoiNo: 1 } },
         );
       const eoiNo: string | undefined = productRow?.eoiNo;
-      const existingProductDesign = await this.productDesignModel
-        .findOne({
-          urnNo: createProductDesignDto.urnNo,
-          vendorId: vendorObjectId,
-        })
-        .sort({ updatedDate: -1, createdDate: -1, _id: -1 })
-        .session(session);
-
-      const productDesignId = await this.sequenceHelper.getProductDesignId();
-
-      // Handle file uploads:
-      // - first file -> eco_vision_upload
-      // - remaining files -> supporting_documents
-      const ecoVisionFile = uploadedFiles[0];
-      const supportingDocumentFiles = uploadedFiles.slice(1);
 
       // Handle file uploads and set flags
-      let ecoVisionUpload = existingProductDesign?.ecoVisionUpload ?? 0;
+      let ecoVisionUpload = 0;
       let ecoVisionFilePath: string | undefined;
-      let ecoVisionStoredFileName: string | undefined;
       if (ecoVisionFile) {
-        const uploadedEcoVision = await this.saveFileToUrnFolder(
+        ecoVisionFilePath = this.saveFileToUrnFolder(
           ecoVisionFile,
           createProductDesignDto.urnNo,
           'eco_vision',
         );
-        ecoVisionFilePath = uploadedEcoVision.fileUrl;
-        ecoVisionStoredFileName = uploadedEcoVision.fileName;
+        ecoVisionFullPath = path.join('uploads', ecoVisionFilePath);
         ecoVisionUpload = 1;
       }
 
-      let productDesignSupportingDocument =
-        existingProductDesign?.productDesignSupportingDocument ?? 0;
-      const supportingDocumentFilePaths: string[] = [];
-      const supportingDocumentStoredNames: string[] = [];
-      if (supportingDocumentFiles.length > 0) {
-        for (const supportingDocumentFile of supportingDocumentFiles) {
-          const supportingDocumentFileUpload = await this.saveFileToUrnFolder(
-            supportingDocumentFile,
-            createProductDesignDto.urnNo,
-            'supporting_document',
-          );
-          supportingDocumentFilePaths.push(supportingDocumentFileUpload.fileUrl);
-          supportingDocumentStoredNames.push(supportingDocumentFileUpload.fileName);
-        }
+      let productDesignSupportingDocument = 0;
+      let supportingDocumentFilePath: string | undefined;
+      if (supportingDocumentFile) {
+        supportingDocumentFilePath = this.saveFileToUrnFolder(
+          supportingDocumentFile,
+          createProductDesignDto.urnNo,
+          'supporting_document',
+        );
+        supportingDocumentFullPath = path.join(
+          'uploads',
+          supportingDocumentFilePath,
+        );
         productDesignSupportingDocument = 1;
       }
-      if (hasNewUploads && supportingDocumentFiles.length === 0) {
-        // First uploaded file is eco vision; if no remaining files, supporting docs are replaced with none.
-        productDesignSupportingDocument = 0;
-      }
 
-      // Replace doc entries when new files are uploaded
-      if (hasNewUploads) {
-        const existingDocs = await this.allProductDocumentModel
-          .find({
-            vendorId: vendorObjectId,
-            urnNo: createProductDesignDto.urnNo,
-            documentForm: DocumentSectionKey.PRODUCT_DESIGN,
-            isDeleted: { $ne: true },
-          })
-          .session(session);
-
-        oldFileLinksToDeleteAfterCommit = existingDocs
-          .map((d) => d.documentLink)
-          .filter(Boolean);
-
-        if (existingDocs.length) {
-          await this.allProductDocumentModel.updateMany(
-            { _id: { $in: existingDocs.map((d) => d._id) } },
-            {
-              $set: {
-                isDeleted: true,
-                deletedAt: now,
-                deletedBy: vendorObjectId,
-                updatedDate: now,
-              },
-            },
-            { session },
-          );
-        }
-      }
-
-      // Replace master product-design record: remove existing rows, then create fresh.
-      await this.productDesignModel.deleteMany(
-        {
-          urnNo: createProductDesignDto.urnNo,
-        },
-        { session },
-      );
-
+      // Create product design data
       const productDesignData = {
         productDesignId,
         urnNo: createProductDesignDto.urnNo,
@@ -328,58 +173,56 @@ export class ProductDesignService implements OnModuleInit {
         statergies: createProductDesignDto.statergies,
         productDesignSupportingDocument,
         productDesignStatus: createProductDesignDto.productDesignStatus || 0,
-        measuresAndBenefits: normalizedMeasures,
+        measuresAndBenefits: createProductDesignDto.measuresAndBenefits || [],
         createdDate: now,
         updatedDate: now,
       };
 
-      const createdProductDesign = new this.productDesignModel(productDesignData);
-      const savedProductDesign = await createdProductDesign.save({ session });
+      const productDesign = new this.productDesignModel(productDesignData);
+      const savedProductDesign = await productDesign.save({ session });
 
-      if (!savedProductDesign) {
-        throw new InternalServerErrorException(
-          'Failed to save product design record',
-        );
+      // Insert measures into process_pd_measures
+      if (createProductDesignDto.measuresAndBenefits?.length) {
+        const measureDocs = [];
+        for (const row of createProductDesignDto.measuresAndBenefits) {
+          const productDesignMeasureId =
+            await this.sequenceHelper.getProductDesignMeasureId();
+          measureDocs.push({
+            productDesignMeasureId,
+            urnNo: createProductDesignDto.urnNo,
+            vendorId: vendorObjectId,
+            productDesignId,
+            measures: row.measuresImplemented,
+            benefits: row.benefitsAchieved,
+            createdDate: now,
+            updatedDate: now,
+          });
+        }
+        if (measureDocs.length) {
+          await this.pdMeasureModel.insertMany(measureDocs, { session });
+        }
       }
-
-      const effectiveProductDesignId = savedProductDesign.productDesignId;
-
-      // Idempotent measure upsert by normalized pair per URN.
-      // Existing normalized pairs are skipped; only new pairs are inserted.
-      const measureStats = await this.upsertMeasuresByUrn({
-        urnNo: createProductDesignDto.urnNo,
-        vendorObjectId,
-        effectiveProductDesignId,
-        normalizedMeasures,
-        now,
-        session,
-      });
 
       // Insert uploaded documents into all_product_documents (master table)
       const docRows: Array<{
         subsection: string;
         filePath: string;
-        fileName: string;
         originalName: string;
       }> = [];
 
-      if (ecoVisionFilePath && ecoVisionFile && ecoVisionStoredFileName) {
+      if (ecoVisionFilePath && ecoVisionFile) {
         docRows.push({
           subsection: 'eco_vision_upload',
-          filePath: ecoVisionFilePath,
-          fileName: ecoVisionStoredFileName,
+          filePath: `uploads/${ecoVisionFilePath}`,
           originalName: ecoVisionFile.originalname,
         });
       }
-      if (supportingDocumentFilePaths.length > 0) {
-        for (let i = 0; i < supportingDocumentFilePaths.length; i++) {
-          docRows.push({
-            subsection: 'supporting_documents',
-            filePath: supportingDocumentFilePaths[i],
-            fileName: supportingDocumentStoredNames[i],
-            originalName: supportingDocumentFiles[i].originalname,
-          });
-        }
+      if (supportingDocumentFilePath && supportingDocumentFile) {
+        docRows.push({
+          subsection: 'supporting_documents',
+          filePath: `uploads/${supportingDocumentFilePath}`,
+          originalName: supportingDocumentFile.originalname,
+        });
       }
 
       if (docRows.length) {
@@ -392,10 +235,10 @@ export class ProductDesignService implements OnModuleInit {
             vendorId: vendorObjectId,
             urnNo: createProductDesignDto.urnNo,
             eoiNo,
-            documentForm: DocumentSectionKey.PRODUCT_DESIGN,
+            documentForm: 'product_design',
             documentFormSubsection: d.subsection,
-            formPrimaryId: effectiveProductDesignId,
-            documentName: d.fileName,
+            formPrimaryId: productDesignId,
+            documentName: path.basename(d.filePath),
             documentOriginalName: d.originalName,
             documentLink: d.filePath,
             createdDate: now,
@@ -410,32 +253,21 @@ export class ProductDesignService implements OnModuleInit {
       await session.commitTransaction();
       session.endSession();
 
-      // Delete replaced files only after successful DB commit
-      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
-        const normalizedPath = String(fileLink).replace(/\\/g, '/');
-        if (normalizedPath && fs.existsSync(normalizedPath)) {
-          try {
-            fs.unlinkSync(normalizedPath);
-          } catch {
-            // Ignore file cleanup issues after successful commit
-          }
-        }
-      }
-
-      return {
-        productDesign: savedProductDesign,
-        measureStats,
-      };
+      return savedProductDesign;
     } catch (error: any) {
       await session.abortTransaction();
       session.endSession();
 
       // Clean up uploaded files if transaction fails (files were moved to URN folder)
       try {
-        for (const fullPath of createdFileFullPaths) {
-          if (fs.existsSync(fullPath)) {
-            fs.unlinkSync(fullPath);
-          }
+        if (ecoVisionFullPath && fs.existsSync(ecoVisionFullPath)) {
+          fs.unlinkSync(ecoVisionFullPath);
+        }
+        if (
+          supportingDocumentFullPath &&
+          fs.existsSync(supportingDocumentFullPath)
+        ) {
+          fs.unlinkSync(supportingDocumentFullPath);
         }
       } catch (cleanupError) {
         // Ignore cleanup errors

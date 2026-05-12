@@ -1,17 +1,17 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import {
   IsString,
   IsEmail,
   IsNotEmpty,
   MinLength,
-  IsOptional,
+  Matches,
 } from 'class-validator';
 
 export class RegisterVendorDto {
-  @ApiPropertyOptional()
+  @ApiProperty()
   @IsString()
-  @IsOptional()
-  companyName?: string;
+  @IsNotEmpty()
+  companyName: string;
 
   @ApiProperty()
   @IsEmail()
@@ -33,8 +33,8 @@ export class RegisterVendorDto {
   @IsNotEmpty()
   confirmPassword: string;
 
-  @ApiPropertyOptional()
+  @ApiProperty()
   @IsString()
-  @IsOptional()
-  captchaToken?: string;
+  @IsNotEmpty()
+  captchaToken: string;
 }

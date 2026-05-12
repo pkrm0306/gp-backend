@@ -20,13 +20,4 @@ export class CreateRawMaterialsEliminationOfProhibitedFlameDto {
   @IsString()
   @IsOptional()
   measuresImplemented?: string;
-
-  @ApiProperty({
-    description: 'Display name for uploaded supporting file',
-    example: 'Prohibited Flame Elimination Supporting Document - 2026',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  prohibitedFlameFileName?: string;
 }

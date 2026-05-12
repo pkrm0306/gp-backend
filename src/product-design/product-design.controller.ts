@@ -52,7 +52,7 @@ export class ProductDesignController {
 
   @Post()
   @UseInterceptors(
-    FilesInterceptor('files', 20, {
+    FilesInterceptor('files', 2, {
       storage,
       fileFilter: (req, file, cb) => {
         if (!file) {
@@ -142,7 +142,7 @@ export class ProductDesignController {
             format: 'binary',
           },
           description:
-            'Upload multiple files. First file is treated as eco_vision_upload and remaining files are treated as product_design_supporting_document.',
+            'Files: First file is eco_vision_upload, second file is product_design_supporting_document',
         },
       },
     },
@@ -193,34 +193,20 @@ export class ProductDesignController {
         throw new BadRequestException('Vendor ID not found in token');
       }
 
-      // Parse measuresAndBenefits from multipart payload (lenient for re-submit/edit flows)
+      // Parse measuresAndBenefits from JSON string if provided
       let measuresAndBenefits: MeasureBenefitDto[] | undefined;
-      const rawMeasures = body.measuresAndBenefits;
-      if (rawMeasures !== undefined && rawMeasures !== null) {
-        if (Array.isArray(rawMeasures)) {
-          measuresAndBenefits = rawMeasures;
-        } else if (typeof rawMeasures === 'string') {
-          const trimmed = rawMeasures.trim();
-          if (trimmed === '') {
-            measuresAndBenefits = [];
-          } else {
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (Array.isArray(parsed)) {
-                measuresAndBenefits = parsed;
-              } else if (parsed && typeof parsed === 'object') {
-                measuresAndBenefits = [parsed as MeasureBenefitDto];
-              } else {
-                measuresAndBenefits = [];
-              }
-            } catch {
-              // Do not block submit on malformed payload from client-side row edits.
-              // Service layer will normalize and replace with empty/valid rows.
-              measuresAndBenefits = [];
-            }
+      if (body.measuresAndBenefits) {
+        try {
+          // If it's a string, parse it; if it's already an object/array, use it directly
+          if (typeof body.measuresAndBenefits === 'string') {
+            measuresAndBenefits = JSON.parse(body.measuresAndBenefits);
+          } else if (Array.isArray(body.measuresAndBenefits)) {
+            measuresAndBenefits = body.measuresAndBenefits;
           }
-        } else if (typeof rawMeasures === 'object') {
-          measuresAndBenefits = [rawMeasures as MeasureBenefitDto];
+        } catch (parseError) {
+          throw new BadRequestException(
+            'Invalid measuresAndBenefits format. Expected JSON array.',
+          );
         }
       }
 
@@ -239,19 +225,22 @@ export class ProductDesignController {
         throw new BadRequestException('URN number is required');
       }
 
-      const result = await this.productDesignService.createProductDesign(
+      // Extract files (first file = eco_vision, second file = supporting_document)
+      const ecoVisionFile = files && files.length > 0 ? files[0] : undefined;
+      const supportingDocumentFile =
+        files && files.length > 1 ? files[1] : undefined;
+
+      const productDesign = await this.productDesignService.createProductDesign(
         createProductDesignDto,
         user.vendorId,
-        files,
+        ecoVisionFile,
+        supportingDocumentFile,
       );
 
       return {
         success: true,
         message: 'Product design created successfully',
-        data: result.productDesign,
-        meta: {
-          measures: result.measureStats,
-        },
+        data: productDesign,
       };
     } catch (error: any) {
       console.error('Controller error:', error);

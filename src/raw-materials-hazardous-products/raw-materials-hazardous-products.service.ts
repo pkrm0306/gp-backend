@@ -11,11 +11,12 @@ import {
 } from './schemas/raw-materials-hazardous-products.schema';
 import { CreateRawMaterialsHazardousProductsDto } from './dto/create-raw-materials-hazardous-products.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
-import { AllProductDocument, AllProductDocumentDocument } from '../product-design/schemas/all-product-document.schema';
-import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import {
+  AllProductDocument,
+  AllProductDocumentDocument,
+} from '../product-design/schemas/all-product-document.schema';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class RawMaterialsHazardousProductsService {
@@ -38,12 +39,38 @@ export class RawMaterialsHazardousProductsService {
     return new Types.ObjectId(id);
   }
 
-  private async saveFileToUrnFolder(
+  private ensureUrnFolder(urnNo: string): string {
+    const urnFolderPath = path.join('uploads', 'urns', urnNo);
+    if (!fs.existsSync(urnFolderPath)) {
+      fs.mkdirSync(urnFolderPath, { recursive: true });
+    }
+    return urnFolderPath;
+  }
+
+  private saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
     fileType: string,
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  ): string {
+    const urnFolderPath = this.ensureUrnFolder(urnNo);
+    const fileExt = path.extname(file.originalname);
+    const timestamp = Date.now();
+    const randomSuffix = Math.round(Math.random() * 1e9);
+    const fileName = `${fileType}-${timestamp}-${randomSuffix}${fileExt}`;
+    const filePath = path.join(urnFolderPath, fileName);
+
+    if (file.path && fs.existsSync(file.path)) {
+      fs.copyFileSync(file.path, filePath);
+      try {
+        fs.unlinkSync(file.path);
+      } catch {}
+    } else if (file.buffer) {
+      fs.writeFileSync(filePath, file.buffer);
+    } else {
+      throw new BadRequestException('File data not available');
+    }
+
+    return path.join('urns', urnNo, fileName).replace(/\\/g, '/');
   }
 
   async create(
@@ -60,7 +87,7 @@ export class RawMaterialsHazardousProductsService {
       let storedFileName = '';
       let storedRelativePath = '';
       if (productsTestReportFile) {
-        storedRelativePath = await this.saveFileToUrnFolder(
+        storedRelativePath = this.saveFileToUrnFolder(
           productsTestReportFile,
           dto.urnNo,
           'hazardous_test_report',
@@ -89,12 +116,12 @@ export class RawMaterialsHazardousProductsService {
           vendorId: vendorObjectId,
           urnNo: dto.urnNo,
           eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+          documentForm: 'raw_materials_hazardous_products',
           documentFormSubsection: 'products_test_report',
           formPrimaryId: id,
           documentName: storedFileName,
           documentOriginalName: productsTestReportFile.originalname,
-          documentLink: storedRelativePath,
+          documentLink: `uploads/${storedRelativePath}`,
           createdDate: now,
           updatedDate: now,
         });

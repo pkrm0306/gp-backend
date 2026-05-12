@@ -8,15 +8,15 @@ import {
   Patch,
   Post,
   Query,
-  Req,
 } from '@nestjs/common';
-import type { Request } from 'express';
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { WebsiteService } from './website.service';
 import { NewsletterSubscribeDto } from './dto/newsletter-subscribe.dto';
 import { NewsletterRecordDto } from './dto/newsletter-record.dto';
 import { ContactSubmitDto } from './dto/contact-submit.dto';
+import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CategoriesService } from '../categories/categories.service';
+import { ProductRegistrationService } from '../product-registration/product-registration.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { ListCategoriesQueryDto } from '../categories/dto/list-categories-query.dto';
 import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
@@ -29,7 +29,9 @@ import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
 export class WebsiteController {
   constructor(
     private readonly websiteService: WebsiteService,
+    private readonly manufacturersService: ManufacturersService,
     private readonly categoriesService: CategoriesService,
+    private readonly productRegistrationService: ProductRegistrationService,
   ) {}
 
   @Get('public/manufacturers')
@@ -43,7 +45,7 @@ export class WebsiteController {
     description: 'Manufacturers retrieved successfully',
   })
   async listPublicManufacturers(@Query() query: ListManufacturersQueryDto) {
-    return this.websiteService.getPublicManufacturersPaginated(query);
+    return this.manufacturersService.findAllPaginated(query);
   }
 
   @Get('public/categories')
@@ -64,42 +66,6 @@ export class WebsiteController {
     };
   }
 
-  @Get(['public/banners', 'banner/list', 'banners/list'])
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Public banners for website',
-    description:
-      'Returns **all vendors’** active banners (ordered by sequence number) for homepage/marketing carousel. For a vendor’s **own** banners in the admin panel, use **GET /admin/banner/list** with auth.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Banner cards data (same shape as legacy public admin list)',
-  })
-  async listPublicBanners(@Req() req: Request) {
-    const origin = `${req.protocol}://${req.get('host')}`;
-    return this.websiteService.getPublicBannersNormalized(origin);
-  }
-
-  @Get('public/articles/list')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Public articles list',
-    description:
-      'Returns active articles for website/blog cards (newest first).',
-  })
-  @ApiResponse({ status: 200, description: 'Articles retrieved successfully' })
-  async listPublicArticles(@Req() req: Request) {
-    const origin = `${req.protocol}://${req.get('host')}`;
-    return this.websiteService.getPublicArticlesNormalized(origin);
-  }
-
-  // Alias route for clients using `/website/public/articles`
-  @Get('public/articles')
-  @HttpCode(HttpStatus.OK)
-  async listPublicArticlesAlias(@Req() req: Request) {
-    return this.listPublicArticles(req);
-  }
-
   @Post('public/products/certified/list')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -113,7 +79,14 @@ export class WebsiteController {
     description: 'Certified products retrieved successfully',
   })
   async listPublicCertifiedProducts(@Body() dto: AdminListProductsDto) {
-    return this.websiteService.getPublicCertifiedProducts(dto);
+    const result = await this.productRegistrationService.adminListProducts({
+      ...dto,
+      status: [2],
+    });
+    return {
+      ...result,
+      message: 'Certified products retrieved successfully',
+    };
   }
 
   @Post('public/manufacturers/by-category')
@@ -131,7 +104,14 @@ export class WebsiteController {
   async listManufacturersByCategory(
     @Body() dto: PublicCategoryManufacturersDto,
   ) {
-    return this.websiteService.getManufacturersByCategoryPublic(dto);
+    const data =
+      await this.productRegistrationService.getManufacturersByCategory(
+        dto.categoryId,
+      );
+    return {
+      message: 'Manufacturers retrieved successfully',
+      ...data,
+    };
   }
 
   @Post('public/categories/by-manufacturer')
@@ -149,7 +129,14 @@ export class WebsiteController {
   async listCategoriesByManufacturer(
     @Body() dto: PublicManufacturerCategoriesDto,
   ) {
-    return this.websiteService.getCategoriesByManufacturerPublic(dto);
+    const data =
+      await this.productRegistrationService.getCategoriesByManufacturer(
+        dto.manufacturerId,
+      );
+    return {
+      message: 'Categories retrieved successfully',
+      ...data,
+    };
   }
 
   @Post('newsletter')
@@ -245,14 +232,8 @@ export class WebsiteController {
   @ApiResponse({ status: 200, description: 'Email sent successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })
   @ApiResponse({ status: 404, description: 'Manufacturer not found' })
-  async manufacturerInquiry(
-    @Body() dto: ManufacturerInquiryDto,
-    @Query('manufacturerId') manufacturerId?: string,
-  ) {
-    const data = await this.websiteService.submitManufacturerInquiry(
-      dto,
-      manufacturerId,
-    );
+  async manufacturerInquiry(@Body() dto: ManufacturerInquiryDto) {
+    const data = await this.websiteService.submitManufacturerInquiry(dto);
     return { message: 'Email sent successfully', data };
   }
 }

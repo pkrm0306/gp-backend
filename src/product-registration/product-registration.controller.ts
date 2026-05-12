@@ -69,22 +69,13 @@ export class ProductRegistrationController {
     example: 'Solar Panel',
   })
   @ApiQuery({
-    name: 'productStatus',
+    name: 'status',
     required: false,
     type: Number,
     description:
       'Filter by product status (0=Pending, 1=Active, 2=Certified, 3=Rejected)',
     example: 0,
     enum: [0, 1, 2, 3],
-  })
-  @ApiQuery({
-    name: 'status',
-    required: false,
-    type: Number,
-    description: 'Deprecated alias for productStatus',
-    example: 0,
-    enum: [0, 1, 2, 3],
-    deprecated: true,
   })
   @ApiQuery({
     name: 'sort',

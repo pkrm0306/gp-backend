@@ -37,7 +37,3 @@ export class ProcessLifeCycleApproach {
 export const ProcessLifeCycleApproachSchema = SchemaFactory.createForClass(
   ProcessLifeCycleApproach,
 );
-ProcessLifeCycleApproachSchema.index(
-  { urnNo: 1 },
-  { unique: true, name: 'uniq_process_life_cycle_approach_urn' },
-);

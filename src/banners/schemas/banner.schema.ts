@@ -15,15 +15,11 @@ export class Banner {
   @Prop({ required: true })
   imageUrl: string;
 
-  /** Tracks how banner image was provided: uploaded binary (S3) vs manual URL. */
-  @Prop({ required: true, enum: ['binary_upload', 'manual_url'], default: 'manual_url' })
-  imageSource: 'binary_upload' | 'manual_url';
+  @Prop({ required: false, default: '' })
+  targetUrl?: string;
 
   @Prop({ required: true })
   heading: string;
-
-  @Prop({ required: true, min: 1 })
-  sequenceNumber: number;
 
   @Prop({ required: true })
   description: string;

@@ -57,10 +57,6 @@ export class ManufacturersService {
     return this.manufacturerModel.findById(id).exec();
   }
 
-  async findByVendorEmail(email: string): Promise<ManufacturerDocument | null> {
-    return this.manufacturerModel.findOne({ vendor_email: email }).exec();
-  }
-
   async update(
     id: string,
     data: Partial<Manufacturer>,
@@ -120,118 +116,27 @@ export class ManufacturersService {
     };
   }
 
-  private toProfilePayloadShape(manufacturer: ManufacturerDocument | Manufacturer) {
-    return {
-      companyName: manufacturer.manufacturerName ?? '',
-      name: manufacturer.vendor_name ?? '',
-      designation: manufacturer.vendor_designation ?? '',
-      gst: manufacturer.vendor_gst ?? '',
-      email: manufacturer.vendor_email ?? '',
-      mobile: manufacturer.vendor_phone ?? '',
-    };
-  }
-
-  async editProfile(
-    authUser:
-      | string
-      | { userId: string; manufacturerId?: string; vendorId?: string },
-    updateDto: UpdateProfileDto,
-  ) {
+  async editProfile(userId: string, updateDto: UpdateProfileDto) {
     const session = await this.connection.startSession();
     session.startTransaction();
 
     try {
-      const userId = typeof authUser === 'string' ? authUser : authUser.userId;
-      const manufacturerIdFromToken =
-        typeof authUser === 'string'
-          ? ''
-          : String(authUser.manufacturerId || authUser.vendorId || '').trim();
-
-      const manufacturerFromToken =
-        manufacturerIdFromToken && Types.ObjectId.isValid(manufacturerIdFromToken)
-          ? await this.manufacturerModel.findById(manufacturerIdFromToken).exec()
-          : null;
-
       const vendorUser = await this.vendorUsersService.findById(userId);
+      if (!vendorUser) {
+        throw new NotFoundException('Vendor user not found');
+      }
 
-      const mappedManufacturerId =
-        vendorUser?.manufacturerId?.toString() ||
-        vendorUser?.vendorId?.toString() ||
-        '';
-
-      const manufacturer = mappedManufacturerId
-        ? await this.manufacturerModel.findById(mappedManufacturerId).exec()
-        : null;
-
-      // Legacy fallback: some older auth flows may carry manufacturer id as user id.
-      const fallbackManufacturer =
-        !manufacturer && Types.ObjectId.isValid(userId)
-          ? await this.manufacturerModel.findById(userId).exec()
-          : null;
-
-      // Data-repair fallback for legacy users with missing manufacturerId/vendorId
-      // mapping in vendor_users: resolve via unique vendor email/phone.
-      const fallbackByContact =
-        !manufacturer &&
-        !fallbackManufacturer &&
-        (vendorUser.email || vendorUser.phone)
-          ? await this.manufacturerModel
-              .findOne({
-                $or: [
-                  ...(vendorUser.email
-                    ? [{ vendor_email: String(vendorUser.email).trim() }]
-                    : []),
-                  ...(vendorUser.phone
-                    ? [{ vendor_phone: String(vendorUser.phone).trim() }]
-                    : []),
-                ],
-              })
-              .exec()
-          : null;
-
-      const resolvedManufacturer =
-        manufacturerFromToken ||
-        manufacturer ||
-        fallbackManufacturer ||
-        fallbackByContact;
-      if (!resolvedManufacturer) {
-        // Admin-profile fallback: some admin users are stored only in vendor_users
-        // and do not have a linked manufacturer record.
-        const vendorUserUpdate: Partial<VendorUser> = {};
-        if (updateDto.name !== undefined) {
-          vendorUserUpdate.name = updateDto.name;
-        }
-        if (updateDto.designation !== undefined) {
-          vendorUserUpdate.designation = updateDto.designation;
-        }
-        if (updateDto.email !== undefined) {
-          vendorUserUpdate.email = updateDto.email;
-        }
-        if (updateDto.mobile !== undefined) {
-          vendorUserUpdate.phone = updateDto.mobile;
-        }
-
-        if (Object.keys(vendorUserUpdate).length > 0) {
-          await this.vendorUserModel
-            .findByIdAndUpdate(userId, vendorUserUpdate, { new: true, session })
-            .exec();
-        }
-
-        await session.commitTransaction();
-        return {
-          companyName: updateDto.companyName ?? '',
-          name: updateDto.name ?? vendorUser?.name ?? '',
-          designation: updateDto.designation ?? vendorUser?.designation ?? '',
-          gst: updateDto.gst ?? '',
-          email: updateDto.email ?? vendorUser?.email ?? '',
-          mobile: updateDto.mobile ?? vendorUser?.phone ?? '',
-        };
+      const manufacturer = await this.manufacturerModel
+        .findById(vendorUser.manufacturerId.toString())
+        .exec();
+      if (!manufacturer) {
+        throw new NotFoundException('Manufacturer not found');
       }
 
       if (updateDto.gst) {
         const gstExists = await this.manufacturerModel
           .findOne({
-            _id: { $ne: resolvedManufacturer._id },
+            _id: { $ne: manufacturer._id },
             vendor_gst: updateDto.gst,
           })
           .select('_id')
@@ -247,7 +152,7 @@ export class ManufacturersService {
       if (updateDto.mobile) {
         const phoneExists = await this.manufacturerModel
           .findOne({
-            _id: { $ne: resolvedManufacturer._id },
+            _id: { $ne: manufacturer._id },
             vendor_phone: updateDto.mobile,
           })
           .select('_id')
@@ -281,19 +186,11 @@ export class ManufacturersService {
       }
 
       if (Object.keys(updateData).length > 0) {
-        await this.update(
-          resolvedManufacturer._id.toString(),
-          updateData,
-          session,
-        );
+        await this.update(manufacturer._id.toString(), updateData, session);
       }
 
       await session.commitTransaction();
-      const updated = await this.findById(resolvedManufacturer._id.toString());
-      if (!updated) {
-        throw new NotFoundException('Manufacturer not found');
-      }
-      return this.toProfilePayloadShape(updated);
+      return this.findById(manufacturer._id.toString());
     } catch (error) {
       await session.abortTransaction();
       throw error;

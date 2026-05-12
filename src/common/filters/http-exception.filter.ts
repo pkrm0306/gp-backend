@@ -32,30 +32,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
     }
 
-    // Server-side diagnostic logging (sanitized response is still returned to client)
-    const reqMethod = request?.method || 'UNKNOWN';
-    const reqPath = request?.path || request?.url || 'UNKNOWN_PATH';
-    const isMissingStaticUpload =
-      status === HttpStatus.NOT_FOUND &&
-      reqMethod === 'GET' &&
-      typeof reqPath === 'string' &&
-      reqPath.startsWith('/uploads');
-
-    if (!isMissingStaticUpload) {
-      console.error(
-        `[HttpExceptionFilter] ${reqMethod} ${reqPath} -> ${status}`,
-        {
-          message,
-          error,
-          exceptionName: (exception as any)?.name,
-          exceptionMessage: (exception as any)?.message,
-          stack: (exception as any)?.stack,
-          response:
-            exception instanceof HttpException ? exception.getResponse() : null,
-        },
-      );
-    }
-
     if (
       status === HttpStatus.BAD_REQUEST &&
       request.method === 'POST' &&

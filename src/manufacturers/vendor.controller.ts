@@ -57,15 +57,11 @@ export class VendorController {
     description: 'Vendor profile updated successfully',
   })
   async updateVendorProfile(
-    @CurrentUser() user: {
-      userId: string;
-      manufacturerId?: string;
-      vendorId?: string;
-    },
+    @CurrentUser() user: { userId: string },
     @Body() updateDto: UpdateProfileDto,
   ) {
     const data = await this.manufacturersService.editProfile(
-      user,
+      user.userId,
       updateDto,
     );
     return { message: 'Vendor profile updated successfully', data };
