@@ -112,6 +112,23 @@ export class AuthController {
     const referer = String(req?.headers?.referer || '')
       .trim()
       .toLowerCase();
+
+    /**
+     * Production admin SPA on Vercel: **Origin** is only the hostname
+     * (`https://greenpro-portals.vercel.app`) — it does **not** contain the
+     * string `admin`, so the old `greenpro-portals` + `admin` check never matched.
+     * **Referer** may include `/admin/...` when the browser sends it.
+     */
+    if (referer.includes('/admin')) {
+      return 'admin';
+    }
+    if (
+      origin.includes('greenpro-portals.vercel.app') ||
+      referer.includes('greenpro-portals.vercel.app')
+    ) {
+      return 'admin';
+    }
+
     const combined = `${host} ${origin} ${referer}`;
 
     if (combined.includes('localhost:3004')) return 'admin';
@@ -131,7 +148,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Request password reset',
     description:
-      'Send **`portal`: `"admin"`** (or header **`x-admin-portal`: `1`**) for the admin app: unknown emails → **Email id is not registered**; **staff** without RBAC roles or non–admin/staff accounts → **Portal access restricted** (same rules as admin login). Vendor portal keeps the generic success message when the email is unknown.',
+      'Prefer **`portal`: `"admin"`** or **`x-admin-portal`: `1`**. Without them, the API infers admin from **Referer** (`/admin` path) or **Origin** host **`greenpro-portals.vercel.app`**. Unknown emails → **Email id is not registered**; staff without RBAC or wrong account type → **Portal access restricted**.',
   })
   async forgotPassword(
     @Body() forgotPasswordDto: ForgotPasswordDto,
