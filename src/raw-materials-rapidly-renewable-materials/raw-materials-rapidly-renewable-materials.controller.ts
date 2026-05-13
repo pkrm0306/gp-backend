@@ -19,28 +19,11 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import * as fs from 'fs';
+import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRapidlyRenewableMaterialsService } from './raw-materials-rapidly-renewable-materials.service';
 import { CreateRawMaterialsRapidlyRenewableMaterialsDto } from './dto/create-raw-materials-rapidly-renewable-materials.dto';
-
-const storage = diskStorage({
-  destination: (req, file, cb) => {
-    const tempDir = './uploads/temp';
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    cb(null, tempDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = extname(file.originalname);
-    cb(null, `temp-${uniqueSuffix}${ext}`);
-  },
-});
 
 @ApiTags('Raw Materials Rapidly Renewable Materials')
 @Controller('raw-materials-rapidly-renewable-materials')
@@ -56,10 +39,7 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
     summary: 'Create raw materials rapidly renewable materials units (per URN)',
   })
   @UseInterceptors(
-    AnyFilesInterceptor({
-      storage,
-      limits: { fileSize: 10 * 1024 * 1024 },
-    }),
+    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({

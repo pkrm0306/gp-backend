@@ -23,24 +23,13 @@ import {
   ApiQuery,
   ApiParam,
 } from '@nestjs/swagger';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ListPaymentsDto } from './dto/list-payments.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
-
-// Configure storage for proposal documents
-const storage = diskStorage({
-  destination: './uploads/payments',
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = extname(file.originalname);
-    cb(null, `proposal-${uniqueSuffix}${ext}`);
-  },
-});
+import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 
 @ApiTags('Payments')
 @Controller('payments')
@@ -178,42 +167,7 @@ export class PaymentsController {
 
   @Post()
   @UseInterceptors(
-    FileInterceptor('proposal_file', {
-      storage,
-      fileFilter: (req, file, cb) => {
-        if (!file) {
-          cb(null, true);
-          return;
-        }
-        // Allow PNG, Word, Excel files
-        const allowedMimes = [
-          'image/png',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-          'application/msword', // .doc
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-          'application/vnd.ms-excel', // .xls
-        ];
-        const allowedExtensions = ['.png', '.doc', '.docx', '.xls', '.xlsx'];
-        const fileExt = extname(file.originalname).toLowerCase();
-
-        if (
-          allowedMimes.includes(file.mimetype) ||
-          allowedExtensions.includes(fileExt)
-        ) {
-          cb(null, true);
-        } else {
-          cb(
-            new BadRequestException(
-              'Invalid file type. Only PNG, Word (.doc, .docx), and Excel (.xls, .xlsx) files are allowed.',
-            ),
-            false,
-          );
-        }
-      },
-      limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit
-      },
-    }),
+    FileInterceptor('proposal_file', certificationMultipartMemoryMulterOptions()),
   )
   @ApiOperation({
     summary: 'Create payment details',
@@ -430,38 +384,7 @@ export class PaymentsController {
         { name: 'cheque_or_dd_file', maxCount: 1 },
         { name: 'tds_file', maxCount: 1 },
       ],
-      {
-        storage,
-        fileFilter: (req, file, cb) => {
-          if (!file) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/png',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-excel',
-          ];
-          const allowedExtensions = ['.png', '.doc', '.docx', '.xls', '.xlsx'];
-          const fileExt = extname(file.originalname).toLowerCase();
-
-          if (allowedMimes.includes(file.mimetype) || allowedExtensions.includes(fileExt)) {
-            cb(null, true);
-          } else {
-            cb(
-              new BadRequestException(
-                'Invalid file type. Only PNG, Word (.doc, .docx), and Excel (.xls, .xlsx) files are allowed.',
-              ),
-              false,
-            );
-          }
-        },
-        limits: {
-          fileSize: 10 * 1024 * 1024,
-        },
-      },
+      certificationMultipartMemoryMulterOptions(),
     ),
   )
   @ApiConsumes('multipart/form-data')

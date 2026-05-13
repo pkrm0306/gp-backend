@@ -31,6 +31,7 @@ import { ListManufacturersQueryDto } from './dto/list-manufacturers-query.dto';
 import { UpdateVendorStatusDto } from './dto/update-vendor-status.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { manufacturerImageMulterOptions } from './manufacturer-image-upload.config';
+import { uploadFile } from '../utils/upload-file.util';
 
 @ApiTags('Manufacturers')
 @Controller('api/manufacturers')
@@ -119,7 +120,7 @@ export class ManufacturersController {
   ) {
     const image = files?.image?.[0] ?? files?.manufacturer_image?.[0];
     const imagePath = image
-      ? `/uploads/manufacturers/${image.filename}`
+      ? (await uploadFile(image, 'manufacturers')).fileUrl
       : undefined;
     const data = await this.manufacturersService.updateManufacturerDetails(
       id,

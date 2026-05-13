@@ -19,28 +19,11 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import * as fs from 'fs';
+import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsUtilizationService } from './raw-materials-utilization.service';
 import { CreateRawMaterialsUtilizationDto } from './dto/create-raw-materials-utilization.dto';
-
-const storage = diskStorage({
-  destination: (req, file, cb) => {
-    const tempDir = './uploads/temp';
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    cb(null, tempDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = extname(file.originalname);
-    cb(null, `temp-${uniqueSuffix}${ext}`);
-  },
-});
 
 @ApiTags('Raw Materials Utilization')
 @Controller('raw-materials-utilization')
@@ -54,10 +37,7 @@ export class RawMaterialsUtilizationController {
     summary: 'Create raw materials utilization record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('utilizationFile', {
-      storage,
-      limits: { fileSize: 10 * 1024 * 1024 },
-    }),
+    FileInterceptor('utilizationFile', certificationMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({

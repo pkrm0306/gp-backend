@@ -19,6 +19,7 @@ import {
   ProductDocument,
 } from '../product-registration/schemas/product.schema';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { uploadFile } from '../utils/upload-file.util';
 
 @Injectable()
 export class PaymentsService {
@@ -235,7 +236,7 @@ export class PaymentsService {
         // Prepare proposal file path
         let proposalFilePath: string | undefined;
         if (proposalFile) {
-          proposalFilePath = `/uploads/payments/${proposalFile.filename}`;
+          proposalFilePath = (await uploadFile(proposalFile, 'payments')).fileUrl;
         }
 
         const normalizedPaymentType = this.normalizePaymentType(
@@ -443,10 +444,12 @@ export class PaymentsService {
           : undefined;
       }
       if (chequeOrDdFile) {
-        updateData.chequeOrDdFile = `/uploads/payments/${chequeOrDdFile.filename}`;
+        updateData.chequeOrDdFile = (
+          await uploadFile(chequeOrDdFile, 'payments')
+        ).fileUrl;
       }
       if (tdsFile) {
-        updateData.tdsFile = `/uploads/payments/${tdsFile.filename}`;
+        updateData.tdsFile = (await uploadFile(tdsFile, 'payments')).fileUrl;
       }
       if (updatePaymentDto.productsToBeCertified !== undefined) {
         updateData.productsToBeCertified =

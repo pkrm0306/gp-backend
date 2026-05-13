@@ -16,31 +16,12 @@ import {
   ApiBody,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
+import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { ProductPerformanceService } from './product-performance.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProductPerformanceDto } from './dto/create-product-performance.dto';
 import * as fs from 'fs';
-
-// Configure storage for product performance documents
-// Files will be moved to URN-specific folders in the service
-const storage = diskStorage({
-  destination: (req, file, cb) => {
-    // Temporary directory - files will be moved to URN folder in service
-    const tempDir = './uploads/temp';
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    cb(null, tempDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = extname(file.originalname);
-    cb(null, `temp-${uniqueSuffix}${ext}`);
-  },
-});
 
 @ApiTags('Product Performance')
 @Controller('product-performance')
@@ -53,54 +34,7 @@ export class ProductPerformanceController {
 
   @Post()
   @UseInterceptors(
-    AnyFilesInterceptor({
-      storage,
-      fileFilter: (req, file, cb) => {
-        if (!file) {
-          cb(null, true);
-          return;
-        }
-        // Allow common document and image files
-        const allowedMimes = [
-          'image/png',
-          'image/jpeg',
-          'image/jpg',
-          'application/pdf',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-          'application/msword', // .doc
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-          'application/vnd.ms-excel', // .xls
-        ];
-        const allowedExtensions = [
-          '.png',
-          '.jpg',
-          '.jpeg',
-          '.pdf',
-          '.doc',
-          '.docx',
-          '.xls',
-          '.xlsx',
-        ];
-        const fileExt = extname(file.originalname).toLowerCase();
-
-        if (
-          allowedMimes.includes(file.mimetype) ||
-          allowedExtensions.includes(fileExt)
-        ) {
-          cb(null, true);
-        } else {
-          cb(
-            new BadRequestException(
-              'Invalid file type. Only PNG, JPEG, PDF, Word (.doc, .docx), and Excel (.xls, .xlsx) files are allowed.',
-            ),
-            false,
-          );
-        }
-      },
-      limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit
-      },
-    }),
+    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
   )
   @ApiOperation({
     summary: 'Create product performance data',

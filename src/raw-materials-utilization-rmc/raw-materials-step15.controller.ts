@@ -16,27 +16,10 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import * as fs from 'fs';
+import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsUtilizationRmcService } from './raw-materials-utilization-rmc.service';
-
-const storage = diskStorage({
-  destination: (req, file, cb) => {
-    const tempDir = './uploads/temp';
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    cb(null, tempDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = extname(file.originalname);
-    cb(null, `temp-${uniqueSuffix}${ext}`);
-  },
-});
 
 @ApiTags('Raw Materials Step 15')
 @Controller('vendor/raw-materials/step-15')
@@ -48,10 +31,7 @@ export class RawMaterialsStep15Controller {
   @Put(':urnNo')
   @ApiOperation({ summary: 'Upsert Step-15 raw materials payload' })
   @UseInterceptors(
-    AnyFilesInterceptor({
-      storage,
-      limits: { fileSize: 10 * 1024 * 1024 },
-    }),
+    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({

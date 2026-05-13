@@ -64,8 +64,10 @@ import { DeleteNewsletterSubscriberDto } from './dto/delete-newsletter-subscribe
 import { UpdateNewsletterSubscriberStatusDto } from './dto/update-newsletter-subscriber-status.dto';
 import { DeleteContactMessageDto } from './dto/delete-contact-message.dto';
 import { Public } from '../common/decorators/public.decorator';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
+import {
+  adminArticleMemoryMulterOptions,
+  adminImageMemoryMulterOptions,
+} from '../common/upload/multer-universal.config';
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
 import type { Request } from 'express';
@@ -74,46 +76,10 @@ import { PERMISSIONS } from '../common/constants/permissions.constants';
 import { GALLERY_TYPES, GalleryType } from '../events/schemas/event.schema';
 import { uploadFile } from '../utils/upload-file.util';
 
-const storage = diskStorage({
-  destination: join(process.cwd(), 'uploads', 'manufacturers'),
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = extname(file.originalname);
-    cb(null, `manufacturer-${uniqueSuffix}${ext}`);
-  },
-});
-
-const teamMemberStorage = diskStorage({
-  destination: join(process.cwd(), 'uploads', 'team-members'),
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = extname(file.originalname);
-    cb(null, `team-member-${uniqueSuffix}${ext}`);
-  },
-});
-
-const teamMemberImageInterceptor = FileInterceptor('image', {
-  storage: teamMemberStorage,
-  fileFilter: (req, file, cb) => {
-    if (!file?.originalname) {
-      cb(null, true);
-      return;
-    }
-    const allowedMimes = [
-      'image/jpeg',
-      'image/jpg',
-      'image/png',
-      'image/gif',
-      'image/webp',
-    ];
-    if (allowedMimes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(null, false);
-    }
-  },
-  limits: { fileSize: 5 * 1024 * 1024 },
-});
+const teamMemberImageInterceptor = FileInterceptor(
+  'image',
+  adminImageMemoryMulterOptions(),
+);
 
 function TeamMemberEditDocs() {
   return applyDecorators(
@@ -358,6 +324,13 @@ export class AdminController {
     return Array.from(new Set(collect(raw)));
   }
 
+  private async uploadEventImages(files: Express.Multer.File[]): Promise<string[]> {
+    if (!files.length) return [];
+    return Promise.all(
+      files.map(async (file) => (await uploadFile(file, 'events')).fileUrl),
+    );
+  }
+
   private mapGalleryResponse(
     item: any,
     options: { includeDescription?: boolean } = {},
@@ -531,27 +504,7 @@ export class AdminController {
   @Permissions(PERMISSIONS.BANNERS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
-    FileInterceptor('image', {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'banners'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `banner-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        cb(
-          null,
-          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
-        );
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+    FileInterceptor('image', adminImageMemoryMulterOptions()),
   )
   @ApiOperation({
     summary: 'Create banner',
@@ -617,27 +570,7 @@ export class AdminController {
   @Permissions(PERMISSIONS.BANNERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
-    FileInterceptor('image', {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'banners'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `banner-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        cb(
-          null,
-          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
-        );
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+    FileInterceptor('image', adminImageMemoryMulterOptions()),
   )
   @ApiOperation({
     summary: 'Edit banner',
@@ -722,32 +655,7 @@ export class AdminController {
   @Permissions(PERMISSIONS.EVENTS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
-    FileInterceptor('image', {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'events'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `event-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        const allowedMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-        ];
-        cb(null, allowedMimes.includes(file.mimetype));
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+    FileInterceptor('image', adminImageMemoryMulterOptions()),
   )
   @ApiOperation({
     summary: 'Create event',
@@ -877,32 +785,7 @@ export class AdminController {
         { name: 'eventImage', maxCount: 20 },
         { name: 'event_image', maxCount: 20 },
       ],
-      {
-        storage: diskStorage({
-          destination: join(process.cwd(), 'uploads', 'events'),
-          filename: (req, file, cb) => {
-            const uniqueSuffix =
-              Date.now() + '-' + Math.round(Math.random() * 1e9);
-            const ext = extname(file.originalname || '');
-            cb(null, `event-${uniqueSuffix}${ext}`);
-          },
-        }),
-        fileFilter: (req, file, cb) => {
-          if (!file?.originalname) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-          ];
-          cb(null, allowedMimes.includes(file.mimetype));
-        },
-        limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminImageMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
@@ -1068,32 +951,7 @@ export class AdminController {
         { name: 'image[]', maxCount: 20 },
         { name: 'images', maxCount: 20 },
       ],
-      {
-        storage: diskStorage({
-          destination: join(process.cwd(), 'uploads', 'events'),
-          filename: (req, file, cb) => {
-            const uniqueSuffix =
-              Date.now() + '-' + Math.round(Math.random() * 1e9);
-            const ext = extname(file.originalname || '');
-            cb(null, `event-${uniqueSuffix}${ext}`);
-          },
-        }),
-        fileFilter: (req, file, cb) => {
-          if (!file?.originalname) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-          ];
-          cb(null, allowedMimes.includes(file.mimetype));
-        },
-        limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminImageMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
@@ -1168,7 +1026,7 @@ export class AdminController {
         'Invalid eventDate (expected ISO date/datetime)',
       );
     }
-    const galleryImages = allImages.map((f) => `/uploads/events/${f.filename}`);
+    const galleryImages = await this.uploadEventImages(allImages);
     const galleryType = this.parseGalleryType(
       pick(['galleryType', 'type', 'category']),
       true,
@@ -1198,32 +1056,7 @@ export class AdminController {
         { name: 'eventImage', maxCount: 20 },
         { name: 'event_image', maxCount: 20 },
       ],
-      {
-        storage: diskStorage({
-          destination: join(process.cwd(), 'uploads', 'events'),
-          filename: (req, file, cb) => {
-            const uniqueSuffix =
-              Date.now() + '-' + Math.round(Math.random() * 1e9);
-            const ext = extname(file.originalname || '');
-            cb(null, `event-${uniqueSuffix}${ext}`);
-          },
-        }),
-        fileFilter: (req, file, cb) => {
-          if (!file?.originalname) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-          ];
-          cb(null, allowedMimes.includes(file.mimetype));
-        },
-        limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminImageMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
@@ -1321,7 +1154,7 @@ export class AdminController {
       pick(['galleryType', 'type', 'category']),
       false,
     );
-    const uploadedImages = allImages.map((f) => `/uploads/events/${f.filename}`);
+    const uploadedImages = await this.uploadEventImages(allImages);
     const normalizeGalleryImageRef = (raw: unknown): string => {
       const text = String(raw ?? '').trim();
       if (!text) return '';
@@ -1568,45 +1401,7 @@ export class AdminController {
         { name: 'pdf', maxCount: 1 },
         { name: 'file', maxCount: 1 },
       ],
-      {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'articles'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `article-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-          if (file.mimetype === 'application/pdf') {
-            cb(null, true);
-            return;
-          }
-          cb(
-            new BadRequestException(
-              'Only PDF files are allowed for file/pdf field',
-            ),
-            false,
-          );
-          return;
-        }
-        const allowedImageMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-        ];
-        cb(null, allowedImageMimes.includes(file.mimetype));
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminArticleMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
@@ -1709,45 +1504,7 @@ export class AdminController {
         { name: 'pdf', maxCount: 1 },
         { name: 'file', maxCount: 1 },
       ],
-      {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'articles'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `article-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-          if (file.mimetype === 'application/pdf') {
-            cb(null, true);
-            return;
-          }
-          cb(
-            new BadRequestException(
-              'Only PDF files are allowed for file/pdf field',
-            ),
-            false,
-          );
-          return;
-        }
-        const allowedImageMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-        ];
-        cb(null, allowedImageMimes.includes(file.mimetype));
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminArticleMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
@@ -2930,29 +2687,7 @@ export class AdminController {
   @Put('manufacturers/:id')
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
-    FileInterceptor('manufacturer_image', {
-      storage,
-      fileFilter: (req, file, cb) => {
-        if (!file) {
-          cb(null, true);
-          return;
-        }
-        const allowedMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-        ];
-        if (allowedMimes.includes(file.mimetype)) {
-          cb(null, true);
-        } else {
-          cb(new Error('Invalid file type. Only images are allowed.'), false);
-        }
-      },
-      limits: {
-        fileSize: 5 * 1024 * 1024,
-      },
-    }),
+    FileInterceptor('manufacturer_image', adminImageMemoryMulterOptions()),
   )
   @ApiOperation({
     summary: 'Update manufacturer details',
