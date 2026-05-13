@@ -358,7 +358,11 @@ export class AdminController {
     return Array.from(new Set(collect(raw)));
   }
 
-  private mapGalleryResponse(item: any) {
+  private mapGalleryResponse(
+    item: any,
+    options: { includeDescription?: boolean } = {},
+  ) {
+    const includeDescription = options.includeDescription !== false;
     const images = Array.isArray(item?.galleryImages)
       ? item.galleryImages
       : item?.eventImage
@@ -373,17 +377,20 @@ export class AdminController {
             ? String(rawDate).trim()
             : new Date(rawDate).toISOString().slice(0, 10)
           : '';
-    return {
+    const base: Record<string, unknown> = {
       id: item?.id,
       eventId: item?.eventId,
       title: item?.eventName ?? '',
       galleryType: item?.galleryType ?? '',
-      description: item?.eventDescription ?? '',
       date: normalizedDate,
       image: images[0] ?? null,
       images,
       event_image: item?.event_image ?? null,
     };
+    if (includeDescription) {
+      base.description = item?.eventDescription ?? '';
+    }
+    return base;
   }
 
   private isGalleryItem(item: any): boolean {
@@ -1457,7 +1464,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'List gallery items',
     description:
-      'Returns gallery list with gallery-friendly fields: title, description, date, image, active flag, and id.',
+      'Returns gallery list with gallery-friendly fields: title, date, image, active flag, and id (no description on list items).',
   })
   @ApiResponse({
     status: 200,
@@ -1476,7 +1483,6 @@ export class AdminController {
               eventId: { type: 'number', nullable: true },
               title: { type: 'string' },
               galleryType: { type: 'string', enum: [...GALLERY_TYPES] },
-              description: { type: 'string' },
               date: { type: 'string', example: '2026-03-25' },
               image: { type: 'string', nullable: true },
               images: {
@@ -1496,7 +1502,7 @@ export class AdminController {
     const rows = await this.adminService.listGalleryItems();
     const data = rows.map((r: any, index: number) => ({
       s_no: index + 1,
-      ...this.mapGalleryResponse(r),
+      ...this.mapGalleryResponse(r, { includeDescription: false }),
       is_active: r.is_active,
     }));
     return { message: 'Gallery retrieved successfully', data };
