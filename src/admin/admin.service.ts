@@ -3,7 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -22,11 +21,7 @@ import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
-import {
-  Event,
-  EventDocument,
-  GALLERY_TYPES,
-} from '../events/schemas/event.schema';
+import { Event, EventDocument } from '../events/schemas/event.schema';
 import { Article, ArticleDocument } from '../articles/schemas/article.schema';
 import {
   EventIdCounter,
@@ -55,44 +50,9 @@ import * as bcrypt from 'bcryptjs';
 import { RbacService } from '../rbac/rbac.service';
 import { RedisService } from '../common/redis/redis.service';
 import { CategoriesService } from '../categories/categories.service';
-import { UpdateVendorUserProfileDto } from './dto/update-vendor-user-profile.dto';
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Multipart/query-style truthy used for optional credential flags on team-member forms. */
-function isTruthyCredentialFlag(raw: unknown): boolean {
-  if (raw === undefined || raw === null || raw === '') return false;
-  if (raw === true || raw === 1) return true;
-  const s = String(raw).trim().toLowerCase();
-  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
-}
-
-const DISPLAY_ORDER_TAKEN_BODY = {
-  error: 'DISPLAY_ORDER_TAKEN',
-  message: 'This display order is already assigned.',
-} as const;
-
-/**
- * Upper bound only for numeric safety / BSON int — not derived from roster size.
- */
-const TEAM_MEMBER_DISPLAY_ORDER_MAX = 2_147_483_647;
-
-function throwDisplayOrderTaken(): never {
-  throw new ConflictException(DISPLAY_ORDER_TAKEN_BODY);
-}
-
-function isMongoStaffTeamDisplayOrderDuplicate(err: unknown): boolean {
-  const e = err as {
-    code?: number;
-    keyPattern?: Record<string, unknown>;
-  };
-  if (e?.code !== 11000) return false;
-  const kp = e.keyPattern ?? {};
-  return (
-    'displayOrder' in kp && 'team' in kp && 'manufacturerId' in kp
-  );
 }
 
 function escapeHtml(input: string): string {
@@ -109,14 +69,23 @@ const DEFAULT_EVENT_REGISTRATION_LINK =
 const DEFAULT_EVENT_BROCHURE_LINK =
   'https://www.linkedin.com/posts/cii-greenpro-ecolabelling_greenpro-summit-2025-brochure-03062025-activity-7335663123154014208-2ScV?utm_source=share&utm_medium=member_desktop&rcm=ACoAAB-BYukBl9XKRWqUfyykOlftYFSgtIQGafI';
 
-/** Rows with `galleryType` in this set are gallery items, not calendar events. */
-const EVENT_LISTING_FILTER = { galleryType: { $nin: [...GALLERY_TYPES] } };
+export interface TeamMemberListItem {
+  s_no: number;
+  id: string;
+  vendorUserId: string;
+  name: string;
+  designation: string;
+  email: string;
+  mobile: string;
+  is_active: boolean;
+  displayOrder: number;
+  team: string;
+  category_ids: number[];
+  categoryIds: number[];
+}
 
-const GALLERY_LISTING_FILTER = { galleryType: { $in: [...GALLERY_TYPES] } };
-
-/** Paginated team member list (`GET /admin/team-members/list`, `GET /api/team-members/by-category/...`). */
 export interface TeamMembersPaginatedResult {
-  data: Record<string, unknown>[];
+  data: TeamMemberListItem[];
   displayOrderMax: number;
   totalCount: number;
   currentPage: number;
@@ -175,171 +144,6 @@ export class AdminService {
       return { category_ids: [one], categoryIds: [one] };
     }
     return { category_ids: [], categoryIds: [] };
-  }
-
-  /** Raw `displayOrder` from DB for API responses (gaps allowed; do not coerce missing to 0). */
-  /**
-   * PATCH /admin/vendor-user/profile — updates the logged-in vendor_users row
-   * (admin + staff only). Persists name, designation, email, phone (`mobile` in body).
-   */
-  async updateOwnVendorUserProfile(
-    authUserId: string,
-    manufacturerIdFromToken: string | undefined,
-    dto: UpdateVendorUserProfileDto,
-  ) {
-    let oid: Types.ObjectId;
-    try {
-      oid = new Types.ObjectId(authUserId);
-    } catch {
-      throw new BadRequestException('Invalid user id');
-    }
-
-    const doc = await this.vendorUserModel.findById(oid).exec();
-    if (!doc || doc.status === 2) {
-      throw new NotFoundException('User not found');
-    }
-    if (!['admin', 'staff'].includes(doc.type)) {
-      throw new BadRequestException(
-        'This endpoint is only for admin portal accounts (type admin or staff). Use vendor profile routes for vendor accounts.',
-      );
-    }
-
-    const mid =
-      doc.manufacturerId?.toString() || doc.vendorId?.toString() || '';
-    if (
-      manufacturerIdFromToken &&
-      mid &&
-      manufacturerIdFromToken !== mid
-    ) {
-      throw new ForbiddenException('Cannot update another manufacturer account');
-    }
-
-    const emailLower = dto.email.trim().toLowerCase();
-    const mobileTrim = dto.mobile.trim();
-
-    const existingOther = await this.vendorUserModel
-      .findOne({
-        _id: { $ne: oid },
-        manufacturerId: doc.manufacturerId,
-        status: { $ne: 2 },
-        $or: [
-          { email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i') },
-          { phone: mobileTrim },
-        ],
-      })
-      .select('_id email phone')
-      .lean()
-      .exec();
-
-    if (existingOther) {
-      if (
-        String(existingOther.email ?? '').toLowerCase() === emailLower
-      ) {
-        throw new ConflictException('Email already exists');
-      }
-      if (existingOther.phone === mobileTrim) {
-        throw new ConflictException('Phone number already exists');
-      }
-      throw new ConflictException('Email or phone already exists');
-    }
-
-    doc.name = dto.name.trim();
-    doc.email = emailLower;
-    doc.phone = mobileTrim;
-    doc.designation =
-      dto.designation !== undefined ? String(dto.designation).trim() : '';
-    doc.updatedAt = new Date();
-    await doc.save();
-
-    const mobile = doc.phone;
-    const designation = doc.designation ?? '';
-    const idStr = String(doc._id);
-    return {
-      id: idStr,
-      vendorUserId: idStr,
-      email: doc.email,
-      name: doc.name,
-      type: doc.type,
-      designation,
-      mobile,
-      phone: mobile,
-      vendorUser: {
-        designation,
-        mobile,
-        vendorUserId: idStr,
-      },
-    };
-  }
-
-  private persistedTeamMemberDisplayOrder(value: unknown): number | null {
-    if (value === null || value === undefined) return null;
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  /** Active staff rows for a manufacturer + team. Optional exclude (e.g. member being edited). */
-  private async countActiveStaffInTeam(
-    manufacturerId: Types.ObjectId,
-    team: TeamMemberTeam,
-    excludeId?: Types.ObjectId,
-  ): Promise<number> {
-    const q: Record<string, unknown> = {
-      manufacturerId,
-      type: 'staff',
-      status: { $ne: 2 },
-      team,
-    };
-    if (excludeId) {
-      q._id = { $ne: excludeId };
-    }
-    return this.vendorUserModel.countDocuments(q).exec();
-  }
-
-  /** Explicit orders must be positive integers within the global numeric cap (not tied to team size). */
-  private assertTeamMemberDisplayOrderAllowed(order: number): void {
-    if (!Number.isInteger(order) || order < 1) {
-      throw new BadRequestException('Display order must be a positive integer');
-    }
-    if (order > TEAM_MEMBER_DISPLAY_ORDER_MAX) {
-      throw new BadRequestException(
-        `Display order must not exceed ${TEAM_MEMBER_DISPLAY_ORDER_MAX}`,
-      );
-    }
-  }
-
-  /**
-   * When displayOrder is omitted on create: next slot after the highest existing order in this team
-   * (gaps allowed elsewhere); empty team → 1. Uses $max so rows without displayOrder do not affect the max.
-   */
-  private async nextDefaultDisplayOrderForTeam(
-    manufacturerId: Types.ObjectId,
-    team: TeamMemberTeam,
-  ): Promise<number> {
-    const rows = await this.vendorUserModel
-      .aggregate<{ maxOrd: number | null }>([
-        {
-          $match: {
-            manufacturerId,
-            type: 'staff',
-            status: { $ne: 2 },
-            team,
-          },
-        },
-        { $group: { _id: null, maxOrd: { $max: '$displayOrder' } } },
-      ])
-      .exec();
-
-    const raw = rows[0]?.maxOrd;
-    const highest =
-      typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 ? raw : 0;
-    const next = highest + 1;
-    if (next > TEAM_MEMBER_DISPLAY_ORDER_MAX) {
-      throw new BadRequestException(
-        `Display order cannot exceed ${TEAM_MEMBER_DISPLAY_ORDER_MAX}`,
-      );
-    }
-    return next;
   }
 
   private invalidateWebsiteTeamMembersListCache(): void {
@@ -492,24 +296,6 @@ export class AdminService {
     registrationLink?: string;
     brochureLink?: string;
   }) {
-    const nextName = String(payload.eventName ?? '').trim();
-    const nextType = String(payload.galleryType ?? '').trim();
-    if (nextType && nextName) {
-      const duplicate = await this.eventModel
-        .findOne({
-          eventName: new RegExp(`^${escapeRegex(nextName)}$`, 'i'),
-          galleryType: new RegExp(`^${escapeRegex(nextType)}$`, 'i'),
-        })
-        .select('_id')
-        .lean()
-        .exec();
-      if (duplicate) {
-        throw new ConflictException(
-          `A gallery item with this title already exists in "${nextType}"`,
-        );
-      }
-    }
-
     const eventId = await this.nextEventId();
     const now = new Date();
 
@@ -663,56 +449,24 @@ export class AdminService {
       $set.eventStatus = payload.eventStatus;
     }
 
-    const findQuery: Record<string, unknown> = Types.ObjectId.isValid(raw)
-      ? { _id: new Types.ObjectId(raw) }
-      : (() => {
-          const asNumber = Number.parseInt(raw, 10);
-          if (!Number.isFinite(asNumber) || asNumber <= 0) {
-            throw new BadRequestException(
-              'Invalid event id (expected Mongo _id or numeric eventId)',
-            );
-          }
-          return { eventId: asNumber };
-        })();
-
-    const current = await this.eventModel
-      .findOne(findQuery)
-      .select('_id eventName galleryType')
-      .lean()
-      .exec();
-    if (!current) {
-      throw new NotFoundException('Event not found');
-    }
-
-    const nextName =
-      payload.eventName !== undefined
-        ? String(payload.eventName).trim()
-        : String((current as any).eventName ?? '').trim();
-    const nextType =
-      payload.galleryType !== undefined
-        ? String(payload.galleryType).trim()
-        : String((current as any).galleryType ?? '').trim();
-    if (nextType && nextName) {
-      const duplicate = await this.eventModel
-        .findOne({
-          _id: { $ne: (current as any)._id },
-          eventName: new RegExp(`^${escapeRegex(nextName)}$`, 'i'),
-          galleryType: new RegExp(`^${escapeRegex(nextType)}$`, 'i'),
-        })
-        .select('_id')
+    let updated: any = null;
+    if (Types.ObjectId.isValid(raw)) {
+      updated = await this.eventModel
+        .findByIdAndUpdate(new Types.ObjectId(raw), { $set }, { new: true })
         .lean()
         .exec();
-      if (duplicate) {
-        throw new ConflictException(
-          `A gallery item with this title already exists in "${nextType}"`,
+    } else {
+      const asNumber = Number.parseInt(raw, 10);
+      if (!Number.isFinite(asNumber) || asNumber <= 0) {
+        throw new BadRequestException(
+          'Invalid event id (expected Mongo _id or numeric eventId)',
         );
       }
+      updated = await this.eventModel
+        .findOneAndUpdate({ eventId: asNumber }, { $set }, { new: true })
+        .lean()
+        .exec();
     }
-
-    const updated = await this.eventModel
-      .findOneAndUpdate(findQuery, { $set }, { new: true })
-      .lean()
-      .exec();
 
     if (!updated) {
       throw new NotFoundException('Event not found');
@@ -730,44 +484,9 @@ export class AdminService {
     return this.formatEventResponse(updated);
   }
 
-  /**
-   * Same row shape as GET /admin/events/list (omit s_no for single-item detail).
-   */
-  mapEventToAdminListItem(e: any, s_no?: number) {
-    const datePart =
-      e?.eventDate instanceof Date
-        ? e.eventDate.toISOString().slice(0, 10)
-        : e?.eventDate
-          ? new Date(e.eventDate).toISOString().slice(0, 10)
-          : '';
-    const timePart = String(e?.eventStartTime ?? '').trim();
-
-    return {
-      ...(s_no !== undefined ? { s_no } : {}),
-      id: String(e._id),
-      eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
-      image: e.eventImage ?? null,
-      galleryImages: Array.isArray(e.galleryImages)
-        ? e.galleryImages
-        : e.eventImage
-          ? [e.eventImage]
-          : [],
-      event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
-      eventName: String(e.eventName ?? ''),
-      eventDescription: String(e.eventDescription ?? ''),
-      galleryType: e.galleryType ?? '',
-      date: datePart,
-      dateTime: [datePart, timePart].filter(Boolean).join(' '),
-      location: String(e.eventLocation ?? ''),
-      is_active: Number(e.eventStatus) === 1,
-      registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
-      brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
-    };
-  }
-
   async listEvents() {
     const rows = await this.eventModel
-      .find(EVENT_LISTING_FILTER)
+      .find({})
       .sort({ createdDate: -1, _id: -1 })
       .select(
         'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
@@ -775,31 +494,40 @@ export class AdminService {
       .lean()
       .exec();
 
-    return (rows ?? []).map((e: any, idx: number) =>
-      this.mapEventToAdminListItem(e, idx + 1),
-    );
+    return (rows ?? []).map((e: any, idx: number) => {
+      const datePart =
+        e?.eventDate instanceof Date
+          ? e.eventDate.toISOString().slice(0, 10)
+          : e?.eventDate
+            ? new Date(e.eventDate).toISOString().slice(0, 10)
+            : '';
+      const timePart = String(e?.eventStartTime ?? '').trim();
+
+      return {
+        s_no: idx + 1,
+        id: String(e._id),
+        eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
+        image: e.eventImage ?? null,
+        galleryImages: Array.isArray(e.galleryImages)
+          ? e.galleryImages
+          : e.eventImage
+            ? [e.eventImage]
+            : [],
+        event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
+        eventName: String(e.eventName ?? ''),
+        eventDescription: String(e.eventDescription ?? ''),
+        galleryType: e.galleryType ?? '',
+        date: datePart,
+        dateTime: [datePart, timePart].filter(Boolean).join(' '),
+        location: String(e.eventLocation ?? ''),
+        is_active: Number(e.eventStatus) === 1,
+        registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
+        brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
+      };
+    });
   }
 
-  /** Gallery-only rows (same collection as events, filtered by `galleryType`). */
-  async listGalleryItems() {
-    const rows = await this.eventModel
-      .find(GALLERY_LISTING_FILTER)
-      .sort({ createdDate: -1, _id: -1 })
-      .select(
-        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
-      )
-      .lean()
-      .exec();
-
-    return (rows ?? []).map((e: any, idx: number) =>
-      this.mapEventToAdminListItem(e, idx + 1),
-    );
-  }
-
-  async getEventById(
-    identifier: string,
-    options?: { scope?: 'event' | 'any' },
-  ) {
+  async getEventById(identifier: string) {
     const raw = String(identifier ?? '').trim();
     if (!raw) throw new BadRequestException('Event id is required');
 
@@ -826,20 +554,7 @@ export class AdminService {
       throw new NotFoundException('Event not found');
     }
 
-    const scope = options?.scope ?? 'any';
-    if (scope === 'event') {
-      const t = String(event.galleryType ?? '').trim();
-      if ((GALLERY_TYPES as readonly string[]).includes(t)) {
-        throw new NotFoundException('Event not found');
-      }
-    }
-
-    const listShape = this.mapEventToAdminListItem(event);
-    const formatted = this.formatEventResponse(event);
-    return {
-      ...formatted,
-      ...listShape,
-    };
+    return this.formatEventResponse(event);
   }
 
   async deleteEvent(identifier: string) {
@@ -963,21 +678,8 @@ export class AdminService {
       );
     }
 
-    const title = String(payload.title ?? '').trim();
-    if (!title) {
-      throw new BadRequestException('title is required');
-    }
-    const duplicate = await this.articleModel
-      .findOne({ title: new RegExp(`^${escapeRegex(title)}$`, 'i') })
-      .select('_id')
-      .lean()
-      .exec();
-    if (duplicate) {
-      throw new ConflictException('An article with this title already exists');
-    }
-
     const doc = new this.articleModel({
-      title,
+      title: String(payload.title ?? '').trim(),
       description: externalUrl ? '' : description,
       date: payload.date,
       image: payload.image,
@@ -1021,24 +723,7 @@ export class AdminService {
     }
 
     const $set: Record<string, unknown> = {};
-    if (payload.title !== undefined) {
-      const nextTitle = String(payload.title).trim();
-      if (!nextTitle) {
-        throw new BadRequestException('title cannot be empty');
-      }
-      const duplicate = await this.articleModel
-        .findOne({
-          _id: { $ne: objectId },
-          title: new RegExp(`^${escapeRegex(nextTitle)}$`, 'i'),
-        })
-        .select('_id')
-        .lean()
-        .exec();
-      if (duplicate) {
-        throw new ConflictException('An article with this title already exists');
-      }
-      $set.title = nextTitle;
-    }
+    if (payload.title !== undefined) $set.title = String(payload.title).trim();
     if (payload.description !== undefined) $set.description = String(payload.description).trim();
     if (payload.date !== undefined) $set.date = payload.date;
     if (payload.image !== undefined) {
@@ -1531,8 +1216,7 @@ export class AdminService {
       linkedinUrl?: string;
       roleId?: string;
       roleIds?: string[];
-      /** Optional; omit or empty = no product categories linked. */
-      category_ids?: number[];
+      category_ids: number[];
     },
   ) {
     let vendorObjectId: Types.ObjectId;
@@ -1589,38 +1273,43 @@ export class AdminService {
       .exec();
 
     if (softDeleted) {
-      /**
-       * Omit displayOrder → next slot after max existing order in this team (not roster count).
-       * Explicit order: any positive integer up to TEAM_MEMBER_DISPLAY_ORDER_MAX; uniqueness per team enforced by shift + index.
-       */
-      const desiredOrder =
-        data.displayOrder === undefined
-          ? await this.nextDefaultDisplayOrderForTeam(vendorObjectId, data.team)
-          : data.displayOrder;
-      this.assertTeamMemberDisplayOrderAllowed(desiredOrder);
-
-      await this.vendorUserModel
-        .updateMany(
-          {
-            manufacturerId: vendorObjectId,
-            type: 'staff',
-            status: { $ne: 2 },
-            team: data.team,
-            displayOrder: { $gte: desiredOrder },
-          },
-          { $inc: { displayOrder: 1 } },
-        )
+      const totalNonDeleted = await this.vendorUserModel
+        .countDocuments({
+          manufacturerId: vendorObjectId,
+          type: 'staff',
+          status: { $ne: 2 },
+        })
         .exec();
+      const maxAllowed = Math.max(1, totalNonDeleted + 1);
+      const desiredOrder =
+        data.displayOrder === undefined ? maxAllowed : data.displayOrder;
+      if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
+        throw new BadRequestException('Display order must be a positive integer');
+      }
+      if (desiredOrder > maxAllowed) {
+        throw new BadRequestException(
+          `Display order must be between 1 and ${maxAllowed}`,
+        );
+      }
+
+      if (desiredOrder <= totalNonDeleted) {
+        await this.vendorUserModel
+          .updateMany(
+            {
+              manufacturerId: vendorObjectId,
+              type: 'staff',
+              status: { $ne: 2 },
+              displayOrder: { $gte: desiredOrder },
+            },
+            { $inc: { displayOrder: 1 } },
+          )
+          .exec();
+      }
 
       const passwordHash = await bcrypt.hash(
         crypto.randomBytes(8).toString('hex'),
         10,
       );
-
-      const categoryIds = data.category_ids ?? [];
-      if (categoryIds.length > 0) {
-        await this.categoriesService.assertNumericCategoriesExist(categoryIds);
-      }
 
       const $set: Record<string, unknown> = {
         name: data.name.trim(),
@@ -1636,38 +1325,19 @@ export class AdminService {
         twitterUrl: data.twitterUrl,
         linkedinUrl: data.linkedinUrl,
         updatedAt: new Date(),
-        category_ids: categoryIds,
       };
-      if (categoryIds.length > 0) {
-        $set.category_id = categoryIds[0];
-      }
       if (data.designation !== undefined && data.designation !== '') {
         $set.designation = data.designation;
       }
 
       const updatePayload: Record<string, unknown> = { $set };
-      const $unset: Record<string, string> = {};
       if (data.designation !== undefined && data.designation === '') {
-        $unset.designation = '';
-      }
-      if (categoryIds.length === 0) {
-        $unset.category_id = '';
-      }
-      if (Object.keys($unset).length > 0) {
-        updatePayload.$unset = $unset;
+        updatePayload.$unset = { designation: '' };
       }
 
-      let updated: VendorUserDocument | null;
-      try {
-        updated = await this.vendorUserModel
-          .findByIdAndUpdate(softDeleted._id, updatePayload, { new: true })
-          .exec();
-      } catch (e: unknown) {
-        if (isMongoStaffTeamDisplayOrderDuplicate(e)) {
-          throwDisplayOrderTaken();
-        }
-        throw e;
-      }
+      const updated = await this.vendorUserModel
+        .findByIdAndUpdate(softDeleted._id, updatePayload, { new: true })
+        .exec();
 
       if (!updated) {
         throw new NotFoundException('Team member record could not be reactivated');
@@ -1682,7 +1352,7 @@ export class AdminService {
             ? [String(data.roleId).trim()]
             : [];
 
-      const rbacResult = await this.rbacService.replaceStaffRoles(vendorId, {
+      await this.rbacService.replaceStaffRoles(vendorId, {
         vendorUserId: String(updated._id),
         roleIds: normalizedRoleIds,
       });
@@ -1693,52 +1363,57 @@ export class AdminService {
       delete obj.password;
       delete obj.otp;
       const id = String(updated._id);
-      const cat = this.teamMemberCategoryArrays(obj);
       return {
         ...obj,
         id,
         vendorUserId: id,
         roleIds: normalizedRoleIds,
         portalAccess: normalizedRoleIds.length > 0,
-        category_ids: cat.category_ids,
-        categoryIds: cat.categoryIds,
-        ...(rbacResult.temporaryPassword != null && rbacResult.email != null
-          ? {
-              temporaryPassword: rbacResult.temporaryPassword,
-              email: rbacResult.email,
-            }
-          : {}),
       };
     }
 
-    const desiredOrder =
-      data.displayOrder === undefined
-        ? await this.nextDefaultDisplayOrderForTeam(vendorObjectId, data.team)
-        : data.displayOrder;
-    this.assertTeamMemberDisplayOrderAllowed(desiredOrder);
-
-    await this.vendorUserModel
-      .updateMany(
-        {
-          manufacturerId: vendorObjectId,
-          type: 'staff',
-          status: { $ne: 2 },
-          team: data.team,
-          displayOrder: { $gte: desiredOrder },
-        },
-        { $inc: { displayOrder: 1 } },
-      )
+    const totalNonDeleted = await this.vendorUserModel
+      .countDocuments({
+        manufacturerId: vendorObjectId,
+        type: 'staff',
+        status: { $ne: 2 },
+      })
       .exec();
+    const maxAllowed = Math.max(1, totalNonDeleted + 1);
+    const desiredOrder =
+      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
+    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
+      throw new BadRequestException('Display order must be a positive integer');
+    }
+    if (desiredOrder > maxAllowed) {
+      throw new BadRequestException(
+        `Display order must be between 1 and ${maxAllowed}`,
+      );
+    }
+
+    if (desiredOrder <= totalNonDeleted) {
+      await this.vendorUserModel
+        .updateMany(
+          {
+            manufacturerId: vendorObjectId,
+            type: 'staff',
+            status: { $ne: 2 },
+            displayOrder: { $gte: desiredOrder },
+          },
+          { $inc: { displayOrder: 1 } },
+        )
+        .exec();
+    }
 
     // Staff can log into admin portal only after a role is assigned (RBAC mapping).
     // We still store a random password hash here; on first role assignment we rotate it
     // and send credentials via email (see RbacService).
     const passwordHash = await bcrypt.hash(crypto.randomBytes(8).toString('hex'), 10);
 
-    const categoryIds = data.category_ids ?? [];
-    if (categoryIds.length > 0) {
-      await this.categoriesService.assertNumericCategoriesExist(categoryIds);
+    if (!data.category_ids?.length) {
+      throw new BadRequestException('At least one category is required');
     }
+    await this.categoriesService.assertNumericCategoriesExist(data.category_ids);
 
     const teamMember: Partial<VendorUser> = {
       // Canonical + legacy alias (some modules still query vendorId)
@@ -1760,8 +1435,8 @@ export class AdminService {
       displayOrder: desiredOrder,
       team: data.team,
       password: passwordHash,
-      category_ids: categoryIds,
-      ...(categoryIds.length > 0 ? { category_id: categoryIds[0] } : {}),
+      category_ids: data.category_ids,
+      category_id: data.category_ids[0],
     };
 
     const created = new this.vendorUserModel(teamMember);
@@ -1770,9 +1445,6 @@ export class AdminService {
       saved = await created.save();
     } catch (e: any) {
       if (e?.code === 11000) {
-        if (isMongoStaffTeamDisplayOrderDuplicate(e)) {
-          throwDisplayOrderTaken();
-        }
         const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
         const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
         if ('email' in pattern || keyVal.email !== undefined) {
@@ -1800,7 +1472,7 @@ export class AdminService {
 
     // Role assignments drive portal access; credentials are sent only on first transition
     // from no-roles to any-role by RBAC service.
-    const rbacResult = await this.rbacService.replaceStaffRoles(vendorId, {
+    await this.rbacService.replaceStaffRoles(vendorId, {
       vendorUserId: String(saved._id),
       roleIds: normalizedRoleIds,
     });
@@ -1817,12 +1489,6 @@ export class AdminService {
       portalAccess: normalizedRoleIds.length > 0,
       category_ids: cat.category_ids,
       categoryIds: cat.categoryIds,
-      ...(rbacResult.temporaryPassword != null && rbacResult.email != null
-        ? {
-            temporaryPassword: rbacResult.temporaryPassword,
-            email: rbacResult.email,
-          }
-        : {}),
     };
   }
 
@@ -1854,7 +1520,7 @@ export class AdminService {
         email: m.email,
         mobile: m.phone,
         is_active: m.status === 1,
-        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
+        displayOrder: Number((m as any).displayOrder) || 0,
         team: String((m as any).team ?? ''),
         category_ids: cat.category_ids,
         categoryIds: cat.categoryIds,
@@ -1904,15 +1570,8 @@ export class AdminService {
 
     const [displayOrderMax, totalCount, members] = await Promise.all([
       this.vendorUserModel
-        .aggregate<{ maxOrd: number | null }>([
-          { $match: mongoQuery },
-          { $group: { _id: null, maxOrd: { $max: '$displayOrder' } } },
-        ])
-        .exec()
-        .then((rows) => {
-          const v = rows[0]?.maxOrd;
-          return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-        }),
+        .countDocuments({ type: 'staff', status: { $ne: 2 } })
+        .exec(),
       this.vendorUserModel.countDocuments(mongoQuery).exec(),
       this.vendorUserModel
         .find(mongoQuery)
@@ -1938,7 +1597,7 @@ export class AdminService {
         email: m.email,
         mobile: m.phone,
         is_active: m.status === 1,
-        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
+        displayOrder: Number((m as any).displayOrder) || 0,
         team: String((m as any).team ?? ''),
         category_ids: cat.category_ids,
         categoryIds: cat.categoryIds,
@@ -1996,7 +1655,7 @@ export class AdminService {
         email: m.email,
         mobile: m.phone,
         is_active: m.status === 1,
-        displayOrder: this.persistedTeamMemberDisplayOrder((m as any).displayOrder),
+        displayOrder: Number((m as any).displayOrder) || 0,
         team: String((m as any).team ?? ''),
         category_ids: cat.category_ids,
         categoryIds: cat.categoryIds,
@@ -2043,7 +1702,7 @@ export class AdminService {
       facebookUrl: member.facebookUrl ?? '',
       twitterUrl: member.twitterUrl ?? '',
       linkedinUrl: member.linkedinUrl ?? '',
-      displayOrder: this.persistedTeamMemberDisplayOrder((member as any).displayOrder),
+      displayOrder: Number((member as any).displayOrder) || 0,
       team: String((member as any).team ?? ''),
       category_ids: cat.category_ids,
       categoryIds: cat.categoryIds,
@@ -2087,7 +1746,6 @@ export class AdminService {
       vendorId: vendorObjectId,
       banner_image: this.resolveBannerImagePath(dto.imageUrl),
       imageUrl: String(dto.imageUrl ?? '').trim(),
-      imageSource: dto.imageSource === 'binary_upload' ? 'binary_upload' : 'manual_url',
       heading: dto.title.trim(),
       sequenceNumber,
       description: dto.description.trim(),
@@ -2103,10 +1761,6 @@ export class AdminService {
     return {
       id: String(o._id),
       imageUrl: this.resolveBannerImageForResponse(o.imageUrl, o.banner_image),
-      imageSource:
-        String((o as any).imageSource) === 'binary_upload'
-          ? 'binary_upload'
-          : 'manual_url',
       heading: o.heading,
       title: o.heading,
       sequenceNumber: Number(o.sequenceNumber ?? 1),
@@ -2134,7 +1788,7 @@ export class AdminService {
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
+      .select('banner_image imageUrl heading sequenceNumber description status')
       .lean()
       .exec();
 
@@ -2144,10 +1798,6 @@ export class AdminService {
         s_no: index + 1,
         id: String(b._id),
         imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-        imageSource:
-          String((b as any).imageSource) === 'binary_upload'
-            ? 'binary_upload'
-            : 'manual_url',
         heading: b.heading,
         title: b.heading,
         sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -2169,7 +1819,7 @@ export class AdminService {
         ],
       })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
+      .select('banner_image imageUrl heading sequenceNumber description status')
       .lean()
       .exec();
 
@@ -2177,10 +1827,6 @@ export class AdminService {
       s_no: index + 1,
       id: String(b._id),
       imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-      imageSource:
-        String((b as any).imageSource) === 'binary_upload'
-          ? 'binary_upload'
-          : 'manual_url',
       heading: b.heading,
       title: b.heading,
       sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -2206,7 +1852,7 @@ export class AdminService {
         _id: bannerObjectId,
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .select('banner_image imageUrl imageSource heading sequenceNumber description status')
+      .select('banner_image imageUrl heading sequenceNumber description status')
       .lean()
       .exec();
 
@@ -2217,10 +1863,6 @@ export class AdminService {
     return {
       id: String(b._id),
       imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-      imageSource:
-        String((b as any).imageSource) === 'binary_upload'
-          ? 'binary_upload'
-          : 'manual_url',
       heading: b.heading,
       title: b.heading,
       sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -2235,7 +1877,6 @@ export class AdminService {
     bannerId: string,
     payload: {
       imageUrl?: string;
-      imageSource?: 'binary_upload' | 'manual_url';
       title?: string;
       sequenceNumber?: number;
       description?: string;
@@ -2301,10 +1942,6 @@ export class AdminService {
       $set.imageUrl = payload.imageUrl.trim();
       $set.banner_image = this.resolveBannerImagePath(payload.imageUrl);
     }
-    if (payload.imageSource !== undefined) {
-      $set.imageSource =
-        payload.imageSource === 'binary_upload' ? 'binary_upload' : 'manual_url';
-    }
 
     const updated = await this.bannerModel
       .findByIdAndUpdate(bannerObjectId, { $set }, { new: true })
@@ -2322,10 +1959,6 @@ export class AdminService {
         (updated as any).imageUrl,
         (updated as any).banner_image,
       ),
-      imageSource:
-        String((updated as any).imageSource) === 'binary_upload'
-          ? 'binary_upload'
-          : 'manual_url',
       heading: updated.heading,
       title: updated.heading,
       sequenceNumber: Number((updated as any).sequenceNumber ?? 1),
@@ -2449,9 +2082,6 @@ export class AdminService {
       roleId?: string;
       roleIds?: string[];
       category_ids?: number[];
-      /** When set with sendCredentialsEmail (e.g. multipart "1"), rotate portal password after email change. */
-      autoGeneratePassword?: unknown;
-      sendCredentialsEmail?: unknown;
     },
   ) {
     let memberObjectId: Types.ObjectId;
@@ -2459,13 +2089,6 @@ export class AdminService {
       memberObjectId = new Types.ObjectId(data.id);
     } catch {
       throw new BadRequestException('Invalid ID format');
-    }
-
-    let vendorObjectId: Types.ObjectId;
-    try {
-      vendorObjectId = new Types.ObjectId(vendorId);
-    } catch {
-      throw new BadRequestException('Invalid vendor ID format');
     }
 
     const member = await this.vendorUserModel
@@ -2480,32 +2103,8 @@ export class AdminService {
       throw new NotFoundException('Team member not found');
     }
 
-    const memberManufacturerId = (member as any).manufacturerId as
-      | Types.ObjectId
-      | undefined;
-    if (!memberManufacturerId?.equals(vendorObjectId)) {
-      throw new ForbiddenException(
-        'Team member does not belong to this manufacturer',
-      );
-    }
-
-    const priorEmail = String(member.email ?? '').trim().toLowerCase();
-    const hadAnyRoleBefore = await this.rbacService.hasAnyActiveStaffRoleMapping(
-      vendorId,
-      data.id,
-    );
-
     const emailLower = data.email.trim().toLowerCase();
     const mobileTrim = data.mobile.trim();
-
-    const normalizedRoleIds =
-      Array.isArray(data.roleIds) && data.roleIds.length > 0
-        ? Array.from(new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)))
-        : data.roleId
-          ? [String(data.roleId).trim()]
-          : [];
-
-    const emailChanged = priorEmail !== emailLower;
 
     const existingOther = await this.vendorUserModel
       .findOne({
@@ -2537,111 +2136,47 @@ export class AdminService {
       throw new ConflictException('Team member already exists');
     }
 
-    const manufacturerId = vendorObjectId;
-    const oldTeam = (member as any).team as TeamMemberTeam | undefined;
-    const newTeam = data.team;
-
-    const persistedOld = this.persistedTeamMemberDisplayOrder(
-      (member as any).displayOrder,
-    );
-    const oldOrder =
-      persistedOld !== null && persistedOld >= 1 ? persistedOld : null;
-
-    const explicitDisplayOrder = data.displayOrder !== undefined;
-
-    /**
-     * Omit displayOrder on edit: keep current slot in the same team; when changing team only,
-     * append to the end of the destination team (next free slot).
-     */
-    let desiredOrder: number;
-    if (!explicitDisplayOrder) {
-      if (oldTeam !== undefined && String(oldTeam) === String(newTeam)) {
-        desiredOrder =
-          oldOrder ??
-          (await this.nextDefaultDisplayOrderForTeam(manufacturerId, newTeam));
-      } else {
-        desiredOrder = await this.nextDefaultDisplayOrderForTeam(
-          manufacturerId,
-          newTeam,
-        );
-      }
-    } else {
-      desiredOrder = data.displayOrder as number;
+    const totalNonDeleted = await this.vendorUserModel
+      .countDocuments({ type: 'staff', status: { $ne: 2 } })
+      .exec();
+    const maxAllowed = Math.max(1, totalNonDeleted);
+    const desiredOrder =
+      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
+    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
+      throw new BadRequestException('Display order must be a positive integer');
+    }
+    if (desiredOrder > maxAllowed) {
+      throw new BadRequestException(
+        `Display order must be between 1 and ${maxAllowed}`,
+      );
     }
 
-    this.assertTeamMemberDisplayOrderAllowed(desiredOrder);
-
-    const sameTeam =
-      oldTeam !== undefined && String(oldTeam) === String(newTeam);
-
-    const nInTeamIncludingSelf = await this.countActiveStaffInTeam(
-      manufacturerId,
-      newTeam,
-    );
-    const curSlotForShift =
-      oldOrder ?? (sameTeam ? nInTeamIncludingSelf : null);
-
-    if (!sameTeam) {
-      if (oldTeam !== undefined && curSlotForShift !== null) {
+    const currentOrder = Number((member as any).displayOrder) || maxAllowed;
+    if (desiredOrder !== currentOrder) {
+      if (desiredOrder < currentOrder) {
         await this.vendorUserModel
           .updateMany(
             {
-              manufacturerId,
+              _id: { $ne: memberObjectId },
               type: 'staff',
               status: { $ne: 2 },
-              team: oldTeam,
+              displayOrder: { $gte: desiredOrder, $lt: currentOrder },
+            },
+            { $inc: { displayOrder: 1 } },
+          )
+          .exec();
+      } else {
+        await this.vendorUserModel
+          .updateMany(
+            {
               _id: { $ne: memberObjectId },
-              displayOrder: { $gt: curSlotForShift },
+              type: 'staff',
+              status: { $ne: 2 },
+              displayOrder: { $gt: currentOrder, $lte: desiredOrder },
             },
             { $inc: { displayOrder: -1 } },
           )
           .exec();
-      }
-      await this.vendorUserModel
-        .updateMany(
-          {
-            manufacturerId,
-            type: 'staff',
-            status: { $ne: 2 },
-            team: newTeam,
-            _id: { $ne: memberObjectId },
-            displayOrder: { $gte: desiredOrder },
-          },
-          { $inc: { displayOrder: 1 } },
-        )
-        .exec();
-    } else {
-      const cur = curSlotForShift ?? Math.max(1, nInTeamIncludingSelf);
-      if (desiredOrder !== cur) {
-        if (desiredOrder < cur) {
-          await this.vendorUserModel
-            .updateMany(
-              {
-                manufacturerId,
-                type: 'staff',
-                status: { $ne: 2 },
-                team: newTeam,
-                _id: { $ne: memberObjectId },
-                displayOrder: { $gte: desiredOrder, $lt: cur },
-              },
-              { $inc: { displayOrder: 1 } },
-            )
-            .exec();
-        } else {
-          await this.vendorUserModel
-            .updateMany(
-              {
-                manufacturerId,
-                type: 'staff',
-                status: { $ne: 2 },
-                team: newTeam,
-                _id: { $ne: memberObjectId },
-                displayOrder: { $gt: cur, $lte: desiredOrder },
-              },
-              { $inc: { displayOrder: -1 } },
-            )
-            .exec();
-        }
       }
     }
 
@@ -2671,24 +2206,15 @@ export class AdminService {
     $set.displayOrder = desiredOrder;
     $set.team = data.team;
 
-    const unsetFields: Record<string, string> = {};
     if (data.category_ids !== undefined) {
-      if (data.category_ids.length > 0) {
-        await this.categoriesService.assertNumericCategoriesExist(data.category_ids);
-        $set.category_ids = data.category_ids;
-        $set.category_id = data.category_ids[0];
-      } else {
-        $set.category_ids = [];
-        unsetFields.category_id = '';
-      }
+      await this.categoriesService.assertNumericCategoriesExist(data.category_ids);
+      $set.category_ids = data.category_ids;
+      $set.category_id = data.category_ids[0];
     }
 
     const updatePayload: Record<string, unknown> = { $set };
     if (data.designation !== undefined && data.designation === '') {
-      unsetFields.designation = '';
-    }
-    if (Object.keys(unsetFields).length > 0) {
-      updatePayload.$unset = unsetFields;
+      updatePayload.$unset = { designation: '' };
     }
 
     let updated: VendorUserDocument | null;
@@ -2698,9 +2224,6 @@ export class AdminService {
         .exec();
     } catch (e: any) {
       if (e?.code === 11000) {
-        if (isMongoStaffTeamDisplayOrderDuplicate(e)) {
-          throwDisplayOrderTaken();
-        }
         const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
         const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
         if ('email' in pattern || keyVal.email !== undefined) {
@@ -2722,62 +2245,16 @@ export class AdminService {
     delete obj.password;
     delete obj.otp;
 
-    const rbacResult = await this.rbacService.replaceStaffRoles(vendorId, {
+    const normalizedRoleIds =
+      Array.isArray(data.roleIds) && data.roleIds.length > 0
+        ? Array.from(new Set(data.roleIds.map((id) => String(id).trim()).filter(Boolean)))
+        : data.roleId
+          ? [String(data.roleId).trim()]
+          : [];
+    await this.rbacService.replaceStaffRoles(vendorId, {
       vendorUserId: data.id,
       roleIds: normalizedRoleIds,
     });
-
-    /**
-     * Optional multipart flags (legacy): both false-ish explicitly → skip rotation when email changed.
-     * Otherwise, email change + at least one role behaves like delivery on create / first role assignment.
-     */
-    const explicitlySkipCredentialRotation =
-      data.autoGeneratePassword !== undefined &&
-      data.sendCredentialsEmail !== undefined &&
-      !isTruthyCredentialFlag(data.autoGeneratePassword) &&
-      !isTruthyCredentialFlag(data.sendCredentialsEmail);
-
-    const deferFirstRoleCredentialDelivery =
-      !hadAnyRoleBefore && normalizedRoleIds.length > 0;
-
-    let credentialExtras: { temporaryPassword?: string; email?: string } =
-      rbacResult.temporaryPassword != null && rbacResult.email != null
-        ? {
-            temporaryPassword: rbacResult.temporaryPassword,
-            email: rbacResult.email,
-          }
-        : {};
-
-    if (
-      !explicitlySkipCredentialRotation &&
-      normalizedRoleIds.length > 0 &&
-      emailChanged &&
-      !deferFirstRoleCredentialDelivery
-    ) {
-      const password = crypto.randomBytes(8).toString('hex');
-      const passwordHash = await bcrypt.hash(password, 10);
-      await this.vendorUserModel
-        .updateOne(
-          { _id: memberObjectId },
-          { $set: { password: passwordHash, updatedAt: new Date() } },
-        )
-        .exec();
-      try {
-        await this.emailService.sendStaffCredentialsEmail(
-          emailLower,
-          password,
-          String(data.name ?? '').trim(),
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Team member email-change credentials email failed for ${emailLower}: ${(err as Error)?.message || 'unknown error'}`,
-        );
-      }
-      credentialExtras = {
-        temporaryPassword: password,
-        email: emailLower,
-      };
-    }
 
     this.invalidateWebsiteTeamMembersListCache();
 
@@ -2791,7 +2268,6 @@ export class AdminService {
       portalAccess: normalizedRoleIds.length > 0,
       category_ids: cat.category_ids,
       categoryIds: cat.categoryIds,
-      ...(Object.keys(credentialExtras).length > 0 ? credentialExtras : {}),
     };
   }
 
@@ -2826,6 +2302,21 @@ export class AdminService {
 
     if (!updated) {
       throw new NotFoundException('Team member not found');
+    }
+
+    const deletedOrder = Number((member as any).displayOrder);
+    if (Number.isFinite(deletedOrder) && deletedOrder > 0) {
+      await this.vendorUserModel
+        .updateMany(
+          {
+            _id: { $ne: memberObjectId },
+            type: 'staff',
+            status: { $ne: 2 },
+            displayOrder: { $gt: deletedOrder },
+          },
+          { $inc: { displayOrder: -1 } },
+        )
+        .exec();
     }
 
     const obj: any = updated.toObject();
@@ -2980,7 +2471,7 @@ export class AdminService {
   async listContactMessages() {
     const rows = await this.contactMessageModel
       .find({})
-      .select('name email phoneNumber subject message createdAt')
+      .select('name email phoneNumber message createdAt')
       .sort({ createdAt: -1, _id: -1 })
       .lean()
       .exec();
@@ -2991,7 +2482,6 @@ export class AdminService {
       name: String(r.name ?? ''),
       email: String(r.email ?? ''),
       phoneNo: String((r as any).phoneNumber ?? ''),
-      subject: String((r as any).subject ?? ''),
       message:
         typeof (r as any).message === 'string'
           ? String((r as any).message).trim()

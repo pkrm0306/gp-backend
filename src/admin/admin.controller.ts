@@ -16,7 +16,6 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
-  NotFoundException,
   applyDecorators,
 } from '@nestjs/common';
 import {
@@ -46,7 +45,6 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import { ChangePasswordDto } from '../manufacturers/dto/change-password.dto';
 import { UpdateProfileDto } from '../manufacturers/dto/update-manufacturer-profile.dto';
-import { UpdateVendorUserProfileDto } from './dto/update-vendor-user-profile.dto';
 import { CreateTeamMemberDto } from './dto/create-team-member.dto';
 import { EditTeamMemberDto } from './dto/edit-team-member.dto';
 import { DeleteTeamMemberDto } from './dto/delete-team-member.dto';
@@ -64,10 +62,8 @@ import { DeleteNewsletterSubscriberDto } from './dto/delete-newsletter-subscribe
 import { UpdateNewsletterSubscriberStatusDto } from './dto/update-newsletter-subscriber-status.dto';
 import { DeleteContactMessageDto } from './dto/delete-contact-message.dto';
 import { Public } from '../common/decorators/public.decorator';
-import {
-  adminArticleMemoryMulterOptions,
-  adminImageMemoryMulterOptions,
-} from '../common/upload/multer-universal.config';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
 import type { Request } from 'express';
@@ -76,10 +72,46 @@ import { PERMISSIONS } from '../common/constants/permissions.constants';
 import { GALLERY_TYPES, GalleryType } from '../events/schemas/event.schema';
 import { uploadFile } from '../utils/upload-file.util';
 
-const teamMemberImageInterceptor = FileInterceptor(
-  'image',
-  adminImageMemoryMulterOptions(),
-);
+const storage = diskStorage({
+  destination: join(process.cwd(), 'uploads', 'manufacturers'),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = extname(file.originalname);
+    cb(null, `manufacturer-${uniqueSuffix}${ext}`);
+  },
+});
+
+const teamMemberStorage = diskStorage({
+  destination: join(process.cwd(), 'uploads', 'team-members'),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = extname(file.originalname);
+    cb(null, `team-member-${uniqueSuffix}${ext}`);
+  },
+});
+
+const teamMemberImageInterceptor = FileInterceptor('image', {
+  storage: teamMemberStorage,
+  fileFilter: (req, file, cb) => {
+    if (!file?.originalname) {
+      cb(null, true);
+      return;
+    }
+    const allowedMimes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+    ];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(null, false);
+    }
+  },
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
 function TeamMemberEditDocs() {
   return applyDecorators(
@@ -89,7 +121,7 @@ function TeamMemberEditDocs() {
       summary: 'Edit team member',
       description:
         '**POST** or **PATCH** — same handler. Multipart form: **id** (team member from list), name, designation, email, mobile, optional **image** (270×400px recommended), social URLs. ' +
-        'Omit all category fields to leave categories unchanged; if any **category_id** / **category_ids** / **categoryIds** field is sent, the full set is replaced (empty clears all categories). ' +
+        'Omit all category fields to leave categories unchanged; if any **category_id** / **category_ids** / **categoryIds** field is sent, the full set is replaced and at least one id is required. ' +
         'Same JWT workarounds as create (**x-access-token** / **access_token**) if Bearer is dropped on multipart.',
     }),
     ApiConsumes('multipart/form-data'),
@@ -153,24 +185,13 @@ function TeamMemberEditDocs() {
             type: 'array',
             items: { type: 'integer' },
           },
-          autoGeneratePassword: {
-            type: 'string',
-            description:
-              'Optional. Legacy opt-out only: send both this and sendCredentialsEmail as false to skip credential rotation on email change when the member has roles. Otherwise email change + roles triggers rotation automatically.',
-          },
-          sendCredentialsEmail: {
-            type: 'string',
-            description:
-              'Optional. Legacy opt-out only (pair with autoGeneratePassword=false); see autoGeneratePassword.',
-          },
         },
         required: ['id', 'name', 'email', 'mobile', 'displayOrder', 'team'],
       },
     }),
     ApiResponse({
       status: 200,
-      description:
-        'Team member updated successfully. May include temporaryPassword and email when credentials were issued (first role assignment or email-change rotation).',
+      description: 'Team member updated successfully',
     }),
     ApiResponse({ status: 404, description: 'Team member not found' }),
     ApiResponse({
@@ -295,47 +316,7 @@ export class AdminController {
     return /^[a-fA-F0-9]{24}$/.test(roleId) ? [roleId] : [];
   }
 
-  private parseStringArrayField(raw: unknown): string[] {
-    const collect = (value: unknown): string[] => {
-      if (Array.isArray(value)) {
-        return value
-          .map((item) => String(item ?? '').trim())
-          .filter((item) => item.length > 0);
-      }
-      const text = String(value ?? '').trim();
-      if (!text) return [];
-      if (text.startsWith('[') && text.endsWith(']')) {
-        try {
-          const parsed = JSON.parse(text);
-          if (Array.isArray(parsed)) {
-            return parsed
-              .map((item) => String(item ?? '').trim())
-              .filter((item) => item.length > 0);
-          }
-        } catch {
-          // fall through to comma-separated parsing
-        }
-      }
-      return text
-        .split(',')
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
-    };
-    return Array.from(new Set(collect(raw)));
-  }
-
-  private async uploadEventImages(files: Express.Multer.File[]): Promise<string[]> {
-    if (!files.length) return [];
-    return Promise.all(
-      files.map(async (file) => (await uploadFile(file, 'events')).fileUrl),
-    );
-  }
-
-  private mapGalleryResponse(
-    item: any,
-    options: { includeDescription?: boolean } = {},
-  ) {
-    const includeDescription = options.includeDescription !== false;
+  private mapGalleryResponse(item: any) {
     const images = Array.isArray(item?.galleryImages)
       ? item.galleryImages
       : item?.eventImage
@@ -350,25 +331,17 @@ export class AdminController {
             ? String(rawDate).trim()
             : new Date(rawDate).toISOString().slice(0, 10)
           : '';
-    const base: Record<string, unknown> = {
+    return {
       id: item?.id,
       eventId: item?.eventId,
       title: item?.eventName ?? '',
       galleryType: item?.galleryType ?? '',
+      description: item?.eventDescription ?? '',
       date: normalizedDate,
       image: images[0] ?? null,
       images,
       event_image: item?.event_image ?? null,
     };
-    if (includeDescription) {
-      base.description = item?.eventDescription ?? '';
-    }
-    return base;
-  }
-
-  private isGalleryItem(item: any): boolean {
-    const type = String(item?.galleryType ?? '').trim();
-    return GALLERY_TYPES.includes(type as GalleryType);
   }
 
   private mapArticleResponse(item: any) {
@@ -424,38 +397,6 @@ export class AdminController {
     return { message: 'Profile updated successfully', data: profile };
   }
 
-  @Patch('vendor-user/profile')
-  @Permissions(PERMISSIONS.PROFILE_UPDATE)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Edit admin/staff own profile (vendor_users)',
-    description:
-      'Updates the authenticated **vendor_users** row used at login (`name`, `designation`, `email`, **mobile** stored as `phone`). ' +
-      'For **admin** (manufacturer admin) and **staff** only; vendor accounts should use **PATCH /admin/profile/edit**. ' +
-      'Staff needs **profile:update** permission.',
-  })
-  @ApiBody({ type: UpdateVendorUserProfileDto })
-  @ApiResponse({ status: 200, description: 'Profile updated successfully' })
-  @ApiResponse({ status: 409, description: 'Email or phone already in use' })
-  async updateVendorUserProfile(
-    @CurrentUser()
-    user: {
-      userId: string;
-      manufacturerId?: string;
-      vendorId?: string;
-      role: string;
-    },
-    @Body() dto: UpdateVendorUserProfileDto,
-  ) {
-    const mid = user.manufacturerId ?? user.vendorId;
-    const data = await this.adminService.updateOwnVendorUserProfile(
-      user.userId,
-      mid,
-      dto,
-    );
-    return { message: 'Profile updated successfully', data };
-  }
-
   @Get('banner/list')
   @Permissions(PERMISSIONS.BANNERS_VIEW)
   @HttpCode(HttpStatus.OK)
@@ -504,7 +445,27 @@ export class AdminController {
   @Permissions(PERMISSIONS.BANNERS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
-    FileInterceptor('image', adminImageMemoryMulterOptions()),
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'banners'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `banner-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        cb(
+          null,
+          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
+        );
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
   )
   @ApiOperation({
     summary: 'Create banner',
@@ -561,7 +522,6 @@ export class AdminController {
     const data = await this.adminService.createBanner(user.vendorId, {
       ...dto,
       imageUrl,
-      imageSource: file ? 'binary_upload' : 'manual_url',
     });
     return { message: 'Banner created successfully', data };
   }
@@ -570,7 +530,27 @@ export class AdminController {
   @Permissions(PERMISSIONS.BANNERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
-    FileInterceptor('image', adminImageMemoryMulterOptions()),
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'banners'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `banner-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        cb(
+          null,
+          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
+        );
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
   )
   @ApiOperation({
     summary: 'Edit banner',
@@ -636,11 +616,6 @@ export class AdminController {
     const imageUrl = file ? (await uploadFile(file, 'banners')).fileUrl : dto.imageUrl;
     const data = await this.adminService.updateBanner(user.vendorId, id, {
       ...(imageUrl ? { imageUrl } : {}),
-      ...(file
-        ? { imageSource: 'binary_upload' as const }
-        : dto.imageUrl !== undefined
-          ? { imageSource: 'manual_url' as const }
-          : {}),
       ...(dto.title !== undefined ? { title: dto.title } : {}),
       ...(dto.status !== undefined ? { status: dto.status } : {}),
       ...(dto.sequenceNumber !== undefined
@@ -655,7 +630,32 @@ export class AdminController {
   @Permissions(PERMISSIONS.EVENTS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
-    FileInterceptor('image', adminImageMemoryMulterOptions()),
+    FileInterceptor('image', {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'events'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `event-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        const allowedMimes = [
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+          'image/gif',
+          'image/webp',
+        ];
+        cb(null, allowedMimes.includes(file.mimetype));
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
   )
   @ApiOperation({
     summary: 'Create event',
@@ -785,7 +785,32 @@ export class AdminController {
         { name: 'eventImage', maxCount: 20 },
         { name: 'event_image', maxCount: 20 },
       ],
-      adminImageMemoryMulterOptions(),
+      {
+        storage: diskStorage({
+          destination: join(process.cwd(), 'uploads', 'events'),
+          filename: (req, file, cb) => {
+            const uniqueSuffix =
+              Date.now() + '-' + Math.round(Math.random() * 1e9);
+            const ext = extname(file.originalname || '');
+            cb(null, `event-${uniqueSuffix}${ext}`);
+          },
+        }),
+        fileFilter: (req, file, cb) => {
+          if (!file?.originalname) {
+            cb(null, true);
+            return;
+          }
+          const allowedMimes = [
+            'image/jpeg',
+            'image/jpg',
+            'image/png',
+            'image/gif',
+            'image/webp',
+          ];
+          cb(null, allowedMimes.includes(file.mimetype));
+        },
+        limits: { fileSize: 5 * 1024 * 1024 },
+      },
     ),
   )
   @ApiOperation({
@@ -951,7 +976,32 @@ export class AdminController {
         { name: 'image[]', maxCount: 20 },
         { name: 'images', maxCount: 20 },
       ],
-      adminImageMemoryMulterOptions(),
+      {
+        storage: diskStorage({
+          destination: join(process.cwd(), 'uploads', 'events'),
+          filename: (req, file, cb) => {
+            const uniqueSuffix =
+              Date.now() + '-' + Math.round(Math.random() * 1e9);
+            const ext = extname(file.originalname || '');
+            cb(null, `event-${uniqueSuffix}${ext}`);
+          },
+        }),
+        fileFilter: (req, file, cb) => {
+          if (!file?.originalname) {
+            cb(null, true);
+            return;
+          }
+          const allowedMimes = [
+            'image/jpeg',
+            'image/jpg',
+            'image/png',
+            'image/gif',
+            'image/webp',
+          ];
+          cb(null, allowedMimes.includes(file.mimetype));
+        },
+        limits: { fileSize: 5 * 1024 * 1024 },
+      },
     ),
   )
   @ApiOperation({
@@ -1026,7 +1076,7 @@ export class AdminController {
         'Invalid eventDate (expected ISO date/datetime)',
       );
     }
-    const galleryImages = await this.uploadEventImages(allImages);
+    const galleryImages = allImages.map((f) => `/uploads/events/${f.filename}`);
     const galleryType = this.parseGalleryType(
       pick(['galleryType', 'type', 'category']),
       true,
@@ -1056,13 +1106,38 @@ export class AdminController {
         { name: 'eventImage', maxCount: 20 },
         { name: 'event_image', maxCount: 20 },
       ],
-      adminImageMemoryMulterOptions(),
+      {
+        storage: diskStorage({
+          destination: join(process.cwd(), 'uploads', 'events'),
+          filename: (req, file, cb) => {
+            const uniqueSuffix =
+              Date.now() + '-' + Math.round(Math.random() * 1e9);
+            const ext = extname(file.originalname || '');
+            cb(null, `event-${uniqueSuffix}${ext}`);
+          },
+        }),
+        fileFilter: (req, file, cb) => {
+          if (!file?.originalname) {
+            cb(null, true);
+            return;
+          }
+          const allowedMimes = [
+            'image/jpeg',
+            'image/jpg',
+            'image/png',
+            'image/gif',
+            'image/webp',
+          ];
+          cb(null, allowedMimes.includes(file.mimetype));
+        },
+        limits: { fileSize: 5 * 1024 * 1024 },
+      },
     ),
   )
   @ApiOperation({
     summary: 'Edit gallery item',
     description:
-      'Edits a gallery item by id. Existing images are preserved by default; upload new files to append, send `existingImages` to control kept order, and `removeImages` to delete selected previous images.',
+      'Edits a gallery item by id. Fields accepted: title, description, date, galleryType, image.',
   })
   @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
   @ApiConsumes('multipart/form-data')
@@ -1074,18 +1149,6 @@ export class AdminController {
         description: { type: 'string' },
         date: { type: 'string', example: '2026-04-08' },
         galleryType: { type: 'string', enum: [...GALLERY_TYPES] },
-        existingImages: {
-          oneOf: [
-            { type: 'array', items: { type: 'string' } },
-            { type: 'string', description: 'JSON array or comma-separated URLs' },
-          ],
-        },
-        removeImages: {
-          oneOf: [
-            { type: 'array', items: { type: 'string' } },
-            { type: 'string', description: 'JSON array or comma-separated URLs' },
-          ],
-        },
         image: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
@@ -1154,85 +1217,7 @@ export class AdminController {
       pick(['galleryType', 'type', 'category']),
       false,
     );
-    const uploadedImages = await this.uploadEventImages(allImages);
-    const normalizeGalleryImageRef = (raw: unknown): string => {
-      const text = String(raw ?? '').trim();
-      if (!text) return '';
-      if (/^https?:\/\//i.test(text)) {
-        try {
-          const parsed = new URL(text);
-          return parsed.pathname.trim();
-        } catch {
-          return text;
-        }
-      }
-      if (text.startsWith('uploads/')) return `/${text}`;
-      return text;
-    };
-    const existingImagesRaw = pick([
-      'existingImages',
-      'existing_images',
-      'keepImages',
-      'keep_images',
-    ]);
-    const removeImagesRaw = pick([
-      'removeImages',
-      'remove_images',
-      'deletedImages',
-      'deleted_images',
-    ]);
-    const existingImagesProvided = existingImagesRaw !== undefined;
-    const removeImagesProvided = removeImagesRaw !== undefined;
-
-    const current = await this.adminService.getEventById(id);
-    const currentImages = Array.isArray((current as any)?.galleryImages)
-      ? ((current as any).galleryImages as string[])
-      : (current as any)?.eventImage
-        ? [String((current as any).eventImage)]
-        : [];
-    const currentByNormalized = new Map<string, string>();
-    for (const image of currentImages) {
-      const normalized = normalizeGalleryImageRef(image);
-      if (normalized && !currentByNormalized.has(normalized)) {
-        currentByNormalized.set(normalized, image);
-      }
-    }
-
-    const keepImages = existingImagesProvided
-      ? this.parseStringArrayField(existingImagesRaw)
-          .map((imageRef) => {
-            const normalized = normalizeGalleryImageRef(imageRef);
-            return currentByNormalized.get(normalized) ?? imageRef;
-          })
-      : currentImages;
-    const removeImages = removeImagesProvided
-      ? this.parseStringArrayField(removeImagesRaw)
-      : [];
-    const removeImageSet = new Set(
-      removeImages.map((imagePath) => normalizeGalleryImageRef(imagePath)),
-    );
-
-    const nextImages = Array.from(
-      new Set(
-        [...keepImages, ...uploadedImages].filter(
-          (imagePath) => {
-            if (!imagePath) return false;
-            const normalized = normalizeGalleryImageRef(imagePath);
-            if (!normalized) return false;
-            const existsInCurrent = currentByNormalized.has(normalized);
-            const isUploaded = uploadedImages.some(
-              (uploaded) => normalizeGalleryImageRef(uploaded) === normalized,
-            );
-            return (existsInCurrent || isUploaded) && !removeImageSet.has(normalized);
-          },
-        ),
-      ),
-    );
-
-    const hasGalleryImageMutation =
-      uploadedImages.length > 0 ||
-      existingImagesProvided ||
-      removeImagesProvided;
+    const galleryImages = allImages.map((f) => `/uploads/events/${f.filename}`);
     const data = await this.adminService.updateEvent(id, {
       ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
       ...(dto.eventDescription !== undefined
@@ -1240,11 +1225,8 @@ export class AdminController {
         : {}),
       ...(eventDate !== undefined ? { eventDate } : {}),
       ...(galleryType !== undefined ? { galleryType } : {}),
-      ...(hasGalleryImageMutation
-        ? {
-            galleryImages: nextImages,
-            eventImage: nextImages[0] ?? '',
-          }
+      ...(galleryImages.length
+        ? { galleryImages, eventImage: galleryImages[0] }
         : {}),
     });
     return {
@@ -1297,7 +1279,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'List gallery items',
     description:
-      'Returns gallery list with gallery-friendly fields: title, date, image, active flag, and id (no description on list items).',
+      'Returns gallery list with gallery-friendly fields: title, description, date, image, active flag, and id.',
   })
   @ApiResponse({
     status: 200,
@@ -1316,6 +1298,7 @@ export class AdminController {
               eventId: { type: 'number', nullable: true },
               title: { type: 'string' },
               galleryType: { type: 'string', enum: [...GALLERY_TYPES] },
+              description: { type: 'string' },
               date: { type: 'string', example: '2026-03-25' },
               image: { type: 'string', nullable: true },
               images: {
@@ -1332,10 +1315,10 @@ export class AdminController {
   })
   @Public()
   async listGallery() {
-    const rows = await this.adminService.listGalleryItems();
-    const data = rows.map((r: any, index: number) => ({
-      s_no: index + 1,
-      ...this.mapGalleryResponse(r, { includeDescription: false }),
+    const rows = await this.adminService.listEvents();
+    const data = rows.map((r: any) => ({
+      s_no: r.s_no,
+      ...this.mapGalleryResponse(r),
       is_active: r.is_active,
     }));
     return { message: 'Gallery retrieved successfully', data };
@@ -1355,9 +1338,6 @@ export class AdminController {
   @Public()
   async getGalleryById(@Param('id') id: string) {
     const item: any = await this.adminService.getEventById(id);
-    if (!this.isGalleryItem(item)) {
-      throw new NotFoundException('Gallery item not found');
-    }
     const data = this.mapGalleryResponse(item);
     return { message: 'Gallery item retrieved successfully', data };
   }
@@ -1401,7 +1381,45 @@ export class AdminController {
         { name: 'pdf', maxCount: 1 },
         { name: 'file', maxCount: 1 },
       ],
-      adminArticleMemoryMulterOptions(),
+      {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'articles'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `article-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
+          if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+            return;
+          }
+          cb(
+            new BadRequestException(
+              'Only PDF files are allowed for file/pdf field',
+            ),
+            false,
+          );
+          return;
+        }
+        const allowedImageMimes = [
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+          'image/gif',
+          'image/webp',
+        ];
+        cb(null, allowedImageMimes.includes(file.mimetype));
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+      },
     ),
   )
   @ApiOperation({
@@ -1504,7 +1522,45 @@ export class AdminController {
         { name: 'pdf', maxCount: 1 },
         { name: 'file', maxCount: 1 },
       ],
-      adminArticleMemoryMulterOptions(),
+      {
+      storage: diskStorage({
+        destination: join(process.cwd(), 'uploads', 'articles'),
+        filename: (req, file, cb) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname || '');
+          cb(null, `article-${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file?.originalname) {
+          cb(null, true);
+          return;
+        }
+        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
+          if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+            return;
+          }
+          cb(
+            new BadRequestException(
+              'Only PDF files are allowed for file/pdf field',
+            ),
+            false,
+          );
+          return;
+        }
+        const allowedImageMimes = [
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+          'image/gif',
+          'image/webp',
+        ];
+        cb(null, allowedImageMimes.includes(file.mimetype));
+      },
+      limits: { fileSize: 5 * 1024 * 1024 },
+      },
     ),
   )
   @ApiOperation({
@@ -1702,7 +1758,7 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Event not found' })
   @Public()
   async getEventById(@Param('id') id: string) {
-    const data = await this.adminService.getEventById(id, { scope: 'event' });
+    const data = await this.adminService.getEventById(id);
     return { message: 'Event retrieved successfully', data };
   }
 
@@ -1942,7 +1998,7 @@ export class AdminController {
     summary: 'Create team member',
     description:
       'Use **Authorize** (Bearer) as usual. Swagger sometimes drops `Authorization` on multipart uploads — then send the same JWT via **x-access-token** header or **access_token** query param. ' +
-      'Optional product categories: **category_id**, repeated **category_ids[]** / **categoryIds[]**, and/or **categoryIds** JSON array string (numeric ids from GET /categories). Omit or send empty to create with no categories.',
+      'At least one product **category** is required: **category_id**, repeated **category_ids[]** / **categoryIds[]**, and/or **categoryIds** JSON array string (numeric ids from GET /categories).',
   })
   @ApiConsumes('multipart/form-data')
   @ApiHeader({
@@ -2033,6 +2089,11 @@ export class AdminController {
 
     const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
     const mergedCategoryIds = mergeCategoryIdsFromFormObject(body);
+    if (mergedCategoryIds.length === 0) {
+      throw new BadRequestException(
+        'At least one category is required (category_id, category_ids[], or categoryIds).',
+      );
+    }
     const dto = plainToClass(CreateTeamMemberDto, {
       name: body.name,
       designation: body.designation,
@@ -2113,6 +2174,11 @@ export class AdminController {
     const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
     const explicitCategories = hasExplicitCategoryIdFields(body);
     const mergedCategoryIds = mergeCategoryIdsFromFormObject(body);
+    if (explicitCategories && mergedCategoryIds.length === 0) {
+      throw new BadRequestException(
+        'At least one category is required when updating categories.',
+      );
+    }
     const dto = plainToClass(EditTeamMemberDto, {
       id: body.id,
       name: body.name,
@@ -2153,8 +2219,6 @@ export class AdminController {
       roleId: dto.roleId,
       roleIds: normalizedRoleIds,
       category_ids: explicitCategories ? mergedCategoryIds : undefined,
-      autoGeneratePassword: body.autoGeneratePassword,
-      sendCredentialsEmail: body.sendCredentialsEmail,
     });
 
     return { message: 'Team member updated successfully', data: teamMember };
@@ -2166,8 +2230,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete team member (soft delete)',
     description:
-      'Sets team member **status** to **2** (removed from list). Same behaviour as partner delete. **POST** or **DELETE** with JSON body `{ "id": "..." }`. ' +
-      'Other members’ **displayOrder** values are **not** changed (gaps in sort order are allowed).',
+      'Sets team member **status** to **2** (removed from list). Same behaviour as partner delete. **POST** or **DELETE** with JSON body `{ "id": "..." }`.',
   })
   @ApiBody({ type: DeleteTeamMemberDto })
   @ApiResponse({ status: 200, description: 'Team member deleted successfully' })
@@ -2185,7 +2248,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete team member (soft delete)',
     description:
-      'Same as POST **/admin/team-member/delete** — JSON body `{ "id": "..." }`. Does not renumber **displayOrder** on remaining members.',
+      'Same as POST **/admin/team-member/delete** — JSON body `{ "id": "..." }`.',
   })
   @ApiBody({ type: DeleteTeamMemberDto })
   @ApiResponse({ status: 200, description: 'Team member deleted successfully' })
@@ -2323,7 +2386,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'List team members',
     description:
-      'Returns global team members dataset for admin panel: serial number (**s_no**, table row only), name, designation, email, mobile, **displayOrder** (persisted sort slot from DB; may have gaps), team, active flag, and id for actions. Excludes soft-deleted members (status 2). Sorted by displayOrder ascending.',
+      'Returns global team members dataset for admin panel: serial number, name, designation, email, mobile, displayOrder, team, active flag, and id for actions. Excludes soft-deleted members (status 2). Sorted by displayOrder ascending.',
   })
   @ApiResponse({
     status: 200,
@@ -2439,7 +2502,6 @@ export class AdminController {
               name: { type: 'string' },
               email: { type: 'string' },
               phoneNo: { type: 'string' },
-              subject: { type: 'string' },
               message: { type: 'string' },
               createdAt: { type: 'string', format: 'date-time' },
             },
@@ -2616,7 +2678,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get team member by id',
     description:
-      'Returns one team member for the **View** modal: name, designation, email, mobile, **displayOrder** (stored value from DB), team, status (**Active** / **Inactive**), image URL, Facebook / Twitter / LinkedIn URLs. Soft-deleted excluded.',
+      'Returns one team member for the **View** modal: name, designation, email, mobile, displayOrder, team, status (**Active** / **Inactive**), image URL, Facebook / Twitter / LinkedIn URLs. Soft-deleted excluded.',
   })
   @ApiParam({ name: 'id', description: 'Team member MongoDB id' })
   @ApiResponse({ status: 200, description: 'Team member details' })
@@ -2687,7 +2749,29 @@ export class AdminController {
   @Put('manufacturers/:id')
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
-    FileInterceptor('manufacturer_image', adminImageMemoryMulterOptions()),
+    FileInterceptor('manufacturer_image', {
+      storage,
+      fileFilter: (req, file, cb) => {
+        if (!file) {
+          cb(null, true);
+          return;
+        }
+        const allowedMimes = [
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+          'image/gif',
+        ];
+        if (allowedMimes.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          cb(new Error('Invalid file type. Only images are allowed.'), false);
+        }
+      },
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+      },
+    }),
   )
   @ApiOperation({
     summary: 'Update manufacturer details',
