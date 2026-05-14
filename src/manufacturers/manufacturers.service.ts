@@ -232,7 +232,7 @@ export class ManufacturersService {
   }
 
   /**
-   * Resolve vendor-facing profile using login auth user id -> vendor_users.manufacturerId -> manufacturers doc.
+   * Resolve vendor-facing profile using login auth user id -> users.manufacturerId -> manufacturers doc.
    */
   async getVendorDetailsByAuthUserId(userId: string) {
     const vendorUser = await this.vendorUsersService.findById(userId);

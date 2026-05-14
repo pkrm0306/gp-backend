@@ -10,7 +10,7 @@ export const TEAM_MEMBER_TEAMS = [
 ] as const;
 export type TeamMemberTeam = (typeof TEAM_MEMBER_TEAMS)[number];
 
-@Schema({ timestamps: true })
+@Schema({ collection: 'users', timestamps: true })
 export class VendorUser {
   @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: true })
   manufacturerId: Types.ObjectId;

@@ -59,7 +59,7 @@ export class AuthService {
   }
 
   /**
-   * Login / refresh **user** payload for admin portal accounts (`admin` / `staff` vendor_users).
+   * Login / refresh **user** payload for admin portal accounts (`admin` / `staff` users).
    * Includes flat **designation**, **mobile** (from `phone`) and nested **vendorUser** for clients that merge either shape.
    */
   private buildAdminPortalUserPayload(user: VendorUserDocument): Record<string, unknown> {

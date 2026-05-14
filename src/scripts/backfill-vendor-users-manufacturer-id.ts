@@ -33,11 +33,11 @@ async function run() {
   };
 
   try {
-    const vendorUsersCol = connection.collection('vendorusers');
+    const usersCol = connection.collection('users');
     const vendorsCol = connection.collection('vendors');
 
     // Process only records needing backfill.
-    const cursor = vendorUsersCol.find(
+    const cursor = usersCol.find(
       {
         $and: [
           {
@@ -84,13 +84,13 @@ async function run() {
 
       if (dryRun) {
         console.log(
-          `[DRY_RUN] would set vendor_users(${row._id}) manufacturerId -> ${manufacturerId.toHexString()}`,
+          `[DRY_RUN] would set users(${row._id}) manufacturerId -> ${manufacturerId.toHexString()}`,
         );
         counters.updated += 1;
         continue;
       }
 
-      await vendorUsersCol.updateOne(
+      await usersCol.updateOne(
         {
           _id: row._id,
           $or: [
@@ -107,7 +107,7 @@ async function run() {
     console.log(JSON.stringify({ dryRun, ...counters }, null, 2));
     console.log('Verification query:');
     console.log(
-      `db.vendorusers.countDocuments({ $and: [ { $or: [ { manufacturerId: { $exists: false } }, { manufacturerId: null } ] }, { vendorId: { $exists: true, $ne: null } } ] })`,
+      `db.users.countDocuments({ $and: [ { $or: [ { manufacturerId: { $exists: false } }, { manufacturerId: null } ] }, { vendorId: { $exists: true, $ne: null } } ] })`,
     );
   } catch (error) {
     console.error('Migration failed:', error);
