@@ -28,6 +28,36 @@ import type { VendorUserDocument } from '../vendor-users/schemas/vendor-user.sch
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
+  private normalizeRegistrationPhone(phoneRaw: unknown, countryCodeRaw?: unknown): string {
+    const phoneInput = String(phoneRaw ?? '').trim();
+    const countryCodeInput = String(countryCodeRaw ?? '').trim();
+    if (!phoneInput) {
+      throw new BadRequestException('Phone is required');
+    }
+
+    const normalizeDialCode = (raw: string): string => {
+      const digits = raw.replace(/[^\d]/g, '');
+      return digits ? `+${digits}` : '';
+    };
+    const sanitizedPhone = phoneInput.replace(/[^\d+]/g, '');
+    const normalizedDialCode = normalizeDialCode(countryCodeInput);
+
+    let normalizedPhone = sanitizedPhone;
+    if (sanitizedPhone.startsWith('+')) {
+      normalizedPhone = `+${sanitizedPhone.slice(1).replace(/[^\d]/g, '')}`;
+    } else {
+      const digits = sanitizedPhone.replace(/[^\d]/g, '');
+      normalizedPhone = normalizedDialCode ? `${normalizedDialCode}${digits}` : digits;
+    }
+
+    const digitCount = normalizedPhone.replace(/[^\d]/g, '').length;
+    if (digitCount < 7) {
+      throw new BadRequestException('Phone number is invalid');
+    }
+
+    return normalizedPhone;
+  }
+
   /**
    * Login / refresh **user** payload for admin portal accounts (`admin` / `staff` vendor_users).
    * Includes flat **designation**, **mobile** (from `phone`) and nested **vendorUser** for clients that merge either shape.
@@ -88,6 +118,27 @@ export class AuthService {
     return Math.floor(Date.now() / 1000);
   }
 
+  /** Vendor / partner logins require an active manufacturer row (both flags = 1). */
+  private async assertVendorOrganizationActive(
+    manufacturerId: string | undefined,
+  ): Promise<void> {
+    const id = String(manufacturerId ?? '').trim();
+    if (!id) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    const m = await this.manufacturersService.findById(id);
+    if (!m) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    const manufacturerOk = Number(m.manufacturerStatus) === 1;
+    const vendorOk = Number(m.vendor_status) === 1;
+    if (!manufacturerOk || !vendorOk) {
+      throw new UnauthorizedException(
+        'Vendor portal access is not available. Your organization must be active.',
+      );
+    }
+  }
+
   private async revokeTokenByJtiAndExp(
     jti: string | undefined,
     exp: number | undefined,
@@ -127,11 +178,20 @@ export class AuthService {
     const normalizedEmail = String(registerDto.email || '')
       .trim()
       .toLowerCase();
-    const normalizedPhone = String(registerDto.phone || '').trim();
+    const normalizedPhone = this.normalizeRegistrationPhone(
+      registerDto.phone,
+      registerDto.countryCode,
+    );
     const normalizedCompanyName =
       registerDto.companyName?.trim() ||
       normalizedEmail.split('@')[0]?.trim() ||
       'Vendor';
+    const normalizedContactName = String(registerDto.name || '')
+      .trim()
+      .slice(0, 200);
+    const normalizedCompanySize = String(registerDto.companySize || '')
+      .trim()
+      .slice(0, 64);
 
     const existingUser = await this.vendorUsersService.findByEmail(
       normalizedEmail,
@@ -143,6 +203,11 @@ export class AuthService {
       await this.manufacturersService.findByVendorEmail(normalizedEmail);
     if (existingManufacturer) {
       throw new ConflictException('Email already exists');
+    }
+    const existingManufacturerByPhone =
+      await this.manufacturersService.findByVendorPhone(normalizedPhone);
+    if (existingManufacturerByPhone) {
+      throw new ConflictException('Phone number already exists');
     }
 
     const session = await this.connection.startSession();
@@ -158,6 +223,7 @@ export class AuthService {
           vendor_email: normalizedEmail,
           vendor_phone: normalizedPhone,
           vendor_status: 0,
+          companySize: normalizedCompanySize,
         },
         session,
       );
@@ -167,7 +233,7 @@ export class AuthService {
         {
           manufacturerId: manufacturer._id,
           vendorId: manufacturer._id,
-          name: normalizedCompanyName,
+          name: normalizedContactName,
           email: normalizedEmail,
           phone: normalizedPhone,
           password: registerDto.password,
@@ -296,10 +362,7 @@ export class AuthService {
         : null;
 
     if (!user && !fallbackManufacturer) {
-      if (portal === 'admin') {
-        throw new UnauthorizedException('Email id is not registered');
-      }
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('Email not registered');
     }
 
     const isPasswordValid = user
@@ -342,6 +405,16 @@ export class AuthService {
             : 'Vendor portal allows only vendor or partner users';
         throw new UnauthorizedException(message);
       }
+    }
+
+    const vendorSideUser =
+      user && (user.type === 'vendor' || user.type === 'partner');
+    const manufacturerOnlyLogin = !user && !!fallbackManufacturer;
+    if (vendorSideUser || manufacturerOnlyLogin) {
+      const manufacturerId = user
+        ? user.manufacturerId?.toString() || user.vendorId?.toString()
+        : fallbackManufacturer!._id.toString();
+      await this.assertVendorOrganizationActive(manufacturerId);
     }
 
     // Portal access is authoritative by RBAC role mapping presence for staff users.
@@ -447,10 +520,7 @@ export class AuthService {
       if (portal === 'admin') {
         throw new BadRequestException('Email id is not registered');
       }
-      return {
-        message:
-          'If the email exists, a new password has been sent to your email.',
-      };
+      throw new BadRequestException('User not registered');
     }
 
     // Align with admin login: only admin/staff; staff must have RBAC portal access.

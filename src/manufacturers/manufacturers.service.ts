@@ -11,6 +11,7 @@ import {
   Manufacturer,
   ManufacturerDocument,
 } from './schemas/manufacturer.schema';
+import { VendorContactSlot } from './schemas/vendor-contact-slot.schema';
 import {
   Product,
   ProductDocument,
@@ -21,9 +22,11 @@ import {
 } from '../vendor-users/schemas/vendor-user.schema';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
 import { UpdateProfileDto } from './dto/update-manufacturer-profile.dto';
+import { UpdateVendorContactsDto } from './dto/update-vendor-contacts.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import { ListManufacturersQueryDto } from './dto/list-manufacturers-query.dto';
+import { uploadFile } from '../utils/upload-file.util';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -59,6 +62,16 @@ export class ManufacturersService {
 
   async findByVendorEmail(email: string): Promise<ManufacturerDocument | null> {
     return this.manufacturerModel.findOne({ vendor_email: email }).exec();
+  }
+
+  async findByVendorPhone(
+    phone: string,
+  ): Promise<ManufacturerDocument | null> {
+    const normalized = String(phone ?? '').trim();
+    if (!normalized) {
+      return null;
+    }
+    return this.manufacturerModel.findOne({ vendor_phone: normalized }).exec();
   }
 
   async update(
@@ -114,7 +127,17 @@ export class ManufacturersService {
       vendor_website: manufacturer.vendor_website ?? '',
       vendor_designation: manufacturer.vendor_designation ?? '',
       vendor_gst: manufacturer.vendor_gst ?? '',
+      gstPdf: manufacturer.vendorGstPdf ?? '',
+      companyLogo: manufacturer.companyLogo ?? '',
       vendor_status: manufacturer.vendor_status ?? 0,
+      companySize: manufacturer.companySize ?? '',
+      pan: manufacturer.vendorPanDocument ?? '',
+      technicalContact: this.mapVendorContactSlot(
+        manufacturer.technicalContact as VendorContactSlot | undefined,
+      ),
+      marketingContact: this.mapVendorContactSlot(
+        manufacturer.marketingContact as VendorContactSlot | undefined,
+      ),
       createdAt: manufacturer.createdAt,
       updatedAt: manufacturer.updatedAt,
     };
@@ -126,9 +149,154 @@ export class ManufacturersService {
       name: manufacturer.vendor_name ?? '',
       designation: manufacturer.vendor_designation ?? '',
       gst: manufacturer.vendor_gst ?? '',
+      gstPdf: manufacturer.vendorGstPdf ?? '',
+      companyLogo: manufacturer.companyLogo ?? '',
+      pan: manufacturer.vendorPanDocument ?? '',
       email: manufacturer.vendor_email ?? '',
       mobile: manufacturer.vendor_phone ?? '',
     };
+  }
+
+  private emptyVendorContactSlot() {
+    return {
+      name: '',
+      email_id: '',
+      phone_number: '',
+      designation: '',
+    };
+  }
+
+  private mapVendorContactSlot(
+    slot?: VendorContactSlot | Record<string, unknown> | null,
+  ) {
+    if (!slot) {
+      return this.emptyVendorContactSlot();
+    }
+    const s = slot as Record<string, unknown>;
+    return {
+      name: String(s.name ?? '').trim(),
+      email_id: String(s.email_id ?? '').trim(),
+      phone_number: String(s.phone_number ?? '').trim(),
+      designation: String(s.designation ?? '').trim(),
+    };
+  }
+
+  private looksLikeVendorAssetUrl(value: string): boolean {
+    const t = String(value ?? '').trim();
+    if (!t) return false;
+    return t.startsWith('/') || /^https?:\/\//i.test(t);
+  }
+
+  private partitionGstAndPdfFromUpdateDto(updateDto: UpdateProfileDto): {
+    gstNumberToApply: string;
+    gstPdfToApply?: string;
+  } {
+    const rawGst =
+      updateDto.gst !== undefined ? String(updateDto.gst).trim() : '';
+    const rawGstNumber =
+      updateDto.gstNumber !== undefined
+        ? String(updateDto.gstNumber).trim()
+        : '';
+    let gstNumberToApply = rawGstNumber;
+    let gstPdfToApply: string | undefined;
+    if (rawGst && this.looksLikeVendorAssetUrl(rawGst)) {
+      gstPdfToApply = rawGst;
+    } else if (rawGst) {
+      gstNumberToApply = gstNumberToApply || rawGst;
+    }
+    return { gstNumberToApply, gstPdfToApply };
+  }
+
+  private async resolveManufacturerForVendorProfile(
+    authUser:
+      | string
+      | { userId: string; manufacturerId?: string; vendorId?: string },
+  ): Promise<{
+    resolvedManufacturer: ManufacturerDocument | null;
+    vendorUser: VendorUserDocument | null;
+  }> {
+    const userId = typeof authUser === 'string' ? authUser : authUser.userId;
+    const manufacturerIdFromToken =
+      typeof authUser === 'string'
+        ? ''
+        : String(authUser.manufacturerId || authUser.vendorId || '').trim();
+
+    const manufacturerFromToken =
+      manufacturerIdFromToken && Types.ObjectId.isValid(manufacturerIdFromToken)
+        ? await this.manufacturerModel.findById(manufacturerIdFromToken).exec()
+        : null;
+
+    const vendorUser = await this.vendorUsersService.findById(userId);
+
+    const mappedManufacturerId =
+      vendorUser?.manufacturerId?.toString() ||
+      vendorUser?.vendorId?.toString() ||
+      '';
+
+    const manufacturer = mappedManufacturerId
+      ? await this.manufacturerModel.findById(mappedManufacturerId).exec()
+      : null;
+
+    const fallbackManufacturer =
+      !manufacturer && Types.ObjectId.isValid(userId)
+        ? await this.manufacturerModel.findById(userId).exec()
+        : null;
+
+    const fallbackByContact =
+      !manufacturer &&
+      !fallbackManufacturer &&
+      vendorUser &&
+      (vendorUser.email || vendorUser.phone)
+        ? await this.manufacturerModel
+            .findOne({
+              $or: [
+                ...(vendorUser.email
+                  ? [{ vendor_email: String(vendorUser.email).trim() }]
+                  : []),
+                ...(vendorUser.phone
+                  ? [{ vendor_phone: String(vendorUser.phone).trim() }]
+                  : []),
+              ],
+            })
+            .exec()
+        : null;
+
+    const resolvedManufacturer =
+      manufacturerFromToken ||
+      manufacturer ||
+      fallbackManufacturer ||
+      fallbackByContact;
+
+    return { resolvedManufacturer, vendorUser };
+  }
+
+  async uploadVendorProfileBranding(
+    authUser: { userId: string; manufacturerId?: string; vendorId?: string },
+    files?: {
+      gst?: Express.Multer.File[];
+      companyLogo?: Express.Multer.File[];
+      pan?: Express.Multer.File[];
+    },
+  ) {
+    const gstFile = files?.gst?.[0];
+    const logoFile = files?.companyLogo?.[0];
+    const panFile = files?.pan?.[0];
+    if (!gstFile && !logoFile && !panFile) {
+      throw new BadRequestException(
+        'Send at least one file: **gst** (PDF), **companyLogo** (image), and/or **pan** (PDF or JPEG).',
+      );
+    }
+    const dto: UpdateProfileDto = {};
+    if (gstFile) {
+      dto.gst = (await uploadFile(gstFile, 'manufacturers')).fileUrl;
+    }
+    if (logoFile) {
+      dto.companyLogo = (await uploadFile(logoFile, 'manufacturers')).fileUrl;
+    }
+    if (panFile) {
+      dto.pan = (await uploadFile(panFile, 'manufacturers')).fileUrl;
+    }
+    return this.editProfile(authUser, dto);
   }
 
   async editProfile(
@@ -137,66 +305,29 @@ export class ManufacturersService {
       | { userId: string; manufacturerId?: string; vendorId?: string },
     updateDto: UpdateProfileDto,
   ) {
+    const userId = typeof authUser === 'string' ? authUser : authUser.userId;
+    const { gstNumberToApply, gstPdfToApply } =
+      this.partitionGstAndPdfFromUpdateDto(updateDto);
+    const rawPanForBranding =
+      updateDto.pan !== undefined ? String(updateDto.pan).trim() : '';
+    const brandingAttempted =
+      updateDto.companyLogo !== undefined ||
+      gstPdfToApply !== undefined ||
+      (updateDto.pan !== undefined && rawPanForBranding !== '');
+
     const session = await this.connection.startSession();
     session.startTransaction();
 
     try {
-      const userId = typeof authUser === 'string' ? authUser : authUser.userId;
-      const manufacturerIdFromToken =
-        typeof authUser === 'string'
-          ? ''
-          : String(authUser.manufacturerId || authUser.vendorId || '').trim();
+      const { resolvedManufacturer, vendorUser } =
+        await this.resolveManufacturerForVendorProfile(authUser);
 
-      const manufacturerFromToken =
-        manufacturerIdFromToken && Types.ObjectId.isValid(manufacturerIdFromToken)
-          ? await this.manufacturerModel.findById(manufacturerIdFromToken).exec()
-          : null;
-
-      const vendorUser = await this.vendorUsersService.findById(userId);
-
-      const mappedManufacturerId =
-        vendorUser?.manufacturerId?.toString() ||
-        vendorUser?.vendorId?.toString() ||
-        '';
-
-      const manufacturer = mappedManufacturerId
-        ? await this.manufacturerModel.findById(mappedManufacturerId).exec()
-        : null;
-
-      // Legacy fallback: some older auth flows may carry manufacturer id as user id.
-      const fallbackManufacturer =
-        !manufacturer && Types.ObjectId.isValid(userId)
-          ? await this.manufacturerModel.findById(userId).exec()
-          : null;
-
-      // Data-repair fallback for legacy users with missing manufacturerId/vendorId
-      // mapping in vendor_users: resolve via unique vendor email/phone.
-      const fallbackByContact =
-        !manufacturer &&
-        !fallbackManufacturer &&
-        (vendorUser.email || vendorUser.phone)
-          ? await this.manufacturerModel
-              .findOne({
-                $or: [
-                  ...(vendorUser.email
-                    ? [{ vendor_email: String(vendorUser.email).trim() }]
-                    : []),
-                  ...(vendorUser.phone
-                    ? [{ vendor_phone: String(vendorUser.phone).trim() }]
-                    : []),
-                ],
-              })
-              .exec()
-          : null;
-
-      const resolvedManufacturer =
-        manufacturerFromToken ||
-        manufacturer ||
-        fallbackManufacturer ||
-        fallbackByContact;
       if (!resolvedManufacturer) {
-        // Admin-profile fallback: some admin users are stored only in vendor_users
-        // and do not have a linked manufacturer record.
+        if (brandingAttempted) {
+          throw new BadRequestException(
+            'Company logo, GST certificate, and PAN document require a linked manufacturer profile.',
+          );
+        }
         const vendorUserUpdate: Partial<VendorUser> = {};
         if (updateDto.name !== undefined) {
           vendorUserUpdate.name = updateDto.name;
@@ -218,21 +349,30 @@ export class ManufacturersService {
         }
 
         await session.commitTransaction();
+        const vendorOnlyGst =
+          gstNumberToApply ||
+          (updateDto.gst !== undefined &&
+          !this.looksLikeVendorAssetUrl(String(updateDto.gst))
+            ? String(updateDto.gst).trim()
+            : '');
         return {
           companyName: updateDto.companyName ?? '',
           name: updateDto.name ?? vendorUser?.name ?? '',
           designation: updateDto.designation ?? vendorUser?.designation ?? '',
-          gst: updateDto.gst ?? '',
+          gst: vendorOnlyGst,
+          gstPdf: '',
+          companyLogo: '',
+          pan: '',
           email: updateDto.email ?? vendorUser?.email ?? '',
           mobile: updateDto.mobile ?? vendorUser?.phone ?? '',
         };
       }
 
-      if (updateDto.gst) {
+      if (gstNumberToApply) {
         const gstExists = await this.manufacturerModel
           .findOne({
             _id: { $ne: resolvedManufacturer._id },
-            vendor_gst: updateDto.gst,
+            vendor_gst: gstNumberToApply,
           })
           .select('_id')
           .lean()
@@ -270,8 +410,26 @@ export class ManufacturersService {
       if (updateDto.designation !== undefined) {
         updateData.vendor_designation = updateDto.designation;
       }
-      if (updateDto.gst !== undefined) {
-        updateData.vendor_gst = updateDto.gst;
+      if (gstNumberToApply) {
+        updateData.vendor_gst = gstNumberToApply;
+      }
+      if (gstPdfToApply !== undefined) {
+        updateData.vendorGstPdf = gstPdfToApply;
+      }
+      if (updateDto.companyLogo !== undefined) {
+        updateData.companyLogo = String(updateDto.companyLogo).trim();
+      }
+      if (updateDto.pan !== undefined) {
+        const rawPan = String(updateDto.pan).trim();
+        if (!rawPan) {
+          updateData.vendorPanDocument = '';
+        } else if (this.looksLikeVendorAssetUrl(rawPan)) {
+          updateData.vendorPanDocument = rawPan;
+        } else {
+          throw new BadRequestException(
+            'pan must be a document URL path (e.g. /uploads/manufacturers/...) or https://...',
+          );
+        }
       }
       if (updateDto.email) {
         updateData.vendor_email = updateDto.email;
@@ -294,6 +452,75 @@ export class ManufacturersService {
         throw new NotFoundException('Manufacturer not found');
       }
       return this.toProfilePayloadShape(updated);
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  async getVendorContactsByAuthUserId(userId: string) {
+    const { resolvedManufacturer } =
+      await this.resolveManufacturerForVendorProfile(userId);
+    if (!resolvedManufacturer) {
+      return {
+        technicalContact: this.emptyVendorContactSlot(),
+        marketingContact: this.emptyVendorContactSlot(),
+      };
+    }
+    return {
+      technicalContact: this.mapVendorContactSlot(
+        resolvedManufacturer.technicalContact,
+      ),
+      marketingContact: this.mapVendorContactSlot(
+        resolvedManufacturer.marketingContact,
+      ),
+    };
+  }
+
+  async updateVendorContacts(
+    authUser: { userId: string; manufacturerId?: string; vendorId?: string },
+    dto: UpdateVendorContactsDto,
+  ) {
+    const { resolvedManufacturer } =
+      await this.resolveManufacturerForVendorProfile(authUser);
+    if (!resolvedManufacturer) {
+      throw new BadRequestException(
+        'Vendor contacts require a linked manufacturer profile.',
+      );
+    }
+
+    const session = await this.connection.startSession();
+    session.startTransaction();
+    try {
+      await this.update(
+        resolvedManufacturer._id.toString(),
+        {
+          technicalContact: {
+            name: dto.technicalContact.name.trim(),
+            email_id: dto.technicalContact.email_id.trim().toLowerCase(),
+            phone_number: dto.technicalContact.phone_number.trim(),
+            designation: dto.technicalContact.designation.trim(),
+          },
+          marketingContact: {
+            name: dto.marketingContact.name.trim(),
+            email_id: dto.marketingContact.email_id.trim().toLowerCase(),
+            phone_number: dto.marketingContact.phone_number.trim(),
+            designation: dto.marketingContact.designation.trim(),
+          },
+        } as Partial<Manufacturer>,
+        session,
+      );
+      await session.commitTransaction();
+      const updated = await this.findById(resolvedManufacturer._id.toString());
+      if (!updated) {
+        throw new NotFoundException('Manufacturer not found');
+      }
+      return {
+        technicalContact: this.mapVendorContactSlot(updated.technicalContact),
+        marketingContact: this.mapVendorContactSlot(updated.marketingContact),
+      };
     } catch (error) {
       await session.abortTransaction();
       throw error;

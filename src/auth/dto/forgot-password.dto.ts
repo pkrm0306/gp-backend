@@ -10,7 +10,7 @@ export class ForgotPasswordDto {
   @ApiPropertyOptional({
     enum: ['admin', 'vendor'],
     description:
-      'When **admin**, unknown emails return **Email id is not registered** instead of a generic message.',
+      'When **admin**, unknown emails return **400** **Email id is not registered**. For **vendor** (or inferred non-admin), unknown emails return **400** **User not registered**.',
   })
   @IsOptional()
   @IsString()

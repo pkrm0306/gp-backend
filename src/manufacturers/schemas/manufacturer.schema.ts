@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import {
+  VendorContactSlot,
+  VendorContactSlotSchema,
+} from './vendor-contact-slot.schema';
 
 export type ManufacturerDocument = Manufacturer & Document;
 
@@ -35,11 +39,33 @@ export class Manufacturer {
   @Prop()
   vendor_gst?: string;
 
+  /** GST certificate / document (PDF), stored as public URL path under /uploads/... */
+  @Prop()
+  vendorGstPdf?: string;
+
   @Prop({ default: 0 })
   vendor_status: number;
 
+  /** Headcount / scale band collected at vendor self-registration (e.g. "1-10", "11-50"). */
+  @Prop()
+  companySize?: string;
+
   @Prop()
   manufacturerImage?: string;
+
+  /** Company logo image URL path (e.g. /uploads/manufacturers/...). */
+  @Prop()
+  companyLogo?: string;
+
+  /** PAN card document (PDF or JPEG), public URL path. */
+  @Prop()
+  vendorPanDocument?: string;
+
+  @Prop({ type: VendorContactSlotSchema })
+  technicalContact?: VendorContactSlot;
+
+  @Prop({ type: VendorContactSlotSchema })
+  marketingContact?: VendorContactSlot;
 
   createdAt?: Date;
   updatedAt?: Date;

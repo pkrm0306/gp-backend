@@ -373,7 +373,8 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit profile (unique GST + phone)',
     description:
-      'Edits the logged-in vendor profile. Blocks the update if GST number or phone number already exists for another vendor.',
+      'Edits the logged-in vendor profile on the linked manufacturer. Blocks the update if GST number or phone already exists for another vendor. ' +
+      '**gst** = GST certificate PDF URL path (or `https://…`); **gstNumber** = GSTIN; **companyLogo** = logo image URL; **pan** = PAN card document URL (**PDF** or **JPEG** file). Legacy: plain GSTIN may still be sent in **gst**.',
   })
   @ApiBody({ type: UpdateProfileDto })
   @ApiResponse({ status: 200, description: 'Profile updated successfully' })

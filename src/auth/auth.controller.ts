@@ -59,7 +59,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Login user',
     description:
-      'Requires a **body**. For the **admin portal**, send **`portal`: `"admin"`** (recommended) so unknown emails return **Email id is not registered** instead of generic invalid credentials. ' +
+      'Requires a **body**. Unknown emails return **401** with **Email not registered** (not generic invalid credentials). For the **admin portal**, send **`portal`: `"admin"`** (recommended) for correct portal/type checks. ' +
       'If the API runs on a different port than the SPA, also send header **`x-admin-portal`: `1`** when `Origin` may not identify the admin app. ' +
       'Success responses for admin/staff include **designation**, **mobile**, **vendorUserId** on **`user`**.',
   })
@@ -148,7 +148,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Request password reset',
     description:
-      'Prefer **`portal`: `"admin"`** or **`x-admin-portal`: `1`**. Without them, the API infers admin from **Referer** (`/admin` path) or **Origin** host **`greenpro-portals.vercel.app`**. Unknown emails → **Email id is not registered**; staff without RBAC or wrong account type → **Portal access restricted**.',
+      'Prefer **`portal`: `"admin"`** or **`x-admin-portal`: `1`**. Without them, the API infers admin from **Referer** (`/admin` path) or **Origin** host **`greenpro-portals.vercel.app`**. Unknown email: admin → **400** **Email id is not registered**; vendor/other → **400** **User not registered**. Staff without RBAC or wrong account type → **Portal access restricted**.',
   })
   async forgotPassword(
     @Body() forgotPasswordDto: ForgotPasswordDto,
