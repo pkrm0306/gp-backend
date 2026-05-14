@@ -90,4 +90,14 @@ export class ListManufacturersQueryDto {
   @IsOptional()
   @IsEnum(['asc', 'desc'])
   order?: 'asc' | 'desc' = 'desc';
+
+  @ApiPropertyOptional({
+    description:
+      'Only for `GET /api/manufacturers/export`: `csv` (default) or `xlsx` spreadsheet with Initial and Status columns aligned to the admin listing.',
+    enum: ['csv', 'xlsx'],
+    default: 'csv',
+  })
+  @IsOptional()
+  @IsEnum(['csv', 'xlsx'])
+  format?: 'csv' | 'xlsx';
 }

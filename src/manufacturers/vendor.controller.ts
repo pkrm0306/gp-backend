@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Patch,
   Post,
+  Req,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
@@ -26,6 +27,7 @@ import { UpdateProfileDto } from './dto/update-manufacturer-profile.dto';
 import { UpdateVendorContactsDto } from './dto/update-vendor-contacts.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { vendorProfileBrandingMemoryMulterOptions } from './vendor-profile-upload.config';
+import type { Request } from 'express';
 
 @ApiTags('Vendor')
 @Controller('api/vendor')
@@ -40,18 +42,20 @@ export class VendorController {
     FileFieldsInterceptor(
       [
         { name: 'gst', maxCount: 1 },
+        { name: 'gstDocument', maxCount: 1 },
         { name: 'companyLogo', maxCount: 1 },
         { name: 'pan', maxCount: 1 },
+        { name: 'panDocument', maxCount: 1 },
       ],
       vendorProfileBrandingMemoryMulterOptions(),
     ),
   )
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
-    summary: 'Upload GST certificate (PDF) and/or company logo (image)',
+    summary: 'Upload GST certificate and/or company logo',
     description:
-      'Multipart: **gst** = one PDF (GST certificate); **companyLogo** = one image (jpeg/png/gif/webp); **pan** = one PDF or JPEG (PAN card). ' +
-      'At least one file is required. Files are stored via the shared **uploadFile** helper (local `uploads/manufacturers/` or S3 when configured).',
+      'Multipart: **gst** or **gstDocument** = one **PDF or JPEG** (GST certificate); **companyLogo** = one image (jpeg/png/gif/webp); **pan** or **panDocument** = one **PDF or JPEG** (PAN card scan). ' +
+      'At least one file is required. Files are stored only through the shared **uploadFile()** helper in `src/utils/upload-file.util.ts` (local `uploads/manufacturers/` or S3 when configured).',
   })
   @ApiResponse({
     status: 200,
@@ -67,8 +71,10 @@ export class VendorController {
     @UploadedFiles()
     files?: {
       gst?: Express.Multer.File[];
+      gstDocument?: Express.Multer.File[];
       companyLogo?: Express.Multer.File[];
       pan?: Express.Multer.File[];
+      panDocument?: Express.Multer.File[];
     },
   ) {
     const data = await this.manufacturersService.uploadVendorProfileBranding(
@@ -83,7 +89,7 @@ export class VendorController {
     summary: 'Get vendor details from manufacturer table (auth user based)',
     description:
       'Uses logged-in user id from JWT, resolves manufacturer mapping via vendor-users, and returns vendor details from manufacturer record. ' +
-      'Includes **gstPdf**, **companyLogo**, and **pan** (PAN document URL) when set.',
+      'Includes **gstPdf**, **companyLogo**, **pan** (PAN document URL), and **panNumber** (PAN id text) when set.',
   })
   @ApiResponse({
     status: 200,
@@ -98,13 +104,27 @@ export class VendorController {
 
   @Patch('profile')
   @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'gst', maxCount: 1 },
+        { name: 'gstDocument', maxCount: 1 },
+        { name: 'companyLogo', maxCount: 1 },
+        { name: 'pan', maxCount: 1 },
+        { name: 'panDocument', maxCount: 1 },
+      ],
+      vendorProfileBrandingMemoryMulterOptions(),
+    ),
+  )
+  @ApiConsumes('application/json', 'multipart/form-data')
   @ApiOperation({
     summary: 'Update vendor profile (auth user based)',
     description:
       'Updates vendor/company fields on the linked **manufacturer** for the logged-in vendor user. ' +
-      '**gst**: GST certificate **PDF** as a URL path (e.g. `/uploads/manufacturers/vendor-gst-….pdf`) or `https://…`; plain GSTIN without a URL shape should go in **gstNumber** (or legacy: send GSTIN in **gst**). ' +
-      '**companyLogo**: company logo **image** URL path. **pan**: PAN card document URL path (**PDF** or **JPEG** only). ' +
-      'Alternatively use **POST /api/vendor/profile/upload** with multipart files **gst** (PDF), **companyLogo** (image), and/or **pan** (PDF/JPEG); uploads use the shared **uploadFile** pipeline (S3 or local).',
+      'Send **application/json** with URL fields, or **multipart/form-data** with the same text fields plus optional files. ' +
+      'File fields: **gst** or **gstDocument** (**PDF or JPEG only**), **companyLogo** (image), **pan** or **panDocument** (**PDF or JPEG only**). If the form sends both **pan** and **panDocument**, use **panDocument** for the real file (an empty **pan** slot is ignored when **panDocument** has content). Uploaded files use the shared **uploadFile()** helper in `src/utils/upload-file.util.ts` (local or S3). ' +
+      '**gst** (JSON): GST certificate document URL path or `https://…`; use **gstNumber** for GST id text. ' +
+      'Alternatively use **POST /api/vendor/profile/upload** for file-only updates.',
   })
   @ApiBody({ type: UpdateProfileDto })
   @ApiResponse({
@@ -112,16 +132,32 @@ export class VendorController {
     description: 'Vendor profile updated successfully',
   })
   async updateVendorProfile(
-    @CurrentUser() user: {
+    @CurrentUser()
+    user: {
       userId: string;
       manufacturerId?: string;
       vendorId?: string;
     },
+    @Req() req: Request,
     @Body() updateDto: UpdateProfileDto,
+    @UploadedFiles()
+    files?: {
+      gst?: Express.Multer.File[];
+      gstDocument?: Express.Multer.File[];
+      companyLogo?: Express.Multer.File[];
+      pan?: Express.Multer.File[];
+      panDocument?: Express.Multer.File[];
+    },
   ) {
-    const data = await this.manufacturersService.editProfile(
+    const raw =
+      typeof req.body === 'object' && req.body !== null && !Array.isArray(req.body)
+        ? (req.body as Record<string, unknown>)
+        : undefined;
+    const data = await this.manufacturersService.editProfileWithOptionalBrandingFiles(
       user,
       updateDto,
+      files,
+      raw,
     );
     return { message: 'Vendor profile updated successfully', data };
   }

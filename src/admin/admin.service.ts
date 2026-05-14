@@ -50,6 +50,7 @@ import * as bcrypt from 'bcryptjs';
 import { RbacService } from '../rbac/rbac.service';
 import { RedisService } from '../common/redis/redis.service';
 import { CategoriesService } from '../categories/categories.service';
+import { ManufacturerIdGenerationService } from '../manufacturers/manufacturer-id-generation.service';
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -121,6 +122,7 @@ export class AdminService {
     private readonly rbacService: RbacService,
     private readonly redisService: RedisService,
     private readonly categoriesService: CategoriesService,
+    private readonly manufacturerIdGeneration: ManufacturerIdGenerationService,
   ) {}
 
   private teamMemberCategoryArrays(m: {
@@ -2595,28 +2597,111 @@ export class AdminService {
   ) {
     try {
       const manufacturerId = new Types.ObjectId(id);
-      const updateData: any = {
-        manufacturerName: updateDto.manufacturerName,
-        gpInternalId: updateDto.gpInternalId,
-        manufacturerInitial: updateDto.manufacturerInitial,
-        updatedAt: new Date(),
-      };
+      return await this.manufacturerIdGeneration.withTransaction(
+        async (session) => {
+          const existing = await this.manufacturerModel
+            .findById(manufacturerId)
+            .session(session)
+            .exec();
+          if (!existing) {
+            throw new NotFoundException('Manufacturer not found');
+          }
 
-      if (imagePath) {
-        updateData.manufacturerImage = imagePath;
-      }
+          const isUnverified = (existing.manufacturerStatus ?? 0) !== 1;
+          const updateData: Record<string, unknown> = {
+            manufacturerName: updateDto.manufacturerName,
+            updatedAt: new Date(),
+          };
+          if (imagePath) {
+            updateData.manufacturerImage = imagePath;
+          }
 
-      const manufacturer = await this.manufacturerModel
-        .findByIdAndUpdate(manufacturerId, updateData, { new: true })
-        .exec();
+          if (isUnverified) {
+            const auto =
+              await this.manufacturerIdGeneration.resolveAutoIdentifiersForUnverified(
+                updateDto.manufacturerName,
+                existing._id,
+                {
+                  manufacturerName: existing.manufacturerName,
+                  manufacturerInitial: existing.manufacturerInitial,
+                  gpInternalId: existing.gpInternalId,
+                },
+                session,
+              );
+            updateData.manufacturerInitial = auto.manufacturerInitial;
+            updateData.gpInternalId = auto.gpInternalId;
+          } else {
+            const rawGp =
+              updateDto.gpInternalId !== undefined
+                ? String(updateDto.gpInternalId).trim()
+                : '';
+            const rawIni =
+              updateDto.manufacturerInitial !== undefined
+                ? String(updateDto.manufacturerInitial).trim()
+                : '';
+            if (rawGp) {
+              updateData.gpInternalId = rawGp.toUpperCase();
+            }
+            if (rawIni) {
+              updateData.manufacturerInitial = rawIni.toUpperCase();
+            }
+          }
 
-      if (!manufacturer) {
-        throw new NotFoundException('Manufacturer not found');
-      }
+          if (updateData.manufacturerInitial !== undefined) {
+            const dupInitial = await this.manufacturerModel
+              .findOne({
+                manufacturerInitial: updateData.manufacturerInitial,
+                _id: { $ne: existing._id },
+              })
+              .session(session)
+              .select('_id')
+              .lean()
+              .exec();
+            if (dupInitial) {
+              throw new ConflictException(
+                'manufacturerInitial already exists on another manufacturer',
+              );
+            }
+          }
+          if (updateData.gpInternalId !== undefined) {
+            const dupGp = await this.manufacturerModel
+              .findOne({
+                gpInternalId: updateData.gpInternalId,
+                _id: { $ne: existing._id },
+              })
+              .session(session)
+              .select('_id')
+              .lean()
+              .exec();
+            if (dupGp) {
+              throw new ConflictException(
+                'gpInternalId already exists on another manufacturer',
+              );
+            }
+          }
 
-      return manufacturer;
+          const manufacturer = await this.manufacturerModel
+            .findByIdAndUpdate(manufacturerId, updateData, {
+              new: true,
+              session,
+            })
+            .exec();
+          if (!manufacturer) {
+            throw new NotFoundException('Manufacturer not found');
+          }
+          return manufacturer;
+        },
+      );
     } catch (error: any) {
-      if (error instanceof NotFoundException) {
+      if (error?.code === 11000) {
+        throw new ConflictException(
+          'Duplicate manufacturer identifier (initial or internal id)',
+        );
+      }
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
         throw error;
       }
       if (error.name === 'CastError') {

@@ -49,7 +49,11 @@ export class AuthController {
 
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify email with OTP' })
+  @ApiOperation({
+    summary: 'Verify email with OTP',
+    description:
+      'On success, returns **gpInternalId** and **manufacturerInitial** from the linked manufacturer when set (otherwise **null**). Vendor profile GET also exposes these only after the account email is verified.',
+  })
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
     return this.authService.verifyOtp(verifyOtpDto);
   }

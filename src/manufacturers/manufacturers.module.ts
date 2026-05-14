@@ -7,6 +7,11 @@ import {
   ManufacturerSchema,
 } from './schemas/manufacturer.schema';
 import {
+  ManufacturerInternalIdCounter,
+  ManufacturerInternalIdCounterSchema,
+} from './schemas/manufacturer-internal-id-counter.schema';
+import { ManufacturerIdGenerationService } from './manufacturer-id-generation.service';
+import {
   Product,
   ProductSchema,
 } from '../product-registration/schemas/product.schema';
@@ -24,6 +29,10 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
   imports: [
     MongooseModule.forFeature([
       { name: Manufacturer.name, schema: ManufacturerSchema },
+      {
+        name: ManufacturerInternalIdCounter.name,
+        schema: ManufacturerInternalIdCounterSchema,
+      },
       { name: Product.name, schema: ProductSchema },
       { name: VendorUser.name, schema: VendorUserSchema },
     ]),
@@ -35,7 +44,7 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
     VendorController,
     AdminManufacturerActionsController,
   ],
-  providers: [ManufacturersService, PermissionsGuard],
-  exports: [ManufacturersService],
+  providers: [ManufacturersService, ManufacturerIdGenerationService, PermissionsGuard],
+  exports: [ManufacturersService, ManufacturerIdGenerationService],
 })
 export class ManufacturersModule {}

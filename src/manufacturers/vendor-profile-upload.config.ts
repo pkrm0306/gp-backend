@@ -1,9 +1,16 @@
+import { BadRequestException } from '@nestjs/common';
 import { memoryStorage } from 'multer';
 import { Options } from 'multer';
 
 const MAX_BYTES = 15 * 1024 * 1024;
 
-const GST_MIMES = new Set(['application/pdf']);
+/** GST certificate and PAN document: **PDF or JPEG only** (by MIME and/or file extension). */
+const GST_OR_PAN_MIMES = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/pjpeg',
+]);
 const LOGO_MIMES = new Set([
   'image/jpeg',
   'image/jpg',
@@ -11,56 +18,77 @@ const LOGO_MIMES = new Set([
   'image/gif',
   'image/webp',
 ]);
-/** PAN card: PDF or JPEG only */
-const PAN_MIMES = new Set([
-  'application/pdf',
-  'image/jpeg',
-  'image/jpg',
-]);
+
+function originalNameLooksPdfOrJpeg(
+  originalname: string | undefined,
+): boolean {
+  const n = String(originalname ?? '').toLowerCase();
+  return /\.(pdf|jpe?g)$/i.test(n);
+}
+
+function isGstOrPanPdfOrJpeg(
+  file: Pick<Express.Multer.File, 'mimetype' | 'originalname'>,
+): boolean {
+  const m = String(file.mimetype ?? '').toLowerCase();
+  if (GST_OR_PAN_MIMES.has(m)) {
+    return true;
+  }
+  if (
+    m === 'application/octet-stream' ||
+    m === 'binary/octet-stream' ||
+    m === ''
+  ) {
+    return originalNameLooksPdfOrJpeg(file.originalname);
+  }
+  return false;
+}
 
 /**
- * Memory storage so files can be passed to shared {@link uploadFile} (S3 or local).
- * Fields: **gst** (PDF), **companyLogo** (image), **pan** (PDF or JPEG).
+ * Memory storage so buffers are passed to shared **uploadFile()** in `upload-file.util.ts` (S3 or local).
+ * Fields: **gst** / **gstDocument** (PDF or JPEG only), **companyLogo** (images), **pan** / **panDocument** (PDF or JPEG only).
  */
 export function vendorProfileBrandingMemoryMulterOptions(): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: MAX_BYTES },
     fileFilter: (_req, file, cb) => {
-      const done = cb as (err: Error | null, accept?: boolean) => void;
-      if (file.fieldname === 'gst') {
-        if (GST_MIMES.has(file.mimetype)) {
-          done(null, true);
+      if (file.fieldname === 'gst' || file.fieldname === 'gstDocument') {
+        if (isGstOrPanPdfOrJpeg(file)) {
+          cb(null, true);
         } else {
-          done(new Error('GST upload must be a PDF file'), false);
+          cb(
+            new BadRequestException(
+              'GST certificate must be a PDF or JPEG file (.pdf, .jpg, .jpeg).',
+            ),
+          );
         }
         return;
       }
       if (file.fieldname === 'companyLogo') {
         if (LOGO_MIMES.has(file.mimetype)) {
-          done(null, true);
+          cb(null, true);
         } else {
-          done(
-            new Error(
-              'Company logo must be an image (jpeg, png, gif, or webp)',
+          cb(
+            new BadRequestException(
+              'Company logo must be an image (jpeg, png, gif, or webp).',
             ),
-            false,
           );
         }
         return;
       }
-      if (file.fieldname === 'pan') {
-        if (PAN_MIMES.has(file.mimetype)) {
-          done(null, true);
+      if (file.fieldname === 'pan' || file.fieldname === 'panDocument') {
+        if (isGstOrPanPdfOrJpeg(file)) {
+          cb(null, true);
         } else {
-          done(
-            new Error('PAN document must be a PDF or JPEG file'),
-            false,
+          cb(
+            new BadRequestException(
+              'PAN document must be a PDF or JPEG file (.pdf, .jpg, .jpeg).',
+            ),
           );
         }
         return;
       }
-      done(new Error(`Unexpected file field: ${file.fieldname}`), false);
+      cb(new BadRequestException(`Unexpected file field: ${file.fieldname}`));
     },
   };
 }

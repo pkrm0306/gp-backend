@@ -228,6 +228,12 @@ export class AuthService {
         session,
       );
 
+      await this.manufacturersService.assignAutoGpIdentifiersForUnverifiedManufacturer(
+        manufacturer._id.toString(),
+        normalizedCompanyName,
+        session,
+      );
+
       const otp = '123456';
       await this.vendorUsersService.create(
         {
@@ -335,8 +341,24 @@ export class AuthService {
       throw new BadRequestException('Invalid OTP or email');
     }
 
+    const manufacturerId =
+      user.manufacturerId?.toString() || user.vendorId?.toString();
+    let gpInternalId: string | null = null;
+    let manufacturerInitial: string | null = null;
+    if (manufacturerId) {
+      const m = await this.manufacturersService.findById(manufacturerId);
+      if (m) {
+        const rawGp = String(m.gpInternalId ?? '').trim();
+        const rawIni = String(m.manufacturerInitial ?? '').trim();
+        gpInternalId = rawGp ? rawGp : null;
+        manufacturerInitial = rawIni ? rawIni : null;
+      }
+    }
+
     return {
       message: 'Email verified successfully',
+      gpInternalId,
+      manufacturerInitial,
     };
   }
 

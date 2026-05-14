@@ -2777,7 +2777,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Update manufacturer details',
     description:
-      'Updates manufacturer details including name, GP internal ID, and initial. Supports optional image upload.',
+      'Updates manufacturer display name (required). For **unverified** manufacturers, **gpInternalId** and **manufacturerInitial** are generated server-side from the name (multipart fields ignored if sent). For verified manufacturers, optional **gpInternalId** / **manufacturerInitial** may be supplied. Supports optional image upload.',
   })
   @ApiParam({ name: 'id', description: 'Manufacturer ID' })
   @ApiConsumes('multipart/form-data')
@@ -2792,12 +2792,14 @@ export class AdminController {
         gpInternalId: {
           type: 'string',
           description:
-            'GP Internal ID (format: 3-5 uppercase letters + "-" + 3 digits, e.g., GPSC-312)',
-          example: 'GPSC-312',
+            'Optional for verified manufacturers (e.g. GPGP-001 or legacy GPSC-312). Ignored when unverified (auto-generated).',
+          example: 'GPGP-001',
         },
         manufacturerInitial: {
           type: 'string',
-          description: 'Manufacturer initial',
+          description:
+            'Optional for verified (two letters). Ignored when unverified (auto-generated).',
+          example: 'GP',
         },
         manufacturer_image: {
           type: 'string',
@@ -2805,7 +2807,7 @@ export class AdminController {
           description: 'Manufacturer image (optional)',
         },
       },
-      required: ['manufacturerName', 'gpInternalId', 'manufacturerInitial'],
+      required: ['manufacturerName'],
     },
   })
   @ApiResponse({

@@ -36,12 +36,31 @@ export class RegisterVendorDto {
   @IsOptional()
   companyName?: string;
 
-  @ApiProperty()
-  @IsEmail()
+  @ApiProperty({ example: 'niharika@gmail.com' })
+  @Transform(({ value }) => {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    if (Array.isArray(value)) {
+      return String(value[0] ?? '').trim().toLowerCase();
+    }
+    return String(value).trim().toLowerCase();
+  })
+  @IsString()
   @IsNotEmpty()
+  @IsEmail({}, { message: 'email must be a valid email address' })
   email: string;
 
   @ApiProperty()
+  @Transform(({ value }) => {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    if (Array.isArray(value)) {
+      return String(value[0] ?? '').trim();
+    }
+    return String(value).trim();
+  })
   @IsString()
   @IsNotEmpty()
   phone: string;

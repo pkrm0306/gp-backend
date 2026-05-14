@@ -11,6 +11,7 @@ import {
   Patch,
   Put,
   Query,
+  StreamableFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
@@ -39,6 +40,31 @@ import { uploadFile } from '../utils/upload-file.util';
 @ApiBearerAuth()
 export class ManufacturersController {
   constructor(private readonly manufacturersService: ManufacturersService) {}
+
+  @Get('export')
+  @ApiOperation({
+    summary: 'Export manufacturers (CSV or Excel)',
+    description:
+      'Same filters and sort as the paginated list (search, manufacturerName, gpInternalId, manufacturerInitial, manufacturerStatus, vendor_status, sortBy, order). Omits pagination and returns every matching row. Optional `id` exports a single manufacturer. Use `format=xlsx` for an Excel workbook that includes **Initial** and **Status** (On/Off) like the admin grid; default `format=csv`.',
+  })
+  @ApiResponse({ status: 200, description: 'CSV or XLSX download' })
+  async exportFile(@Query() query: ListManufacturersQueryDto) {
+    const format = query.format ?? 'csv';
+    if (format === 'xlsx') {
+      const { buffer, fileName } =
+        await this.manufacturersService.buildXlsxExport(query);
+      return new StreamableFile(buffer, {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        disposition: `attachment; filename="${fileName}"`,
+      });
+    }
+    const csv = await this.manufacturersService.buildCsvExport(query);
+    const buf = Buffer.from(csv, 'utf-8');
+    return new StreamableFile(buf, {
+      type: 'text/csv; charset=utf-8',
+      disposition: 'attachment; filename="manufacturers-export.csv"',
+    });
+  }
 
   @Get()
   @ApiOperation({
@@ -79,17 +105,24 @@ export class ManufacturersController {
   @ApiOperation({
     summary: 'Update manufacturer',
     description:
-      'Updates required fields manufacturer_name, gp_internal_id, manufacturer_initial and optional vendor fields/image.',
+      'Updates manufacturer name (required). **gpInternalId** / **manufacturerInitial** are auto-generated while the manufacturer is **unverified**; optional for verified. Optional vendor fields and image.',
   })
   @ApiParam({ name: 'id', description: 'Manufacturer MongoDB id' })
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['manufacturerName', 'gpInternalId', 'manufacturerInitial'],
+      required: ['manufacturerName'],
       properties: {
         manufacturerName: { type: 'string' },
-        gpInternalId: { type: 'string', example: 'GPSC-312' },
-        manufacturerInitial: { type: 'string' },
+        gpInternalId: {
+          type: 'string',
+          description: 'Optional when verified; ignored when unverified (auto).',
+          example: 'GPGP-001',
+        },
+        manufacturerInitial: {
+          type: 'string',
+          description: 'Optional when verified; ignored when unverified (auto).',
+        },
         vendor_name: { type: 'string' },
         vendor_email: { type: 'string' },
         vendor_phone: { type: 'string' },

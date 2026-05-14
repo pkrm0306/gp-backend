@@ -39,6 +39,10 @@ export class Manufacturer {
   @Prop()
   vendor_gst?: string;
 
+  /** PAN card id (10 chars, e.g. ABCDE1234F). Separate from document URL in vendorPanDocument. */
+  @Prop()
+  vendorPan?: string;
+
   /** GST certificate / document (PDF), stored as public URL path under /uploads/... */
   @Prop()
   vendorGstPdf?: string;
@@ -57,7 +61,7 @@ export class Manufacturer {
   @Prop()
   companyLogo?: string;
 
-  /** PAN card document (PDF or JPEG), public URL path. */
+  /** PAN card document scan, public URL path (separate from PAN id in vendorPan). */
   @Prop()
   vendorPanDocument?: string;
 
