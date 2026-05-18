@@ -23,14 +23,18 @@ import { UpdateStandardMultipartDto } from './dto/update-standard-multipart.dto'
 import { UpdateStandardStatusDto } from './dto/update-standard-status.dto';
 import { RedisService } from '../common/redis/redis.service';
 import { CategoriesService } from '../categories/categories.service';
+import { SectorsService } from '../sectors/sectors.service';
 import {
   StandardCategory,
   StandardCategoryDocument,
 } from './schemas/standard-category.schema';
 import {
   hasExplicitCategoryIdFields,
-  mergeCategoryIdsFromFormObject,
 } from './utils/merge-category-ids.util';
+import {
+  hasExplicitSectorAssignmentFields,
+  mergeSectorIdsFromFormObject,
+} from './utils/merge-sector-ids-from-form.util';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -59,6 +63,7 @@ export class StandardsService implements OnModuleInit {
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
     private readonly categoriesService: CategoriesService,
+    private readonly sectorsService: SectorsService,
   ) {}
 
   private getStandardListCacheTtlSeconds(): number {
@@ -80,6 +85,7 @@ export class StandardsService implements OnModuleInit {
         .trim()
         .toLowerCase(),
       category_id: query.category_id ?? null,
+      sector: query.sector ?? null,
       status: query.status ?? null,
       sortBy: query.sortBy ?? 'id',
       order: query.order === 'desc' ? 'desc' : 'asc',
@@ -170,6 +176,78 @@ export class StandardsService implements OnModuleInit {
     return this.categoriesService.resolveNumericCategoryKey(param);
   }
 
+  /** Path `sectorId` must be a positive integer sector `id` (GET /api/sectors). */
+  parseStandardSectorPathParam(param: string): number {
+    const n = parseInt(String(param ?? '').trim(), 10);
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+      throw new BadRequestException('Invalid sector id');
+    }
+    return n;
+  }
+
+  private async categoryIdsForSectorsOrThrow(
+    sectorIds: number[],
+  ): Promise<number[]> {
+    const uniqueSectorOrder: number[] = [];
+    const seenSectors = new Set<number>();
+    for (const sid of sectorIds) {
+      if (!Number.isInteger(sid) || sid < 1) continue;
+      if (seenSectors.has(sid)) continue;
+      seenSectors.add(sid);
+      uniqueSectorOrder.push(sid);
+    }
+    if (!uniqueSectorOrder.length) {
+      throw new BadRequestException(
+        'At least one valid sector id is required (GET /api/sectors).',
+      );
+    }
+    const categoryOut: number[] = [];
+    const seenCategories = new Set<number>();
+    for (const sectorId of uniqueSectorOrder) {
+      await this.sectorsService.assertSectorExists(sectorId);
+      const ids =
+        await this.categoriesService.listNumericCategoryIdsBySector(sectorId);
+      if (!ids.length) {
+        throw new BadRequestException(
+          `No categories exist for sector ${sectorId}; create categories under that sector first.`,
+        );
+      }
+      for (const cid of ids) {
+        if (seenCategories.has(cid)) continue;
+        seenCategories.add(cid);
+        categoryOut.push(cid);
+      }
+    }
+    return categoryOut;
+  }
+
+  private mergedSectorIdsFromCreateOrUpdate(
+    dto: CreateStandardMultipartDto | UpdateStandardMultipartDto,
+    raw?: Record<string, unknown>,
+  ): number[] {
+    return mergeSectorIdsFromFormObject({
+      ...(dto as object),
+      ...(raw ?? {}),
+    });
+  }
+
+  private explicitSectorAssignmentInUpdate(
+    dto: UpdateStandardMultipartDto,
+    raw?: Record<string, unknown>,
+  ): boolean {
+    if (hasExplicitSectorAssignmentFields(raw)) {
+      return true;
+    }
+    const d = dto as Record<string, unknown>;
+    if (d.sectors !== undefined && d.sectors !== null) {
+      return true;
+    }
+    if (d.sector !== undefined && d.sector !== null && d.sector !== '') {
+      return true;
+    }
+    return false;
+  }
+
   private async buildListFilter(
     query: ListStandardsQueryDto,
   ): Promise<Record<string, unknown>> {
@@ -209,6 +287,32 @@ export class StandardsService implements OnModuleInit {
       parts.push({
         $or: [{ category_id: cid }, { id: { $in: linkedIds } }],
       });
+    }
+    if (
+      query.sector !== undefined &&
+      Number.isInteger(query.sector) &&
+      query.sector >= 1
+    ) {
+      const catIds =
+        await this.categoriesService.listNumericCategoryIdsBySector(
+          query.sector,
+        );
+      if (!catIds.length) {
+        parts.push({ id: { $in: [] as number[] } });
+      } else {
+        const linked = await this.standardCategoryModel
+          .distinct('standard_id', { category_id: { $in: catIds } })
+          .exec();
+        const linkedIds = (linked ?? []).filter(
+          (x): x is number => typeof x === 'number' && Number.isInteger(x),
+        );
+        parts.push({
+          $or: [
+            { category_id: { $in: catIds } },
+            { id: { $in: linkedIds } },
+          ],
+        });
+      }
     }
 
     if (parts.length === 0) {
@@ -297,6 +401,10 @@ export class StandardsService implements OnModuleInit {
         categories: { id: number; name: string }[];
         category_id: number | null;
         category_name: string | null;
+        /** Primary category's sector id (GET /api/sectors `id`) for admin sector dropdown. */
+        sector_id: number | null;
+        sector_ids: number[];
+        sector_name: string | null;
       }
     >
   > {
@@ -313,6 +421,21 @@ export class StandardsService implements OnModuleInit {
     const nameMap = await this.categoriesService.getCategoryNamesByNumericIds([
       ...allCatIds,
     ]);
+    const catToSector =
+      await this.categoriesService.getCategorySectorsByNumericIds([
+        ...allCatIds,
+      ]);
+    const allSectorIds = new Set<number>();
+    for (const cid of allCatIds) {
+      const s = catToSector.get(cid);
+      if (typeof s === 'number' && Number.isInteger(s) && s >= 1) {
+        allSectorIds.add(s);
+      }
+    }
+    const sectorNameMap = await this.sectorsService.getSectorNamesByNumericIds([
+      ...allSectorIds,
+    ]);
+
     return docs.map((d) => {
       const category_ids = this.effectiveCategoryIdsForDoc(d, map);
       const categories = category_ids.map((id) => ({
@@ -320,12 +443,32 @@ export class StandardsService implements OnModuleInit {
         name: nameMap.get(id) ?? '',
       }));
       const primary = category_ids[0] ?? null;
+      const docSectorIds = new Set<number>();
+      for (const cid of category_ids) {
+        const s = catToSector.get(cid);
+        if (typeof s === 'number' && Number.isInteger(s) && s >= 1) {
+          docSectorIds.add(s);
+        }
+      }
+      const sector_ids = [...docSectorIds].sort((a, b) => a - b);
+      let sector_id: number | null = null;
+      let sector_name: string | null = null;
+      if (primary !== null) {
+        const sid = catToSector.get(primary);
+        if (typeof sid === 'number' && Number.isInteger(sid) && sid >= 1) {
+          sector_id = sid;
+          sector_name = sectorNameMap.get(sid) ?? null;
+        }
+      }
       return {
         ...d,
         category_ids,
         categories,
         category_id: primary,
         category_name: primary !== null ? nameMap.get(primary) ?? null : null,
+        sector_id,
+        sector_ids,
+        sector_name,
       };
     });
   }
@@ -435,6 +578,16 @@ export class StandardsService implements OnModuleInit {
     return response;
   }
 
+  /** List standards scoped to a sector (path); validates sector id exists. */
+  async findAllPaginatedForSectorPath(
+    sectorIdParam: string,
+    query: ListStandardsQueryDto,
+  ) {
+    const sid = this.parseStandardSectorPathParam(sectorIdParam);
+    await this.sectorsService.assertSectorExists(sid);
+    return this.findAllPaginated({ ...query, sector: sid });
+  }
+
   async findOneById(id: number) {
     const doc = await this.standardModel.findOne({ id }).lean().exec();
     if (!doc) {
@@ -484,19 +637,25 @@ export class StandardsService implements OnModuleInit {
         'File is required (field name: file). Allowed: PDF, JPG, PNG. Max 10MB.',
       );
     }
+    if (hasExplicitCategoryIdFields(rawBody)) {
+      throw new BadRequestException(
+        'Category fields are no longer accepted. Send **sector** only (numeric id from GET /api/sectors).',
+      );
+    }
     const upload = await uploadFile(file, 'standards');
     const now = new Date();
     const numericId = await this.nextStandardId();
 
-    const merged = mergeCategoryIdsFromFormObject({
-      ...(dto as object),
-      ...(rawBody ?? {}),
-    });
-    if (merged.length === 0) {
+    const mergedSectors = this.mergedSectorIdsFromCreateOrUpdate(
+      dto,
+      rawBody,
+    );
+    if (!mergedSectors.length) {
       throw new BadRequestException(
-        'At least one category is required (category_id, category_ids[], or categoryIds).',
+        'Select at least one **sector** (multiselect): send **sectors** as a JSON array (e.g. [1,2]), repeated **sectors** / **sectors[]**, or **sector_ids** — numeric ids from GET /api/sectors. Legacy single **sector** is also accepted.',
       );
     }
+    const merged = await this.categoryIdsForSectorsOrThrow(mergedSectors);
     await this.categoriesService.assertNumericCategoriesExist(merged);
     const primary = merged[0]!;
 
@@ -535,11 +694,14 @@ export class StandardsService implements OnModuleInit {
       throw new NotFoundException('Standard not found');
     }
 
-    const explicitCategories = hasExplicitCategoryIdFields(rawBody);
-    const mergedCategories = mergeCategoryIdsFromFormObject({
-      ...(dto as object),
-      ...(rawBody ?? {}),
-    });
+    if (hasExplicitCategoryIdFields(rawBody)) {
+      throw new BadRequestException(
+        'Category fields are no longer accepted. Send **sector** only (numeric id from GET /api/sectors).',
+      );
+    }
+
+    const explicitSector = this.explicitSectorAssignmentInUpdate(dto, rawBody);
+    const mergedSectors = this.mergedSectorIdsFromCreateOrUpdate(dto, rawBody);
 
     const hasText =
       (dto.name !== undefined && dto.name.trim() !== '') ||
@@ -547,7 +709,7 @@ export class StandardsService implements OnModuleInit {
       (dto.resource_standard_type !== undefined &&
         dto.resource_standard_type.trim() !== '') ||
       dto.status !== undefined ||
-      explicitCategories;
+      explicitSector;
     if (!hasText && !file) {
       throw new BadRequestException('No fields to update');
     }
@@ -570,14 +732,17 @@ export class StandardsService implements OnModuleInit {
       set.status = dto.status;
     }
 
-    if (explicitCategories) {
-      if (mergedCategories.length === 0) {
+    let mergedForCategories: number[] | null = null;
+    if (explicitSector) {
+      if (!mergedSectors.length) {
         throw new BadRequestException(
-          'At least one category is required when updating categories.',
+          'When updating sector assignment, send at least one sector id (**sectors** multiselect or legacy **sector**).',
         );
       }
-      await this.categoriesService.assertNumericCategoriesExist(mergedCategories);
-      set.category_id = mergedCategories[0];
+      mergedForCategories =
+        await this.categoryIdsForSectorsOrThrow(mergedSectors);
+      await this.categoriesService.assertNumericCategoriesExist(mergedForCategories);
+      set.category_id = mergedForCategories[0];
     }
 
     if (file) {
@@ -597,8 +762,8 @@ export class StandardsService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException('Standard not found');
     }
-    if (explicitCategories) {
-      await this.replaceStandardCategories(id, mergedCategories);
+    if (mergedForCategories) {
+      await this.replaceStandardCategories(id, mergedForCategories);
     }
     const response = this.ensureDescriptionField(this.enrichStandardFileUrl(updated));
     await this.invalidateStandardListCache();
@@ -656,6 +821,20 @@ export class StandardsService implements OnModuleInit {
     const nameMap = await this.categoriesService.getCategoryNamesByNumericIds([
       ...allIds,
     ]);
+    const catToSector =
+      await this.categoriesService.getCategorySectorsByNumericIds([
+        ...allIds,
+      ]);
+    const allSectorIds = new Set<number>();
+    for (const cid of allIds) {
+      const s = catToSector.get(cid);
+      if (typeof s === 'number' && Number.isInteger(s) && s >= 1) {
+        allSectorIds.add(s);
+      }
+    }
+    const sectorNameMap = await this.sectorsService.getSectorNamesByNumericIds([
+      ...allSectorIds,
+    ]);
 
     const header = [
       'id',
@@ -663,6 +842,8 @@ export class StandardsService implements OnModuleInit {
       'category_names',
       'category_id',
       'category_name',
+      'sector_id',
+      'sector_name',
       'name',
       'description',
       'filename',
@@ -682,12 +863,23 @@ export class StandardsService implements OnModuleInit {
         const cnames = cids.map((id) => nameMap.get(id) ?? '').join('; ');
         const primary = cids[0] ?? null;
         const primaryName = primary !== null ? nameMap.get(primary) ?? '' : '';
+        let sectorIdVal: number | string = '';
+        let sectorNameVal = '';
+        if (primary !== null) {
+          const sid = catToSector.get(primary);
+          if (typeof sid === 'number' && Number.isInteger(sid) && sid >= 1) {
+            sectorIdVal = sid;
+            sectorNameVal = sectorNameMap.get(sid) ?? '';
+          }
+        }
         return [
           e.id,
           cids.join(';'),
           cnames,
           primary ?? '',
           primaryName,
+          sectorIdVal,
+          sectorNameVal,
           e.name,
           e.description ?? '',
           e.filename,

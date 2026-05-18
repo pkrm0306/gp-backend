@@ -10,7 +10,19 @@ export const TEAM_MEMBER_TEAMS = [
 ] as const;
 export type TeamMemberTeam = (typeof TEAM_MEMBER_TEAMS)[number];
 
-@Schema({ collection: 'users', timestamps: true })
+/**
+ * Vendor portal accounts (vendor / partner / admin / staff).
+ *
+ * **Collection name:** legacy data lives in **`users`** (not the Mongoose default
+ * `vendorusers`). Override with env **`VENDOR_USERS_MONGO_COLLECTION`** if your DB uses a
+ * different collection.
+ */
+const vendorUsersCollectionName =
+  (typeof process !== 'undefined' &&
+    String(process.env.VENDOR_USERS_MONGO_COLLECTION || '').trim()) ||
+  'users';
+
+@Schema({ collection: vendorUsersCollectionName, timestamps: true })
 export class VendorUser {
   @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: true })
   manufacturerId: Types.ObjectId;
@@ -49,11 +61,22 @@ export class VendorUser {
   @Prop({ required: false, enum: TEAM_MEMBER_TEAMS })
   team?: TeamMemberTeam;
 
-  /** Product category ids (GET /categories `category_id`); full set for this team member. */
+  /**
+   * Sector ids (GET /api/sectors numeric `id`); admin multiselect — what the user picks.
+   * Replaces legacy **category_ids** for team-member forms.
+   */
+  @Prop({ type: [Number], default: [] })
+  sector_ids?: number[];
+
+  /** Legacy primary sector (first entry of sector_ids when set). */
+  @Prop({ required: false })
+  sector_id?: number;
+
+  /** @deprecated Use **sector_ids**. Kept for legacy queries / migration. */
   @Prop({ type: [Number], default: [] })
   category_ids?: number[];
 
-  /** Legacy primary category (first entry of category_ids when set). */
+  /** @deprecated Use **sector_id**. */
   @Prop({ required: false })
   category_id?: number;
 

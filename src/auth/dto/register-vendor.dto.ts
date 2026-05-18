@@ -32,6 +32,7 @@ export class RegisterVendorDto {
   companySize: string;
 
   @ApiPropertyOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsOptional()
   companyName?: string;

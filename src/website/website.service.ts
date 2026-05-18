@@ -323,6 +323,7 @@ export class WebsiteService {
     const result = await this.productRegistrationService.adminListProducts({
       ...dto,
       status: [2],
+      groupBy: 'urn',
     });
     this.redisService
       .set(cacheKey, result, this.getWebsitePublicListCacheTtlSeconds())

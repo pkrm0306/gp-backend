@@ -28,6 +28,7 @@ import {
 import { StandardsService } from './standards.service';
 import { ListStandardsQueryDto } from './dto/list-standards-query.dto';
 import { ListStandardsByCategoryQueryDto } from './dto/list-standards-by-category-query.dto';
+import { ListStandardsBySectorQueryDto } from './dto/list-standards-by-sector-query.dto';
 import { CreateStandardMultipartDto } from './dto/create-standard-multipart.dto';
 import { UpdateStandardMultipartDto } from './dto/update-standard-multipart.dto';
 import { UpdateStandardStatusDto } from './dto/update-standard-status.dto';
@@ -42,11 +43,30 @@ export class StandardsController {
   @ApiOperation({
     summary: 'List standards (paginated)',
     description:
-      'Pagination, search on name, filter by resource_standard_type, **category_id** (matches legacy field or any linked category), and status, sort. Each row includes **category_ids**, **categories** `{ id, name }[]`, and legacy **category_id** / **category_name** for the primary (first) category.',
+      'Pagination, search on name, filter by resource_standard_type, **category_id** (legacy primary or any linked category), **sector** (numeric sector `id` from GET /api/sectors — any category in that sector), and status, sort. Each row includes **category_ids**, **categories** `{ id, name }[]`, legacy **category_id** / **category_name**, and **sector_id** / **sector_ids** / **sector_name** (from the primary category’s sector) for admin sector dropdowns.',
   })
   @ApiResponse({ status: 200, description: 'Paginated list' })
   async findAll(@Query() query: ListStandardsQueryDto) {
     return this.standardsService.findAllPaginated(query);
+  }
+
+  @Get('by-sector/:sectorId')
+  @ApiOperation({
+    summary: 'List standards for a sector (paginated)',
+    description:
+      'Same pagination and filters as GET /api/standards, except **do not pass sector** in the query — the sector is fixed by the path. **sectorId** is the numeric sector `id` from GET /api/sectors. Returns 400 if the sector does not exist.',
+  })
+  @ApiParam({
+    name: 'sectorId',
+    description: 'Numeric sector `id` from GET /api/sectors',
+  })
+  @ApiResponse({ status: 200, description: 'Paginated list' })
+  @ApiResponse({ status: 400, description: 'Invalid or unknown sector id' })
+  async findBySector(
+    @Param('sectorId') sectorId: string,
+    @Query() query: ListStandardsBySectorQueryDto,
+  ) {
+    return this.standardsService.findAllPaginatedForSectorPath(sectorId, query);
   }
 
   @Get('by-category/:categoryId')
@@ -81,7 +101,7 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Export standards as CSV',
     description:
-      'Applies search, resource_standard_type, **category_id**, and status filters (no pagination).',
+      'Applies search, resource_standard_type, **category_id**, **sector**, and status filters (no pagination).',
   })
   @ApiResponse({ status: 200, description: 'CSV download' })
   async exportCsv(@Query() query: ListStandardsQueryDto) {
@@ -97,7 +117,7 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Get standard by id',
     description:
-      'Response includes **category_ids**, **categories**, and legacy **category_id** / **category_name** (primary = first).',
+      'Response includes **category_ids**, **categories**, legacy **category_id** / **category_name**, and **sector_id** / **sector_ids** / **sector_name** (primary category’s sector).',
   })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiResponse({ status: 404, description: 'Not found' })
@@ -117,26 +137,41 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Create standard (file upload)',
     description:
-      'Form: at least one category via **category_id** (legacy), repeated **category_ids[]**, and/or **categoryIds** (JSON array string); name; description (optional); resource_standard_type; status (optional, default 1); file (required). PDF, JPG, or PNG, max 10MB. Primary **category_id** on the document is the first id in the submitted set.',
+      'Form: **sectors** (required, multiselect) — one or more numeric sector ids from GET /api/sectors (sector names for the admin dropdown come from that list). Send as JSON array string `[1,2]`, repeated **sectors** / **sectors[]**, **sector_ids**, or **sectorIds**; legacy single **sector** is merged in. The standard is linked to **all** categories in each selected sector (union, deduped). Do not send category_id / category_ids / categoryIds. name; description (optional); resource_standard_type; status (optional, default 1); file (required). PDF, JPG, or PNG, max 10MB. Primary **category_id** on the document is the first category id in the merged set.',
   })
   @ApiBody({
     schema: {
       type: 'object',
       required: ['name', 'resource_standard_type', 'file'],
       properties: {
-        category_id: {
-          oneOf: [{ type: 'integer' }, { type: 'string' }],
-          description: 'Legacy single category id from GET /categories',
-        },
-        category_ids: {
+        sectors: {
           oneOf: [
             { type: 'array', items: { type: 'integer' } },
-            { type: 'string', description: 'JSON array string' },
+            { type: 'string', description: 'JSON array of sector ids, e.g. "[1,2]"' },
+          ],
+          description:
+            'Multiselect: one or more sector ids from GET /api/sectors (required unless using sector / sectors[] / sector_ids)',
+        },
+        sector: {
+          oneOf: [{ type: 'integer' }, { type: 'string' }],
+          description: 'Legacy single sector id (merged with sectors)',
+        },
+        'sectors[]': {
+          oneOf: [
+            { type: 'array', items: { type: 'integer' } },
+            { type: 'string' },
+          ],
+          description: 'Repeated sector ids (multipart)',
+        },
+        sector_ids: {
+          oneOf: [
+            { type: 'array', items: { type: 'integer' } },
+            { type: 'string', description: 'JSON array or comma-separated ids' },
           ],
         },
-        categoryIds: {
+        sectorIds: {
           type: 'string',
-          description: 'JSON array string of numeric ids (admin UI)',
+          description: 'JSON array string of sector ids',
         },
         name: { type: 'string' },
         description: { type: 'string' },
@@ -175,24 +210,34 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Update standard',
     description:
-      'Optional fields: **category_id**, **category_ids[]**, **categoryIds** — when any category field is present, the full category set is replaced and at least one id is required. Omit all category fields to keep current categories. Other fields: name, description, resource_standard_type, status, file. At least one field or file required.',
+      'Optional **sectors** (multiselect) or legacy **sector** — when sent, replaces linked categories with the **union** of all categories across the selected sectors (GET /api/sectors). Category fields are not accepted. Other fields: name, description, resource_standard_type, status, file. At least one field or file required.',
   })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        category_id: {
-          oneOf: [{ type: 'integer' }, { type: 'string' }],
-          description: 'Legacy single category; merged with arrays when sent.',
+        sectors: {
+          oneOf: [
+            { type: 'array', items: { type: 'integer' } },
+            { type: 'string', description: 'JSON array string' },
+          ],
+          description: 'Multiselect sector ids; replaces category links when sent',
         },
-        category_ids: {
+        sector: {
+          oneOf: [{ type: 'integer' }, { type: 'string' }],
+          description: 'Single sector id (legacy); merged with sectors',
+        },
+        'sectors[]': {
+          oneOf: [{ type: 'array', items: { type: 'integer' } }, { type: 'string' }],
+        },
+        sector_ids: {
           oneOf: [
             { type: 'array', items: { type: 'integer' } },
             { type: 'string' },
           ],
         },
-        categoryIds: { type: 'string' },
+        sectorIds: { type: 'string' },
         name: { type: 'string' },
         description: { type: 'string' },
         resource_standard_type: { type: 'string' },

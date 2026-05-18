@@ -76,6 +76,16 @@ export class Product {
 
   @Prop({ required: true })
   updatedDate: Date;
+
+  /** Soft delete — excluded from active listings and EOI sequence calculation */
+  @Prop({ default: false })
+  is_deleted?: boolean;
+
+  @Prop({ type: Date, default: null })
+  deleted_at?: Date | null;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  deleted_by?: Types.ObjectId | null;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);
@@ -87,3 +97,5 @@ ProductSchema.index({ manufacturerId: 1 });
 ProductSchema.index({ categoryId: 1 });
 ProductSchema.index({ createdDate: -1 });
 ProductSchema.index({ validtillDate: 1 });
+ProductSchema.index({ manufacturerId: 1, is_deleted: 1, createdDate: 1 });
+ProductSchema.index({ manufacturerId: 1, is_deleted: 1, eoiNo: 1 });

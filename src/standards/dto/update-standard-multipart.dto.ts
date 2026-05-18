@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   Allow,
+  IsArray,
   IsEnum,
   IsInt,
   IsOptional,
@@ -9,31 +10,54 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { CategoryIdFromForm } from './category-id-from-form.transform';
+import { SectorsArrayFromForm } from './sectors-array-from-form.transform';
+import { SectorIdFromForm } from './sector-id-from-form.transform';
 
 export class UpdateStandardMultipartDto {
   @ApiPropertyOptional({
     description:
-      'Legacy primary category when updating categories (one-element set if no arrays). Omit all category fields to leave categories unchanged.',
+      'When sent, replaces linked categories with **all** categories in **each** selected sector (multiselect). Omit all sector fields to leave categories unchanged.',
+    type: [Number],
+    example: [1, 3],
   })
-  @CategoryIdFromForm()
+  @SectorsArrayFromForm()
   @IsOptional()
-  @IsInt({ message: 'category_id must be an integer' })
-  @Min(1, { message: 'category_id must be a positive integer' })
-  category_id?: number;
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  sectors?: number[];
 
   @ApiPropertyOptional({
     description:
-      'Repeated multipart or JSON string array of numeric category ids; replaces the full set when any category field is sent.',
+      'Legacy single sector id; when sent alone, same as one **sectors** entry.',
+    example: 2,
   })
+  @SectorIdFromForm()
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'sector must be an integer' })
+  @Min(1, { message: 'sector must be a positive integer' })
+  sector?: number;
+
   @Allow()
   @IsOptional()
-  category_ids?: unknown;
+  'sectors[]'?: unknown;
 
-  @ApiPropertyOptional({ description: 'JSON string array of numeric category ids.' })
+  @Allow()
   @IsOptional()
-  @IsString()
-  categoryIds?: string;
+  sector_ids?: unknown;
+
+  @Allow()
+  @IsOptional()
+  'sector_ids[]'?: unknown;
+
+  @Allow()
+  @IsOptional()
+  sectorIds?: unknown;
+
+  @Allow()
+  @IsOptional()
+  'sectorIds[]'?: unknown;
 
   @ApiPropertyOptional()
   @IsOptional()

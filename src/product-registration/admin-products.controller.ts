@@ -43,7 +43,7 @@ export class AdminProductsController {
     summary: 'Get product details by URN (platform admin)',
     description:
       'Same payload as **GET /products/details/:urn_no** — lookup by URN only (no manufacturer filter). ' +
-      'Each row includes **product_details.urnStatus** (number). Response may also include top-level **urnStatus** for timeline highlighting. ' +
+      'Each row includes **product_details.urnStatus** (number). **manufacturer** / **manufacturing_details** include full **vendor_details** (email, phone, GST, contacts, etc.) from the manufacturers record. ' +
       'Requires a valid Bearer token (any authenticated user).',
   })
   @ApiParam({
@@ -93,9 +93,11 @@ export class AdminProductsController {
   @Post('list')
   @Permissions(PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({
-    summary: 'Unified product lifecycle listing',
+    summary: 'Admin product lifecycle listing (manufacturer → URN → EOI)',
     description:
-      'Single listing endpoint for all admin product lifecycle tabs using filters only.',
+      'Default **groupBy: manufacturer** paginates manufacturer groups. Each item includes `manufacturer_id`, `manufacturer_name`, `total_urns`, `total_eois`, and nested `urns[]` with `eois[]`. ' +
+      'Search matches manufacturer name, URN, EOI, or product name; when a manufacturer qualifies, nested URNs/EOIs reflect filters (Option A). ' +
+      'Legacy **groupBy: urn** returns flat URN groups. `total` counts top-level groups (manufacturers or URNs).',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Products listed successfully' })
@@ -111,7 +113,7 @@ export class AdminProductsController {
   @ApiOperation({
     summary: 'Export admin products (Excel)',
     description:
-      'Direct Excel download using same filters as list endpoint. Exports one row per EOI.',
+      'Same filters as list. Flat Excel with Manufacturer, URN, and EOI columns (one row per EOI).',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Excel file download' })

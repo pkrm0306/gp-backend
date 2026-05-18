@@ -41,6 +41,17 @@ export class ListStandardsQueryDto {
   @Min(1)
   category_id?: number;
 
+  @ApiPropertyOptional({
+    example: 1,
+    description:
+      'Numeric sector `id` from GET /api/sectors; limits results to standards linked to any category in that sector.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  sector?: number;
+
   @ApiPropertyOptional({ enum: [0, 1] })
   @IsOptional()
   @Type(() => Number)

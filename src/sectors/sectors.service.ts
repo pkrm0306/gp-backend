@@ -222,6 +222,47 @@ export class SectorsService implements OnModuleInit {
     return doc;
   }
 
+  /** Ensures sector `id` exists and is not soft-deleted (for standards / validation). */
+  async assertSectorExists(sectorId: number): Promise<void> {
+    if (!Number.isInteger(sectorId) || sectorId < 1) {
+      throw new BadRequestException('Invalid sector id');
+    }
+    const ok = await this.sectorModel.exists({
+      id: sectorId,
+      ...this.notDeletedFilter(),
+    });
+    if (!ok) {
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'Unknown sector id',
+        sector: sectorId,
+      });
+    }
+  }
+
+  /** Sector display names for numeric sector ids (GET /sectors `id`). */
+  async getSectorNamesByNumericIds(
+    sectorIds: Array<number | undefined | null>,
+  ): Promise<Map<number, string>> {
+    const unique = [
+      ...new Set(
+        sectorIds.filter(
+          (x): x is number =>
+            typeof x === 'number' && Number.isInteger(x) && x >= 1,
+        ),
+      ),
+    ];
+    if (!unique.length) {
+      return new Map();
+    }
+    const rows = await this.sectorModel
+      .find({ id: { $in: unique }, ...this.notDeletedFilter() })
+      .select('id name')
+      .lean()
+      .exec();
+    return new Map(rows.map((r) => [r.id as number, r.name as string]));
+  }
+
   async create(dto: CreateSectorDto) {
     const now = new Date();
     const sectorId = await this.nextSectorId();

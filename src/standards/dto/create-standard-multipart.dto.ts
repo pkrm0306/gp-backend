@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   Allow,
+  IsArray,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -9,33 +10,58 @@ import {
   IsString,
   Min,
 } from 'class-validator';
-import { CategoryIdFromForm } from './category-id-from-form.transform';
+import { SectorsArrayFromForm } from './sectors-array-from-form.transform';
+import { SectorIdFromForm } from './sector-id-from-form.transform';
 
+/**
+ * Whitelist alternate multipart keys for sector multiselect (global ValidationPipe
+ * uses forbidNonWhitelisted). Parsed together in StandardsService via mergeSectorIdsFromFormObject.
+ */
 export class CreateStandardMultipartDto {
   @ApiPropertyOptional({
     description:
-      'Legacy single category (treated as a one-element set). Prefer **category_ids** / **categoryIds** for multiple.',
+      'Preferred: one or more sector ids from GET /api/sectors (multiselect). JSON array string or repeated values.',
+    type: [Number],
+    example: [1, 2],
   })
-  @CategoryIdFromForm()
+  @SectorsArrayFromForm()
   @IsOptional()
-  @IsInt({ message: 'category_id must be an integer' })
-  @Min(1, { message: 'category_id must be a positive integer' })
-  category_id?: number;
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  sectors?: number[];
 
   @ApiPropertyOptional({
     description:
-      'Repeated multipart fields or JSON array string of numeric category ids (GET /categories `category_id`).',
+      'Legacy single sector id; merged with **sectors** when both are sent. Prefer **sectors** for multiselect.',
+    example: 1,
   })
+  @SectorIdFromForm()
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'sector must be an integer' })
+  @Min(1, { message: 'sector must be a positive integer' })
+  sector?: number;
+
   @Allow()
   @IsOptional()
-  category_ids?: unknown;
+  'sectors[]'?: unknown;
 
-  @ApiPropertyOptional({
-    description: 'JSON string array of numeric category ids (admin UI).',
-  })
+  @Allow()
   @IsOptional()
-  @IsString()
-  categoryIds?: string;
+  sector_ids?: unknown;
+
+  @Allow()
+  @IsOptional()
+  'sector_ids[]'?: unknown;
+
+  @Allow()
+  @IsOptional()
+  sectorIds?: unknown;
+
+  @Allow()
+  @IsOptional()
+  'sectorIds[]'?: unknown;
 
   @ApiProperty({ example: 'Energy Efficiency Benchmark' })
   @IsString()

@@ -70,18 +70,12 @@ export function mergeCategoryIdsFromFormObject(obj: unknown): number[] {
   return out;
 }
 
-/** True if the multipart body explicitly includes any category assignment field. */
+/**
+ * True when the body includes category assignment fields with at least one valid id.
+ * Empty arrays / blank values are ignored so optional UI fields do not trigger validation.
+ */
 export function hasExplicitCategoryIdFields(
   body: Record<string, unknown> | undefined,
 ): boolean {
-  if (!body || typeof body !== 'object') {
-    return false;
-  }
-  return (
-    Object.prototype.hasOwnProperty.call(body, 'category_id') ||
-    Object.prototype.hasOwnProperty.call(body, 'category_ids') ||
-    Object.prototype.hasOwnProperty.call(body, 'category_ids[]') ||
-    Object.prototype.hasOwnProperty.call(body, 'categoryIds') ||
-    Object.prototype.hasOwnProperty.call(body, 'categoryIds[]')
-  );
+  return mergeCategoryIdsFromFormObject(body).length > 0;
 }

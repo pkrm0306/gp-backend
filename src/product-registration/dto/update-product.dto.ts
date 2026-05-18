@@ -1,117 +1,123 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsNumber, IsDateString } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import {
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsDateString,
+  Allow,
+  ValidateIf,
+} from 'class-validator';
+
+/** Swagger/clients often send "" or null for unchanged optional fields — treat as omitted. */
+function omitEmptyOptional(value: unknown): unknown {
+  if (value === '' || value === null) {
+    return undefined;
+  }
+  return value;
+}
 
 export class UpdateProductDto {
-  @ApiProperty({
-    description: 'Product name',
-    example: 'Solar Panel 100W Updated',
-    required: false,
-  })
-  @IsString()
+  @ApiPropertyOptional({ description: 'Product name', example: 'Solar Panel 100W Updated' })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsString()
   productName?: string;
 
-  @ApiProperty({ description: 'Product image URL', required: false })
-  @IsString()
+  @ApiPropertyOptional({ description: 'Product image URL' })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsString()
   productImage?: string;
 
-  @ApiProperty({ description: 'Product details', required: false })
-  @IsString()
+  @ApiPropertyOptional({
+    description: 'Product description text',
+    example: 'Updated product description',
+  })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsString()
   productDetails?: string;
 
-  @ApiProperty({ description: 'Product type', example: 0, required: false })
-  @IsNumber()
+  @ApiPropertyOptional({ description: 'Product type', example: 0 })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsNumber()
   productType?: number;
 
-  @ApiProperty({ description: 'Product status', example: 0, required: false })
-  @IsNumber()
+  @ApiPropertyOptional({ description: 'Product status', example: 0 })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsNumber()
   productStatus?: number;
 
-  @ApiProperty({
-    description: 'Product renew status',
-    example: 0,
-    required: false,
-  })
-  @IsNumber()
+  @ApiPropertyOptional({ description: 'Product renew status', example: 0 })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsNumber()
   productRenewStatus?: number;
 
-  @ApiProperty({ description: 'URN status', example: 0, required: false })
-  @IsNumber()
+  @ApiPropertyOptional({ description: 'URN status', example: 0 })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsNumber()
   urnStatus?: number;
 
-  @ApiProperty({ description: 'Assessment report URL', required: false })
-  @IsString()
+  @ApiPropertyOptional({ description: 'Assessment report URL' })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsString()
   assessmentReportUrl?: string;
 
-  @ApiProperty({ description: 'Rejected details', required: false })
-  @IsString()
+  @ApiPropertyOptional({ description: 'Rejected details' })
+  @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
+  @IsString()
   rejectedDetails?: string;
 
-  @ApiProperty({
-    description: 'Certified date',
-    required: false,
-    type: String,
-    format: 'date-time',
-  })
-  @IsOptional()
+  @ApiPropertyOptional({ description: 'Certified date (ISO 8601)', format: 'date-time' })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @ValidateIf((_, value) => value !== undefined)
   @IsDateString()
   certifiedDate?: string;
 
-  @ApiProperty({
-    description: 'Valid till date',
-    required: false,
-    type: String,
+  @ApiPropertyOptional({
+    description: 'Valid till date (ISO 8601)',
     format: 'date-time',
+    name: 'validtillDate',
   })
-  @IsOptional()
+  @Transform(({ value, obj }) =>
+    omitEmptyOptional(value ?? obj?.validTillDate),
+  )
+  @ValidateIf((_, value) => value !== undefined)
   @IsDateString()
   validtillDate?: string;
 
-  @ApiProperty({
-    description: 'First notify date',
-    required: false,
-    type: String,
-    format: 'date-time',
-  })
-  @IsOptional()
+  /** Alias accepted from Swagger/clients (`validTillDate`); merged into `validtillDate` above. */
+  @Allow()
+  validTillDate?: string;
+
+  @ApiPropertyOptional({ description: 'First notify date (ISO 8601)', format: 'date-time' })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @ValidateIf((_, value) => value !== undefined)
   @IsDateString()
   firstNotifyDate?: string;
 
-  @ApiProperty({
-    description: 'Second notify date',
-    required: false,
-    type: String,
-    format: 'date-time',
-  })
-  @IsOptional()
+  @ApiPropertyOptional({ description: 'Second notify date (ISO 8601)', format: 'date-time' })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @ValidateIf((_, value) => value !== undefined)
   @IsDateString()
   secondNotifyDate?: string;
 
-  @ApiProperty({
-    description: 'Third notify date',
-    required: false,
-    type: String,
-    format: 'date-time',
-  })
-  @IsOptional()
+  @ApiPropertyOptional({ description: 'Third notify date (ISO 8601)', format: 'date-time' })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @ValidateIf((_, value) => value !== undefined)
   @IsDateString()
   thirdNotifyDate?: string;
 
-  @ApiProperty({
-    description: 'Renewed date',
-    required: false,
-    type: String,
-    format: 'date-time',
-  })
-  @IsOptional()
+  @ApiPropertyOptional({ description: 'Renewed date (ISO 8601)', format: 'date-time' })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @ValidateIf((_, value) => value !== undefined)
   @IsDateString()
   renewedDate?: string;
 }

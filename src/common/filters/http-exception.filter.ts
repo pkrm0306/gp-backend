@@ -30,6 +30,24 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = responseObj.message || message;
         error = responseObj.error || error;
       }
+    } else if (exception instanceof SyntaxError) {
+      status = HttpStatus.BAD_REQUEST;
+      message = this.formatInvalidJsonMessage(exception.message);
+      error = 'Bad Request';
+    } else if (
+      typeof exception === 'object' &&
+      exception !== null &&
+      (exception as { type?: string }).type === 'entity.parse.failed'
+    ) {
+      status = HttpStatus.BAD_REQUEST;
+      const parseMessage =
+        (exception as { message?: string }).message || 'Invalid JSON body';
+      message = this.formatInvalidJsonMessage(parseMessage);
+      error = 'Bad Request';
+    }
+
+    if (Array.isArray(message)) {
+      message = message.join('; ');
     }
 
     // Server-side diagnostic logging (sanitized response is still returned to client)
@@ -72,5 +90,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
     };
 
     response.status(status).json(apiResponse);
+  }
+
+  private formatInvalidJsonMessage(raw: string): string {
+    if (/bad control character|unexpected token|json at position/i.test(raw)) {
+      return (
+        'Invalid JSON request body. String values cannot contain raw line breaks — ' +
+        'use \\n inside the string (e.g. "line one\\nline two") or keep text on one line.'
+      );
+    }
+    return raw || 'Invalid JSON request body';
   }
 }

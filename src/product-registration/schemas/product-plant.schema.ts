@@ -46,6 +46,19 @@ export class ProductPlant {
 
   @Prop({ required: true })
   createdDate: Date;
+
+  /** Soft delete — cascaded when parent product is deleted */
+  @Prop({ default: false })
+  is_deleted?: boolean;
+
+  @Prop({ type: Date, default: null })
+  deleted_at?: Date | null;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  deleted_by?: Types.ObjectId | null;
 }
 
 export const ProductPlantSchema = SchemaFactory.createForClass(ProductPlant);
+
+ProductPlantSchema.index({ productId: 1, is_deleted: 1 });
+ProductPlantSchema.index({ manufacturerId: 1, is_deleted: 1 });

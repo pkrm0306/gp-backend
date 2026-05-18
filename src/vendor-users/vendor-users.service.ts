@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, ClientSession } from 'mongoose';
+import { Model, ClientSession, Types } from 'mongoose';
 import { VendorUser, VendorUserDocument } from './schemas/vendor-user.schema';
 import * as bcrypt from 'bcryptjs';
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 @Injectable()
 export class VendorUsersService {
@@ -26,7 +30,43 @@ export class VendorUsersService {
   }
 
   async findByEmail(email: string): Promise<VendorUserDocument | null> {
-    return this.vendorUserModel.findOne({ email }).exec();
+    const normalized = String(email ?? '').trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    const exact = await this.vendorUserModel
+      .findOne({ email: normalized })
+      .exec();
+    if (exact) {
+      return exact;
+    }
+    return this.vendorUserModel
+      .findOne({
+        email: { $regex: new RegExp(`^${escapeRegex(normalized)}$`, 'i') },
+      })
+      .exec();
+  }
+
+  /**
+   * First vendor/partner login row for a manufacturer (by `manufacturerId` or legacy `vendorId`).
+   * Used when login email matches **manufacturer.vendor_email** but not **vendor_users.email** (legacy data).
+   */
+  async findPrimaryLoginUserForManufacturer(
+    manufacturerId: string,
+  ): Promise<VendorUserDocument | null> {
+    if (!Types.ObjectId.isValid(manufacturerId)) {
+      return null;
+    }
+    const mid = new Types.ObjectId(manufacturerId);
+    const rows = await this.vendorUserModel
+      .find({
+        $or: [{ manufacturerId: mid }, { vendorId: mid }],
+        type: { $in: ['vendor', 'partner'] },
+      })
+      .sort({ createdAt: 1 })
+      .limit(1)
+      .exec();
+    return rows[0] ?? null;
   }
 
   async findById(id: string): Promise<VendorUserDocument | null> {

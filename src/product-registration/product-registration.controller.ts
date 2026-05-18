@@ -42,9 +42,11 @@ export class ProductRegistrationController {
 
   @Get('list')
   @ApiOperation({
-    summary: 'List all products',
+    summary: 'Vendor EOI list grouped by URN',
     description:
-      'Returns a paginated list of products with optional search, filtering by status, and sorting. Uses MongoDB aggregation with category lookup.',
+      'Returns paginated URN groups (not flat products). Each group includes nested eois[]. ' +
+      'Certified EOIs (productStatus 2) are excluded by default. Pagination counts URNs. ' +
+      'When search matches any EOI in a URN, the full eois[] for that URN is returned (same filters, no search re-apply on children).',
   })
   @ApiQuery({
     name: 'page',
@@ -73,9 +75,9 @@ export class ProductRegistrationController {
     required: false,
     type: Number,
     description:
-      'Filter by product status (0=Pending, 1=Active, 2=Certified, 3=Rejected)',
+      'Filter EOIs: 0=Pending, 1=Submitted, 3=Rejected, 4=Expired. Certified (2) excluded unless status=4.',
     example: 0,
-    enum: [0, 1, 2, 3],
+    enum: [0, 1, 2, 3, 4],
   })
   @ApiQuery({
     name: 'status',
@@ -83,25 +85,45 @@ export class ProductRegistrationController {
     type: Number,
     description: 'Deprecated alias for productStatus',
     example: 0,
-    enum: [0, 1, 2, 3],
+    enum: [0, 1, 2, 3, 4],
     deprecated: true,
+  })
+  @ApiQuery({
+    name: 'categoryId',
+    required: false,
+    type: String,
+    description: 'Filter by category ObjectId',
+  })
+  @ApiQuery({
+    name: 'dateFrom',
+    required: false,
+    type: String,
+    description: 'Created date from (YYYY-MM-DD)',
+    example: '2026-01-01',
+  })
+  @ApiQuery({
+    name: 'dateTo',
+    required: false,
+    type: String,
+    description: 'Created date to (YYYY-MM-DD)',
+    example: '2026-12-31',
   })
   @ApiQuery({
     name: 'sort',
     required: false,
     type: String,
-    description: 'Sort order by created_date (default: desc)',
+    description: 'URN sort by earliest product createdDate (default: desc)',
     example: 'desc',
     enum: ['asc', 'desc'],
   })
   @ApiResponse({
     status: 200,
-    description: 'Products retrieved successfully',
+    description: 'EOI list fetched successfully',
     schema: {
       type: 'object',
       properties: {
         success: { type: 'boolean', example: true },
-        message: { type: 'string', example: 'Products retrieved successfully' },
+        message: { type: 'string', example: 'EOI list fetched successfully' },
         data: {
           type: 'object',
           properties: {
@@ -110,31 +132,33 @@ export class ProductRegistrationController {
               items: {
                 type: 'object',
                 properties: {
-                  eoiNo: { type: 'string', example: 'GPMN012001' },
-                  urnNo: { type: 'string', example: 'URN-20240302120000' },
-                  productName: { type: 'string', example: 'Solar Panel 100W' },
-                  productDetails: {
-                    type: 'string',
-                    example: 'Product description details',
-                  },
-                  addedOn: {
+                  urnNo: { type: 'string', example: 'URN-20260514165917' },
+                  createdDate: {
                     type: 'string',
                     format: 'date-time',
-                    example: '2024-03-02T12:00:00.000Z',
                   },
-                  category: {
-                    type: 'object',
-                    properties: {
-                      _id: {
-                        type: 'string',
-                        example: '507f1f77bcf86cd799439011',
+                  urnStatus: {
+                    type: 'string',
+                    enum: ['Active', 'Pending', 'Inactive'],
+                  },
+                  totalEoi: { type: 'number', example: 3 },
+                  eois: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        _id: { type: 'string' },
+                        eoiNo: { type: 'string', example: 'GPPMI003012' },
+                        productName: { type: 'string' },
+                        categoryName: { type: 'string' },
+                        productStatus: { type: 'number', example: 0 },
+                        statusLabel: { type: 'string', example: 'Pending' },
+                        createdDate: { type: 'string', format: 'date-time' },
+                        hpUnits: { type: 'number', example: 5 },
+                        plantCount: { type: 'number', example: 5 },
                       },
-                      categoryName: { type: 'string', example: 'Solar Panels' },
-                      categoryCode: { type: 'string', example: 'SOLAR' },
                     },
                   },
-                  hpUnits: { type: 'number', example: 5 },
-                  status: { type: 'number', example: 0 },
                 },
               },
             },
@@ -143,8 +167,8 @@ export class ProductRegistrationController {
               properties: {
                 page: { type: 'number', example: 1 },
                 limit: { type: 'number', example: 10 },
-                totalCount: { type: 'number', example: 50 },
-                totalPages: { type: 'number', example: 5 },
+                totalCount: { type: 'number', example: 8 },
+                totalPages: { type: 'number', example: 1 },
               },
             },
           },
@@ -166,8 +190,8 @@ export class ProductRegistrationController {
         user.manufacturerId,
       );
       return {
-        message: 'Products retrieved successfully',
-        data: result,
+        message: 'EOI list fetched successfully',
+        data: result ?? { data: [], pagination: { page: 1, limit: 10, totalCount: 0, totalPages: 0 } },
       };
     } catch (error: any) {
       console.error('Controller error:', error);

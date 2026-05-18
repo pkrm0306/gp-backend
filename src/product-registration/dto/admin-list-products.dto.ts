@@ -158,6 +158,16 @@ export class AdminListProductsDto {
   limit?: number = 10;
 
   @ApiPropertyOptional({
+    description:
+      'Response grouping: manufacturer (default, paginates manufacturers) or urn (legacy flat URN groups)',
+    enum: ['manufacturer', 'urn'],
+    default: 'manufacturer',
+  })
+  @IsOptional()
+  @IsIn(['manufacturer', 'urn'])
+  groupBy?: 'manufacturer' | 'urn' = 'manufacturer';
+
+  @ApiPropertyOptional({
     enum: [
       'createdDate',
       'createdAt',
@@ -165,6 +175,7 @@ export class AdminListProductsDto {
       'productName',
       'eoiNo',
       'urnNo',
+      'manufacturerName',
     ],
     default: 'createdDate',
   })
@@ -176,6 +187,7 @@ export class AdminListProductsDto {
     'productName',
     'eoiNo',
     'urnNo',
+    'manufacturerName',
   ])
   sortBy?:
     | 'createdDate'
@@ -183,7 +195,8 @@ export class AdminListProductsDto {
     | 'validTill'
     | 'productName'
     | 'eoiNo'
-    | 'urnNo' = 'createdDate';
+    | 'urnNo'
+    | 'manufacturerName' = 'createdDate';
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'desc' })
   @IsOptional()

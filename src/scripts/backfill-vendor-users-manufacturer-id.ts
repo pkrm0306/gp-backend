@@ -33,11 +33,14 @@ async function run() {
   };
 
   try {
-    const usersCol = connection.collection('users');
+    const vendorUsersCollectionName =
+      String(process.env.VENDOR_USERS_MONGO_COLLECTION || '').trim() ||
+      'users';
+    const vendorUsersCol = connection.collection(vendorUsersCollectionName);
     const vendorsCol = connection.collection('vendors');
 
     // Process only records needing backfill.
-    const cursor = usersCol.find(
+    const cursor = vendorUsersCol.find(
       {
         $and: [
           {
@@ -84,13 +87,13 @@ async function run() {
 
       if (dryRun) {
         console.log(
-          `[DRY_RUN] would set users(${row._id}) manufacturerId -> ${manufacturerId.toHexString()}`,
+          `[DRY_RUN] would set ${vendorUsersCollectionName}(${row._id}) manufacturerId -> ${manufacturerId.toHexString()}`,
         );
         counters.updated += 1;
         continue;
       }
 
-      await usersCol.updateOne(
+      await vendorUsersCol.updateOne(
         {
           _id: row._id,
           $or: [
@@ -107,7 +110,7 @@ async function run() {
     console.log(JSON.stringify({ dryRun, ...counters }, null, 2));
     console.log('Verification query:');
     console.log(
-      `db.users.countDocuments({ $and: [ { $or: [ { manufacturerId: { $exists: false } }, { manufacturerId: null } ] }, { vendorId: { $exists: true, $ne: null } } ] })`,
+      `db.${vendorUsersCollectionName}.countDocuments({ $and: [ { $or: [ { manufacturerId: { $exists: false } }, { manufacturerId: null } ] }, { vendorId: { $exists: true, $ne: null } } ] })`,
     );
   } catch (error) {
     console.error('Migration failed:', error);

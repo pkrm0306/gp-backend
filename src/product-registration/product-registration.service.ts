@@ -28,6 +28,11 @@ import { ListProductsDto } from './dto/list-products.dto';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
 import { AdminProductsExportDto } from './dto/admin-products-export.dto';
 import { SequenceHelper } from './helpers/sequence.helper';
+import { EoiNumberService } from './services/eoi-number.service';
+import {
+  matchActiveProductPlants,
+  matchActiveProducts,
+} from './constants/active-product.filter';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
@@ -68,6 +73,7 @@ export class ProductRegistrationService {
     private productPlantModel: Model<ProductPlantDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private eoiNumberService: EoiNumberService,
     private manufacturersService: ManufacturersService,
     private countriesService: CountriesService,
     private statesService: StatesService,
@@ -96,7 +102,11 @@ export class ProductRegistrationService {
       limit: listProductsDto.limit ?? 10,
       search: String(listProductsDto.search || '').trim().toLowerCase(),
       productStatus: listProductsDto.productStatus ?? listProductsDto.status ?? null,
+      categoryId: listProductsDto.categoryId ?? null,
+      dateFrom: listProductsDto.dateFrom ?? null,
+      dateTo: listProductsDto.dateTo ?? null,
       sort: listProductsDto.sort === 'asc' ? 'asc' : 'desc',
+      v: 2,
     };
     return this.redisService.buildKey(
       'products',
@@ -112,6 +122,7 @@ export class ProductRegistrationService {
       limit: dto.limit ?? 10,
       order: (dto.order ?? dto.sortOrder) === 'asc' ? 'asc' : 'desc',
       sortBy: dto.sortBy ?? 'createdDate',
+      groupBy: dto.groupBy ?? 'manufacturer',
       search: String(dto.search || '').trim().toLowerCase(),
       product_type: dto.product_type ?? null,
       categoryId: dto.categoryId ?? null,
@@ -122,6 +133,7 @@ export class ProductRegistrationService {
       to: dto.to ?? dto.toDate ?? null,
       validTillYear: dto.validTillYear ?? null,
       status: Array.isArray(dto.status) ? [...dto.status].sort((a, b) => a - b) : [],
+      v: 4,
     };
     return this.redisService.buildKey(
       'products',
@@ -140,6 +152,361 @@ export class ProductRegistrationService {
         `Failed to invalidate product listing caches: ${(error as Error)?.message || 'unknown error'}`,
       );
     });
+  }
+
+  /** Admin list EOI row — flat fields only; product description is `productDetails` (string). */
+  private formatAdminListEoiEntry(e: Record<string, unknown>) {
+    const plants = Array.isArray(e?.plants) ? (e.plants as Record<string, unknown>[]) : [];
+
+    const mapProductStatusLabel = (
+      code: number,
+    ): 'Pending' | 'Approved' | 'Rejected' => {
+      if (code === 3) return 'Rejected';
+      if (code === 2) return 'Approved';
+      return 'Pending';
+    };
+
+    return {
+      _id: e?._id,
+      productId: e?.productId,
+      eoiNo: e?.eoiNo,
+      urnNo: e?.urnNo,
+      productName: e?.productName,
+      productDetails: e?.productDetails ?? null,
+      categoryName: e?.categoryName,
+      manufacturerName: e?.manufacturerName,
+      productStatus: e?.productStatus,
+      createdDate: e?.createdDate,
+      plantDetails: plants.map((p) => ({
+        _id: p?._id,
+        productPlantId: p?.productPlantId,
+        productId: p?.productId,
+        plantName: p?.plantName,
+        plantLocation: p?.plantLocation,
+        countryId: p?.countryId,
+        stateId: p?.stateId,
+        stateName: p?.stateName ?? null,
+        city: p?.city,
+        plantStatus: p?.plantStatus,
+        createdDate: p?.createdDate,
+      })),
+      statusLabel: mapProductStatusLabel(Number(e?.productStatus ?? 0)),
+    };
+  }
+
+  private deriveAdminUrnStatus(
+    codes: number[],
+  ): 'Active' | 'Pending' | 'Inactive' {
+    if (codes.includes(3)) {
+      return 'Inactive';
+    }
+    if (codes.includes(2)) {
+      return 'Active';
+    }
+    return 'Pending';
+  }
+
+  private formatAdminListUrnGroup(urn: {
+    urnNo: string;
+    createdDate: Date;
+    totalEoi: number;
+    statusCodes: number[];
+    eoiDocs: Record<string, unknown>[];
+  }) {
+    const urnStatus = this.deriveAdminUrnStatus(urn.statusCodes ?? []);
+    const eois = (urn.eoiDocs ?? []).map((e) =>
+      this.formatAdminListEoiEntry(e ?? {}),
+    );
+    return {
+      urn_number: urn.urnNo,
+      urnNo: urn.urnNo,
+      total_eoi: urn.totalEoi,
+      totalEoi: urn.totalEoi,
+      urnStatus,
+      status: urnStatus,
+      created_at: urn.createdDate,
+      createdDate: urn.createdDate,
+      eois,
+    };
+  }
+
+  private formatAdminListManufacturerGroup(m: {
+    manufacturer_id: Types.ObjectId | string;
+    manufacturerName?: string;
+    manufacturer_name?: string;
+    total_urns: number;
+    total_eois: number;
+    urns: Array<{
+      urnNo: string;
+      createdDate: Date;
+      totalEoi: number;
+      statusCodes: number[];
+      eoiDocs: Record<string, unknown>[];
+    }>;
+  }) {
+    const urns = (m.urns ?? [])
+      .map((u) => this.formatAdminListUrnGroup(u))
+      .sort(
+        (a, b) =>
+          new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime(),
+      );
+    const manufacturerName = String(
+      m.manufacturerName ?? m.manufacturer_name ?? '',
+    ).trim();
+    return {
+      manufacturer_id: String(m.manufacturer_id),
+      manufacturerName,
+      /** @deprecated Use manufacturerName — kept for older admin clients */
+      manufacturer_name: manufacturerName,
+      total_urns: m.total_urns ?? 0,
+      total_eois: m.total_eois ?? 0,
+      urns,
+    };
+  }
+
+  private mapProductDetailsVendorContactSlot(
+    slot?: Record<string, unknown> | null,
+  ) {
+    if (!slot) {
+      return {
+        name: '',
+        email_id: '',
+        phone_number: '',
+        designation: '',
+      };
+    }
+    return {
+      name: String(slot.name ?? '').trim(),
+      email_id: String(slot.email_id ?? '').trim(),
+      phone_number: String(slot.phone_number ?? '').trim(),
+      designation: String(slot.designation ?? '').trim(),
+    };
+  }
+
+  /**
+   * Manufacturer + vendor org profile for URN product details (admin / vendor).
+   * Vendor contact fields live on the manufacturers collection.
+   */
+  private formatProductDetailsManufacturer(
+    manufacturer: Record<string, unknown> | null | undefined,
+  ) {
+    if (!manufacturer) {
+      return null;
+    }
+
+    const technicalContact = this.mapProductDetailsVendorContactSlot(
+      manufacturer.technicalContact as Record<string, unknown> | undefined,
+    );
+    const marketingContact = this.mapProductDetailsVendorContactSlot(
+      manufacturer.marketingContact as Record<string, unknown> | undefined,
+    );
+
+    const vendor_details = {
+      companyName: String(manufacturer.manufacturerName ?? '').trim(),
+      name: String(manufacturer.vendor_name ?? '').trim(),
+      designation: String(manufacturer.vendor_designation ?? '').trim(),
+      email: String(manufacturer.vendor_email ?? '').trim(),
+      vendor_email: String(manufacturer.vendor_email ?? '').trim(),
+      phone: String(manufacturer.vendor_phone ?? '').trim(),
+      vendor_phone: String(manufacturer.vendor_phone ?? '').trim(),
+      mobile: String(manufacturer.vendor_phone ?? '').trim(),
+      website: String(manufacturer.vendor_website ?? '').trim(),
+      vendor_website: String(manufacturer.vendor_website ?? '').trim(),
+      gst: String(manufacturer.vendor_gst ?? '').trim(),
+      vendor_gst: String(manufacturer.vendor_gst ?? '').trim(),
+      gstPdf: manufacturer.vendorGstPdf ?? null,
+      companyLogo: manufacturer.companyLogo ?? null,
+      companySize: String(manufacturer.companySize ?? '').trim(),
+      panNumber: manufacturer.vendorPan ?? null,
+      pan: manufacturer.vendorPanDocument ?? null,
+      vendor_status: manufacturer.vendor_status ?? 0,
+      technicalContact,
+      marketingContact,
+    };
+
+    return {
+      _id: manufacturer._id,
+      manufacturerName: manufacturer.manufacturerName ?? '',
+      gpInternalId: manufacturer.gpInternalId ?? null,
+      manufacturerInitial: manufacturer.manufacturerInitial ?? null,
+      manufacturerStatus: manufacturer.manufacturerStatus ?? 0,
+      manufacturerImage: manufacturer.manufacturerImage ?? null,
+      companyLogo: manufacturer.companyLogo ?? null,
+      companySize: manufacturer.companySize ?? '',
+      vendor_name: manufacturer.vendor_name ?? '',
+      vendor_email: manufacturer.vendor_email ?? '',
+      vendor_phone: manufacturer.vendor_phone ?? '',
+      vendor_website: manufacturer.vendor_website ?? '',
+      vendor_designation: manufacturer.vendor_designation ?? '',
+      vendor_gst: manufacturer.vendor_gst ?? '',
+      vendorGstPdf: manufacturer.vendorGstPdf ?? null,
+      gstPdf: manufacturer.vendorGstPdf ?? null,
+      vendor_status: manufacturer.vendor_status ?? 0,
+      vendorPan: manufacturer.vendorPan ?? null,
+      vendorPanDocument: manufacturer.vendorPanDocument ?? null,
+      panNumber: manufacturer.vendorPan ?? null,
+      pan: manufacturer.vendorPanDocument ?? null,
+      technicalContact,
+      marketingContact,
+      createdAt: manufacturer.createdAt ?? null,
+      updatedAt: manufacturer.updatedAt ?? null,
+      vendor_details,
+    };
+  }
+
+  private formatProductDetailsVendor(
+    manufacturer: Record<string, unknown> | null | undefined,
+    vendorFromCollection: Record<string, unknown> | null | undefined,
+  ) {
+    if (vendorFromCollection) {
+      return {
+        _id: vendorFromCollection._id,
+        vendorName: vendorFromCollection.vendorName,
+        vendorEmail: vendorFromCollection.vendorEmail,
+        vendorPhone: vendorFromCollection.vendorPhone,
+        vendorDesignation: vendorFromCollection.vendorDesignation,
+        vendorGst: vendorFromCollection.vendorGst,
+        vendorStatus: vendorFromCollection.vendorStatus,
+      };
+    }
+    if (!manufacturer) {
+      return null;
+    }
+    return {
+      _id: manufacturer._id,
+      vendorName:
+        manufacturer.vendor_name ?? manufacturer.manufacturerName ?? '',
+      vendorEmail: manufacturer.vendor_email ?? '',
+      vendorPhone: manufacturer.vendor_phone ?? '',
+      vendorDesignation: manufacturer.vendor_designation ?? '',
+      vendorGst: manufacturer.vendor_gst ?? '',
+      vendorStatus: manufacturer.vendor_status ?? 0,
+      vendor_details: this.formatProductDetailsManufacturer(manufacturer)
+        ?.vendor_details,
+    };
+  }
+
+  /** Flatten manufacturer-grouped or legacy URN-grouped list rows for export. */
+  private flattenAdminListForExport(data: any[]): {
+    urnRows: any[];
+    eoiRows: any[];
+  } {
+    const urnRows: any[] = [];
+    const eoiRows: any[] = [];
+
+    for (const item of data ?? []) {
+      if (item?.manufacturer_id && Array.isArray(item.urns)) {
+        const groupManufacturerName =
+          item.manufacturerName ?? item.manufacturer_name ?? '';
+        for (const u of item.urns) {
+          urnRows.push({
+            ...u,
+            manufacturerName: groupManufacturerName,
+          });
+          for (const e of u.eois ?? []) {
+            eoiRows.push({
+              ...e,
+              urnNo: e.urnNo ?? u.urnNo ?? u.urn_number,
+              manufacturerName: e.manufacturerName ?? groupManufacturerName,
+            });
+          }
+        }
+        continue;
+      }
+      if (item?.urnNo) {
+        urnRows.push(item);
+        for (const e of item.eois ?? []) {
+          eoiRows.push({
+            ...e,
+            urnNo: e.urnNo ?? item.urnNo,
+            manufacturerName: e.manufacturerName ?? '',
+          });
+        }
+      }
+    }
+
+    return { urnRows, eoiRows };
+  }
+
+  /** Vendor EOI list — productStatus labels for uncertified / lifecycle UI. */
+  private mapVendorProductStatusLabel(
+    productStatus: number,
+    validtillDate?: Date | string | null,
+  ): 'Pending' | 'Submitted' | 'Certified' | 'Rejected' | 'Expired' {
+    const now = new Date();
+    if (productStatus === 4) {
+      return 'Expired';
+    }
+    if (productStatus === 2 && validtillDate) {
+      const vt = new Date(validtillDate);
+      if (!Number.isNaN(vt.getTime()) && vt < now) {
+        return 'Expired';
+      }
+    }
+    switch (productStatus) {
+      case 1:
+        return 'Submitted';
+      case 2:
+        return 'Certified';
+      case 3:
+        return 'Rejected';
+      default:
+        return 'Pending';
+    }
+  }
+
+  /** URN row status from child productStatus codes (aligned with admin uncertified list). */
+  private deriveVendorUrnStatus(
+    codes: number[],
+  ): 'Active' | 'Pending' | 'Inactive' {
+    if (codes.includes(3)) {
+      return 'Inactive';
+    }
+    if (codes.includes(2)) {
+      return 'Active';
+    }
+    return 'Pending';
+  }
+
+  private formatVendorListEoiEntry(e: Record<string, unknown>) {
+    const productStatus = Number(e?.productStatus ?? 0);
+    return {
+      _id: e?._id,
+      eoiNo: e?.eoiNo,
+      productName: e?.productName,
+      categoryName: e?.categoryName ?? null,
+      productStatus,
+      statusLabel: this.mapVendorProductStatusLabel(
+        productStatus,
+        e?.validtillDate as Date | string | null | undefined,
+      ),
+      createdDate: e?.createdDate,
+      hpUnits: Number(e?.plantCount ?? 0),
+      plantCount: Number(e?.plantCount ?? 0),
+    };
+  }
+
+  /**
+   * Vendor uncertified list status filter. Default excludes certified (productStatus 2).
+   * Status 4 = expired certified (productStatus 2 with validtillDate in the past).
+   */
+  private buildVendorListProductStatusMatch(
+    normalizedStatus: number | null | undefined,
+  ): Record<string, unknown> | null {
+    const now = new Date();
+    if (normalizedStatus === undefined || normalizedStatus === null) {
+      return { productStatus: { $ne: 2 } };
+    }
+    if (normalizedStatus === 4) {
+      return {
+        productStatus: 2,
+        validtillDate: { $exists: true, $ne: null, $lt: now },
+      };
+    }
+    if (normalizedStatus === 2) {
+      return { productStatus: { $in: [] } };
+    }
+    return { productStatus: normalizedStatus };
   }
 
   private ensureExportDir() {
@@ -161,6 +528,22 @@ export class ProductRegistrationService {
         this.exportJobs.delete(jobId);
       }
     }
+  }
+
+  /** Set a date field only when a non-empty ISO value was provided. */
+  private applyOptionalDateField(
+    target: Record<string, unknown>,
+    field: string,
+    value?: string,
+  ): void {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return;
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`Invalid date for ${field}`);
+    }
+    target[field] = parsed;
   }
 
   /**
@@ -384,28 +767,7 @@ export class ProductRegistrationService {
     manufacturerId: string,
     session?: ClientSession,
   ): Promise<string> {
-    const useSession = session && session.inTransaction() ? session : undefined;
-
-    // Count existing products for THIS manufacturer only (not global)
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
-    const existingProductCount = await this.productModel
-      .countDocuments(
-        { manufacturerId: manufacturerObjectId },
-        { session: useSession },
-      )
-      .exec();
-
-    // Calculate next sequence number (existing count + 1)
-    const manufacturerProductCount = existingProductCount + 1;
-
-    return await this.generateEOIWithCount(
-      manufacturerId,
-      manufacturerProductCount,
-      session,
-    );
+    return this.eoiNumberService.generateNextEoiNo(manufacturerId, session);
   }
 
   /**
@@ -419,55 +781,11 @@ export class ProductRegistrationService {
     manufacturerProductCount: number,
     session?: ClientSession,
   ): Promise<string> {
-    // Get manufacturer details
-    const manufacturer =
-      await this.manufacturersService.findById(manufacturerId);
-    if (!manufacturer) {
-      throw new NotFoundException('Manufacturer not found');
-    }
-
-    // Get manufacturer initial
-    const manufacturerInitial = manufacturer.manufacturerInitial;
-    if (!manufacturerInitial || manufacturerInitial.trim() === '') {
-      throw new BadRequestException(
-        `Manufacturer ${manufacturerId} does not have manufacturerInitial set. Please update the manufacturer record with manufacturerInitial field.`,
-      );
-    }
-
-    // Extract internal_id from gpInternalId
-    // Examples: "GP-12" → "012", "GPSC-312" → "312"
-    const gpInternalId = manufacturer.gpInternalId;
-    if (!gpInternalId || gpInternalId.trim() === '') {
-      throw new BadRequestException(
-        `Manufacturer ${manufacturerId} does not have gpInternalId set. Please update the manufacturer record with gpInternalId field (format: "GP-12" or "GPSC-312").`,
-      );
-    }
-
-    const internalIdMatch = gpInternalId.match(/-(\d+)$/);
-    let internalId: string;
-
-    if (internalIdMatch) {
-      // Extract the number after the hyphen and pad to 3 digits
-      const internalIdNum = internalIdMatch[1];
-      internalId = internalIdNum.padStart(3, '0');
-    } else {
-      // Fallback if no match found
-      console.warn(
-        `No internal ID pattern found in gpInternalId: ${gpInternalId}, using '000'`,
-      );
-      internalId = '000';
-    }
-
-    // Pad manufacturer_product_count to 3 digits
-    const paddedManufacturerProductCount = manufacturerProductCount
-      .toString()
-      .padStart(3, '0');
-
-    // Generate EOI: GP + manufacturer_initial + 3-digit internal_id + 3-digit manufacturer_product_count
-    // Example: GPAB012006
-    const eoiNo = `GP${manufacturerInitial}${internalId}${paddedManufacturerProductCount}`;
-
-    return eoiNo;
+    return this.eoiNumberService.buildEoiNo(
+      manufacturerId,
+      manufacturerProductCount,
+      session,
+    );
   }
 
   /**
@@ -749,9 +1067,11 @@ export class ProductRegistrationService {
         );
 
         // Get initial manufacturer-specific product count (before inserting any products)
-        const initialManufacturerProductCount = await this.productModel
-          .countDocuments({ manufacturerId: manufacturerObjectId }, { session })
-          .exec();
+        const initialManufacturerProductCount =
+          await this.eoiNumberService.countActiveProductsByManufacturer(
+            manufacturerObjectId,
+            session,
+          );
 
         console.log(
           '[Bulk Product Registration] Initial manufacturer product count:',
@@ -1053,31 +1373,36 @@ export class ProductRegistrationService {
         updateData.rejectedDetails = updateProductDto.rejectedDetails;
       }
 
-      if (updateProductDto.certifiedDate !== undefined) {
-        updateData.certifiedDate = new Date(updateProductDto.certifiedDate);
-      }
-
-      if (updateProductDto.validtillDate !== undefined) {
-        updateData.validtillDate = new Date(updateProductDto.validtillDate);
-      }
-
-      if (updateProductDto.firstNotifyDate !== undefined) {
-        updateData.firstNotifyDate = new Date(updateProductDto.firstNotifyDate);
-      }
-
-      if (updateProductDto.secondNotifyDate !== undefined) {
-        updateData.secondNotifyDate = new Date(
-          updateProductDto.secondNotifyDate,
-        );
-      }
-
-      if (updateProductDto.thirdNotifyDate !== undefined) {
-        updateData.thirdNotifyDate = new Date(updateProductDto.thirdNotifyDate);
-      }
-
-      if (updateProductDto.renewedDate !== undefined) {
-        updateData.renewedDate = new Date(updateProductDto.renewedDate);
-      }
+      this.applyOptionalDateField(
+        updateData,
+        'certifiedDate',
+        updateProductDto.certifiedDate,
+      );
+      this.applyOptionalDateField(
+        updateData,
+        'validtillDate',
+        updateProductDto.validtillDate,
+      );
+      this.applyOptionalDateField(
+        updateData,
+        'firstNotifyDate',
+        updateProductDto.firstNotifyDate,
+      );
+      this.applyOptionalDateField(
+        updateData,
+        'secondNotifyDate',
+        updateProductDto.secondNotifyDate,
+      );
+      this.applyOptionalDateField(
+        updateData,
+        'thirdNotifyDate',
+        updateProductDto.thirdNotifyDate,
+      );
+      this.applyOptionalDateField(
+        updateData,
+        'renewedDate',
+        updateProductDto.renewedDate,
+      );
 
       // Update product
       const updatedProduct = await this.productModel
@@ -1287,8 +1612,8 @@ export class ProductRegistrationService {
   }
 
   /**
-   * List all products with pagination, search, filtering, and sorting
-   * Filtered by vendorId from authenticated user
+   * Vendor EOI list grouped by URN (paginate/sort URNs, not flat products).
+   * Excludes certified EOIs (productStatus 2) unless filtering status=4 (expired).
    */
   async listProducts(listProductsDto: ListProductsDto, manufacturerId: string) {
     try {
@@ -1322,70 +1647,67 @@ export class ProductRegistrationService {
         productStatus,
         status,
         sort = 'desc',
+        categoryId,
+        dateFrom,
+        dateTo,
       } = listProductsDto;
 
       const skip = (page - 1) * limit;
       const sortOrder = sort === 'asc' ? 1 : -1;
-
-      // Resolve vendor alias using authenticated manufacturerId
       const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+      const normalizedProductStatus = productStatus ?? status ?? null;
+      const statusMatch = this.buildVendorListProductStatusMatch(
+        normalizedProductStatus,
+      );
 
-      // Build initial match conditions
-      const initialMatchConditions: any = {
-        vendorId: vendorObjectId, // Always filter by vendorId
+      const nativeMatch: Record<string, unknown> = {
+        vendorId: vendorObjectId,
+        ...matchActiveProducts(),
       };
-
-      // Status filter
-      const normalizedProductStatus = productStatus ?? status;
-      if (
-        normalizedProductStatus !== undefined &&
-        normalizedProductStatus !== null
-      ) {
-        initialMatchConditions.productStatus = normalizedProductStatus;
+      if (categoryId) {
+        nativeMatch.categoryId = this.toObjectId(categoryId, 'categoryId');
+      }
+      if (dateFrom || dateTo) {
+        const createdRange: Record<string, Date> = {};
+        if (dateFrom) {
+          createdRange.$gte = new Date(dateFrom);
+        }
+        if (dateTo) {
+          const to = new Date(dateTo);
+          to.setHours(23, 59, 59, 999);
+          createdRange.$lte = to;
+        }
+        nativeMatch.createdDate = createdRange;
       }
 
-      // Aggregation pipeline
-      const pipeline: any[] = [];
-
-      // Stage 1: Initial $match for status (before lookup to optimize)
-      if (Object.keys(initialMatchConditions).length > 0) {
-        pipeline.push({ $match: initialMatchConditions });
+      const basePipeline: any[] = [{ $match: nativeMatch }];
+      if (statusMatch) {
+        basePipeline.push({ $match: statusMatch });
       }
 
-      // Stage 2: $lookup category by categoryId
-      // Convert categoryId to ObjectId for proper matching
-      pipeline.push({
-        $lookup: {
-          from: 'categories',
-          let: { categoryId: '$categoryId' },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $eq: ['$_id', '$$categoryId'],
-                },
-              },
-            },
-          ],
-          as: 'category',
+      basePipeline.push(
+        {
+          $lookup: {
+            from: 'categories',
+            localField: 'categoryId',
+            foreignField: '_id',
+            as: 'category',
+          },
         },
-      });
-
-      // Stage 3: $unwind category (convert array to object)
-      pipeline.push({
-        $unwind: {
-          path: '$category',
-          preserveNullAndEmptyArrays: true,
+        {
+          $unwind: {
+            path: '$category',
+            preserveNullAndEmptyArrays: true,
+          },
         },
-      });
+      );
 
-      // Stage 4: $match for global search (after lookup to include category name)
       if (search && search.trim() !== '') {
         const searchRegex = new RegExp(
           search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
           'i',
         );
-        pipeline.push({
+        basePipeline.push({
           $match: {
             $or: [
               { productName: searchRegex },
@@ -1398,82 +1720,137 @@ export class ProductRegistrationService {
         });
       }
 
-      // Stage 5: $project formatted result
-      // Check both camelCase (categoryName) and snake_case (category_name) field names
-      pipeline.push({
-        $project: {
-          eoiNo: 1,
-          urnNo: 1,
-          productName: 1,
-          productDetails: 1,
-          addedOn: '$createdDate',
-          category: {
-            _id: { $ifNull: ['$category._id', null] },
-            categoryName: {
-              $cond: {
-                if: { $ne: ['$category', null] },
-                then: {
-                  $ifNull: [
-                    '$category.categoryName',
-                    { $ifNull: ['$category.category_name', null] },
-                  ],
-                },
-                else: null,
-              },
-            },
-            categoryCode: {
-              $cond: {
-                if: { $ne: ['$category', null] },
-                then: {
-                  $ifNull: [
-                    '$category.categoryCode',
-                    { $ifNull: ['$category.category_code', null] },
-                  ],
-                },
-                else: null,
-              },
-            },
+      const rowBase: any[] = [...basePipeline];
+
+      const urnSummaryPipeline: any[] = [
+        ...rowBase,
+        {
+          $group: {
+            _id: '$urnNo',
+            urnNo: { $first: '$urnNo' },
+            createdDate: { $min: '$createdDate' },
+            totalEoi: { $sum: 1 },
+            statusCodes: { $addToSet: '$productStatus' },
           },
-          hpUnits: '$plantCount',
-          status: '$productStatus',
         },
-      });
+        { $sort: { createdDate: sortOrder } },
+      ];
 
-      // Stage 6: Sort by created_date
-      pipeline.push({
-        $sort: { addedOn: sortOrder },
-      });
-
-      // Stage 7: Use $facet for pagination and total count
-      pipeline.push({
-        $facet: {
-          data: [{ $skip: skip }, { $limit: limit }],
-          totalCount: [{ $count: 'count' }],
+      const eoiLookupMatchStages: any[] = [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $eq: ['$urnNo', '$$urnNo'] },
+                { $eq: ['$vendorId', vendorObjectId] },
+              ],
+            },
+            ...matchActiveProducts(),
+          },
         },
-      });
-
-      // Execute aggregation
-      const result = await this.productModel.aggregate(pipeline).exec();
-
-      // Extract data and total count
-      const data = result[0]?.data || [];
-      const totalCount = result[0]?.totalCount[0]?.count || 0;
-      const totalPages = Math.ceil(totalCount / limit);
-
-      // Debug: Log first result to check category data
-      if (data.length > 0 && !data[0].category?.categoryName) {
-        console.log(
-          '[List Products] Category lookup debug - First product category:',
-          JSON.stringify(data[0].category, null, 2),
-        );
-        console.log(
-          '[List Products] Category ID from product:',
-          data[0].category?._id,
-        );
+      ];
+      if (statusMatch) {
+        eoiLookupMatchStages.push({ $match: statusMatch });
+      }
+      if (categoryId) {
+        eoiLookupMatchStages.push({
+          $match: {
+            categoryId: this.toObjectId(categoryId, 'categoryId'),
+          },
+        });
       }
 
+      const urnDataPipeline = [
+        ...urnSummaryPipeline,
+        { $skip: skip },
+        { $limit: limit },
+        {
+          $lookup: {
+            from: 'products',
+            let: { urnNo: '$urnNo' },
+            pipeline: [
+              ...eoiLookupMatchStages,
+              {
+                $lookup: {
+                  from: 'categories',
+                  localField: 'categoryId',
+                  foreignField: '_id',
+                  as: 'category',
+                },
+              },
+              {
+                $unwind: {
+                  path: '$category',
+                  preserveNullAndEmptyArrays: true,
+                },
+              },
+              {
+                $project: {
+                  _id: 1,
+                  eoiNo: 1,
+                  productName: 1,
+                  productStatus: 1,
+                  validtillDate: 1,
+                  createdDate: 1,
+                  plantCount: 1,
+                  categoryName: {
+                    $ifNull: [
+                      '$category.categoryName',
+                      '$category.category_name',
+                    ],
+                  },
+                },
+              },
+              { $sort: { createdDate: -1 } },
+            ],
+            as: 'eois',
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            urnNo: 1,
+            createdDate: 1,
+            totalEoi: 1,
+            statusCodes: 1,
+            eois: 1,
+          },
+        },
+      ];
+
+      const totalUrnPipeline = [...urnSummaryPipeline, { $count: 'count' }];
+
+      const facetResult = await this.productModel
+        .aggregate([
+          {
+            $facet: {
+              data: urnDataPipeline,
+              totalCount: totalUrnPipeline,
+            },
+          },
+        ])
+        .exec();
+
+      const payload = facetResult[0] ?? { data: [], totalCount: [] };
+      const totalCount = payload.totalCount?.[0]?.count ?? 0;
+      const totalPages = limit > 0 ? Math.ceil(totalCount / limit) : 0;
+
+      const grouped = (payload.data ?? []).map((u: Record<string, unknown>) => ({
+        urnNo: u.urnNo,
+        createdDate: u.createdDate,
+        urnStatus: this.deriveVendorUrnStatus(
+          Array.isArray(u.statusCodes) ? (u.statusCodes as number[]) : [],
+        ),
+        totalEoi: Number(u.totalEoi ?? 0),
+        eois: Array.isArray(u.eois)
+          ? (u.eois as Record<string, unknown>[]).map((e) =>
+              this.formatVendorListEoiEntry(e ?? {}),
+            )
+          : [],
+      }));
+
       const response = {
-        data,
+        data: grouped,
         pagination: {
           page,
           limit,
@@ -1481,6 +1858,7 @@ export class ProductRegistrationService {
           totalPages,
         },
       };
+
       this.redisService
         .set(cacheKey, response, this.getProductListCacheTtlSeconds())
         .catch((error) => {
@@ -1490,11 +1868,12 @@ export class ProductRegistrationService {
         });
       return response;
     } catch (error: any) {
-      console.error('[List Products] Error:', error);
-      console.error('[List Products] Error stack:', error.stack);
+      this.logger.error(
+        `[List Products] ${error?.message || 'unknown error'}`,
+        error?.stack,
+      );
       throw new InternalServerErrorException(
-        error.message ||
-          'Failed to list products. Please check the logs for details.',
+        error.message || 'Failed to fetch EOI list',
       );
     }
   }
@@ -1529,6 +1908,7 @@ export class ProductRegistrationService {
             $ne: null,
             $lt: thresholdDate, // validtillDate < (current_date + 60 days)
           },
+          ...matchActiveProducts(),
         },
       });
 
@@ -1616,10 +1996,11 @@ export class ProductRegistrationService {
       // Aggregation pipeline
       const pipeline: any[] = [];
 
-      // Stage 1: $match - Filter by urnNo
+      // Stage 1: $match - Filter by urnNo (active products only)
       pipeline.push({
         $match: {
           urnNo: urnNo.trim(),
+          ...matchActiveProducts(),
         },
       });
 
@@ -1677,7 +2058,7 @@ export class ProductRegistrationService {
         },
       });
 
-      // Stage 5: $lookup - Join with product_plants collection
+      // Stage 5: $lookup - Join with active product_plants only
       pipeline.push({
         $lookup: {
           from: 'product_plants',
@@ -1688,6 +2069,7 @@ export class ProductRegistrationService {
                 $expr: {
                   $eq: ['$productId', '$$productId'],
                 },
+                ...matchActiveProductPlants(),
               },
             },
           ],
@@ -2508,7 +2890,11 @@ export class ProductRegistrationService {
       }
 
       // Format response structure
-      const formattedResults = results.map((product) => ({
+      const formattedResults = results.map((product) => {
+        const manufacturerDetails = this.formatProductDetailsManufacturer(
+          product.manufacturer as Record<string, unknown> | null,
+        );
+        return {
         product_details: {
           _id: product._id,
           productId: product.productId,
@@ -2534,27 +2920,13 @@ export class ProductRegistrationService {
           updatedDate: product.updatedDate,
         },
         category: product.category || null,
-        manufacturer: product.manufacturer
-          ? {
-              _id: product.manufacturer._id,
-              manufacturerName: product.manufacturer.manufacturerName,
-              gpInternalId: product.manufacturer.gpInternalId,
-              manufacturerInitial: product.manufacturer.manufacturerInitial,
-              manufacturerStatus: product.manufacturer.manufacturerStatus,
-              manufacturerImage: product.manufacturer.manufacturerImage,
-            }
-          : null,
-        vendor: product.vendor
-          ? {
-              _id: product.vendor._id,
-              vendorName: product.vendor.vendorName,
-              vendorEmail: product.vendor.vendorEmail,
-              vendorPhone: product.vendor.vendorPhone,
-              vendorDesignation: product.vendor.vendorDesignation,
-              vendorGst: product.vendor.vendorGst,
-              vendorStatus: product.vendor.vendorStatus,
-            }
-          : null,
+        manufacturer: manufacturerDetails,
+        /** Admin UI section label — same payload as manufacturer (includes vendor_details). */
+        manufacturing_details: manufacturerDetails,
+        vendor: this.formatProductDetailsVendor(
+          product.manufacturer as Record<string, unknown> | null,
+          product.vendor as Record<string, unknown> | null,
+        ),
         plants: product.plants || [],
         payments: product.payments || [],
         product_design: product.product_design
@@ -3328,7 +3700,8 @@ export class ProductRegistrationService {
               updatedDate: product.process_comments.updatedDate,
             }
           : null,
-      }));
+      };
+      });
 
       return formattedResults;
     } catch (error: any) {
@@ -3350,32 +3723,31 @@ export class ProductRegistrationService {
   }
 
   async adminListProducts(dto: AdminListProductsDto) {
-    const cacheKey = this.buildAdminProductListCacheKey(dto);
-    try {
-      const cached = await this.redisService.get<{
-        message: string;
-        data: any[];
-        total: number;
-        page: number;
-        limit: number;
-        statusCounts: Record<string, number>;
-      }>(cacheKey);
-      if (cached && Array.isArray(cached.data)) {
-        return cached;
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Product admin list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
-      );
+    const groupBy = dto.groupBy ?? 'manufacturer';
+    if (groupBy === 'urn') {
+      return this.adminListProductsGroupedByUrn(dto);
     }
+    return this.adminListProductsGroupedByManufacturer(dto);
+  }
 
+  private buildAdminListRowBase(dto: AdminListProductsDto): {
+    page: number;
+    limit: number;
+    skip: number;
+    sortOrder: 1 | -1;
+    now: Date;
+    rowBase: any[];
+    statusMatch: Record<string, unknown> | null;
+    urnSortField: string;
+    manufacturerSortField: string;
+  } {
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 10;
     const skip = (page - 1) * limit;
     const sortOrder = (dto.order ?? dto.sortOrder) === 'asc' ? 1 : -1;
     const now = new Date();
 
-    const sortFieldMap: Record<string, string> = {
+    const urnSortFieldMap: Record<string, string> = {
       createdDate: 'createdDate',
       createdAt: 'createdDate',
       validTill: 'validtillDate',
@@ -3383,10 +3755,24 @@ export class ProductRegistrationService {
       eoiNo: 'eoiNo',
       urnNo: 'urnNo',
     };
-    const sortField =
-      sortFieldMap[dto.sortBy ?? 'createdDate'] ?? 'createdDate';
+    const urnSortField =
+      urnSortFieldMap[dto.sortBy ?? 'createdDate'] ?? 'createdDate';
 
-    const nativeMatch: Record<string, unknown> = {};
+    const manufacturerSortFieldMap: Record<string, string> = {
+      createdDate: 'sortKey',
+      createdAt: 'sortKey',
+      manufacturerName: 'manufacturerName',
+      validTill: 'sortKey',
+      productName: 'sortKey',
+      eoiNo: 'sortKey',
+      urnNo: 'sortKey',
+    };
+    const manufacturerSortField =
+      manufacturerSortFieldMap[dto.sortBy ?? 'createdDate'] ?? 'sortKey';
+
+    const nativeMatch: Record<string, unknown> = {
+      ...matchActiveProducts(),
+    };
     if (dto.product_type !== undefined) {
       nativeMatch.productType = dto.product_type;
     }
@@ -3459,7 +3845,14 @@ export class ProductRegistrationService {
         $lookup: {
           from: 'product_plants',
           let: { pid: '$_id' },
-          pipeline: [{ $match: { $expr: { $eq: ['$productId', '$$pid'] } } }],
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$productId', '$$pid'] },
+                ...matchActiveProductPlants(),
+              },
+            },
+          ],
           as: 'plants',
         },
       },
@@ -3491,6 +3884,7 @@ export class ProductRegistrationService {
             { urnNo: rx },
             { productName: rx },
             { 'manufacturer.manufacturerName': rx },
+            { 'manufacturer.vendor_name': rx },
             { 'manufacturer.vendor_email': rx },
             { 'manufacturer.vendor_phone': rx },
           ],
@@ -3531,6 +3925,233 @@ export class ProductRegistrationService {
       rowBase.push({ $match: statusMatch });
     }
 
+    return {
+      page,
+      limit,
+      skip,
+      sortOrder,
+      now,
+      rowBase,
+      statusMatch,
+      urnSortField,
+      manufacturerSortField,
+    };
+  }
+
+  private async adminListProductsGroupedByManufacturer(
+    dto: AdminListProductsDto,
+  ) {
+    const cacheKey = this.buildAdminProductListCacheKey(dto);
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: any[];
+        total: number;
+        page: number;
+        limit: number;
+        statusCounts: Record<string, number>;
+      }>(cacheKey);
+      if (cached && Array.isArray(cached.data)) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Product admin list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const {
+      page,
+      limit,
+      skip,
+      sortOrder,
+      now,
+      rowBase,
+      manufacturerSortField,
+    } = this.buildAdminListRowBase(dto);
+
+    const manufacturerGroupPipeline: any[] = [
+      ...rowBase,
+      {
+        $project: {
+          manufacturerId: 1,
+          urnNo: 1,
+          createdDate: 1,
+          productStatus: 1,
+          _id: 1,
+          productId: 1,
+          eoiNo: 1,
+          productName: 1,
+          productDetails: 1,
+          categoryName: {
+            $ifNull: ['$category.categoryName', '$category.category_name'],
+          },
+          manufacturerName: '$manufacturer.manufacturerName',
+          plants: 1,
+        },
+      },
+      {
+        $group: {
+          _id: { manufacturerId: '$manufacturerId', urnNo: '$urnNo' },
+          manufacturer_id: { $first: '$manufacturerId' },
+          manufacturerName: { $first: '$manufacturerName' },
+          urnNo: { $first: '$urnNo' },
+          createdDate: { $min: '$createdDate' },
+          totalEoi: { $sum: 1 },
+          statusCodes: { $addToSet: '$productStatus' },
+          eoiDocs: {
+            $push: {
+              _id: '$_id',
+              productId: '$productId',
+              eoiNo: '$eoiNo',
+              urnNo: '$urnNo',
+              productName: '$productName',
+              productDetails: '$productDetails',
+              productStatus: '$productStatus',
+              createdDate: '$createdDate',
+              categoryName: '$categoryName',
+              manufacturerName: '$manufacturerName',
+              plants: '$plants',
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: '$_id.manufacturerId',
+          manufacturer_id: { $first: '$manufacturer_id' },
+          manufacturerName: { $first: '$manufacturerName' },
+          total_urns: { $sum: 1 },
+          total_eois: { $sum: '$totalEoi' },
+          sortKey: { $max: '$createdDate' },
+          urns: {
+            $push: {
+              urnNo: '$urnNo',
+              createdDate: '$createdDate',
+              totalEoi: '$totalEoi',
+              statusCodes: '$statusCodes',
+              eoiDocs: '$eoiDocs',
+            },
+          },
+        },
+      },
+      { $sort: { [manufacturerSortField]: sortOrder } },
+    ];
+
+    const facetResult = await this.productModel
+      .aggregate([
+        {
+          $facet: {
+            data: [
+              ...manufacturerGroupPipeline,
+              { $skip: skip },
+              { $limit: limit },
+              {
+                $project: {
+                  _id: 0,
+                  manufacturer_id: 1,
+                  manufacturerName: 1,
+                  total_urns: 1,
+                  total_eois: 1,
+                  urns: 1,
+                },
+              },
+            ],
+            total: [...manufacturerGroupPipeline, { $count: 'count' }],
+            byStatus: [
+              ...rowBase,
+              { $group: { _id: '$productStatus', count: { $sum: 1 } } },
+            ],
+            expired: [
+              ...rowBase,
+              {
+                $match: {
+                  productStatus: 2,
+                  validtillDate: { $exists: true, $ne: null, $lt: now },
+                },
+              },
+              { $count: 'count' },
+            ],
+          },
+        },
+      ])
+      .exec();
+
+    const payload = facetResult[0] ?? {
+      data: [],
+      total: [],
+      byStatus: [],
+      expired: [],
+    };
+    const total = payload.total?.[0]?.count ?? 0;
+
+    const statusCounts: Record<string, number> = {
+      0: 0,
+      1: 0,
+      2: 0,
+      3: 0,
+      4: payload.expired?.[0]?.count ?? 0,
+    };
+    for (const row of payload.byStatus ?? []) {
+      if (row?._id !== undefined && row?._id !== null) {
+        statusCounts[String(row._id)] = row.count ?? 0;
+      }
+    }
+
+    const grouped = (payload.data ?? []).map((m: any) =>
+      this.formatAdminListManufacturerGroup(m),
+    );
+
+    const response = {
+      message: 'Products listed successfully',
+      data: grouped,
+      total,
+      page,
+      limit,
+      statusCounts,
+    };
+    this.redisService
+      .set(cacheKey, response, this.getProductListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Product admin list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return response;
+  }
+
+  private async adminListProductsGroupedByUrn(dto: AdminListProductsDto) {
+    const cacheKey = this.buildAdminProductListCacheKey(dto);
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: any[];
+        total: number;
+        page: number;
+        limit: number;
+        statusCounts: Record<string, number>;
+      }>(cacheKey);
+      if (cached && Array.isArray(cached.data)) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Product admin list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const {
+      page,
+      limit,
+      skip,
+      sortOrder,
+      now,
+      rowBase,
+      statusMatch,
+      urnSortField,
+    } = this.buildAdminListRowBase(dto);
+    const sortField = urnSortField;
+
     const urnSummaryPipeline: any[] = [
       ...rowBase,
       {
@@ -3546,7 +4167,12 @@ export class ProductRegistrationService {
     ];
 
     const eoiLookupPipeline: any[] = [
-      { $match: { $expr: { $eq: ['$urnNo', '$$urnNo'] } } },
+      {
+        $match: {
+          $expr: { $eq: ['$urnNo', '$$urnNo'] },
+          ...matchActiveProducts(),
+        },
+      },
     ];
     if (statusMatch) {
       eoiLookupPipeline.push({ $match: statusMatch });
@@ -3592,7 +4218,12 @@ export class ProductRegistrationService {
                 from: 'product_plants',
                 let: { productId: '$_id' },
                 pipeline: [
-                  { $match: { $expr: { $eq: ['$productId', '$$productId'] } } },
+                  {
+                    $match: {
+                      $expr: { $eq: ['$productId', '$$productId'] },
+                      ...matchActiveProductPlants(),
+                    },
+                  },
                   {
                     $lookup: {
                       from: 'states',
@@ -3612,6 +4243,8 @@ export class ProductRegistrationService {
                       _id: 1,
                       productPlantId: 1,
                       productId: 1,
+                      eoiNo: 1,
+                      urnNo: 1,
                       plantName: 1,
                       plantLocation: 1,
                       countryId: 1,
@@ -3638,6 +4271,9 @@ export class ProductRegistrationService {
                 eoiNo: 1,
                 urnNo: 1,
                 productName: 1,
+                productDetails: 1,
+                productStatus: 1,
+                createdDate: 1,
                 categoryName: {
                   $ifNull: [
                     '$category.categoryName',
@@ -3645,8 +4281,6 @@ export class ProductRegistrationService {
                   ],
                 },
                 manufacturerName: '$manufacturer.manufacturerName',
-                productStatus: 1,
-                createdDate: 1,
                 plants: 1,
               },
             },
@@ -3715,53 +4349,20 @@ export class ProductRegistrationService {
       }
     }
 
-    const mapProductStatusLabel = (
-      code: number,
-    ): 'Pending' | 'Approved' | 'Rejected' => {
-      if (code === 3) return 'Rejected';
-      if (code === 2) return 'Approved';
-      return 'Pending';
-    };
-    const deriveUrnStatus = (
-      codes: number[],
-    ): 'Active' | 'Pending' | 'Inactive' => {
-      if (codes.includes(3)) return 'Inactive';
-      if (codes.includes(2)) return 'Active';
-      return 'Pending';
-    };
-
-    const grouped = (payload.data ?? []).map((u: any) => ({
-      urnNo: u.urnNo,
-      createdDate: u.createdDate,
-      urnStatus: deriveUrnStatus(
+    const grouped = (payload.data ?? []).map((u: any) => {
+      const urnStatus = this.deriveAdminUrnStatus(
         Array.isArray(u.statusCodes) ? u.statusCodes : [],
-      ),
-      totalEoi: u.totalEoi ?? 0,
-      eois: Array.isArray(u.eois)
-        ? u.eois.map((e: any) => {
-            const { plants, ...eoi } = e ?? {};
-            return {
-              ...eoi,
-              plantDetails: Array.isArray(plants)
-                ? plants.map((p: any) => ({
-                    _id: p?._id,
-                    productPlantId: p?.productPlantId,
-                    productId: p?.productId,
-                    plantName: p?.plantName,
-                    plantLocation: p?.plantLocation,
-                    countryId: p?.countryId,
-                    stateId: p?.stateId,
-                    stateName: p?.stateName ?? null,
-                    city: p?.city,
-                    plantStatus: p?.plantStatus,
-                    createdDate: p?.createdDate,
-                  }))
-                : [],
-              statusLabel: mapProductStatusLabel(Number(e.productStatus ?? 0)),
-            };
-          })
-        : [],
-    }));
+      );
+      return {
+        urnNo: u.urnNo,
+        createdDate: u.createdDate,
+        urnStatus,
+        totalEoi: u.totalEoi ?? 0,
+        eois: Array.isArray(u.eois)
+          ? u.eois.map((e: any) => this.formatAdminListEoiEntry(e ?? {}))
+          : [],
+      };
+    });
 
     const response = {
       message: 'Products listed successfully',
@@ -3923,8 +4524,8 @@ export class ProductRegistrationService {
   ): Promise<{ buffer: Buffer; fileName: string }> {
     const batchSize = 500;
     let page = 1;
-    let totalUrn = 0;
-    const urnRows: any[] = [];
+    let totalGroups = 0;
+    const listRows: any[] = [];
 
     while (true) {
       const batch = await this.adminListProducts({
@@ -3933,45 +4534,26 @@ export class ProductRegistrationService {
         limit: batchSize,
       } as AdminListProductsDto);
 
-      if (totalUrn === 0) {
-        totalUrn = batch.total ?? 0;
+      if (totalGroups === 0) {
+        totalGroups = batch.total ?? 0;
       }
-      urnRows.push(...(batch.data ?? []));
-      if (urnRows.length >= totalUrn || (batch.data ?? []).length === 0) {
+      listRows.push(...(batch.data ?? []));
+      if (listRows.length >= totalGroups || (batch.data ?? []).length === 0) {
         break;
       }
       page += 1;
     }
 
-    const mapStatusLabel = (
-      code: number,
-    ): 'Pending' | 'Approved' | 'Rejected' => {
-      if (code === 3) return 'Rejected';
-      if (code === 2) return 'Approved';
-      return 'Pending';
-    };
-
-    const eoiRows = urnRows.flatMap((u) =>
-      (u.eois ?? []).map((e: any) => ({
-        urnNo: e.urnNo ?? u.urnNo ?? '',
-        eoiNo: e.eoiNo ?? '',
-        productName: e.productName ?? '',
-        categoryName: e.categoryName ?? '',
-        manufacturerName: e.manufacturerName ?? '',
-        statusLabel:
-          e.statusLabel ?? mapStatusLabel(Number(e.productStatus ?? 0)),
-        createdDate: e.createdDate ?? u.createdDate ?? null,
-      })),
-    );
+    const { eoiRows } = this.flattenAdminListForExport(listRows);
 
     const workbook = new ExcelJS.Workbook();
     const ws = workbook.addWorksheet('Products Export');
     ws.columns = [
+      { header: 'Manufacturer Name', key: 'manufacturerName', width: 30 },
       { header: 'URN No', key: 'urnNo', width: 28 },
       { header: 'EOI No', key: 'eoiNo', width: 24 },
       { header: 'Product Name', key: 'productName', width: 32 },
       { header: 'Category Name', key: 'categoryName', width: 24 },
-      { header: 'Manufacturer Name', key: 'manufacturerName', width: 30 },
       { header: 'Product Status Label', key: 'statusLabel', width: 20 },
       { header: 'Created Date', key: 'createdDate', width: 24 },
     ];
@@ -4073,7 +4655,7 @@ export class ProductRegistrationService {
       const pageSize = 500;
       let page = 1;
       let total = 0;
-      const urnRows: any[] = [];
+      const listRows: any[] = [];
 
       while (true) {
         const batch = await this.adminListProducts({
@@ -4085,31 +4667,19 @@ export class ProductRegistrationService {
         if (total === 0) {
           total = batch.total ?? 0;
         }
-        urnRows.push(...(batch.data ?? []));
-        if (urnRows.length >= total || (batch.data ?? []).length === 0) {
+        listRows.push(...(batch.data ?? []));
+        if (listRows.length >= total || (batch.data ?? []).length === 0) {
           break;
         }
         page += 1;
         job.progress = Math.min(
           70,
-          10 + Math.floor((urnRows.length / Math.max(total, 1)) * 60),
+          10 + Math.floor((listRows.length / Math.max(total, 1)) * 60),
         );
         job.updatedAt = new Date();
       }
 
-      const eoiRows = urnRows.flatMap((u) =>
-        (u.eois ?? []).map((e: any) => ({
-          urnNo: u.urnNo,
-          eoiNo: e.eoiNo,
-          productId: e.productId,
-          productName: e.productName,
-          categoryName: e.categoryName,
-          manufacturerName: e.manufacturerName,
-          productStatus: e.productStatus,
-          statusLabel: e.statusLabel,
-          createdDate: e.createdDate,
-        })),
-      );
+      const { urnRows, eoiRows } = this.flattenAdminListForExport(listRows);
 
       if (eoiRows.length > this.exportMaxRows) {
         throw new BadRequestException(
@@ -4128,12 +4698,12 @@ export class ProductRegistrationService {
           return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
         };
         const header = [
+          'Manufacturer Name',
           'URN',
           'EOI Number',
           'Product ID',
           'Product Name',
           'Category Name',
-          'Manufacturer Name',
           'Product Status',
           'Status Label',
           'Created Date',
@@ -4142,12 +4712,12 @@ export class ProductRegistrationService {
         for (const row of eoiRows) {
           lines.push(
             [
+              row.manufacturerName,
               row.urnNo,
               row.eoiNo,
               row.productId,
               row.productName,
               row.categoryName,
-              row.manufacturerName,
               row.productStatus,
               row.statusLabel,
               row.createdDate,
@@ -4164,6 +4734,7 @@ export class ProductRegistrationService {
           const ws1 = workbook.addWorksheet('URN Summary');
           ws1.columns = [
             { header: 'S.No', key: 'sno', width: 8 },
+            { header: 'Manufacturer Name', key: 'manufacturerName', width: 28 },
             { header: 'URN', key: 'urnNo', width: 28 },
             { header: 'Created Date', key: 'createdDate', width: 24 },
             { header: 'URN Status', key: 'urnStatus', width: 16 },
@@ -4172,10 +4743,11 @@ export class ProductRegistrationService {
           urnRows.forEach((u, idx) => {
             ws1.addRow({
               sno: idx + 1,
-              urnNo: u.urnNo,
-              createdDate: u.createdDate,
-              urnStatus: u.urnStatus,
-              totalEoi: u.totalEoi,
+              manufacturerName: u.manufacturerName ?? '',
+              urnNo: u.urnNo ?? u.urn_number,
+              createdDate: u.createdDate ?? u.created_at,
+              urnStatus: u.urnStatus ?? u.status,
+              totalEoi: u.totalEoi ?? u.total_eoi,
             });
           });
         }
@@ -4183,12 +4755,12 @@ export class ProductRegistrationService {
         if (job.includeSheets.includes('eoi_details')) {
           const ws2 = workbook.addWorksheet('EOI Details');
           ws2.columns = [
+            { header: 'Manufacturer Name', key: 'manufacturerName', width: 28 },
             { header: 'URN', key: 'urnNo', width: 28 },
             { header: 'EOI Number', key: 'eoiNo', width: 20 },
             { header: 'Product ID', key: 'productId', width: 12 },
             { header: 'Product Name', key: 'productName', width: 30 },
             { header: 'Category Name', key: 'categoryName', width: 24 },
-            { header: 'Manufacturer Name', key: 'manufacturerName', width: 28 },
             { header: 'Product Status', key: 'productStatus', width: 14 },
             { header: 'Status Label', key: 'statusLabel', width: 14 },
             { header: 'Created Date', key: 'createdDate', width: 24 },

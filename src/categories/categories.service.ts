@@ -715,6 +715,60 @@ export class CategoriesService implements OnModuleInit {
   }
 
   /**
+   * Numeric `category_id` values for categories in a sector (GET /categories `sector` field).
+   * Sorted ascending by `category_id`.
+   */
+  async listNumericCategoryIdsBySector(sectorId: number): Promise<number[]> {
+    if (!Number.isInteger(sectorId) || sectorId < 1) {
+      return [];
+    }
+    const rows = await this.categoryModel
+      .find({ sector: sectorId })
+      .select('category_id')
+      .sort({ category_id: 1 })
+      .lean()
+      .exec();
+    return rows
+      .map((r) => r.category_id as number)
+      .filter(
+        (x): x is number =>
+          typeof x === 'number' && Number.isInteger(x) && x >= 1,
+      );
+  }
+
+  /** Maps numeric `category_id` → sector id from the categories collection. */
+  async getCategorySectorsByNumericIds(
+    categoryIds: Array<number | undefined | null>,
+  ): Promise<Map<number, number>> {
+    const unique = [
+      ...new Set(
+        categoryIds.filter(
+          (x): x is number =>
+            typeof x === 'number' && Number.isInteger(x) && x >= 1,
+        ),
+      ),
+    ];
+    if (!unique.length) {
+      return new Map();
+    }
+    const rows = await this.categoryModel
+      .find({ category_id: { $in: unique } })
+      .select('category_id sector')
+      .lean()
+      .exec();
+    const m = new Map<number, number>();
+    for (const r of rows) {
+      const cid = r.category_id as number;
+      const sec =
+        typeof r.sector === 'number' && Number.isFinite(r.sector)
+          ? Math.floor(r.sector)
+          : 1;
+      m.set(cid, sec);
+    }
+    return m;
+  }
+
+  /**
    * For standards filters: numeric `category_id` from GET /categories, or MongoDB category `_id`
    * (24-char hex) when the client uses document ids in URLs.
    */

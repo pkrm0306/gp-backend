@@ -12,6 +12,7 @@ import {
   StandardCategorySchema,
 } from './schemas/standard-category.schema';
 import { CategoriesModule } from '../categories/categories.module';
+import { SectorsModule } from '../sectors/sectors.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { CategoriesModule } from '../categories/categories.module';
       { name: StandardCategory.name, schema: StandardCategorySchema },
     ]),
     CategoriesModule,
+    SectorsModule,
   ],
   controllers: [StandardsController],
   providers: [StandardsService],

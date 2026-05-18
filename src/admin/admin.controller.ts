@@ -36,8 +36,11 @@ import {
 import { AdminService } from './admin.service';
 import {
   hasExplicitCategoryIdFields,
-  mergeCategoryIdsFromFormObject,
 } from '../standards/utils/merge-category-ids.util';
+import {
+  hasExplicitSectorAssignmentFields,
+  mergeSectorIdsFromFormObject,
+} from '../standards/utils/merge-sector-ids-from-form.util';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -121,7 +124,7 @@ function TeamMemberEditDocs() {
       summary: 'Edit team member',
       description:
         '**POST** or **PATCH** — same handler. Multipart form: **id** (team member from list), name, designation, email, mobile, optional **image** (270×400px recommended), social URLs. ' +
-        'Omit all category fields to leave categories unchanged; if any **category_id** / **category_ids** / **categoryIds** field is sent, the full set is replaced and at least one id is required. ' +
+        'Optional **sectors** multiselect (numeric ids from GET /api/sectors): send **sectors** JSON array, **sectors[]**, **sector_ids**, or legacy **sector**. When any sector field is sent, linked categories are replaced with all categories in those sectors. Omit sector fields to leave assignment unchanged. Category fields are not accepted. ' +
         'Same JWT workarounds as create (**x-access-token** / **access_token**) if Bearer is dropped on multipart.',
     }),
     ApiConsumes('multipart/form-data'),
@@ -166,25 +169,30 @@ function TeamMemberEditDocs() {
             items: { type: 'string' },
             description: 'Repeated multipart fields for role ids',
           },
-          category_id: {
-            oneOf: [{ type: 'integer' }, { type: 'string' }],
-            description: 'Legacy single numeric category id',
+          sectors: {
+            oneOf: [
+              { type: 'array', items: { type: 'integer' } },
+              { type: 'string', description: 'JSON array of sector ids' },
+            ],
+            description: 'Multiselect sector ids (GET /api/sectors)',
           },
-          category_ids: {
+          sector: {
+            oneOf: [{ type: 'integer' }, { type: 'string' }],
+            description: 'Legacy single sector id',
+          },
+          'sectors[]': {
             oneOf: [
               { type: 'array', items: { type: 'integer' } },
               { type: 'string' },
             ],
           },
-          categoryIds: { type: 'string' },
-          'category_ids[]': {
-            type: 'array',
-            items: { type: 'integer' },
+          sector_ids: {
+            oneOf: [
+              { type: 'array', items: { type: 'integer' } },
+              { type: 'string' },
+            ],
           },
-          'categoryIds[]': {
-            type: 'array',
-            items: { type: 'integer' },
-          },
+          sectorIds: { type: 'string' },
         },
         required: ['id', 'name', 'email', 'mobile', 'displayOrder', 'team'],
       },
@@ -1999,7 +2007,7 @@ export class AdminController {
     summary: 'Create team member',
     description:
       'Use **Authorize** (Bearer) as usual. Swagger sometimes drops `Authorization` on multipart uploads — then send the same JWT via **x-access-token** header or **access_token** query param. ' +
-      'At least one product **category** is required: **category_id**, repeated **category_ids[]** / **categoryIds[]**, and/or **categoryIds** JSON array string (numeric ids from GET /categories).',
+      'Optional **sectors** multiselect (numeric ids from GET /api/sectors): **sectors**, **sectors[]**, **sector_ids** / **sectorIds**, or legacy **sector**. Category fields are not accepted (send sectors instead).',
   })
   @ApiConsumes('multipart/form-data')
   @ApiHeader({
@@ -2042,36 +2050,38 @@ export class AdminController {
           items: { type: 'string' },
           description: 'Repeated multipart fields for role ids',
         },
-        category_id: {
-          oneOf: [{ type: 'integer' }, { type: 'string' }],
-          description: 'Legacy single numeric category id',
-        },
-        category_ids: {
+        sectors: {
           oneOf: [
             { type: 'array', items: { type: 'integer' } },
-            { type: 'string', description: 'JSON array string' },
+            { type: 'string', description: 'JSON array of sector ids, e.g. "[1,2]"' },
+          ],
+          description: 'Multiselect sector ids from GET /api/sectors',
+        },
+        sector: {
+          oneOf: [{ type: 'integer' }, { type: 'string' }],
+          description: 'Legacy single sector id',
+        },
+        'sectors[]': {
+          type: 'array',
+          items: { type: 'integer' },
+          description: 'Repeated multipart sector id fields',
+        },
+        sector_ids: {
+          oneOf: [
+            { type: 'array', items: { type: 'integer' } },
+            { type: 'string' },
           ],
         },
-        categoryIds: {
+        sectorIds: {
           type: 'string',
-          description: 'JSON array string of numeric category ids (admin UI)',
-        },
-        'category_ids[]': {
-          type: 'array',
-          items: { type: 'integer' },
-          description: 'Repeated multipart category id fields',
-        },
-        'categoryIds[]': {
-          type: 'array',
-          items: { type: 'integer' },
-          description: 'Repeated multipart category id fields (camelCase)',
+          description: 'JSON array string of sector ids',
         },
       },
       required: ['name', 'email', 'mobile', 'displayOrder', 'team'],
     },
   })
   @ApiResponse({ status: 201, description: 'Team member created successfully' })
-  @ApiResponse({ status: 409, description: 'Email or phone already exists' })
+  @ApiResponse({ status: 409, description: 'Email or mobile already exists' })
   async createTeamMember(
     @CurrentUser() user: { vendorId: string },
     @Body() body: any,
@@ -2089,12 +2099,12 @@ export class AdminController {
         : Number.parseInt(String(body.displayOrder), 10);
 
     const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
-    const mergedCategoryIds = mergeCategoryIdsFromFormObject(body);
-    if (mergedCategoryIds.length === 0) {
+    if (hasExplicitCategoryIdFields(body)) {
       throw new BadRequestException(
-        'At least one category is required (category_id, category_ids[], or categoryIds).',
+        'Category fields are no longer accepted. Send **sectors** only (numeric ids from GET /api/sectors).',
       );
     }
+    const mergedSectorIds = mergeSectorIdsFromFormObject(body);
     const dto = plainToClass(CreateTeamMemberDto, {
       name: body.name,
       designation: body.designation,
@@ -2132,7 +2142,7 @@ export class AdminController {
       linkedinUrl: dto.linkedinUrl,
       roleId: dto.roleId,
       roleIds: normalizedRoleIds,
-      category_ids: mergedCategoryIds,
+      sector_ids: mergedSectorIds,
     });
 
     return { message: 'Team member created successfully', data: teamMember };
@@ -2173,13 +2183,13 @@ export class AdminController {
         : Number.parseInt(String(body.displayOrder), 10);
 
     const normalizedRoleIds = this.normalizeTeamMemberRoleIds(body);
-    const explicitCategories = hasExplicitCategoryIdFields(body);
-    const mergedCategoryIds = mergeCategoryIdsFromFormObject(body);
-    if (explicitCategories && mergedCategoryIds.length === 0) {
+    if (hasExplicitCategoryIdFields(body)) {
       throw new BadRequestException(
-        'At least one category is required when updating categories.',
+        'Category fields are no longer accepted. Send **sectors** only (numeric ids from GET /api/sectors).',
       );
     }
+    const explicitSectors = hasExplicitSectorAssignmentFields(body);
+    const mergedSectorIds = mergeSectorIdsFromFormObject(body);
     const dto = plainToClass(EditTeamMemberDto, {
       id: body.id,
       name: body.name,
@@ -2219,7 +2229,7 @@ export class AdminController {
       linkedinUrl: dto.linkedinUrl,
       roleId: dto.roleId,
       roleIds: normalizedRoleIds,
-      category_ids: explicitCategories ? mergedCategoryIds : undefined,
+      sector_ids: explicitSectors ? mergedSectorIds : undefined,
     });
 
     return { message: 'Team member updated successfully', data: teamMember };
@@ -2679,7 +2689,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get team member by id',
     description:
-      'Returns one team member for the **View** modal: name, designation, email, mobile, displayOrder, team, status (**Active** / **Inactive**), image URL, Facebook / Twitter / LinkedIn URLs. Soft-deleted excluded.',
+      'Returns one team member for the **View** modal: name, designation, email, mobile, displayOrder, team, status (**Active** / **Inactive**), image URL, social URLs, **sector_ids** / **sectorIds** / **sectors** (multiselect; no category fields). Soft-deleted excluded.',
   })
   @ApiParam({ name: 'id', description: 'Team member MongoDB id' })
   @ApiResponse({ status: 200, description: 'Team member details' })

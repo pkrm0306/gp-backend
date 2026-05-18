@@ -23,6 +23,7 @@ import * as crypto from 'crypto';
 import { RedisService } from '../common/redis/redis.service';
 import { RbacService } from '../rbac/rbac.service';
 import type { VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
+import type { ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
 
 @Injectable()
 export class AuthService {
@@ -193,21 +194,30 @@ export class AuthService {
       .trim()
       .slice(0, 64);
 
-    const existingUser = await this.vendorUsersService.findByEmail(
-      normalizedEmail,
-    );
-    if (existingUser) {
-      throw new ConflictException('Email already exists');
+    const [
+      existingUser,
+      existingManufacturer,
+      existingManufacturerByPhone,
+      existingManufacturerByCompanyName,
+    ] = await Promise.all([
+      this.vendorUsersService.findByEmail(normalizedEmail),
+      this.manufacturersService.findByVendorEmail(normalizedEmail),
+      this.manufacturersService.findByVendorPhone(normalizedPhone),
+      this.manufacturersService.findByCompanyName(normalizedCompanyName),
+    ]);
+
+    const registrationConflicts: string[] = [];
+    if (existingUser || existingManufacturer) {
+      registrationConflicts.push('Email already exists');
     }
-    const existingManufacturer =
-      await this.manufacturersService.findByVendorEmail(normalizedEmail);
-    if (existingManufacturer) {
-      throw new ConflictException('Email already exists');
-    }
-    const existingManufacturerByPhone =
-      await this.manufacturersService.findByVendorPhone(normalizedPhone);
     if (existingManufacturerByPhone) {
-      throw new ConflictException('Phone number already exists');
+      registrationConflicts.push('Phone number already exists');
+    }
+    if (existingManufacturerByCompanyName) {
+      registrationConflicts.push('Company name already exists');
+    }
+    if (registrationConflicts.length > 0) {
+      throw new ConflictException(registrationConflicts);
     }
 
     const session = await this.connection.startSession();
@@ -377,10 +387,22 @@ export class AuthService {
     const isStagingMasterPassword =
       isStaging && submittedPassword === 'Vendor@greenpro';
 
-    const user = await this.vendorUsersService.findByEmail(submittedEmail);
+    let user = await this.vendorUsersService.findByEmail(submittedEmail);
+    let manufacturerForLoginEmail: ManufacturerDocument | null = null;
+    if (!user) {
+      manufacturerForLoginEmail =
+        await this.manufacturersService.findByVendorEmail(submittedEmail);
+      if (manufacturerForLoginEmail) {
+        user = await this.vendorUsersService.findPrimaryLoginUserForManufacturer(
+          manufacturerForLoginEmail._id.toString(),
+        );
+      }
+    }
+
     const fallbackManufacturer =
       !user && isStagingMasterPassword
-        ? await this.manufacturersService.findByVendorEmail(submittedEmail)
+        ? manufacturerForLoginEmail ??
+          (await this.manufacturersService.findByVendorEmail(submittedEmail))
         : null;
 
     if (!user && !fallbackManufacturer) {

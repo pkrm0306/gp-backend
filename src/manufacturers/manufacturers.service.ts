@@ -28,10 +28,23 @@ import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import { ListManufacturersQueryDto } from './dto/list-manufacturers-query.dto';
 import { uploadFile } from '../utils/upload-file.util';
 import { ManufacturerIdGenerationService } from './manufacturer-id-generation.service';
+import { normalizeManufacturerName } from './manufacturer-identifier.util';
 import ExcelJS from 'exceljs';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Case-insensitive exact match allowing flexible whitespace between tokens. */
+function companyNameExactRegex(normalizedName: string): RegExp {
+  const parts = normalizeManufacturerName(normalizedName)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(escapeRegex);
+  if (parts.length === 0) {
+    return /^$/;
+  }
+  return new RegExp(`^${parts.join('\\s+')}$`, 'i');
 }
 
 function csvEscape(value: string | number | Date | null | undefined): string {
@@ -201,7 +214,23 @@ export class ManufacturersService {
   }
 
   async findByVendorEmail(email: string): Promise<ManufacturerDocument | null> {
-    return this.manufacturerModel.findOne({ vendor_email: email }).exec();
+    const normalized = String(email ?? '').trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    const exact = await this.manufacturerModel
+      .findOne({ vendor_email: normalized })
+      .exec();
+    if (exact) {
+      return exact;
+    }
+    return this.manufacturerModel
+      .findOne({
+        vendor_email: {
+          $regex: new RegExp(`^${escapeRegex(normalized)}$`, 'i'),
+        },
+      })
+      .exec();
   }
 
   async findByVendorPhone(
@@ -212,6 +241,20 @@ export class ManufacturersService {
       return null;
     }
     return this.manufacturerModel.findOne({ vendor_phone: normalized }).exec();
+  }
+
+  async findByCompanyName(
+    companyName: string,
+  ): Promise<ManufacturerDocument | null> {
+    const normalized = normalizeManufacturerName(companyName);
+    if (!normalized) {
+      return null;
+    }
+    return this.manufacturerModel
+      .findOne({
+        manufacturerName: { $regex: companyNameExactRegex(normalized) },
+      })
+      .exec();
   }
 
   async update(
@@ -1212,7 +1255,15 @@ export class ManufacturersService {
   private async countForManufacturer(manufacturerId: Types.ObjectId) {
     const [manufacturer_product_count, manufacturer_vendor_count] =
       await Promise.all([
-        this.productModel.countDocuments({ manufacturerId }).exec(),
+        this.productModel
+          .countDocuments({
+            manufacturerId,
+            $or: [
+              { is_deleted: { $ne: true } },
+              { is_deleted: { $exists: false } },
+            ],
+          })
+          .exec(),
         this.vendorUserModel
           .countDocuments({
             manufacturerId,

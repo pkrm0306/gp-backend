@@ -4,7 +4,10 @@ import { PassportModule } from '@nestjs/passport';
 import { ProductRegistrationController } from './product-registration.controller';
 import { ProductsController } from './products.controller';
 import { AdminProductsController } from './admin-products.controller';
+import { ProductController } from './product.controller';
 import { ProductRegistrationService } from './product-registration.service';
+import { EoiNumberService } from './services/eoi-number.service';
+import { ProductSoftDeleteService } from './services/product-soft-delete.service';
 import { Product, ProductSchema } from './schemas/product.schema';
 import {
   ProductPlant,
@@ -39,8 +42,20 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
     ProductRegistrationController,
     ProductsController,
     AdminProductsController,
+    ProductController,
   ],
-  providers: [ProductRegistrationService, SequenceHelper, PermissionsGuard],
-  exports: [ProductRegistrationService, SequenceHelper],
+  providers: [
+    ProductRegistrationService,
+    EoiNumberService,
+    ProductSoftDeleteService,
+    SequenceHelper,
+    PermissionsGuard,
+  ],
+  exports: [
+    ProductRegistrationService,
+    EoiNumberService,
+    ProductSoftDeleteService,
+    SequenceHelper,
+  ],
 })
 export class ProductRegistrationModule {}
