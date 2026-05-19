@@ -98,9 +98,9 @@ export class ProductsController {
 
   @Get('details/:urn_no')
   @ApiOperation({
-    summary: 'Get complete product details by URN',
+    summary: 'Get complete product details by URN (vendor)',
     description:
-      'Returns complete product details for all products with the specified URN, including related data from categories, manufacturers, vendors, product plants, and payment details. Uses MongoDB aggregation pipeline with multiple $lookup operations.',
+      'Returns complete product details for all products with the specified URN, including categories, manufacturers, vendors, plants, payments, and **siteVisits** (admin-managed site visit locations for this URN). Each item in `data[]` also includes the same `siteVisits` array; top-level `siteVisits` / `site_visits` is provided for the URN process UI.',
   })
   @ApiParam({
     name: 'urn_no',
@@ -115,11 +115,23 @@ export class ProductsController {
       type: 'object',
       properties: {
         success: { type: 'boolean', example: true },
+        siteVisits: {
+          type: 'array',
+          description: 'Site visit locations for this URN (read-only)',
+        },
+        site_visits: {
+          type: 'array',
+          description: 'Snake_case alias of siteVisits',
+        },
         data: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
+              siteVisits: {
+                type: 'array',
+                description: 'Same as top-level siteVisits',
+              },
               product_details: {
                 type: 'object',
                 properties: {
@@ -279,9 +291,14 @@ export class ProductsController {
         urnNo.trim(),
       );
 
+      const siteVisits =
+        (data[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
+
       return {
         success: true,
         data,
+        siteVisits,
+        site_visits: siteVisits,
       };
     } catch (error: any) {
       console.error('Controller error:', error);

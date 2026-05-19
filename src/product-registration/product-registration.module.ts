@@ -22,6 +22,7 @@ import { CategoriesModule } from '../categories/categories.module';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { UrnSiteVisitsModule } from '../urn-site-visits/urn-site-visits.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
     CategoriesModule,
     ActivityLogModule,
     RbacModule,
+    UrnSiteVisitsModule,
   ],
   controllers: [
     ProductRegistrationController,

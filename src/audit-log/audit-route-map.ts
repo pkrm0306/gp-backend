@@ -76,6 +76,7 @@ function isProductFamilyPath(p: string): boolean {
     p.startsWith('/product-registration') ||
     p.startsWith('/products') ||
     p.startsWith('/api/admin/products') ||
+    p.startsWith('/api/admin/urn-site-visits') ||
     p.startsWith('/raw-materials-hazardous-products') ||
     p.startsWith('/process-comments') ||
     p.startsWith('/process-')

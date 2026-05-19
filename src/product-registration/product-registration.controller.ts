@@ -337,9 +337,11 @@ export class ProductRegistrationController {
 
   @Put(':id')
   @ApiOperation({
-    summary: 'Update a product',
+    summary: 'Update a product in place (admin EOI edit)',
     description:
-      'Updates a product with all updatable fields. If productName changes, a new URN and EOI will be generated automatically. Otherwise, existing URN and EOI are preserved. All fields are optional - only provided fields will be updated.',
+      'Updates the existing product row only — URN and EOI are never regenerated. ' +
+      'Requires productName, productDetails, urnNo, and eoiNo; urnNo/eoiNo must match the product for {id} (400 on mismatch). ' +
+      'Other fields remain optional.',
   })
   @ApiParam({
     name: 'id',

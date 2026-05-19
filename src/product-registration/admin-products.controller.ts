@@ -44,6 +44,7 @@ export class AdminProductsController {
     description:
       'Same payload as **GET /products/details/:urn_no** — lookup by URN only (no manufacturer filter). ' +
       'Each row includes **product_details.urnStatus** (number). **manufacturer** / **manufacturing_details** include full **vendor_details** (email, phone, GST, contacts, etc.) from the manufacturers record. ' +
+      'Includes **siteVisits** on each row and at the response root. ' +
       'Requires a valid Bearer token (any authenticated user).',
   })
   @ApiParam({
@@ -58,9 +59,13 @@ export class AdminProductsController {
       throw new BadRequestException('URN number is required');
     }
     const data = await this.productRegistrationService.getProductDetailsByUrn(urn.trim());
+    const siteVisits =
+      (data[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
     return {
       success: true,
       data,
+      siteVisits,
+      site_visits: siteVisits,
     };
   }
 

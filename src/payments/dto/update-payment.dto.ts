@@ -8,6 +8,7 @@ import {
   IsDateString,
   IsInt,
   IsIn,
+  MaxLength,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
@@ -160,4 +161,19 @@ export class UpdatePaymentDto {
   @IsInt()
   @IsIn([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
   urnStatus?: number;
+
+  @ApiProperty({
+    description:
+      'Admin remarks when rejecting vendor payment proof (required when paymentStatus is 3)',
+    example: 'Cheque image is unclear. Please upload a readable copy.',
+    required: false,
+    maxLength: 500,
+  })
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value),
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  paymentRejectionRemarks?: string;
 }

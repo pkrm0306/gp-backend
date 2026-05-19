@@ -1,0 +1,446 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import {
+  UrnSiteVisit,
+  UrnSiteVisitDocument,
+} from './schemas/urn-site-visit.schema';
+import { CreateUrnSiteVisitDto } from './dto/create-urn-site-visit.dto';
+import { UpdateUrnSiteVisitDto } from './dto/update-urn-site-visit.dto';
+import { ListUrnSiteVisitsDto } from './dto/list-urn-site-visits.dto';
+import { formatSiteVisitRecord } from './urn-site-visit.util';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
+import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
+import { ActivityLogService } from '../activity-log/activity-log.service';
+
+@Injectable()
+export class UrnSiteVisitsService {
+  constructor(
+    @InjectModel(UrnSiteVisit.name)
+    private readonly siteVisitModel: Model<UrnSiteVisitDocument>,
+    @InjectModel(Product.name)
+    private readonly productModel: Model<ProductDocument>,
+    private readonly activityLogService: ActivityLogService,
+  ) {}
+
+  private normalizeUrnNo(urnNo: string): string {
+    return String(urnNo ?? '')
+      .trim()
+      .replace(/\/+$/g, '');
+  }
+
+  private urnCandidates(urnNo: string): string[] {
+    const normalized = this.normalizeUrnNo(urnNo);
+    if (!normalized) return [];
+    return [normalized, `${normalized}/`];
+  }
+
+  private toObjectId(id: string, fieldName: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException(`Invalid ${fieldName} format: ${id}`);
+    }
+    return new Types.ObjectId(id);
+  }
+
+  private parseOptionalDate(value?: string | null): Date | null {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return null;
+    }
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) {
+      throw new BadRequestException('Invalid auditConductedOn date');
+    }
+    return d;
+  }
+
+  private parseActorId(userId?: string): Types.ObjectId | null {
+    if (!userId || !Types.ObjectId.isValid(userId)) {
+      return null;
+    }
+    return new Types.ObjectId(userId);
+  }
+
+  async assertUrnExists(urnNo: string): Promise<{
+    normalizedUrn: string;
+    vendorId: Types.ObjectId;
+    manufacturerId: Types.ObjectId;
+    urnStatus: number;
+  }> {
+    const normalizedUrn = this.normalizeUrnNo(urnNo);
+    if (!normalizedUrn) {
+      throw new BadRequestException('urnNo is required');
+    }
+    const urnOptions = this.urnCandidates(normalizedUrn);
+    const product = await this.productModel
+      .findOne(matchActiveProducts({ urnNo: { $in: urnOptions } }))
+      .select('vendorId manufacturerId urnStatus urnNo')
+      .sort({ createdDate: 1 })
+      .lean()
+      .exec();
+
+    if (!product) {
+      throw new NotFoundException(`No products found for URN: ${normalizedUrn}`);
+    }
+
+    return {
+      normalizedUrn: this.normalizeUrnNo(String(product.urnNo ?? normalizedUrn)),
+      vendorId: product.vendorId as Types.ObjectId,
+      manufacturerId: product.manufacturerId as Types.ObjectId,
+      urnStatus: Number(product.urnStatus ?? 0),
+    };
+  }
+
+  private async logSiteVisitActivity(
+    action:
+      | 'urn_site_visit_created'
+      | 'urn_site_visit_updated'
+      | 'urn_site_visit_deleted',
+    urnNo: string,
+    siteVisitId: string,
+    name: string,
+    vendorId: Types.ObjectId,
+    manufacturerId: Types.ObjectId,
+    urnStatus: number,
+    extra?: { fields?: string[] },
+  ): Promise<void> {
+    const labelByAction: Record<typeof action, string> = {
+      urn_site_visit_created: `Admin added site visit '${name}' for URN ${urnNo}`,
+      urn_site_visit_updated: `Admin updated site visit '${name}' for URN ${urnNo}`,
+      urn_site_visit_deleted: `Admin deleted site visit '${name}' for URN ${urnNo}`,
+    };
+    try {
+      await this.activityLogService.logActivity({
+        vendor_id: vendorId,
+        manufacturer_id: manufacturerId,
+        urn_no: urnNo,
+        activities_id: urnStatus,
+        activity: labelByAction[action],
+        activity_status: urnStatus,
+        responsibility: 'Admin',
+        next_responsibility: 'Admin',
+        status: 1,
+      });
+      console.info(`[URN Site Visit] ${action}`, {
+        urnNo,
+        siteVisitId,
+        name,
+        ...extra,
+      });
+    } catch (err) {
+      console.error('[URN Site Visit] Activity log failed:', err);
+    }
+  }
+
+  /**
+   * Vendor dashboard `site_visit` is derived from products.urnStatus (see vendor-applications.util).
+   * Optional: when the first visit is created and urnStatus &lt; 5, move to site-visit-in-progress (5).
+   */
+  private async syncUrnStatusAfterSiteVisitChange(
+    urnNo: string,
+    vendorId: Types.ObjectId,
+  ): Promise<number> {
+    const urnOptions = this.urnCandidates(urnNo);
+    const activeCount = await this.siteVisitModel.countDocuments({
+      urnNo: { $in: urnOptions },
+      isDeleted: { $ne: true },
+    });
+
+    const product = await this.productModel
+      .findOne(matchActiveProducts({ urnNo: { $in: urnOptions } }))
+      .select('urnStatus')
+      .lean()
+      .exec();
+    const currentStatus = Number(product?.urnStatus ?? 0);
+
+    if (activeCount > 0 && currentStatus < 5) {
+      await this.productModel.updateMany(
+        matchActiveProducts({ urnNo: { $in: urnOptions }, vendorId }),
+        { $set: { urnStatus: 5, updatedDate: new Date() } },
+      );
+      return 5;
+    }
+
+    return currentStatus;
+  }
+
+  async list(dto: ListUrnSiteVisitsDto) {
+    const urnContext = await this.assertUrnExists(dto.urnNo);
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 10;
+    const skip = (page - 1) * limit;
+    const urnOptions = this.urnCandidates(urnContext.normalizedUrn);
+
+    const filter: Record<string, unknown> = {
+      urnNo: { $in: urnOptions },
+    };
+    if (!dto.includeDeleted) {
+      filter.isDeleted = { $ne: true };
+    }
+
+    if (dto.search?.trim()) {
+      const escaped = dto.search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
+      filter.$or = [{ name: regex }, { conductedBy: regex }, { city: regex }];
+    }
+
+    const sortField = dto.sortBy ?? 'createdAt';
+    const sortOrder = dto.order === 'asc' ? 1 : -1;
+
+    const [rows, total] = await Promise.all([
+      this.siteVisitModel
+        .find(filter)
+        .sort({ [sortField]: sortOrder })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.siteVisitModel.countDocuments(filter).exec(),
+    ]);
+
+    return {
+      data: rows.map((r) => formatSiteVisitRecord(r)),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  async findAllByUrnForEmbed(urnNo: string, limit = 100) {
+    const urnContext = await this.assertUrnExists(urnNo).catch(() => null);
+    if (!urnContext) {
+      return [];
+    }
+    const urnOptions = this.urnCandidates(urnContext.normalizedUrn);
+    const rows = await this.siteVisitModel
+      .find({ urnNo: { $in: urnOptions }, isDeleted: { $ne: true } })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .exec();
+    return rows.map((r) => formatSiteVisitRecord(r));
+  }
+
+  async getById(id: string, urnNoQuery?: string) {
+    const objectId = this.toObjectId(id, 'id');
+    const doc = await this.siteVisitModel.findById(objectId).exec();
+    if (!doc || doc.isDeleted) {
+      throw new NotFoundException('Site visit not found');
+    }
+    if (urnNoQuery) {
+      const expected = this.normalizeUrnNo(urnNoQuery);
+      const actual = this.normalizeUrnNo(doc.urnNo);
+      if (expected && actual !== expected) {
+        throw new BadRequestException(
+          'Site visit does not belong to the requested URN',
+        );
+      }
+    }
+    return formatSiteVisitRecord(doc);
+  }
+
+  async create(
+    dto: CreateUrnSiteVisitDto,
+    actorUserId?: string,
+  ): Promise<Record<string, unknown>> {
+    const urnContext = await this.assertUrnExists(dto.urnNo);
+    const normalizedName = dto.name.trim();
+
+    const duplicate = await this.siteVisitModel
+      .findOne({
+        urnNo: { $in: this.urnCandidates(urnContext.normalizedUrn) },
+        name: normalizedName,
+        isDeleted: { $ne: true },
+      })
+      .lean()
+      .exec();
+    if (duplicate) {
+      throw new ConflictException(
+        'A site visit with this name already exists for this URN',
+      );
+    }
+
+    const actor = this.parseActorId(actorUserId);
+    const doc = await this.siteVisitModel.create({
+      urnNo: urnContext.normalizedUrn,
+      name: normalizedName,
+      addressLine1: dto.addressLine1.trim(),
+      addressLine2: String(dto.addressLine2 ?? '').trim(),
+      city: dto.city.trim(),
+      state: dto.state.trim(),
+      postalCode: dto.postalCode.trim(),
+      country: dto.country.trim(),
+      auditType: dto.auditType?.trim() || null,
+      auditConductedOn: this.parseOptionalDate(dto.auditConductedOn),
+      conductedBy: dto.conductedBy?.trim() || null,
+      createdBy: actor,
+      updatedBy: actor,
+      isDeleted: false,
+    });
+
+    const urnStatus = await this.syncUrnStatusAfterSiteVisitChange(
+      urnContext.normalizedUrn,
+      urnContext.vendorId,
+    );
+
+    await this.logSiteVisitActivity(
+      'urn_site_visit_created',
+      urnContext.normalizedUrn,
+      String(doc._id),
+      doc.name,
+      urnContext.vendorId,
+      urnContext.manufacturerId,
+      urnStatus,
+    );
+
+    return formatSiteVisitRecord(doc);
+  }
+
+  async update(
+    id: string,
+    dto: UpdateUrnSiteVisitDto,
+    actorUserId?: string,
+    rawBody?: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (
+      rawBody &&
+      (rawBody.urnNo !== undefined ||
+        rawBody.urn_no !== undefined ||
+        rawBody['urnNo'] !== undefined)
+    ) {
+      throw new BadRequestException('urnNo cannot be changed on update');
+    }
+
+    const objectId = this.toObjectId(id, 'id');
+    const existing = await this.siteVisitModel.findById(objectId).exec();
+    if (!existing || existing.isDeleted) {
+      throw new NotFoundException('Site visit not found');
+    }
+
+    const urnContext = await this.assertUrnExists(existing.urnNo);
+    const updateFields: string[] = [];
+    const $set: Partial<UrnSiteVisit> & { updatedBy?: Types.ObjectId | null } =
+      {};
+
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (name !== existing.name) {
+        const duplicate = await this.siteVisitModel
+          .findOne({
+            _id: { $ne: objectId },
+            urnNo: { $in: this.urnCandidates(urnContext.normalizedUrn) },
+            name,
+            isDeleted: { $ne: true },
+          })
+          .lean()
+          .exec();
+        if (duplicate) {
+          throw new ConflictException(
+            'A site visit with this name already exists for this URN',
+          );
+        }
+      }
+      $set.name = name;
+      updateFields.push('name');
+    }
+    if (dto.addressLine1 !== undefined) {
+      $set.addressLine1 = dto.addressLine1.trim();
+      updateFields.push('addressLine1');
+    }
+    if (dto.addressLine2 !== undefined) {
+      $set.addressLine2 = dto.addressLine2.trim();
+      updateFields.push('addressLine2');
+    }
+    if (dto.city !== undefined) {
+      $set.city = dto.city.trim();
+      updateFields.push('city');
+    }
+    if (dto.state !== undefined) {
+      $set.state = dto.state.trim();
+      updateFields.push('state');
+    }
+    if (dto.postalCode !== undefined) {
+      $set.postalCode = dto.postalCode.trim();
+      updateFields.push('postalCode');
+    }
+    if (dto.country !== undefined) {
+      $set.country = dto.country.trim();
+      updateFields.push('country');
+    }
+    if (dto.auditType !== undefined) {
+      $set.auditType =
+        dto.auditType === null ? null : String(dto.auditType).trim() || null;
+      updateFields.push('auditType');
+    }
+    if (dto.auditConductedOn !== undefined) {
+      $set.auditConductedOn = this.parseOptionalDate(dto.auditConductedOn);
+      updateFields.push('auditConductedOn');
+    }
+    if (dto.conductedBy !== undefined) {
+      $set.conductedBy =
+        dto.conductedBy === null
+          ? null
+          : String(dto.conductedBy).trim() || null;
+      updateFields.push('conductedBy');
+    }
+
+    if (updateFields.length === 0) {
+      throw new BadRequestException('No updatable fields provided');
+    }
+
+    $set.updatedBy = this.parseActorId(actorUserId);
+
+    const updated = await this.siteVisitModel
+      .findByIdAndUpdate(objectId, { $set }, { new: true })
+      .exec();
+    if (!updated) {
+      throw new NotFoundException('Site visit not found after update');
+    }
+
+    await this.logSiteVisitActivity(
+      'urn_site_visit_updated',
+      urnContext.normalizedUrn,
+      String(updated._id),
+      updated.name,
+      urnContext.vendorId,
+      urnContext.manufacturerId,
+      urnContext.urnStatus,
+      { fields: updateFields },
+    );
+
+    return formatSiteVisitRecord(updated);
+  }
+
+  async softDelete(id: string, actorUserId?: string): Promise<void> {
+    const objectId = this.toObjectId(id, 'id');
+    const existing = await this.siteVisitModel.findById(objectId).exec();
+    if (!existing) {
+      throw new NotFoundException('Site visit not found');
+    }
+    if (existing.isDeleted) {
+      throw new NotFoundException('Site visit not found');
+    }
+
+    const urnContext = await this.assertUrnExists(existing.urnNo);
+    const actor = this.parseActorId(actorUserId);
+
+    await this.siteVisitModel.findByIdAndUpdate(objectId, {
+      $set: { isDeleted: true, updatedBy: actor },
+    });
+
+    await this.logSiteVisitActivity(
+      'urn_site_visit_deleted',
+      urnContext.normalizedUrn,
+      String(existing._id),
+      existing.name,
+      urnContext.vendorId,
+      urnContext.manufacturerId,
+      urnContext.urnStatus,
+    );
+  }
+}

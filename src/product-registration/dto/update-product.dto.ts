@@ -7,6 +7,7 @@ import {
   IsDateString,
   Allow,
   ValidateIf,
+  IsNotEmpty,
 } from 'class-validator';
 
 /** Swagger/clients often send "" or null for unchanged optional fields — treat as omitted. */
@@ -18,26 +19,52 @@ function omitEmptyOptional(value: unknown): unknown {
 }
 
 export class UpdateProductDto {
-  @ApiPropertyOptional({ description: 'Product name', example: 'Solar Panel 100W Updated' })
+  @ApiPropertyOptional({
+    description: 'Product name',
+    example: 'Solar Panel 100W Updated',
+    required: true,
+  })
   @Transform(({ value }) => omitEmptyOptional(value))
-  @IsOptional()
   @IsString()
-  productName?: string;
+  @IsNotEmpty()
+  productName: string;
+
+  @ApiPropertyOptional({
+    description: 'Product description text',
+    example: 'Updated product description',
+    required: true,
+  })
+  @Transform(({ value }) =>
+    value === undefined || value === null ? value : String(value),
+  )
+  @IsString()
+  productDetails: string;
+
+  @ApiPropertyOptional({
+    description: 'URN number (must match the product being updated)',
+    example: 'URN-20260514165917',
+    required: true,
+  })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @IsString()
+  @IsNotEmpty()
+  urnNo: string;
+
+  @ApiPropertyOptional({
+    description: 'EOI number (must match the product being updated)',
+    example: 'GPABC001001',
+    required: true,
+  })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @IsString()
+  @IsNotEmpty()
+  eoiNo: string;
 
   @ApiPropertyOptional({ description: 'Product image URL' })
   @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()
   @IsString()
   productImage?: string;
-
-  @ApiPropertyOptional({
-    description: 'Product description text',
-    example: 'Updated product description',
-  })
-  @Transform(({ value }) => omitEmptyOptional(value))
-  @IsOptional()
-  @IsString()
-  productDetails?: string;
 
   @ApiPropertyOptional({ description: 'Product type', example: 0 })
   @Transform(({ value }) => omitEmptyOptional(value))

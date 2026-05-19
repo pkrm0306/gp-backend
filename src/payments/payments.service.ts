@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
@@ -20,6 +21,13 @@ import {
 } from '../product-registration/schemas/product.schema';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { uploadFile } from '../utils/upload-file.util';
+import { VendorProposalApprovalDto } from './dto/vendor-proposal-approval.dto';
+import {
+  formatPaymentRecord,
+  formatPaymentRecords,
+  resolveVendorProposalApprovalStatus,
+} from './payment-proposal.util';
+import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
 
 @Injectable()
 export class PaymentsService {
@@ -99,6 +107,274 @@ export class PaymentsService {
     return String(value ?? '')
       .trim()
       .replace(/\/+$/g, '');
+  }
+
+  private isAdminPortalRole(role?: string): boolean {
+    return role === 'admin' || role === 'staff';
+  }
+
+  private isVendorPortalRole(role?: string): boolean {
+    return role === 'vendor' || role === 'partner';
+  }
+
+  private idsEqual(
+    a?: Types.ObjectId | string | null,
+    b?: Types.ObjectId | string | null,
+  ): boolean {
+    if (a == null || b == null) {
+      return false;
+    }
+    return String(a) === String(b);
+  }
+
+  /**
+   * Vendor org for a URN comes from active products (not the admin user who created the payment).
+   */
+  private async resolveUrnOwnerVendorObjectId(
+    urnNo: string,
+    session?: ClientSession,
+  ): Promise<Types.ObjectId> {
+    const urnOptions = this.urnCandidates(urnNo);
+    const query = this.productModel
+      .findOne(matchActiveProducts({ urnNo: { $in: urnOptions } }))
+      .select('vendorId manufacturerId')
+      .sort({ createdDate: 1 });
+    if (session) {
+      query.session(session);
+    }
+    const product = await query.lean().exec();
+    if (!product) {
+      throw new NotFoundException(`No products found for URN: ${urnNo}`);
+    }
+    const ownerId = product.vendorId ?? product.manufacturerId;
+    if (!ownerId) {
+      throw new NotFoundException(
+        `URN ${urnNo} has no vendor organization on file`,
+      );
+    }
+    return ownerId instanceof Types.ObjectId
+      ? ownerId
+      : this.toObjectId(String(ownerId), 'vendorId');
+  }
+
+  private async assertCallerOwnsUrn(
+    urnNo: string,
+    callerVendorId: string,
+  ): Promise<{
+    vendorObjectId: Types.ObjectId;
+    product: {
+      manufacturerId: Types.ObjectId;
+      vendorId: Types.ObjectId;
+      urnStatus?: number;
+    };
+  }> {
+    const urnOptions = this.urnCandidates(urnNo);
+    const callerObjectId = this.toObjectId(callerVendorId, 'vendorId');
+    const product = await this.productModel
+      .findOne(matchActiveProducts({ urnNo: { $in: urnOptions } }))
+      .select('manufacturerId vendorId urnStatus')
+      .lean()
+      .exec();
+
+    if (!product) {
+      throw new NotFoundException(`No products found for URN: ${urnNo}`);
+    }
+
+    const ownerVendorId = product.vendorId ?? product.manufacturerId;
+    const ownerManufacturerId = product.manufacturerId ?? product.vendorId;
+    const ownsUrn =
+      this.idsEqual(ownerVendorId, callerObjectId) ||
+      this.idsEqual(ownerManufacturerId, callerObjectId);
+
+    if (!ownsUrn) {
+      throw new ForbiddenException(
+        'You do not have access to this URN',
+      );
+    }
+
+    return {
+      vendorObjectId: callerObjectId,
+      product: {
+        manufacturerId: product.manufacturerId as Types.ObjectId,
+        vendorId: product.vendorId as Types.ObjectId,
+        urnStatus: product.urnStatus,
+      },
+    };
+  }
+
+  private paymentToPlain(
+    payment: PaymentDetailsDocument,
+  ): Record<string, unknown> {
+    return (
+      typeof (payment as PaymentDetailsDocument & { toObject?: () => object })
+        .toObject === 'function'
+        ? payment.toObject()
+        : { ...(payment as unknown as Record<string, unknown>) }
+    ) as Record<string, unknown>;
+  }
+
+  private async findPaymentForVendorUrn(
+    urnNo: string,
+    vendorObjectId: Types.ObjectId,
+    paymentType: string,
+    session?: ClientSession,
+  ): Promise<PaymentDetailsDocument | null> {
+    const urnOptions = this.urnCandidates(urnNo);
+    const query = this.paymentDetailsModel
+      .findOne({
+        urnNo: { $in: urnOptions },
+        vendorId: vendorObjectId,
+        paymentType,
+      })
+      .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 });
+    if (session) {
+      query.session(session);
+    }
+    return query.exec();
+  }
+
+  private isVendorPaymentProofPayload(
+    dto: UpdatePaymentDto,
+    chequeOrDdFile?: Express.Multer.File,
+    tdsFile?: Express.Multer.File,
+  ): boolean {
+    return (
+      dto.paymentMode !== undefined ||
+      dto.paymentReferenceNo !== undefined ||
+      dto.paymentChequeDate !== undefined ||
+      !!chequeOrDdFile ||
+      !!tdsFile
+    );
+  }
+
+  private isAdminQuoteFieldsUpdate(dto: UpdatePaymentDto): boolean {
+    return (
+      dto.quoteAmount !== undefined ||
+      dto.quoteGstAmount !== undefined ||
+      dto.quoteTdsAmount !== undefined ||
+      dto.quoteTotal !== undefined ||
+      dto.adminGstNo !== undefined ||
+      dto.vendorGstNo !== undefined
+    );
+  }
+
+  private async logProposalActivity(
+    vendorId: string,
+    manufacturerId: string,
+    urnNo: string,
+    activityLabel: string,
+    urnStatus: number,
+  ): Promise<void> {
+    try {
+      const nextId = this.getNextActivityIdForLog(urnStatus);
+      await this.activityLogService.logActivity({
+        vendor_id: vendorId,
+        manufacturer_id: manufacturerId,
+        urn_no: urnNo,
+        activities_id: urnStatus,
+        activity: activityLabel,
+        activity_status: urnStatus,
+        responsibility: this.getResponsibilityForStatus(urnStatus),
+        next_responsibility: this.getResponsibilityForStatus(nextId),
+        next_acitivities_id: nextId,
+        next_activity: this.getActivityName(nextId),
+        status: 1,
+      });
+    } catch (err) {
+      console.error('[Payment] Proposal activity log failed:', err);
+    }
+  }
+
+  private async logAdminPaymentRejected(
+    vendorId: string,
+    manufacturerId: string,
+    urnNo: string,
+    paymentType: string,
+    paymentRejectionRemarks: string,
+    urnStatus: number,
+  ): Promise<void> {
+    const activityLabel = `Admin rejected payment: ${paymentRejectionRemarks}`;
+    try {
+      const nextId = this.getNextActivityIdForLog(urnStatus);
+      await this.activityLogService.logActivity({
+        vendor_id: vendorId,
+        manufacturer_id: manufacturerId,
+        urn_no: urnNo,
+        activities_id: urnStatus,
+        activity: activityLabel,
+        activity_status: urnStatus,
+        responsibility: this.getResponsibilityForStatus(urnStatus),
+        next_responsibility: this.getResponsibilityForStatus(nextId),
+        next_acitivities_id: nextId,
+        next_activity: this.getActivityName(nextId),
+        status: 1,
+      });
+      console.info('[Payment] admin_payment_rejected', {
+        urnNo,
+        paymentType,
+        paymentStatus: 3,
+        paymentRejectionRemarks,
+      });
+    } catch (err) {
+      console.error('[Payment] Admin payment rejection activity log failed:', err);
+    }
+  }
+
+  private applyPaymentStatusUpdate(
+    updateData: Record<string, unknown>,
+    updatePaymentDto: UpdatePaymentDto,
+    existingPayment: PaymentDetailsDocument,
+    actorRole?: string,
+  ): { adminRejectedPayment: boolean; paymentRejectionRemarks?: string } {
+    if (updatePaymentDto.paymentStatus === undefined) {
+      return { adminRejectedPayment: false };
+    }
+
+    const newStatus = updatePaymentDto.paymentStatus;
+    const currentStatus = Number(existingPayment.paymentStatus ?? 0);
+
+    if (newStatus === 3) {
+      if (!this.isAdminPortalRole(actorRole)) {
+        throw new ForbiddenException(
+          'Only admin portal users can reject a submitted payment',
+        );
+      }
+      if (currentStatus !== 1) {
+        throw new BadRequestException(
+          'Payment can only be rejected when it is pending admin review (paymentStatus 1)',
+        );
+      }
+      const remarks = String(
+        updatePaymentDto.paymentRejectionRemarks ?? '',
+      ).trim();
+      if (!remarks) {
+        throw new BadRequestException(
+          'paymentRejectionRemarks is required when rejecting payment (paymentStatus 3)',
+        );
+      }
+      if (remarks.length > 500) {
+        throw new BadRequestException(
+          'paymentRejectionRemarks must not exceed 500 characters',
+        );
+      }
+      updateData.paymentStatus = 3;
+      updateData.paymentRejectionRemarks = remarks;
+      return { adminRejectedPayment: true, paymentRejectionRemarks: remarks };
+    }
+
+    if (newStatus === 2) {
+      if (!this.isAdminPortalRole(actorRole)) {
+        throw new ForbiddenException(
+          'Only admin portal users can approve a submitted payment',
+        );
+      }
+      updateData.paymentStatus = 2;
+      updateData.paymentRejectionRemarks = undefined;
+      return { adminRejectedPayment: false };
+    }
+
+    updateData.paymentStatus = newStatus;
+    return { adminRejectedPayment: false };
   }
 
   /** Query both canonical and legacy trailing-slash URN formats. */
@@ -212,7 +488,8 @@ export class PaymentsService {
     createPaymentDto: CreatePaymentDto,
     vendorId: string,
     proposalFile?: Express.Multer.File,
-  ): Promise<PaymentDetailsDocument> {
+    actorRole?: string,
+  ): Promise<Record<string, unknown>> {
     const maxRetries = 3;
     let retryCount = 0;
 
@@ -221,8 +498,27 @@ export class PaymentsService {
       session.startTransaction();
 
       try {
-        // Convert vendorId to ObjectId
-        const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+        const normalizedUrnNo = this.normalizeUrnNo(createPaymentDto.urnNo);
+        if (!normalizedUrnNo) {
+          throw new BadRequestException('URN number is required');
+        }
+
+        const urnOwnerObjectId = await this.resolveUrnOwnerVendorObjectId(
+          normalizedUrnNo,
+          session,
+        );
+        const callerObjectId = this.toObjectId(vendorId, 'vendorId');
+
+        if (
+          this.isVendorPortalRole(actorRole) &&
+          !this.idsEqual(urnOwnerObjectId, callerObjectId)
+        ) {
+          throw new ForbiddenException(
+            'You can only create payments for your own URN registrations',
+          );
+        }
+
+        const vendorObjectId = urnOwnerObjectId;
 
         // Get next payment ID
         const paymentId = await this.sequenceHelper.getPaymentId();
@@ -242,10 +538,6 @@ export class PaymentsService {
         const normalizedPaymentType = this.normalizePaymentType(
           createPaymentDto.paymentType,
         );
-        const normalizedUrnNo = this.normalizeUrnNo(createPaymentDto.urnNo);
-        if (!normalizedUrnNo) {
-          throw new BadRequestException('URN number is required');
-        }
 
         // Create payment data
         const paymentData = {
@@ -268,6 +560,8 @@ export class PaymentsService {
             : undefined,
           productsToBeCertified: createPaymentDto.productsToBeCertified,
           paymentStatus: 0, // Default: 0=Created
+          vendorProposalApprovalStatus: 0,
+          proposalRejectionRemarks: undefined,
           createdDate: now,
           updatedDate: now,
         };
@@ -285,7 +579,7 @@ export class PaymentsService {
           normalizedPaymentType,
         );
 
-        return savedPayment;
+        return formatPaymentRecord(this.paymentToPlain(savedPayment));
       } catch (error: any) {
         await session.abortTransaction();
         session.endSession();
@@ -293,7 +587,8 @@ export class PaymentsService {
         // For validation errors, throw immediately
         if (
           error instanceof NotFoundException ||
-          error instanceof BadRequestException
+          error instanceof BadRequestException ||
+          error instanceof ForbiddenException
         ) {
           console.error('Validation error:', error.message);
           throw error;
@@ -369,7 +664,9 @@ export class PaymentsService {
     vendorId?: string,
     chequeOrDdFile?: Express.Multer.File,
     tdsFile?: Express.Multer.File,
-  ): Promise<PaymentDetailsDocument> {
+    proposalFile?: Express.Multer.File,
+    actorRole?: string,
+  ): Promise<Record<string, unknown>> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -388,32 +685,115 @@ export class PaymentsService {
       }
       const urnOptions = this.urnCandidates(normalizedUrn);
 
-      let existingPayment: PaymentDetailsDocument | null = null;
-      if (vendorId) {
-        const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-        existingPayment = await this.paymentDetailsModel
-          .findOne({ urnNo: { $in: urnOptions }, vendorId: vendorObjectId })
-          .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
-          .session(session)
-          .exec();
-      }
-      if (!existingPayment) {
-        existingPayment = await this.paymentDetailsModel
-          .findOne({ urnNo: { $in: urnOptions } })
-          .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
-          .session(session)
-          .exec();
-      }
+      let existingPayment = await this.paymentDetailsModel
+        .findOne({ urnNo: { $in: urnOptions } })
+        .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
+        .session(session)
+        .exec();
 
       if (!existingPayment) {
         throw new NotFoundException('Payment not found');
       }
-      const effectiveVendorObjectId =
-        existingPayment.vendorId as Types.ObjectId;
+
+      const urnOwnerObjectId = await this.resolveUrnOwnerVendorObjectId(
+        normalizedUrn,
+        session,
+      );
+
+      if (vendorId && this.isVendorPortalRole(actorRole)) {
+        const callerObjectId = this.toObjectId(vendorId, 'vendorId');
+        if (
+          !this.idsEqual(urnOwnerObjectId, callerObjectId) &&
+          !this.idsEqual(existingPayment.vendorId, callerObjectId)
+        ) {
+          throw new ForbiddenException(
+            'You do not have access to this URN payment',
+          );
+        }
+      }
+
+      if (!this.idsEqual(existingPayment.vendorId, urnOwnerObjectId)) {
+        existingPayment = await this.paymentDetailsModel
+          .findByIdAndUpdate(
+            existingPayment._id,
+            { $set: { vendorId: urnOwnerObjectId, updatedDate: new Date() } },
+            { new: true, session },
+          )
+          .exec();
+        if (!existingPayment) {
+          throw new NotFoundException('Payment not found after vendor sync');
+        }
+      }
+
+      const effectiveVendorObjectId = urnOwnerObjectId;
       const effectiveVendorId = effectiveVendorObjectId.toString();
+      const paymentPlain = this.paymentToPlain(existingPayment);
+      const currentApproval = resolveVendorProposalApprovalStatus(paymentPlain);
+      const paymentType =
+        updatePaymentDto.paymentType !== undefined
+          ? this.normalizePaymentType(updatePaymentDto.paymentType)
+          : existingPayment.paymentType;
 
       const now = new Date();
       const updateData: any = { updatedDate: now };
+
+      if (proposalFile) {
+        if (!this.isAdminPortalRole(actorRole)) {
+          throw new ForbiddenException(
+            'Only admin portal users can upload a proposal document',
+          );
+        }
+
+        const previousProposal = existingPayment.proposalFile;
+        const newProposalPath = (await uploadFile(proposalFile, 'payments'))
+          .fileUrl;
+
+        if (
+          currentApproval === 2 &&
+          this.isAdminQuoteFieldsUpdate(updatePaymentDto) &&
+          !proposalFile
+        ) {
+          throw new BadRequestException(
+            'Vendor rejected the proposal document. Upload a revised proposal file before updating amounts.',
+          );
+        }
+
+        if (currentApproval === 2) {
+          updateData.previousProposalFile = previousProposal;
+          updateData.proposalRejectionRemarks = undefined;
+          updateData.vendorProposalApprovalStatus = 0;
+          updateData.paymentStatus = 0;
+        } else if (currentApproval === 1) {
+          updateData.previousProposalFile = previousProposal;
+          updateData.vendorProposalApprovalStatus = 0;
+        } else {
+          updateData.vendorProposalApprovalStatus = 0;
+        }
+
+        updateData.proposalFile = newProposalPath;
+      } else if (
+        currentApproval === 2 &&
+        this.isAdminQuoteFieldsUpdate(updatePaymentDto)
+      ) {
+        throw new BadRequestException(
+          'Vendor rejected the proposal document. Upload a revised proposal file before updating amounts.',
+        );
+      }
+
+      const vendorProofUpdate = this.isVendorPaymentProofPayload(
+        updatePaymentDto,
+        chequeOrDdFile,
+        tdsFile,
+      );
+      if (
+        vendorProofUpdate &&
+        paymentType === 'registration' &&
+        currentApproval !== 1
+      ) {
+        throw new BadRequestException(
+          'Approve the proposal before submitting payment details',
+        );
+      }
 
       if (updatePaymentDto.paymentMode === 'cheque_or_dd' && (!chequeOrDdFile || !tdsFile)) {
         throw new BadRequestException(
@@ -455,8 +835,13 @@ export class PaymentsService {
         updateData.productsToBeCertified =
           updatePaymentDto.productsToBeCertified;
       }
-      if (updatePaymentDto.paymentStatus !== undefined)
-        updateData.paymentStatus = updatePaymentDto.paymentStatus;
+
+      const paymentStatusUpdate = this.applyPaymentStatusUpdate(
+        updateData,
+        updatePaymentDto,
+        existingPayment,
+        actorRole,
+      );
 
       const updatedPayment = await this.paymentDetailsModel
         .findOneAndUpdate({ _id: existingPayment._id }, updateData, {
@@ -527,14 +912,62 @@ export class PaymentsService {
         );
       }
 
-      return updatedPayment;
+      if (proposalFile) {
+        const anyProduct = await this.productModel
+          .findOne({
+            urnNo: { $in: urnOptions },
+            vendorId: effectiveVendorObjectId,
+          })
+          .select('manufacturerId urnStatus')
+          .lean()
+          .exec();
+        if (anyProduct) {
+          const urnStatus =
+            typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
+          await this.logProposalActivity(
+            effectiveVendorId,
+            anyProduct.manufacturerId.toString(),
+            normalizedUrn,
+            currentApproval === 2
+              ? 'Admin uploaded revised registration fee proposal'
+              : 'Admin uploaded registration fee proposal',
+            urnStatus,
+          );
+        }
+      }
+
+      if (paymentStatusUpdate.adminRejectedPayment) {
+        const anyProduct = await this.productModel
+          .findOne({
+            urnNo: { $in: urnOptions },
+            vendorId: effectiveVendorObjectId,
+          })
+          .select('manufacturerId urnStatus')
+          .lean()
+          .exec();
+        if (anyProduct && paymentStatusUpdate.paymentRejectionRemarks) {
+          const urnStatus =
+            typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
+          await this.logAdminPaymentRejected(
+            effectiveVendorId,
+            anyProduct.manufacturerId.toString(),
+            normalizedUrn,
+            paymentType,
+            paymentStatusUpdate.paymentRejectionRemarks,
+            urnStatus,
+          );
+        }
+      }
+
+      return formatPaymentRecord(this.paymentToPlain(updatedPayment));
     } catch (error: any) {
       await session.abortTransaction();
       session.endSession();
 
       if (
         error instanceof NotFoundException ||
-        error instanceof BadRequestException
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
       ) {
         throw error;
       }
@@ -547,6 +980,160 @@ export class PaymentsService {
           'Failed to update payment. Please check the logs for details.',
       );
     }
+  }
+
+  /**
+   * Vendor approves or rejects admin registration-fee proposal for a URN.
+   */
+  async setVendorProposalApproval(
+    urnNo: string,
+    vendorId: string,
+    dto: VendorProposalApprovalDto,
+    actorRole?: string,
+  ): Promise<Record<string, unknown>> {
+    if (this.isAdminPortalRole(actorRole)) {
+      throw new ForbiddenException(
+        'Proposal approval is for the vendor portal only. Admins create or revise proposals via POST/PATCH /payments with proposal_file; vendors approve here with a vendor login.',
+      );
+    }
+    if (!this.isVendorPortalRole(actorRole)) {
+      throw new ForbiddenException(
+        'Only vendor or partner users can approve or reject registration fee proposals',
+      );
+    }
+
+    const normalizedUrn = this.normalizeUrnNo(urnNo);
+    if (!normalizedUrn) {
+      throw new BadRequestException('URN number is required');
+    }
+
+    const paymentType = this.normalizePaymentType(dto.paymentType);
+    if (paymentType !== 'registration') {
+      throw new BadRequestException(
+        'Proposal approval is only supported for registration payments',
+      );
+    }
+
+    const status = dto.vendorProposalApprovalStatus;
+    if (status !== 1 && status !== 2) {
+      throw new BadRequestException(
+        'vendorProposalApprovalStatus must be 1 (approve) or 2 (reject)',
+      );
+    }
+
+    const { vendorObjectId, product } = await this.assertCallerOwnsUrn(
+      normalizedUrn,
+      vendorId,
+    );
+    const urnOptions = this.urnCandidates(normalizedUrn);
+    const urnOwnerObjectId = await this.resolveUrnOwnerVendorObjectId(
+      normalizedUrn,
+    );
+
+    let payment = await this.paymentDetailsModel
+      .findOne({
+        urnNo: { $in: urnOptions },
+        paymentType,
+      })
+      .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
+      .exec();
+
+    if (!payment) {
+      throw new NotFoundException(
+        `No ${paymentType} payment found for URN: ${normalizedUrn}`,
+      );
+    }
+
+    if (!this.idsEqual(payment.vendorId, urnOwnerObjectId)) {
+      payment = await this.paymentDetailsModel
+        .findByIdAndUpdate(
+          payment._id,
+          { $set: { vendorId: urnOwnerObjectId, updatedDate: new Date() } },
+          { new: true },
+        )
+        .exec();
+      if (!payment) {
+        throw new NotFoundException('Payment not found after vendor sync');
+      }
+    }
+
+    const paymentPlain = this.paymentToPlain(payment);
+    if (!String(paymentPlain.proposalFile ?? '').trim()) {
+      throw new BadRequestException(
+        'No proposal document on this payment; cannot approve or reject',
+      );
+    }
+
+    const currentApproval = resolveVendorProposalApprovalStatus(paymentPlain);
+    const paymentStatus = Number(payment.paymentStatus ?? 0);
+    if (![0, 3].includes(paymentStatus)) {
+      throw new BadRequestException(
+        'Proposal review is not available for the current payment status',
+      );
+    }
+
+    if (currentApproval === 2) {
+      throw new BadRequestException(
+        'Proposal was rejected. Wait for admin to upload a revised proposal document before approving.',
+      );
+    }
+
+    if (currentApproval === 1 && status === 1) {
+      throw new BadRequestException('Proposal is already approved');
+    }
+
+    if (currentApproval !== 0) {
+      throw new BadRequestException(
+        'Proposal cannot be updated in the current approval state',
+      );
+    }
+
+    const remarks =
+      status === 2
+        ? String(dto.proposalRejectionRemarks ?? '').trim() || undefined
+        : undefined;
+
+    const now = new Date();
+    const updated = await this.paymentDetailsModel
+      .findByIdAndUpdate(
+        payment._id,
+        {
+          $set: {
+            vendorProposalApprovalStatus: status,
+            proposalRejectionRemarks: remarks,
+            updatedDate: now,
+          },
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Payment not found after update');
+    }
+
+    const urnStatus =
+      typeof product.urnStatus === 'number' ? product.urnStatus : 0;
+    const activityLabel =
+      status === 1
+        ? 'Vendor approved registration fee proposal'
+        : remarks
+          ? `Vendor rejected registration fee proposal: ${remarks}`
+          : 'Vendor rejected registration fee proposal';
+
+    await this.logProposalActivity(
+      vendorId,
+      product.manufacturerId.toString(),
+      normalizedUrn,
+      activityLabel,
+      urnStatus,
+    );
+
+    return formatPaymentRecord({
+      urnNo: normalizedUrn,
+      paymentType,
+      ...this.paymentToPlain(updated),
+    });
   }
 
   /**
@@ -628,6 +1215,10 @@ export class PaymentsService {
           tdsFile: 1,
           productsToBeCertified: 1,
           paymentStatus: 1,
+          vendorProposalApprovalStatus: 1,
+          proposalRejectionRemarks: 1,
+          paymentRejectionRemarks: 1,
+          previousProposalFile: 1,
           createdDate: 1,
           updatedDate: 1,
         },
@@ -650,7 +1241,7 @@ export class PaymentsService {
       const result = await this.paymentDetailsModel.aggregate(pipeline).exec();
 
       // Extract data and total count
-      const data = result[0]?.data || [];
+      const data = formatPaymentRecords(result[0]?.data || []);
       const totalCount = result[0]?.totalCount[0]?.count || 0;
       const totalPages = Math.ceil(totalCount / limit);
 

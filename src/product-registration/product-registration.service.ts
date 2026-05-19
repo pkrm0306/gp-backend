@@ -37,8 +37,10 @@ import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { formatPaymentRecords } from '../payments/payment-proposal.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { RedisService } from '../common/redis/redis.service';
+import { UrnSiteVisitsService } from '../urn-site-visits/urn-site-visits.service';
 
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
@@ -80,6 +82,7 @@ export class ProductRegistrationService {
     private activityLogService: ActivityLogService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
+    private readonly urnSiteVisitsService: UrnSiteVisitsService,
   ) {}
 
   private getProductListCacheTtlSeconds(): number {
@@ -133,7 +136,7 @@ export class ProductRegistrationService {
       to: dto.to ?? dto.toDate ?? null,
       validTillYear: dto.validTillYear ?? null,
       status: Array.isArray(dto.status) ? [...dto.status].sort((a, b) => a - b) : [],
-      v: 4,
+      v: 5,
     };
     return this.redisService.buildKey(
       'products',
@@ -154,9 +157,38 @@ export class ProductRegistrationService {
     });
   }
 
+  private toMongoIdString(value: unknown): string | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    return String(value);
+  }
+
+  private normalizeUrnForCompare(urn: string): string {
+    return String(urn ?? '')
+      .trim()
+      .replace(/\/+$/g, '');
+  }
+
+  private urnValuesMatch(stored: string | undefined, provided: string): boolean {
+    const normalizedStored = this.normalizeUrnForCompare(stored ?? '');
+    const normalizedProvided = this.normalizeUrnForCompare(provided);
+    if (!normalizedStored || !normalizedProvided) {
+      return false;
+    }
+    return (
+      normalizedStored === normalizedProvided ||
+      `${normalizedStored}/` === normalizedProvided ||
+      normalizedStored === `${normalizedProvided}/`
+    );
+  }
+
   /** Admin list EOI row — flat fields only; product description is `productDetails` (string). */
   private formatAdminListEoiEntry(e: Record<string, unknown>) {
     const plants = Array.isArray(e?.plants) ? (e.plants as Record<string, unknown>[]) : [];
+    const mongoId = this.toMongoIdString(e?._id);
+    const urnNo =
+      e?.urnNo !== undefined && e?.urnNo !== null ? String(e.urnNo) : undefined;
 
     const mapProductStatusLabel = (
       code: number,
@@ -167,10 +199,12 @@ export class ProductRegistrationService {
     };
 
     return {
-      _id: e?._id,
+      _id: mongoId,
+      productMongoId: mongoId,
       productId: e?.productId,
       eoiNo: e?.eoiNo,
-      urnNo: e?.urnNo,
+      urnNo,
+      urn_number: urnNo,
       productName: e?.productName,
       productDetails: e?.productDetails ?? null,
       categoryName: e?.categoryName,
@@ -1289,8 +1323,8 @@ export class ProductRegistrationService {
   }
 
   /**
-   * Update a product
-   * If productName changes, regenerate URN and EOI
+   * Update an existing product in place (admin EOI edit).
+   * URN and EOI are immutable — body urnNo/eoiNo must match the document.
    */
   async updateProduct(productId: string, updateProductDto: UpdateProductDto) {
     const session = await this.connection.startSession();
@@ -1310,36 +1344,29 @@ export class ProductRegistrationService {
         throw new NotFoundException('Product not found');
       }
 
-      const previousUrnStatus = existingProduct.urnStatus;
+      if (
+        !this.urnValuesMatch(existingProduct.urnNo, updateProductDto.urnNo)
+      ) {
+        throw new BadRequestException(
+          'urnNo does not match this product',
+        );
+      }
 
-      // Check if productName has changed
-      const productNameChanged =
-        updateProductDto.productName !== undefined &&
-        updateProductDto.productName !== existingProduct.productName;
+      const providedEoi = String(updateProductDto.eoiNo ?? '').trim();
+      const storedEoi = String(existingProduct.eoiNo ?? '').trim();
+      if (!providedEoi || providedEoi !== storedEoi) {
+        throw new BadRequestException(
+          'eoiNo does not match this product',
+        );
+      }
+
+      const previousUrnStatus = existingProduct.urnStatus;
 
       const updateData: any = {
         updatedDate: new Date(),
+        productName: updateProductDto.productName,
+        productDetails: updateProductDto.productDetails,
       };
-
-      // If productName changed, regenerate URN and EOI
-      if (productNameChanged) {
-        // Get manufacturer ID from existing product
-        const manufacturerId = existingProduct.manufacturerId.toString();
-
-        // Generate new URN: "URN-" + YmdHis format
-        const newUrnNo = this.generateURN();
-
-        // Generate new EOI: "GP" + manufacturer_initial + 3-digit internal_id + 3-digit sequence
-        const newEoiNo = await this.generateEOI(manufacturerId, session);
-
-        updateData.urnNo = newUrnNo;
-        updateData.eoiNo = newEoiNo;
-      }
-
-      // Update other fields if provided
-      if (updateProductDto.productName !== undefined) {
-        updateData.productName = updateProductDto.productName;
-      }
 
       if (updateProductDto.productImage !== undefined) {
         updateData.productImage = updateProductDto.productImage;
@@ -2928,7 +2955,9 @@ export class ProductRegistrationService {
           product.vendor as Record<string, unknown> | null,
         ),
         plants: product.plants || [],
-        payments: product.payments || [],
+        payments: formatPaymentRecords(
+          (product.payments as Record<string, unknown>[]) || [],
+        ),
         product_design: product.product_design
           ? {
               _id: product.product_design._id,
@@ -3703,7 +3732,14 @@ export class ProductRegistrationService {
       };
       });
 
-      return formattedResults;
+      const siteVisits = await this.urnSiteVisitsService.findAllByUrnForEmbed(
+        urnNo.trim(),
+      );
+
+      return formattedResults.map((row) => ({
+        ...row,
+        siteVisits,
+      }));
     } catch (error: any) {
       console.error('[Get Product Details by URN] Error:', error);
       console.error('[Get Product Details by URN] Error stack:', error.stack);

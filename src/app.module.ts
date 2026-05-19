@@ -40,6 +40,7 @@ import { ProcessLifeCycleApproachModule } from './process-life-cycle-approach/pr
 import { ProcessProductStewardshipModule } from './process-product-stewardship/process-product-stewardship.module';
 import { ProcessInnovationModule } from './process-innovation/process-innovation.module';
 import { ProcessCommentsModule } from './process-comments/process-comments.module';
+import { UrnSiteVisitsModule } from './urn-site-visits/urn-site-visits.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { SectorsModule } from './sectors/sectors.module';
 import { StandardsModule } from './standards/standards.module';
@@ -104,6 +105,7 @@ import { RedisModule } from './common/redis/redis.module';
     ProcessProductStewardshipModule,
     ProcessInnovationModule,
     ProcessCommentsModule,
+    UrnSiteVisitsModule,
     WebsiteModule,
     DashboardModule,
     SectorsModule,
