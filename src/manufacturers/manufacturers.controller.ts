@@ -70,7 +70,9 @@ export class ManufacturersController {
   @ApiOperation({
     summary: 'List manufacturers (paginated)',
     description:
-      'Pagination, optional search on name / vendor name / email / GP internal ID, dedicated filters for manufacturerName/gpInternalId/manufacturerInitial, filters for manufacturerStatus and vendor_status, sort by createdAt or manufacturerName. Requires JWT.',
+      'Pagination (`page`, `limit`) with filters: **gpInternalId** (manufacturer ID), **manufacturerInitial** (initial), **manufacturerName** (name), **search** (global). ' +
+      'For the **verified manufacturers** screen use `scope=verified` and optional **status** multiselect: `active` (vendor on) / `inactive` (vendor off) — comma-separated or repeated, e.g. `status=active` or `status=active,inactive`. ' +
+      'Legacy numeric filter: `vendor_status` or `vendor_status_list=0,1`. Sort: `sortBy`, `order`. Requires JWT.',
   })
   @ApiResponse({
     status: 200,

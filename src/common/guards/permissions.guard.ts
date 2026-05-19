@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
+import { PERMISSIONS_MATCH_MODE_KEY } from '../decorators/any-permissions.decorator';
 import { RbacService } from '../../rbac/rbac.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ALLOW_STAFF_SELF_ROLE_READ_KEY } from '../decorators/allow-staff-self-role-read.decorator';
@@ -14,6 +15,7 @@ import {
   hasEffectivePermission,
   wouldExactMatchAllow,
 } from '../permissions/permission-hierarchy';
+import { isPlatformAdminUser } from '../utils/platform-admin.util';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
@@ -43,7 +45,7 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('Only admin portal users can access this API');
     }
 
-    if (user.role === 'admin') {
+    if (isPlatformAdminUser(user)) {
       return true;
     }
 
@@ -74,6 +76,24 @@ export class PermissionsGuard implements CanActivate {
       user.manufacturerId,
       user.userId,
     );
+    const matchMode =
+      this.reflector.getAllAndOverride<'any' | 'all'>(
+        PERMISSIONS_MATCH_MODE_KEY,
+        [context.getHandler(), context.getClass()],
+      ) ?? 'all';
+
+    if (matchMode === 'any') {
+      const allowed = requiredPermissions.some((permission) =>
+        hasEffectivePermission(userPermissions, permission),
+      );
+      if (!allowed) {
+        throw new ForbiddenException(
+          `Missing permission (requires one of): ${requiredPermissions.join(', ')}`,
+        );
+      }
+      return true;
+    }
+
     const missingPermission = requiredPermissions.find(
       (permission) => !hasEffectivePermission(userPermissions, permission),
     );

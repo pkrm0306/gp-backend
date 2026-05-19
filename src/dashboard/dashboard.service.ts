@@ -22,6 +22,13 @@ import {
   Manufacturer,
   ManufacturerDocument,
 } from '../manufacturers/schemas/manufacturer.schema';
+import {
+  ActivityLog,
+  ActivityLogDocument,
+} from '../activity-log/schemas/activity-log.schema';
+import { buildVendorProgressTracking } from './vendor-progress.util';
+import { buildVendorApplicationRow } from './vendor-applications.util';
+import { ListVendorApplicationsQueryDto } from './dto/list-vendor-applications-query.dto';
 
 @Injectable()
 export class DashboardService {
@@ -36,30 +43,123 @@ export class DashboardService {
     private eventModel: Model<EventDocument>,
     @InjectModel(Manufacturer.name)
     private manufacturerModel: Model<ManufacturerDocument>,
+    @InjectModel(ActivityLog.name)
+    private activityLogModel: Model<ActivityLogDocument>,
   ) {}
 
-  async getDashboardData(vendorId: string) {
+  /**
+   * Vendor dashboard — **Applications & URNs** table for **one URN only**
+   * (all products/EOIs under that URN). Progress uses the same URN scope.
+   */
+  async listApplicationsAndUrns(
+    vendorId: string,
+    query: ListVendorApplicationsQueryDto,
+  ) {
+    const vendorObjectId = new Types.ObjectId(vendorId);
+    await this.assertVendorProfileComplete(vendorObjectId);
+
+    const scopedUrn = await this.resolvePrimaryUrnProduct(
+      vendorObjectId,
+      query.urn?.trim(),
+    );
+    if (!scopedUrn) {
+      return {
+        message: 'Applications and URNs retrieved successfully',
+        data: {
+          urn_no: null,
+          rows: [],
+          totalCount: 0,
+          currentPage: 1,
+          totalPages: 1,
+          limit: Number(query.limit ?? 10),
+        },
+      };
+    }
+
+    const page = Number(query.page ?? 1);
+    const limit = Number(query.limit ?? 10);
+    const currentPage = Number.isFinite(page) && page > 0 ? page : 1;
+    const perPage =
+      Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 10;
+    const skip = (currentPage - 1) * perPage;
+
+    const match: Record<string, unknown> = {
+      vendorId: vendorObjectId,
+      productType: 0,
+      urnNo: scopedUrn.urnNo,
+    };
+
+    const search = String(query.search ?? '').trim();
+    if (search) {
+      const re = new RegExp(
+        search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'i',
+      );
+      match.$or = [{ eoiNo: re }, { productName: re }];
+    }
+
+    const [totalCount, products] = await Promise.all([
+      this.productModel.countDocuments(match).exec(),
+      this.productModel
+        .find(match)
+        .select('productId urnNo eoiNo productName productStatus urnStatus createdDate')
+        .sort({ createdDate: -1, productId: -1 })
+        .skip(skip)
+        .limit(perPage)
+        .lean()
+        .exec(),
+    ]);
+
+    const rows = products.map((p, index) => ({
+      s_no: skip + index + 1,
+      ...buildVendorApplicationRow({
+        productId: p.productId,
+        urnNo: p.urnNo,
+        eoiNo: p.eoiNo,
+        productName: p.productName,
+        productStatus: p.productStatus,
+        urnStatus: p.urnStatus,
+      }),
+    }));
+
+    return {
+      message: 'Applications and URNs retrieved successfully',
+      data: {
+        urn_no: scopedUrn.urnNo,
+        urn_status: scopedUrn.urnStatus,
+        rows,
+        totalCount,
+        currentPage,
+        totalPages: Math.max(1, Math.ceil(totalCount / perPage)),
+        limit: perPage,
+      },
+    };
+  }
+
+  private async assertVendorProfileComplete(
+    vendorObjectId: Types.ObjectId,
+  ): Promise<void> {
+    const manufacturer = await this.manufacturerModel
+      .findById(vendorObjectId)
+      .exec();
+    if (!manufacturer) {
+      throw new ForbiddenException('Manufacturer not found');
+    }
+    if (
+      !manufacturer.vendor_gst ||
+      !manufacturer.vendor_designation ||
+      !manufacturer.vendor_phone
+    ) {
+      throw new ForbiddenException(
+        'Please enter your account details to access all options!',
+      );
+    }
+  }
+
+  async getDashboardData(vendorId: string, urnNo?: string) {
     try {
       const vendorObjectId = new Types.ObjectId(vendorId);
-
-      // Check if vendor profile is complete
-      const manufacturer = await this.manufacturerModel
-        .findById(vendorObjectId)
-        .exec();
-      if (!manufacturer) {
-        throw new ForbiddenException('Manufacturer not found');
-      }
-
-      // Check if vendor profile is complete (GST, designation, phone)
-      if (
-        !manufacturer.vendor_gst ||
-        !manufacturer.vendor_designation ||
-        !manufacturer.vendor_phone
-      ) {
-        throw new ForbiddenException(
-          'Please enter your account details to access all options!',
-        );
-      }
+      await this.assertVendorProfileComplete(vendorObjectId);
 
       // Execute all queries in parallel for better performance
       const [
@@ -70,6 +170,7 @@ export class DashboardService {
         upcomingEventsCount,
         latestUrn,
         latestEoi,
+        progressTracking,
       ] = await Promise.all([
         this.getProductsCount(vendorObjectId),
         this.getCertifiedProductsCount(vendorObjectId),
@@ -78,6 +179,7 @@ export class DashboardService {
         this.getUpcomingEventsCount(),
         this.getLatestUrn(vendorObjectId),
         this.getLatestEoi(vendorObjectId),
+        this.getProgressTracking(vendorObjectId, urnNo?.trim()),
       ]);
 
       return {
@@ -92,6 +194,7 @@ export class DashboardService {
           upcomingEventsCount: { upcoming_events_count: upcomingEventsCount },
           latestUrn: latestUrn,
           latestEoi: latestEoi,
+          progressTracking,
         },
       };
     } catch (error) {
@@ -189,6 +292,72 @@ export class DashboardService {
       })
       .exec();
     return count || 0;
+  }
+
+  /**
+   * Dynamic certification progress (vendor panel only).
+   * Stepper + latest/next cards from products.urnStatus and activity_log for the URN.
+   */
+  private async getProgressTracking(
+    vendorId: Types.ObjectId,
+    urnNo?: string,
+  ) {
+    const primary = await this.resolvePrimaryUrnProduct(vendorId, urnNo);
+    if (!primary) {
+      return buildVendorProgressTracking({
+        urnNo: null,
+        urnStatus: null,
+        activityLogs: [],
+      });
+    }
+
+    const activityLogs = await this.activityLogModel
+      .find({ vendor_id: vendorId, urn_no: primary.urnNo })
+      .sort({ created_at: 1 })
+      .lean()
+      .exec();
+
+    return buildVendorProgressTracking({
+      urnNo: primary.urnNo,
+      urnStatus: primary.urnStatus,
+      activityLogs,
+    });
+  }
+
+  private async resolvePrimaryUrnProduct(
+    vendorId: Types.ObjectId,
+    urnNo?: string,
+  ): Promise<{ urnNo: string; urnStatus: number } | null> {
+    if (urnNo) {
+      const row = await this.productModel
+        .findOne({ vendorId, urnNo, productType: 0 })
+        .select('urnNo urnStatus')
+        .sort({ productId: -1 })
+        .lean()
+        .exec();
+      if (!row?.urnNo) {
+        return null;
+      }
+      return {
+        urnNo: row.urnNo,
+        urnStatus: Number(row.urnStatus ?? 0),
+      };
+    }
+
+    const row = await this.productModel
+      .findOne({ vendorId, productType: 0 })
+      .select('urnNo urnStatus')
+      .sort({ urnNo: -1, productId: -1 })
+      .lean()
+      .exec();
+
+    if (!row?.urnNo) {
+      return null;
+    }
+    return {
+      urnNo: row.urnNo,
+      urnStatus: Number(row.urnStatus ?? 0),
+    };
   }
 
   /**

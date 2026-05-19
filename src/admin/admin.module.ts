@@ -39,6 +39,18 @@ import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { CategoriesModule } from '../categories/categories.module';
 import { SectorsModule } from '../sectors/sectors.module';
+import { Product, ProductSchema } from '../product-registration/schemas/product.schema';
+import {
+  ProductPlant,
+  ProductPlantSchema,
+} from '../product-registration/schemas/product-plant.schema';
+import { Category, CategorySchema } from '../categories/schemas/category.schema';
+import { State, StateSchema } from '../states/schemas/state.schema';
+import {
+  ActivityLog,
+  ActivityLogSchema,
+} from '../activity-log/schemas/activity-log.schema';
+import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 
 @Module({
   imports: [
@@ -46,7 +58,13 @@ import { SectorsModule } from '../sectors/sectors.module';
     RbacModule,
     CategoriesModule,
     SectorsModule,
+    ProductRegistrationModule,
     MongooseModule.forFeature([
+      { name: Product.name, schema: ProductSchema },
+      { name: ProductPlant.name, schema: ProductPlantSchema },
+      { name: Category.name, schema: CategorySchema },
+      { name: State.name, schema: StateSchema },
+      { name: ActivityLog.name, schema: ActivityLogSchema },
       { name: Manufacturer.name, schema: ManufacturerSchema },
       { name: VendorUser.name, schema: VendorUserSchema },
       { name: Banner.name, schema: BannerSchema },

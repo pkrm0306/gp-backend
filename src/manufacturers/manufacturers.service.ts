@@ -26,6 +26,10 @@ import { UpdateVendorContactsDto } from './dto/update-vendor-contacts.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import { ListManufacturersQueryDto } from './dto/list-manufacturers-query.dto';
+import {
+  resolveManufacturerScopeFilter,
+  resolveVendorStatusFilter,
+} from './utils/list-manufacturers-query.util';
 import { uploadFile } from '../utils/upload-file.util';
 import { ManufacturerIdGenerationService } from './manufacturer-id-generation.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
@@ -1291,11 +1295,14 @@ export class ManufacturersService {
         ],
       });
     }
-    if (query.manufacturerStatus !== undefined) {
-      parts.push({ manufacturerStatus: query.manufacturerStatus });
+    const scopeFilter = resolveManufacturerScopeFilter(query);
+    if (scopeFilter) {
+      parts.push(scopeFilter);
     }
-    if (query.vendor_status !== undefined) {
-      parts.push({ vendor_status: query.vendor_status });
+
+    const vendorStatusFilter = resolveVendorStatusFilter(query);
+    if (vendorStatusFilter) {
+      parts.push(vendorStatusFilter);
     }
     if (
       query.manufacturerName !== undefined &&
@@ -1568,12 +1575,17 @@ export class ManufacturersService {
       }),
     );
 
+    const totalPages = limit > 0 ? Math.ceil(total / limit) : 0;
+
     return {
       message: 'Manufacturers retrieved successfully',
       data,
       total,
+      totalCount: total,
       page,
       limit,
+      totalPages,
+      currentPage: page,
     };
   }
 

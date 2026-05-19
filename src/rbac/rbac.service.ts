@@ -28,6 +28,7 @@ import {
   minimizePermissionSet,
 } from '../common/permissions/permission-hierarchy';
 import { ALL_KNOWN_PERMISSION_VALUES } from '../common/constants/permissions.constants';
+import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
 import { EmailService } from '../common/services/email.service';
 import { RedisService } from '../common/redis/redis.service';
 import * as crypto from 'crypto';
@@ -831,10 +832,29 @@ export class RbacService {
     return mapped;
   }
 
+  private async vendorUserIsPlatformAdmin(vendorUserId: string): Promise<boolean> {
+    const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
+    const user = await this.vendorUserModel
+      .findById(vendorUserObjectId)
+      .select('type')
+      .lean()
+      .exec();
+    return isPlatformAdminUser({ type: user?.type });
+  }
+
+  /** Full grant list for platform admin users (unrestricted portal). */
+  allPlatformAdminGrants(): string[] {
+    return minimizePermissionSet([...ALL_KNOWN_PERMISSION_VALUES]);
+  }
+
   async getStaffPermissions(
     manufacturerId: string,
     vendorUserId: string,
   ): Promise<string[]> {
+    if (await this.vendorUserIsPlatformAdmin(vendorUserId)) {
+      return this.allPlatformAdminGrants();
+    }
+
     const cacheKey = this.redisService.buildKey(
       'rbac',
       manufacturerId,
@@ -895,7 +915,18 @@ export class RbacService {
     roleIds: string[];
     grants: string[];
     effectivePermissions: string[];
+    isPlatformAdmin: boolean;
   }> {
+    if (await this.vendorUserIsPlatformAdmin(vendorUserId)) {
+      const grants = this.allPlatformAdminGrants();
+      return {
+        roleIds: [],
+        grants,
+        effectivePermissions: this.effectivePermissionsFromRaw(grants),
+        isPlatformAdmin: true,
+      };
+    }
+
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
       'manufacturerId',
@@ -922,6 +953,7 @@ export class RbacService {
       roleIds,
       grants,
       effectivePermissions,
+      isPlatformAdmin: false,
     };
   }
 }

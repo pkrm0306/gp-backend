@@ -22,6 +22,8 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import * as crypto from 'crypto';
 import { RedisService } from '../common/redis/redis.service';
 import { RbacService } from '../rbac/rbac.service';
+import { ALL_KNOWN_PERMISSION_VALUES } from '../common/constants/permissions.constants';
+import { expandEffectivePermissions } from '../common/permissions/permission-hierarchy';
 import type { VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
 import type { ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
 
@@ -541,13 +543,37 @@ export class AuthService {
       };
     }
 
+    const loginData: Record<string, unknown> = {
+      accessToken,
+      refreshToken,
+      user: responseUser,
+    };
+
+    if (user?.type === 'admin') {
+      loginData.isPlatformAdmin = true;
+      loginData.effectivePermissions = expandEffectivePermissions(
+        ALL_KNOWN_PERMISSION_VALUES,
+        ALL_KNOWN_PERMISSION_VALUES,
+      );
+    } else if (user?.type === 'staff') {
+      const manufacturerId =
+        user.manufacturerId?.toString() || user.vendorId?.toString();
+      if (manufacturerId) {
+        const ctx = await this.rbacService.getStaffPermissionContext(
+          manufacturerId,
+          user._id.toString(),
+        );
+        loginData.isPlatformAdmin = ctx.isPlatformAdmin;
+        loginData.effectivePermissions = ctx.effectivePermissions;
+      } else {
+        loginData.isPlatformAdmin = false;
+        loginData.effectivePermissions = [];
+      }
+    }
+
     return {
       message: 'Login successful',
-      data: {
-        accessToken,
-        refreshToken,
-        user: responseUser,
-      },
+      data: loginData,
     };
   }
 
@@ -705,11 +731,33 @@ export class AuthService {
       typeof payload?.exp === 'number' ? payload.exp : undefined,
     );
 
-    let refreshedUser: Record<string, unknown> | undefined;
+    const refreshData: Record<string, unknown> = {
+      accessToken,
+      refreshToken,
+    };
+
     try {
       const vu = await this.vendorUsersService.findById(String(payload.userId));
       if (vu && (vu.type === 'admin' || vu.type === 'staff')) {
-        refreshedUser = this.buildAdminPortalUserPayload(vu);
+        refreshData.user = this.buildAdminPortalUserPayload(vu);
+      }
+      if (vu?.type === 'admin') {
+        refreshData.isPlatformAdmin = true;
+        refreshData.effectivePermissions = expandEffectivePermissions(
+          ALL_KNOWN_PERMISSION_VALUES,
+          ALL_KNOWN_PERMISSION_VALUES,
+        );
+      } else if (vu?.type === 'staff') {
+        const manufacturerId =
+          vu.manufacturerId?.toString() || vu.vendorId?.toString();
+        if (manufacturerId) {
+          const ctx = await this.rbacService.getStaffPermissionContext(
+            manufacturerId,
+            vu._id.toString(),
+          );
+          refreshData.isPlatformAdmin = ctx.isPlatformAdmin;
+          refreshData.effectivePermissions = ctx.effectivePermissions;
+        }
       }
     } catch {
       /* ignore */
@@ -717,11 +765,7 @@ export class AuthService {
 
     return {
       message: 'Token refreshed successfully',
-      data: {
-        accessToken,
-        refreshToken,
-        ...(refreshedUser ? { user: refreshedUser } : {}),
-      },
+      data: refreshData,
     };
   }
 

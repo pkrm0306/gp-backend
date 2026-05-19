@@ -52,6 +52,54 @@ import { RedisService } from '../common/redis/redis.service';
 import { CategoriesService } from '../categories/categories.service';
 import { SectorsService } from '../sectors/sectors.service';
 import { ManufacturerIdGenerationService } from '../manufacturers/manufacturer-id-generation.service';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
+import {
+  manufacturerStatusKey,
+  urnStatusLabel,
+  URN_STATUS_LABELS,
+} from './admin-dashboard-metrics.util';
+import type { DashboardMetricsQueryDto } from './dto/dashboard-metrics-query.dto';
+import {
+  buildAppliedDashboardFilters,
+  buildManufacturerSnapshotMatch,
+  buildProductBaseMatch,
+  bucketDateExpression,
+  formatBucketLabel,
+  resolveDashboardDateRange,
+  stateNameMatchesRegion,
+  type DashboardGranularity,
+  type ResolvedDashboardFilters,
+} from './utils/dashboard-metrics-filters.util';
+import { normalizeCategoryNameKey } from '../categories/category-name-normalize';
+import {
+  Category,
+  CategoryDocument,
+} from '../categories/schemas/category.schema';
+import {
+  ProductPlant,
+  ProductPlantDocument,
+} from '../product-registration/schemas/product-plant.schema';
+import { State, StateDocument } from '../states/schemas/state.schema';
+import {
+  ActivityLog,
+  ActivityLogDocument,
+} from '../activity-log/schemas/activity-log.schema';
+import { ProductRegistrationService } from '../product-registration/product-registration.service';
+import type {
+  AdminDashboardCharts,
+  AdminDashboardMetrics,
+  AppliedDashboardFilters,
+} from './admin-dashboard-metrics.types';
+import {
+  filterDashboardMetricsByPermissions,
+  type AdminDashboardMetricsResponse,
+} from './admin-dashboard-permissions.util';
+import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
+
+export type { AdminDashboardMetrics, AdminDashboardMetricsResponse };
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -134,6 +182,8 @@ export class AdminService {
   private readonly logger = new Logger(AdminService.name);
 
   constructor(
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectModel(Manufacturer.name)
     private manufacturerModel: Model<ManufacturerDocument>,
     @InjectModel(VendorUser.name)
@@ -154,13 +204,341 @@ export class AdminService {
     private notificationModel: Model<NotificationDocument>,
     @InjectModel(Article.name)
     private articleModel: Model<ArticleDocument>,
+    @InjectModel(Category.name)
+    private categoryModel: Model<CategoryDocument>,
+    @InjectModel(ProductPlant.name)
+    private productPlantModel: Model<ProductPlantDocument>,
+    @InjectModel(State.name)
+    private stateModel: Model<StateDocument>,
+    @InjectModel(ActivityLog.name)
+    private activityLogModel: Model<ActivityLogDocument>,
     private readonly emailService: EmailService,
     private readonly rbacService: RbacService,
     private readonly redisService: RedisService,
     private readonly categoriesService: CategoriesService,
     private readonly sectorsService: SectorsService,
     private readonly manufacturerIdGeneration: ManufacturerIdGenerationService,
+    private readonly productRegistrationService: ProductRegistrationService,
   ) {}
+
+  async resolveDashboardMetricsFilters(
+    query: DashboardMetricsQueryDto,
+  ): Promise<ResolvedDashboardFilters> {
+    const dateRange = resolveDashboardDateRange(query);
+    const granularity = query.granularity ?? 'monthly';
+    let categoryObjectId: Types.ObjectId | undefined;
+    if (query.categoryId) {
+      categoryObjectId = await this.resolveDashboardCategoryId(query.categoryId);
+    }
+    let manufacturerIdsForRegion: Types.ObjectId[] | undefined;
+    if (query.region) {
+      manufacturerIdsForRegion = await this.resolveManufacturerIdsByRegion(
+        query.region,
+      );
+    }
+    return {
+      dateRange,
+      granularity,
+      categoryObjectId,
+      region: query.region,
+      productStatusFilter: query.productStatus,
+      manufacturerIdsForRegion,
+    };
+  }
+
+  buildAppliedFiltersPayload(
+    query: DashboardMetricsQueryDto,
+    filters: ResolvedDashboardFilters,
+  ): AppliedDashboardFilters {
+    return buildAppliedDashboardFilters(query, filters);
+  }
+
+  getDashboardFilterOptions() {
+    const currentYear = new Date().getFullYear();
+    const years = [currentYear, currentYear - 1, currentYear - 2];
+    return {
+      periods: [
+        { value: 'this_week', label: 'This Week' },
+        { value: 'this_month', label: 'This Month' },
+        { value: 'this_quarter', label: 'This Quarter' },
+        { value: 'this_year', label: 'This Year' },
+      ],
+      years: [
+        { value: null, label: 'All Years' },
+        ...years.map((y) => ({ value: y, label: String(y) })),
+      ],
+      months: [
+        { value: null, label: 'All Months' },
+        { value: 1, label: 'Jan' },
+        { value: 2, label: 'Feb' },
+        { value: 3, label: 'Mar' },
+        { value: 4, label: 'Apr' },
+        { value: 5, label: 'May' },
+        { value: 6, label: 'Jun' },
+        { value: 7, label: 'Jul' },
+        { value: 8, label: 'Aug' },
+        { value: 9, label: 'Sep' },
+        { value: 10, label: 'Oct' },
+        { value: 11, label: 'Nov' },
+        { value: 12, label: 'Dec' },
+      ],
+      productStatuses: [
+        { value: null, label: 'All Statuses' },
+        { value: 'pending', label: 'Pending' },
+        { value: 'active', label: 'Active (in certification)' },
+        { value: 'completed', label: 'Completed (certified)' },
+        { value: 'overdue', label: 'Overdue (expired)' },
+      ],
+      regions: [
+        { value: null, label: 'All Regions' },
+        { value: 'north', label: 'North' },
+        { value: 'south', label: 'South' },
+        { value: 'east', label: 'East' },
+        { value: 'west', label: 'West' },
+      ],
+      granularities: [
+        { value: 'monthly', label: 'Monthly' },
+        { value: 'weekly', label: 'Weekly' },
+        { value: 'quarterly', label: 'Quarterly' },
+      ],
+      defaults: {
+        period: 'this_year',
+        year: currentYear,
+        month: null,
+        granularity: 'monthly',
+      },
+      queryParamMap: {
+        period: 'period',
+        year: 'year',
+        month: 'month',
+        quarter: 'quarter',
+        productStatus: 'productStatus',
+        categoryId: 'categoryId',
+        region: 'region',
+        granularity: 'granularity',
+      },
+    };
+  }
+
+  private async resolveDashboardCategoryId(raw: string): Promise<Types.ObjectId> {
+    const trimmed = String(raw).trim();
+    if (/^[0-9a-fA-F]{24}$/.test(trimmed)) {
+      return new Types.ObjectId(trimmed);
+    }
+    const key = normalizeCategoryNameKey(trimmed.replace(/-/g, ' '));
+    const cat = await this.categoryModel
+      .findOne({ category_name_normalized: key })
+      .select('_id')
+      .lean()
+      .exec();
+    if (!cat?._id) {
+      throw new BadRequestException(`Category not found: ${raw}`);
+    }
+    return cat._id as Types.ObjectId;
+  }
+
+  private async resolveManufacturerIdsByRegion(
+    region: 'north' | 'south' | 'east' | 'west',
+  ): Promise<Types.ObjectId[]> {
+    const states = await this.stateModel.find().select('stateName').lean().exec();
+    const stateIds = states
+      .filter((s) =>
+        stateNameMatchesRegion(String(s.stateName ?? ''), region),
+      )
+      .map((s) => s._id);
+    if (stateIds.length === 0) {
+      return [];
+    }
+    return this.productPlantModel
+      .distinct('manufacturerId', { stateId: { $in: stateIds } })
+      .exec();
+  }
+
+  private compareChartBuckets(
+    a: { year?: number; month?: number; quarter?: number; week?: number },
+    b: { year?: number; month?: number; quarter?: number; week?: number },
+    granularity: DashboardGranularity,
+  ): number {
+    const ay = a.year ?? 0;
+    const by = b.year ?? 0;
+    if (ay !== by) return ay - by;
+    if (granularity === 'weekly') {
+      return (a.week ?? 0) - (b.week ?? 0);
+    }
+    if (granularity === 'quarterly') {
+      return (a.quarter ?? 0) - (b.quarter ?? 0);
+    }
+    return (a.month ?? 0) - (b.month ?? 0);
+  }
+
+  private async buildDashboardCharts(
+    productMatch: Record<string, unknown>,
+    granularity: DashboardGranularity,
+    now: Date,
+  ): Promise<AdminDashboardCharts> {
+    const bucketId = bucketDateExpression(granularity, 'createdDate');
+    const certifiedCond = {
+      $and: [
+        { $eq: ['$productStatus', 2] },
+        {
+          $or: [
+            { $eq: [{ $ifNull: ['$validtillDate', null] }, null] },
+            { $gte: ['$validtillDate', now] },
+          ],
+        },
+      ],
+    };
+
+    const baseStages: any[] = [];
+    if (Object.keys(productMatch).length > 0) {
+      baseStages.push({ $match: productMatch });
+    }
+
+    const [
+      categoryRows,
+      submissionRows,
+      certifiedRows,
+      onlineOfflineRows,
+    ] = await Promise.all([
+      this.productModel
+        .aggregate<{
+          name: string;
+          products: number;
+        }>([
+          ...baseStages,
+          { $group: { _id: '$categoryId', products: { $sum: 1 } } },
+          {
+            $lookup: {
+              from: 'categories',
+              localField: '_id',
+              foreignField: '_id',
+              as: 'cat',
+            },
+          },
+          {
+            $project: {
+              name: {
+                $ifNull: [
+                  { $arrayElemAt: ['$cat.category_name', 0] },
+                  'Unknown',
+                ],
+              },
+              products: 1,
+            },
+          },
+          { $sort: { products: -1 } },
+          { $limit: 20 },
+        ])
+        .exec(),
+      this.productModel
+        .aggregate<{
+          _id: { year?: number; month?: number; quarter?: number; week?: number };
+          count: number;
+        }>([
+          ...baseStages,
+          { $group: { _id: bucketId, count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.productModel
+        .aggregate<{
+          _id: { year?: number; month?: number; quarter?: number; week?: number };
+          certified: number;
+          uncertified: number;
+        }>([
+          ...baseStages,
+          {
+            $group: {
+              _id: bucketId,
+              certified: { $sum: { $cond: [certifiedCond, 1, 0] } },
+              uncertified: {
+                $sum: {
+                  $cond: [{ $in: ['$productStatus', [0, 1]] }, 1, 0],
+                },
+              },
+            },
+          },
+        ])
+        .exec(),
+      this.productModel
+        .aggregate<{
+          _id: { year?: number; month?: number; quarter?: number; week?: number };
+          online: number;
+          offline: number;
+        }>([
+          ...baseStages,
+          {
+            $group: {
+              _id: bucketId,
+              online: {
+                $sum: { $cond: [{ $eq: ['$productType', 0] }, 1, 0] },
+              },
+              offline: {
+                $sum: { $cond: [{ $eq: ['$productType', 1] }, 1, 0] },
+              },
+            },
+          },
+        ])
+        .exec(),
+    ]);
+
+    type ChartBucketRow = {
+      _id: { year?: number; month?: number; quarter?: number; week?: number };
+    };
+    const sortBuckets = <T extends ChartBucketRow>(rows: T[]): T[] =>
+      [...rows].sort((a, b) =>
+        this.compareChartBuckets(a._id, b._id, granularity),
+      );
+
+    return {
+      categoryDistribution: categoryRows.map((r) => ({
+        name: r.name,
+        products: r.products,
+        sales: 0,
+      })),
+      monthlySubmissions: sortBuckets(submissionRows).map((r) => ({
+        month: formatBucketLabel(granularity, r._id),
+        count: r.count,
+      })),
+      monthlyCertified: sortBuckets(certifiedRows).map((r) => ({
+        month: formatBucketLabel(granularity, r._id),
+        certified: r.certified,
+        uncertified: r.uncertified,
+      })),
+      onlineOffline: sortBuckets(onlineOfflineRows).map((r) => ({
+        month: formatBucketLabel(granularity, r._id),
+        online: r.online,
+        offline: r.offline,
+      })),
+    };
+  }
+
+  async getDashboardRecentProducts(page = 1, limit = 10) {
+    return this.productRegistrationService.adminListProducts({
+      page,
+      limit,
+      sortBy: 'createdDate',
+      sortOrder: 'desc',
+    });
+  }
+
+  async getDashboardActivity(limit = 20) {
+    const rows = await this.activityLogModel
+      .find()
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .lean()
+      .exec();
+
+    return rows.map((r) => ({
+      id: String(r._id),
+      urnNo: r.urn_no,
+      activity: r.activity,
+      activityStatus: r.activity_status,
+      manufacturerId: String(r.manufacturer_id),
+      vendorId: String(r.vendor_id),
+      createdAt: r.created_at,
+    }));
+  }
 
   /** Normalized sector ids stored on the team member (or legacy fallback from categories). */
   private teamMemberStoredSectorIds(m: {
@@ -2976,6 +3354,218 @@ export class AdminService {
         error.message || 'Failed to update manufacturer status',
       );
     }
+  }
+
+  /**
+   * Platform-wide metrics for the admin dashboard home screen.
+   * Honors global filters (period, category, productStatus, region, etc.).
+   */
+  async getDashboardMetrics(
+    filters: ResolvedDashboardFilters = { granularity: 'monthly' },
+  ): Promise<AdminDashboardMetrics> {
+    const now = new Date();
+    const manufacturerMatch = buildManufacturerSnapshotMatch(filters);
+    const productMatch = buildProductBaseMatch(filters, now);
+
+    const manufacturerPipeline: any[] = [];
+    if (Object.keys(manufacturerMatch).length > 0) {
+      manufacturerPipeline.push({ $match: manufacturerMatch });
+    }
+    manufacturerPipeline.push({
+      $facet: {
+        total: [{ $count: 'count' }],
+        byStatus: [
+          { $group: { _id: '$manufacturerStatus', count: { $sum: 1 } } },
+        ],
+        verifiedActive: [
+          { $match: { manufacturerStatus: 1, vendor_status: 1 } },
+          { $count: 'count' },
+        ],
+        verifiedInactive: [
+          {
+            $match: {
+              manufacturerStatus: 1,
+              vendor_status: { $ne: 1 },
+            },
+          },
+          { $count: 'count' },
+        ],
+      },
+    });
+
+    const productPipeline: any[] = [];
+    if (Object.keys(productMatch).length > 0) {
+      productPipeline.push({ $match: productMatch });
+    }
+    productPipeline.push({
+      $facet: {
+        total: [{ $count: 'count' }],
+        distinctUrns: [{ $group: { _id: '$urnNo' } }, { $count: 'count' }],
+        byProductStatus: [
+          { $group: { _id: '$productStatus', count: { $sum: 1 } } },
+        ],
+        byUrnStatus: [
+          { $group: { _id: '$urnStatus', count: { $sum: 1 } } },
+        ],
+        expired: [
+          {
+            $match: {
+              productStatus: 2,
+              validtillDate: { $exists: true, $ne: null, $lt: now },
+            },
+          },
+          { $count: 'count' },
+        ],
+      },
+    });
+
+    const [manufacturerFacet, productFacet, charts] = await Promise.all([
+      this.manufacturerModel
+        .aggregate<{
+          total: { count: number }[];
+          byStatus: { _id: number; count: number }[];
+          verifiedActive: { count: number }[];
+          verifiedInactive: { count: number }[];
+        }>(manufacturerPipeline)
+        .exec(),
+      this.productModel
+        .aggregate<{
+          total: { count: number }[];
+          distinctUrns: { count: number }[];
+          byProductStatus: { _id: number; count: number }[];
+          byUrnStatus: { _id: number; count: number }[];
+          expired: { count: number }[];
+        }>(productPipeline)
+        .exec(),
+      this.buildDashboardCharts(
+        productMatch,
+        filters.granularity,
+        now,
+      ),
+    ]);
+
+    const mfgPayload = manufacturerFacet[0] ?? {
+      total: [],
+      byStatus: [],
+      verifiedActive: [],
+      verifiedInactive: [],
+    };
+    const productPayload = productFacet[0] ?? {
+      total: [],
+      distinctUrns: [],
+      byProductStatus: [],
+      byUrnStatus: [],
+      expired: [],
+    };
+
+    const manufacturers = {
+      verified: 0,
+      unverified: 0,
+      inactivePending: 0,
+      verifiedActive: mfgPayload.verifiedActive?.[0]?.count ?? 0,
+      verifiedInactive: mfgPayload.verifiedInactive?.[0]?.count ?? 0,
+    };
+    for (const row of mfgPayload.byStatus ?? []) {
+      const key = manufacturerStatusKey(Number(row._id ?? 0));
+      manufacturers[key] += row.count ?? 0;
+    }
+
+    const productStatusCounts: Record<number, number> = {};
+    for (const row of productPayload.byProductStatus ?? []) {
+      if (row?._id !== undefined && row?._id !== null) {
+        productStatusCounts[Number(row._id)] = row.count ?? 0;
+      }
+    }
+
+    const expiredCount = productPayload.expired?.[0]?.count ?? 0;
+    const certifiedActive = productStatusCounts[2] ?? 0;
+
+    const byProductStatus = {
+      pending: productStatusCounts[0] ?? 0,
+      approved: productStatusCounts[1] ?? 0,
+      certified: Math.max(0, certifiedActive - expiredCount),
+      rejected: productStatusCounts[3] ?? 0,
+      expired: expiredCount,
+    };
+
+    const urnCountMap = new Map<number, number>();
+    for (const row of productPayload.byUrnStatus ?? []) {
+      if (row?._id !== undefined && row?._id !== null) {
+        urnCountMap.set(Number(row._id), row.count ?? 0);
+      }
+    }
+
+    const byUrnStatus = Object.keys(URN_STATUS_LABELS)
+      .map((k) => Number(k))
+      .sort((a, b) => a - b)
+      .map((status) => ({
+        status,
+        label: urnStatusLabel(status),
+        count: urnCountMap.get(status) ?? 0,
+      }));
+
+    const proposalPending = urnCountMap.get(0) ?? 0;
+    const certificatePublished = urnCountMap.get(11) ?? 0;
+    let inCertificationPipeline = 0;
+    for (let s = 1; s <= 10; s += 1) {
+      inCertificationPipeline += urnCountMap.get(s) ?? 0;
+    }
+
+    return {
+      totalManufacturers: mfgPayload.total?.[0]?.count ?? 0,
+      manufacturers,
+      productSubmissions: {
+        total: productPayload.total?.[0]?.count ?? 0,
+        totalUrns: productPayload.distinctUrns?.[0]?.count ?? 0,
+      },
+      certificationProgress: {
+        byProductStatus,
+        byUrnStatus,
+        summary: {
+          certifiedProducts: byProductStatus.certified,
+          inCertificationPipeline,
+          proposalPending,
+          certificatePublished,
+        },
+      },
+      charts,
+    };
+  }
+
+  /**
+   * Dashboard metrics filtered by staff role grants. Platform admins see all sections.
+   */
+  async getDashboardMetricsForUser(input: {
+    role?: string;
+    type?: string;
+    manufacturerId: string;
+    userId: string;
+    filters: ResolvedDashboardFilters;
+    query: DashboardMetricsQueryDto;
+  }): Promise<AdminDashboardMetricsResponse> {
+    const full = await this.getDashboardMetrics(input.filters);
+    const appliedFilters = this.buildAppliedFiltersPayload(
+      input.query,
+      input.filters,
+    );
+
+    if (isPlatformAdminUser({ role: input.role, type: input.type })) {
+      return {
+        ...full,
+        visibleSections: {
+          manufacturers: true,
+          products: true,
+          certification: true,
+        },
+        appliedFilters,
+      };
+    }
+
+    const grants = await this.rbacService.getStaffPermissions(
+      input.manufacturerId,
+      input.userId,
+    );
+    return filterDashboardMetricsByPermissions(full, grants, appliedFilters);
   }
 
   async updateVendorStatus(id: string) {

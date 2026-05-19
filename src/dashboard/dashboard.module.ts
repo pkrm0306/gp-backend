@@ -19,6 +19,10 @@ import {
   Manufacturer,
   ManufacturerSchema,
 } from '../manufacturers/schemas/manufacturer.schema';
+import {
+  ActivityLog,
+  ActivityLogSchema,
+} from '../activity-log/schemas/activity-log.schema';
 
 @Module({
   imports: [
@@ -28,6 +32,7 @@ import {
       { name: VendorUser.name, schema: VendorUserSchema },
       { name: Event.name, schema: EventSchema },
       { name: Manufacturer.name, schema: ManufacturerSchema },
+      { name: ActivityLog.name, schema: ActivityLogSchema },
     ]),
   ],
   controllers: [DashboardController],

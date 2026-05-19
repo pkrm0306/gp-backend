@@ -14,7 +14,11 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import {
+  ALL_KNOWN_PERMISSION_VALUES,
+  DASHBOARD_PERMISSION_CATALOG,
+  PERMISSIONS,
+} from '../common/constants/permissions.constants';
 import { AllowStaffSelfRoleRead } from '../common/decorators/allow-staff-self-role-read.decorator';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -26,6 +30,7 @@ import { ListRolesQueryDto } from './dto/list-roles-query.dto';
 import { RbacService } from './rbac.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
 
 @ApiTags('Admin RBAC')
 @ApiBearerAuth()
@@ -33,6 +38,23 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class RbacController {
   constructor(private readonly rbacService: RbacService) {}
+
+  @Get('permissions/catalog')
+  @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
+  @ApiOperation({
+    summary: 'Permission catalog for role add/edit UI',
+    description:
+      'Returns dashboard section permissions (nested under Dashboard) plus all known permission keys for module checkboxes.',
+  })
+  listPermissionCatalog() {
+    return {
+      message: 'Permission catalog retrieved successfully',
+      data: {
+        dashboard: DASHBOARD_PERMISSION_CATALOG,
+        allPermissions: ALL_KNOWN_PERMISSION_VALUES,
+      },
+    };
+  }
 
   @Post('roles')
   @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
@@ -192,6 +214,14 @@ export class RbacController {
     @CurrentUser() user: { manufacturerId: string; userId: string; role: string },
     @Query('vendorUserId') vendorUserId?: string,
   ) {
+    if (isPlatformAdminUser(user)) {
+      const data = await this.rbacService.getStaffPermissionContext(
+        user.manufacturerId,
+        user.userId,
+      );
+      return { message: 'Permission context retrieved successfully', data };
+    }
+
     if (user.role === 'staff') {
       if (vendorUserId && vendorUserId !== user.userId) {
         throw new ForbiddenException(

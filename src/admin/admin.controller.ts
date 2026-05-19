@@ -71,9 +71,18 @@ import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
 import type { Request } from 'express';
 import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import {
+  DASHBOARD_PERMISSION_CATALOG,
+  PERMISSIONS,
+} from '../common/constants/permissions.constants';
 import { GALLERY_TYPES, GalleryType } from '../events/schemas/event.schema';
 import { uploadFile } from '../utils/upload-file.util';
+import {
+  DashboardActivityQueryDto,
+  DashboardMetricsQueryDto,
+  DashboardRecentProductsQueryDto,
+} from './dto/dashboard-metrics-query.dto';
 
 const storage = diskStorage({
   destination: join(process.cwd(), 'uploads', 'manufacturers'),
@@ -218,6 +227,113 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly manufacturersService: ManufacturersService,
   ) {}
+
+  @Get('dashboard/metrics')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Admin dashboard metrics',
+    description:
+      'Returns dashboard KPIs, optional **charts** time-series, and **visibleSections** for RBAC. ' +
+      'Query filters: `period`, `year`, `month`, `quarter`, `productStatus` (pending|active|completed|overdue), ' +
+      '`categoryId` (ObjectId or slug), `region` (north|south|east|west via plant states), `granularity` (monthly|weekly|quarterly). ' +
+      'Platform admins (`type: admin`) always receive full metrics.',
+  })
+  @ApiResponse({ status: 200, description: 'Dashboard metrics retrieved' })
+  async getDashboardMetrics(
+    @CurrentUser()
+    user: {
+      role: string;
+      type?: string;
+      manufacturerId: string;
+      userId: string;
+    },
+    @Query() query: DashboardMetricsQueryDto,
+  ) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.adminService.getDashboardMetricsForUser({
+      role: user.role,
+      type: user.type,
+      manufacturerId: user.manufacturerId,
+      userId: user.userId,
+      filters,
+      query,
+    });
+    return {
+      message: 'Admin dashboard metrics retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('dashboard/filters')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Dashboard filter options',
+    description:
+      'Returns period/year/month labels and values for the admin dashboard filter bar. ' +
+      'Use the same query param names when calling GET /admin/dashboard/metrics.',
+  })
+  getDashboardFilters() {
+    return {
+      message: 'Dashboard filter options retrieved successfully',
+      data: this.adminService.getDashboardFilterOptions(),
+    };
+  }
+
+  @Get('dashboard/recent-products')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.PRODUCTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Recent products for admin dashboard table',
+    description:
+      'Latest product/URN rows (same shape as POST /api/admin/products/list).',
+  })
+  async getDashboardRecentProducts(@Query() query: DashboardRecentProductsQueryDto) {
+    const result = await this.adminService.getDashboardRecentProducts(
+      query.page ?? 1,
+      query.limit ?? 10,
+    );
+    return {
+      message: 'Recent products retrieved successfully',
+      data: result.data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+    };
+  }
+
+  @Get('dashboard/activity')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+    PERMISSIONS.PRODUCTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Recent certification activity for admin dashboard',
+  })
+  async getDashboardActivity(@Query() query: DashboardActivityQueryDto) {
+    const data = await this.adminService.getDashboardActivity(query.limit ?? 20);
+    return {
+      message: 'Dashboard activity retrieved successfully',
+      data,
+    };
+  }
 
   private parseEventStatus(raw: unknown): number | undefined {
     if (raw === undefined || raw === null || String(raw).trim() === '') {

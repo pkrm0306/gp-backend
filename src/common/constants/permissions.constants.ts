@@ -1,5 +1,11 @@
 export const PERMISSIONS = {
   DASHBOARD_VIEW: 'dashboard:view',
+  /** Admin dashboard — manufacturers KPI block */
+  DASHBOARD_MANUFACTURERS_VIEW: 'dashboard:manufacturers:view',
+  /** Admin dashboard — product submissions KPI block */
+  DASHBOARD_PRODUCTS_VIEW: 'dashboard:products:view',
+  /** Admin dashboard — certification progress KPI block */
+  DASHBOARD_CERTIFICATION_VIEW: 'dashboard:certification:view',
 
   CATEGORIES_VIEW: 'categories:view',
   CATEGORIES_ADD: 'categories:add',
@@ -68,4 +74,34 @@ export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
 /** All registered permission strings; used to expand effective permissions for UI. */
 export const ALL_KNOWN_PERMISSION_VALUES: readonly PermissionKey[] = Object.values(PERMISSIONS);
+
+/** Role form: dashboard section checkboxes (nested under Dashboard). */
+export const DASHBOARD_PERMISSION_CATALOG = [
+  {
+    key: PERMISSIONS.DASHBOARD_VIEW,
+    label: 'Dashboard (all stats)',
+    description: 'Full home dashboard including all widgets below.',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+    label: 'View — Manufacturers',
+    description: 'Manufacturers count and verification breakdown only.',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    label: 'View — Products',
+    description: 'Product submissions (EOIs / URNs) stats only.',
+  },
+  {
+    key: PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+    label: 'View — Certification',
+    description: 'Certification progress and pipeline stats only.',
+  },
+] as const;
+
+export type DashboardVisibleSections = {
+  manufacturers: boolean;
+  products: boolean;
+  certification: boolean;
+};
 
