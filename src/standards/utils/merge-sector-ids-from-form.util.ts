@@ -73,17 +73,32 @@ export function mergeSectorIdsFromFormObject(obj: unknown): number[] {
     );
   }
 
+  if (o.sector_id !== undefined && o.sector_id !== null && o.sector_id !== '') {
+    parseOne(
+      typeof o.sector_id === 'number'
+        ? o.sector_id
+        : parseInt(String(o.sector_id).trim(), 10),
+    );
+  }
+
   return out;
 }
 
 const SECTOR_ASSIGNMENT_BODY_KEYS = [
   'sector',
+  'sector_id',
   'sectors',
   'sectors[]',
   'sector_ids',
   'sector_ids[]',
   'sectorIds',
   'sectorIds[]',
+  /** Legacy admin multipart aliases (same numeric ids as sectors). */
+  'category_id',
+  'category_ids',
+  'category_ids[]',
+  'categoryIds',
+  'categoryIds[]',
 ] as const;
 
 /** True if the multipart body explicitly includes any sector assignment field. */

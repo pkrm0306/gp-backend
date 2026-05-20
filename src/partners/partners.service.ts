@@ -14,12 +14,14 @@ import { CreatePartnerDto } from './dto/create-partner.dto';
 import { UpdatePartnerDto } from './dto/update-partner.dto';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 import * as bcrypt from 'bcryptjs';
+import { GlobalPhoneUniquenessService } from '../common/services/global-phone-uniqueness.service';
 
 @Injectable()
 export class PartnersService {
   constructor(
     @InjectModel(VendorUser.name)
     private vendorUserModel: Model<VendorUserDocument>,
+    private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
   ) {}
 
   async findAll(vendorId: string) {
@@ -93,6 +95,10 @@ export class PartnersService {
   async create(vendorId: string, createPartnerDto: CreatePartnerDto) {
     try {
       const vendorObjectId = new Types.ObjectId(vendorId);
+
+      await this.globalPhoneUniqueness.assertPhoneAvailable(
+        createPartnerDto.phone,
+      );
 
       const existingActivePartner = await this.vendorUserModel
         .findOne({
@@ -213,6 +219,13 @@ export class PartnersService {
           partnerId = new Types.ObjectId(id);
         } catch (error) {
           throw new BadRequestException('Invalid ID format');
+        }
+
+        if (updatePartnerDto.phone) {
+          await this.globalPhoneUniqueness.assertPhoneAvailable(
+            updatePartnerDto.phone,
+            { excludeUserId: partnerId },
+          );
         }
 
         const emailPhoneConditions = [];

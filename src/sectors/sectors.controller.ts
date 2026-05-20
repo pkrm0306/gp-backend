@@ -114,6 +114,10 @@ export class SectorsController {
   @ApiOperation({ summary: 'Soft delete sector' })
   @ApiParam({ name: 'id', description: 'Numeric sector id' })
   @ApiResponse({ status: 404, description: 'Not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'Sector is assigned to one or more categories',
+  })
   async remove(@Param('id') id: string) {
     const numericId = this.sectorsService.parseSectorId(id);
     const data = await this.sectorsService.softDelete(numericId);

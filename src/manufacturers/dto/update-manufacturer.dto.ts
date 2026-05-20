@@ -50,7 +50,16 @@ export class UpdateManufacturerDto {
   })
   manufacturerInitial?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({
+    required: false,
+    description: 'Primary contact / vendor display name (not company name).',
+  })
+  @Transform(({ value, obj }) => {
+    const raw =
+      value ?? obj?.vendorName ?? obj?.vendor_name ?? obj?.contactName;
+    if (raw === '' || raw === null || raw === undefined) return undefined;
+    return typeof raw === 'string' ? raw.trim() : raw;
+  })
   @IsOptional()
   @IsString()
   vendor_name?: string;

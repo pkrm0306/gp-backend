@@ -16,7 +16,7 @@ import {
   ApiBody,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { wasteManagementMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { ProcessWasteManagementService } from './process-waste-management.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -33,12 +33,12 @@ export class ProcessWasteManagementController {
 
   @Post()
   @UseInterceptors(
-    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(wasteManagementMultipartMemoryMulterOptions()),
   )
   @ApiOperation({
     summary: 'Create process waste management data',
     description:
-      'Creates process waste management data with supporting documents file upload. File is stored in URN-specific folder (uploads/urns/{urn_no}/). Supports multiple file types: PNG, JPEG, PDF, Word, and Excel files. Document metadata is stored in the master all_product_documents table.',
+      'Creates or updates process waste management data with supporting documents. Files are stored under uploads/urns/{urn_no}/. New uploads add rows in all_product_documents; existing documents for this URN are not removed automatically (same incremental behaviour as process manufacturing documents).',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

@@ -71,11 +71,20 @@ export function mergeCategoryIdsFromFormObject(obj: unknown): number[] {
 }
 
 /**
- * True when the body includes category assignment fields with at least one valid id.
- * Empty arrays / blank values are ignored so optional UI fields do not trigger validation.
+ * True when the body sends **only** category assignment fields (misuse).
+ * Admin UI may send `category_ids` as a legacy alias alongside `sectors` — ignore in that case.
  */
 export function hasExplicitCategoryIdFields(
   body: Record<string, unknown> | undefined,
 ): boolean {
-  return mergeCategoryIdsFromFormObject(body).length > 0;
+  if (!body || mergeCategoryIdsFromFormObject(body).length === 0) {
+    return false;
+  }
+  const keys = Object.keys(body);
+  const hasSectorAlias = keys.some((k) =>
+    /^(sectors(\[\])?|sector_ids(\[\])?|sectorIds(\[\])?|sector_id|sector)$/i.test(
+      k,
+    ),
+  );
+  return !hasSectorAlias;
 }

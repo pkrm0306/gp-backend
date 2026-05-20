@@ -83,7 +83,6 @@ export class ProcessWasteManagementService implements OnModuleInit {
     session.startTransaction();
 
     let createdFileFullPaths: string[] = [];
-    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
@@ -121,32 +120,9 @@ export class ProcessWasteManagementService implements OnModuleInit {
         wmSupportingDocuments = 1;
       }
 
-      if (uploadedWmFiles.length > 0) {
-        const existingDocs = await this.allProductDocumentModel
-          .find({
-            urnNo: createProcessWasteManagementDto.urnNo,
-            documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
-            isDeleted: { $ne: true },
-          })
-          .session(session);
-        oldFileLinksToDeleteAfterCommit = existingDocs
-          .map((d) => d.documentLink)
-          .filter(Boolean);
-        if (existingDocs.length) {
-          await this.allProductDocumentModel.updateMany(
-            { _id: { $in: existingDocs.map((d) => d._id) } },
-            {
-              $set: {
-                isDeleted: true,
-                deletedAt: now,
-                deletedBy: vendorObjectId,
-                updatedDate: now,
-              },
-            },
-            { session },
-          );
-        }
-      }
+      // Append-only document rows (same behaviour as process-manufacturing):
+      // do not soft-delete existing PROCESS_WASTE_MANAGEMENT all_product_documents
+      // on each upload — vendors add files incrementally.
 
       // Create process waste management data
       const processWasteManagementData = {
@@ -196,17 +172,6 @@ export class ProcessWasteManagementService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
-
-      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
-        const normalizedPath = String(fileLink).replace(/\\/g, '/');
-        if (normalizedPath && fs.existsSync(normalizedPath)) {
-          try {
-            fs.unlinkSync(normalizedPath);
-          } catch {
-            // Ignore post-commit cleanup issues
-          }
-        }
-      }
 
       return savedProcessWasteManagement;
     } catch (error: any) {

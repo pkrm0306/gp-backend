@@ -50,6 +50,7 @@ import { WebsiteModule } from './website/website.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { DocumentsModule } from './documents/documents.module';
 import { RedisModule } from './common/redis/redis.module';
+import { GlobalPhoneUniquenessModule } from './common/services/global-phone-uniqueness.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { RedisModule } from './common/redis/redis.module';
       envFilePath: '.env',
     }),
     RedisModule,
+    GlobalPhoneUniquenessModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

@@ -7,12 +7,14 @@ import {
   SectorIdCounter,
   SectorIdCounterSchema,
 } from './schemas/sector-id-counter.schema';
+import { Category, CategorySchema } from '../categories/schemas/category.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Sector.name, schema: SectorSchema },
       { name: SectorIdCounter.name, schema: SectorIdCounterSchema },
+      { name: Category.name, schema: CategorySchema },
     ]),
   ],
   controllers: [SectorsController],

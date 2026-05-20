@@ -196,6 +196,15 @@ export class ProcessManufacturingController {
       );
     }
 
+    if (
+      dto.totalEnergyConsumption !== undefined &&
+      dto.totalEnergyConsumption < 0
+    ) {
+      throw new BadRequestException(
+        'Total energy consumption cannot be negative',
+      );
+    }
+
     const data =
       await this.processManufacturingService.createProcessManufacturing(
         dto,

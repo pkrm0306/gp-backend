@@ -63,6 +63,25 @@ function mountUploadStaticOnExpress(server: express.Application) {
   });
 }
 
+/** Legacy admin links used `/standards/{file}.pdf` before uploadFile() used `/uploads/standards/`. */
+function mountLegacyStandardsFileRedirect(server: express.Application) {
+  const uploadsRoot = join(process.cwd(), 'uploads');
+  server.get('/standards/:filename', (req: Request, res: Response, next: NextFunction) => {
+    const name = String(req.params.filename ?? '').trim();
+    if (!name || name.includes('..') || name.includes('/')) {
+      next();
+      return;
+    }
+    const candidate = join(uploadsRoot, 'standards', name);
+    if (!existsSync(candidate)) {
+      next();
+      return;
+    }
+    const encoded = name.split('/').map(encodeURIComponent).join('/');
+    res.redirect(302, `/uploads/standards/${encoded}`);
+  });
+}
+
 const ALLOWED_CORS_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:3001',
@@ -107,6 +126,7 @@ async function bootstrap() {
 
   const server = express();
   mountUploadStaticOnExpress(server);
+  mountLegacyStandardsFileRedirect(server);
 
   const app = await NestFactory.create<NestExpressApplication>(
     AppModule,
@@ -121,17 +141,15 @@ async function bootstrap() {
       // Allow non-browser clients (no Origin header)
       if (!origin) return callback(null, true);
 
-      // Allow any localhost/127.0.0.1 port during development
+      // Reflect exact origin (required when Authorization header is sent)
       if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
-        return callback(null, true);
+        return callback(null, origin);
       }
 
-      // Allow known deployed/admin origins
-      if (corsOrigins.includes(origin)) return callback(null, true);
+      if (corsOrigins.includes(origin)) return callback(null, origin);
 
-      // Allow Render-hosted callers (Swagger previews, staging frontends)
       if (/^https:\/\/([a-z0-9-]+\.)*onrender\.com$/i.test(origin)) {
-        return callback(null, true);
+        return callback(null, origin);
       }
 
       return callback(new Error(`CORS blocked for origin: ${origin}`), false);

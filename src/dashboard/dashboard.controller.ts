@@ -18,7 +18,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ListVendorApplicationsQueryDto } from './dto/list-vendor-applications-query.dto';
 
 @ApiTags('Vendor Dashboard')
-@Controller('vendor/dashboard')
+@Controller('api/vendor/dashboard')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class DashboardController {

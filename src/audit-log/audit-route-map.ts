@@ -281,8 +281,15 @@ export function mapFriendlyAudit(
     };
   }
 
-  if (m === 'PATCH' && pathNorm.endsWith('/api/admin/products/urn-status')) {
-    const urn = firstStringField(body, ['urnNo']);
+  if (
+    m === 'PATCH' &&
+    (pathNorm.endsWith('/api/admin/products/urn-status') ||
+      /\/admin\/urn\/[^/]+\/status$/i.test(pathNorm))
+  ) {
+    const urnFromPath = pathNorm.match(/\/admin\/urn\/([^/]+)\/status$/i)?.[1];
+    const urn =
+      (urnFromPath ? decodeURIComponent(urnFromPath) : undefined) ||
+      firstStringField(body, ['urnNo']);
     const typeStr = body?.['updateStatusType'];
     const toVal = body?.['updateStatusTo'];
     const toNum =

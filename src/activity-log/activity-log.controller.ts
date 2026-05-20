@@ -20,6 +20,7 @@ import {
 import { ActivityLogService } from './activity-log.service';
 import { CreateActivityLogDto } from './dto/create-activity-log.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @ApiTags('Activity Log')
 @Controller('activity-log')
@@ -66,9 +67,11 @@ export class ActivityLogController {
 
   @Get(':urn_no')
   @ApiOperation({
-    summary: 'Get activity logs by URN',
+    summary: 'Get activity logs by URN (admin or vendor)',
     description:
-      'Returns all activity logs for a specific URN, sorted by created_at ascending for timeline display.',
+      'Returns activity logs for a URN, sorted by created_at ascending (last row = current activity in Quick View). ' +
+      '**Admin/staff** may read any URN. **Vendor/partner** may only read URNs they own (403 otherwise). ' +
+      'Empty array when no logs yet.',
   })
   @ApiParam({
     name: 'urn_no',
@@ -117,18 +120,25 @@ export class ActivityLogController {
     description: 'Unauthorized - Invalid or missing token',
   })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid URN number' })
-  async getActivityLogsByUrn(@Param('urn_no') urnNo: string) {
+  @ApiResponse({ status: 403, description: 'Vendor does not own this URN' })
+  @ApiResponse({ status: 404, description: 'URN not found' })
+  async getActivityLogsByUrn(
+    @CurrentUser() user: Record<string, unknown>,
+    @Param('urn_no') urnNo: string,
+  ) {
     try {
       if (!urnNo || urnNo.trim() === '') {
         throw new BadRequestException('URN number is required');
       }
 
-      const data = await this.activityLogService.getActivityLogsByUrn(
+      const data = await this.activityLogService.getActivityLogsByUrnForCaller(
         urnNo.trim(),
+        user,
       );
 
       return {
         success: true,
+        message: 'Activity logs retrieved successfully',
         data,
       };
     } catch (error: any) {

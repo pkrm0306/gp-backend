@@ -158,3 +158,81 @@ export async function deleteUploadedFile(params: {
     /* ignore */
   }
 }
+
+/** Strip `/uploads/` prefix and decode URI segments for local/S3 relative paths. */
+export function normalizeUploadsRelativePath(input: string): string {
+  let value = String(input ?? '').trim().replace(/\\/g, '/');
+  if (!value) {
+    return '';
+  }
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      value = decodeURIComponent(new URL(value).pathname);
+    } catch {
+      return '';
+    }
+  }
+  value = value.replace(/^\/+/, '');
+  if (value.startsWith('uploads/')) {
+    value = value.slice('uploads/'.length);
+  }
+  return value
+    .split('/')
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return segment;
+      }
+    })
+    .join('/');
+}
+
+/**
+ * Infer delete metadata from a value stored in `all_product_documents.documentLink`.
+ */
+export function deleteMetaFromDocumentLink(documentLink: string): {
+  storage_type: 'local' | 's3';
+  s3_key?: string;
+  relativePath: string;
+} | null {
+  const raw = String(documentLink ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  const relativePath = normalizeUploadsRelativePath(raw);
+  if (!relativePath) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(raw) && isS3Configured()) {
+    return {
+      storage_type: 's3',
+      s3_key: `uploads/${relativePath}`,
+      relativePath,
+    };
+  }
+
+  return {
+    storage_type: 'local',
+    relativePath,
+  };
+}
+
+/** Delete a certification/product document file from S3 or local disk. */
+export async function deleteUploadedFileByDocumentLink(
+  documentLink?: string | null,
+): Promise<void> {
+  const meta = documentLink
+    ? deleteMetaFromDocumentLink(documentLink)
+    : null;
+  if (!meta) {
+    return;
+  }
+  await deleteUploadedFile({
+    storage_type: meta.storage_type,
+    s3_key: meta.s3_key,
+    relativePath: meta.relativePath,
+  });
+}

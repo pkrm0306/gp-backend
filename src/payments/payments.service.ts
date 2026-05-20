@@ -258,30 +258,38 @@ export class PaymentsService {
     );
   }
 
-  private async logProposalActivity(
+  private async logTimelineEntry(
     vendorId: string,
     manufacturerId: string,
     urnNo: string,
-    activityLabel: string,
-    urnStatus: number,
+    entry: {
+      activity: string;
+      responsibility: 'Admin' | 'Vendor';
+      next_activity: string;
+      next_responsibility: 'Admin' | 'Vendor';
+      activities_id?: number;
+      activity_status?: number;
+    },
+    urnStatusFallback = 0,
   ): Promise<void> {
     try {
-      const nextId = this.getNextActivityIdForLog(urnStatus);
+      const activitiesId = entry.activities_id ?? urnStatusFallback;
+      const activityStatus = entry.activity_status ?? activitiesId;
       await this.activityLogService.logActivity({
         vendor_id: vendorId,
         manufacturer_id: manufacturerId,
         urn_no: urnNo,
-        activities_id: urnStatus,
-        activity: activityLabel,
-        activity_status: urnStatus,
-        responsibility: this.getResponsibilityForStatus(urnStatus),
-        next_responsibility: this.getResponsibilityForStatus(nextId),
-        next_acitivities_id: nextId,
-        next_activity: this.getActivityName(nextId),
+        activities_id: activitiesId,
+        activity: entry.activity,
+        activity_status: activityStatus,
+        responsibility: entry.responsibility,
+        next_responsibility: entry.next_responsibility,
+        next_activity: entry.next_activity,
+        next_acitivities_id: this.getNextActivityIdForLog(activitiesId),
         status: 1,
       });
     } catch (err) {
-      console.error('[Payment] Proposal activity log failed:', err);
+      console.error('[Payment] Timeline activity log failed:', err);
     }
   }
 
@@ -294,30 +302,26 @@ export class PaymentsService {
     urnStatus: number,
   ): Promise<void> {
     const activityLabel = `Admin rejected payment: ${paymentRejectionRemarks}`;
-    try {
-      const nextId = this.getNextActivityIdForLog(urnStatus);
-      await this.activityLogService.logActivity({
-        vendor_id: vendorId,
-        manufacturer_id: manufacturerId,
-        urn_no: urnNo,
-        activities_id: urnStatus,
+    await this.logTimelineEntry(
+      vendorId,
+      manufacturerId,
+      urnNo,
+      {
         activity: activityLabel,
+        responsibility: 'Admin',
+        next_activity: 'Submit registration payment proof',
+        next_responsibility: 'Vendor',
+        activities_id: urnStatus,
         activity_status: urnStatus,
-        responsibility: this.getResponsibilityForStatus(urnStatus),
-        next_responsibility: this.getResponsibilityForStatus(nextId),
-        next_acitivities_id: nextId,
-        next_activity: this.getActivityName(nextId),
-        status: 1,
-      });
-      console.info('[Payment] admin_payment_rejected', {
-        urnNo,
-        paymentType,
-        paymentStatus: 3,
-        paymentRejectionRemarks,
-      });
-    } catch (err) {
-      console.error('[Payment] Admin payment rejection activity log failed:', err);
-    }
+      },
+      urnStatus,
+    );
+    console.info('[Payment] admin_payment_rejected', {
+      urnNo,
+      paymentType,
+      paymentStatus: 3,
+      paymentRejectionRemarks,
+    });
   }
 
   private applyPaymentStatusUpdate(
@@ -325,9 +329,13 @@ export class PaymentsService {
     updatePaymentDto: UpdatePaymentDto,
     existingPayment: PaymentDetailsDocument,
     actorRole?: string,
-  ): { adminRejectedPayment: boolean; paymentRejectionRemarks?: string } {
+  ): {
+    adminRejectedPayment: boolean;
+    adminApprovedPayment: boolean;
+    paymentRejectionRemarks?: string;
+  } {
     if (updatePaymentDto.paymentStatus === undefined) {
-      return { adminRejectedPayment: false };
+      return { adminRejectedPayment: false, adminApprovedPayment: false };
     }
 
     const newStatus = updatePaymentDto.paymentStatus;
@@ -359,7 +367,11 @@ export class PaymentsService {
       }
       updateData.paymentStatus = 3;
       updateData.paymentRejectionRemarks = remarks;
-      return { adminRejectedPayment: true, paymentRejectionRemarks: remarks };
+      return {
+        adminRejectedPayment: true,
+        adminApprovedPayment: false,
+        paymentRejectionRemarks: remarks,
+      };
     }
 
     if (newStatus === 2) {
@@ -370,11 +382,11 @@ export class PaymentsService {
       }
       updateData.paymentStatus = 2;
       updateData.paymentRejectionRemarks = undefined;
-      return { adminRejectedPayment: false };
+      return { adminRejectedPayment: false, adminApprovedPayment: true };
     }
 
     updateData.paymentStatus = newStatus;
-    return { adminRejectedPayment: false };
+    return { adminRejectedPayment: false, adminApprovedPayment: false };
   }
 
   /** Query both canonical and legacy trailing-slash URN formats. */
@@ -428,38 +440,61 @@ export class PaymentsService {
     vendorObjectId: Types.ObjectId,
     urnNo: string,
     paymentType: string,
+    hasProposalFile = false,
   ): Promise<void> {
     if (!urnNo) return;
     try {
+      const urnOptions = this.urnCandidates(urnNo);
       const product = await this.productModel
-        .findOne({ urnNo, vendorId: vendorObjectId })
+        .findOne({
+          urnNo: { $in: urnOptions },
+          vendorId: vendorObjectId,
+        })
         .select('manufacturerId urnStatus')
         .lean()
         .exec();
       if (!product) return;
 
-      const currentStatus =
+      const urnStatus =
         typeof product.urnStatus === 'number' ? product.urnStatus : 0;
+      const manufacturerId = product.manufacturerId.toString();
+
+      if (hasProposalFile && paymentType === 'registration') {
+        await this.logTimelineEntry(
+          vendorId,
+          manufacturerId,
+          urnNo,
+          {
+            activity: 'Admin generated registration fee proposal',
+            responsibility: 'Admin',
+            next_activity: 'Vendor reviews proposal document',
+            next_responsibility: 'Vendor',
+            activities_id: urnStatus,
+            activity_status: urnStatus,
+          },
+          urnStatus,
+        );
+        return;
+      }
+
       const label =
         paymentType === 'certification'
-          ? 'Certificate fee payment'
-          : 'Registration fee payment';
-      const nextId = this.getNextActivityIdForLog(currentStatus);
-      const nextResp = this.getResponsibilityForStatus(nextId);
-
-      await this.activityLogService.logActivity({
-        vendor_id: vendorId,
-        manufacturer_id: product.manufacturerId.toString(),
-        urn_no: urnNo,
-        activities_id: currentStatus,
-        activity: `${label} record created`,
-        activity_status: currentStatus,
-        responsibility: this.getResponsibilityForStatus(currentStatus),
-        next_responsibility: nextResp,
-        next_acitivities_id: nextId,
-        next_activity: this.getActivityName(nextId),
-        status: 1,
-      });
+          ? 'Certificate fee payment record created'
+          : 'Registration fee payment record created';
+      await this.logTimelineEntry(
+        vendorId,
+        manufacturerId,
+        urnNo,
+        {
+          activity: label,
+          responsibility: 'Admin',
+          next_activity: 'Vendor reviews proposal document',
+          next_responsibility: 'Vendor',
+          activities_id: urnStatus,
+          activity_status: urnStatus,
+        },
+        urnStatus,
+      );
     } catch (err) {
       console.error('[Payment] Activity log (payment created) failed:', err);
     }
@@ -577,6 +612,7 @@ export class PaymentsService {
           vendorObjectId,
           normalizedUrnNo,
           normalizedPaymentType,
+          Boolean(proposalFilePath),
         );
 
         return formatPaymentRecord(this.paymentToPlain(savedPayment));
@@ -924,13 +960,83 @@ export class PaymentsService {
         if (anyProduct) {
           const urnStatus =
             typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
-          await this.logProposalActivity(
+          await this.logTimelineEntry(
             effectiveVendorId,
             anyProduct.manufacturerId.toString(),
             normalizedUrn,
-            currentApproval === 2
-              ? 'Admin uploaded revised registration fee proposal'
-              : 'Admin uploaded registration fee proposal',
+            {
+              activity:
+                currentApproval === 2
+                  ? 'Admin uploaded revised registration fee proposal'
+                  : 'Admin generated registration fee proposal',
+              responsibility: 'Admin',
+              next_activity: 'Vendor reviews proposal document',
+              next_responsibility: 'Vendor',
+              activities_id: urnStatus,
+              activity_status: urnStatus,
+            },
+            urnStatus,
+          );
+        }
+      }
+
+      if (
+        vendorProofUpdate &&
+        this.isVendorPortalRole(actorRole) &&
+        paymentType === 'registration'
+      ) {
+        const anyProduct = await this.productModel
+          .findOne({
+            urnNo: { $in: urnOptions },
+            vendorId: effectiveVendorObjectId,
+          })
+          .select('manufacturerId urnStatus')
+          .lean()
+          .exec();
+        if (anyProduct) {
+          const urnStatus =
+            typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
+          await this.logTimelineEntry(
+            effectiveVendorId,
+            anyProduct.manufacturerId.toString(),
+            normalizedUrn,
+            {
+              activity: 'Vendor submitted registration payment',
+              responsibility: 'Vendor',
+              next_activity: 'Approve registration fee',
+              next_responsibility: 'Admin',
+              activities_id: urnStatus,
+              activity_status: urnStatus,
+            },
+            urnStatus,
+          );
+        }
+      }
+
+      if (paymentStatusUpdate.adminApprovedPayment) {
+        const anyProduct = await this.productModel
+          .findOne({
+            urnNo: { $in: urnOptions },
+            vendorId: effectiveVendorObjectId,
+          })
+          .select('manufacturerId urnStatus')
+          .lean()
+          .exec();
+        if (anyProduct) {
+          const urnStatus =
+            typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
+          await this.logTimelineEntry(
+            effectiveVendorId,
+            anyProduct.manufacturerId.toString(),
+            normalizedUrn,
+            {
+              activity: 'Registration payment approved by admin',
+              responsibility: 'Admin',
+              next_activity: 'Process form in progress',
+              next_responsibility: 'Vendor',
+              activities_id: urnStatus,
+              activity_status: urnStatus,
+            },
             urnStatus,
           );
         }
@@ -1114,20 +1220,40 @@ export class PaymentsService {
 
     const urnStatus =
       typeof product.urnStatus === 'number' ? product.urnStatus : 0;
-    const activityLabel =
-      status === 1
-        ? 'Vendor approved registration fee proposal'
-        : remarks
-          ? `Vendor rejected registration fee proposal: ${remarks}`
-          : 'Vendor rejected registration fee proposal';
-
-    await this.logProposalActivity(
-      vendorId,
-      product.manufacturerId.toString(),
-      normalizedUrn,
-      activityLabel,
-      urnStatus,
-    );
+    if (status === 1) {
+      await this.logTimelineEntry(
+        vendorId,
+        product.manufacturerId.toString(),
+        normalizedUrn,
+        {
+          activity: 'Vendor approved registration fee proposal',
+          responsibility: 'Vendor',
+          next_activity: 'Submit registration payment proof',
+          next_responsibility: 'Vendor',
+          activities_id: urnStatus,
+          activity_status: urnStatus,
+        },
+        urnStatus,
+      );
+    } else {
+      const activityLabel = remarks
+        ? `Vendor rejected registration fee proposal: ${remarks}`
+        : 'Vendor rejected registration fee proposal';
+      await this.logTimelineEntry(
+        vendorId,
+        product.manufacturerId.toString(),
+        normalizedUrn,
+        {
+          activity: activityLabel,
+          responsibility: 'Vendor',
+          next_activity: 'Upload revised proposal document',
+          next_responsibility: 'Admin',
+          activities_id: urnStatus,
+          activity_status: urnStatus,
+        },
+        urnStatus,
+      );
+    }
 
     return formatPaymentRecord({
       urnNo: normalizedUrn,

@@ -63,6 +63,30 @@ export class CreateStandardMultipartDto {
   @IsOptional()
   'sectorIds[]'?: unknown;
 
+  @Allow()
+  @IsOptional()
+  sector_id?: unknown;
+
+  @Allow()
+  @IsOptional()
+  category_id?: unknown;
+
+  @Allow()
+  @IsOptional()
+  category_ids?: unknown;
+
+  @Allow()
+  @IsOptional()
+  'category_ids[]'?: unknown;
+
+  @Allow()
+  @IsOptional()
+  categoryIds?: unknown;
+
+  @Allow()
+  @IsOptional()
+  'categoryIds[]'?: unknown;
+
   @ApiProperty({ example: 'Energy Efficiency Benchmark' })
   @IsString()
   @IsNotEmpty()

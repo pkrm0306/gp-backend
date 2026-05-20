@@ -13,19 +13,23 @@ export class ResponseInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const req = context.switchToHttp().getRequest();
     const url = (req?.url as string) || '';
-    /** CSV/binary exports must not be wrapped as JSON */
+    /** CSV/binary exports and raw file streams must not be wrapped as JSON */
     if (
       url.includes('/sectors/export') ||
       url.includes('/standards/export') ||
       url.includes('/categories/export') ||
       url.includes('/api/manufacturers/export') ||
-      url.includes('/api/admin/products/export')
+      url.includes('/api/admin/products/export') ||
+      /\/api\/standards\/[^/]+\/file(?:\?|$)/.test(url)
     ) {
       return next.handle();
     }
 
     return next.handle().pipe(
       map((data) => {
+        if (data == null || typeof data !== 'object') {
+          return data;
+        }
         const response: Record<string, unknown> = {
           success: true,
           message: (data as { message?: string })?.message || 'Success',

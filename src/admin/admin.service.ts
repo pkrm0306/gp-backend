@@ -98,35 +98,22 @@ import {
   type AdminDashboardMetricsResponse,
 } from './admin-dashboard-permissions.util';
 import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
+import { buildPhoneLookupVariants } from '../common/utils/phone-lookup.util';
+import {
+  GlobalPhoneUniquenessService,
+  ADMIN_MOBILE_UNAVAILABLE_MESSAGE,
+} from '../common/services/global-phone-uniqueness.service';
+import { throwTeamMemberMobileDuplicateIssue } from './admin-field-validation.util';
+import {
+  getTeamMemberSectorNameById,
+  isTeamMemberSectorId,
+  TEAM_MEMBER_SECTOR_OPTIONS,
+} from './team-member-sectors.constants';
 
 export type { AdminDashboardMetrics, AdminDashboardMetricsResponse };
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Common stored formats for the same mobile (e.g. +91…, digits-only). */
-function buildPhoneLookupVariants(mobile: string): string[] {
-  const trimmed = String(mobile ?? '').trim();
-  const digits = trimmed.replace(/\D/g, '');
-  const variants = new Set<string>();
-  if (trimmed) {
-    variants.add(trimmed);
-  }
-  if (digits) {
-    variants.add(digits);
-    variants.add(`+${digits}`);
-    if (digits.length === 10) {
-      variants.add(`+91${digits}`);
-      variants.add(`91${digits}`);
-    }
-    if (digits.length === 12 && digits.startsWith('91')) {
-      const local = digits.slice(2);
-      variants.add(local);
-      variants.add(`+91${local}`);
-    }
-  }
-  return [...variants];
 }
 
 function escapeHtml(input: string): string {
@@ -219,6 +206,7 @@ export class AdminService {
     private readonly sectorsService: SectorsService,
     private readonly manufacturerIdGeneration: ManufacturerIdGenerationService,
     private readonly productRegistrationService: ProductRegistrationService,
+    private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
   ) {}
 
   async resolveDashboardMetricsFilters(
@@ -608,61 +596,55 @@ export class AdminService {
     return this.legacySectorIdsFromCategories(m);
   }
 
-  private async assertTeamMemberSectorsExist(sectorIds: number[]): Promise<number[]> {
+  /** Validates fixed CMS team-member sectors (ids 1–4 only). */
+  private assertTeamMemberSectorsValid(sectorIds: number[]): number[] {
     const unique: number[] = [];
     const seen = new Set<number>();
+    const invalid: number[] = [];
     for (const sid of sectorIds) {
-      if (!Number.isInteger(sid) || sid < 1) continue;
+      if (!Number.isInteger(sid)) continue;
       if (seen.has(sid)) continue;
       seen.add(sid);
-      unique.push(sid);
+      if (isTeamMemberSectorId(sid)) {
+        unique.push(sid);
+      } else {
+        invalid.push(sid);
+      }
     }
-    if (!unique.length) {
-      return [];
+    if (invalid.length > 0) {
+      const allowed = TEAM_MEMBER_SECTOR_OPTIONS.map((s) => s.name).join(', ');
+      throw new BadRequestException(
+        `Invalid sector id(s): ${invalid.join(', ')}. Allowed sectors: ${allowed}`,
+      );
     }
-    for (const sectorId of unique) {
-      await this.sectorsService.assertSectorExists(sectorId);
-    }
-    return unique;
+    return unique.sort((a, b) => a - b);
+  }
+
+  listTeamMemberSectorOptions() {
+    return {
+      message: 'Team member sector options retrieved successfully',
+      data: [...TEAM_MEMBER_SECTOR_OPTIONS],
+    };
   }
 
   private async assertGlobalMobileAvailable(
     mobile: string,
     excludeUserId?: Types.ObjectId,
   ): Promise<void> {
-    const variants = buildPhoneLookupVariants(mobile);
-    if (!variants.length) {
-      return;
-    }
-
-    const userFilter: Record<string, unknown> = {
-      status: { $ne: 2 },
-      phone: { $in: variants },
-    };
-    if (excludeUserId) {
-      userFilter._id = { $ne: excludeUserId };
-    }
-
-    const existingUser = await this.vendorUserModel
-      .findOne(userFilter)
-      .select('_id')
-      .lean()
-      .exec();
-    if (existingUser) {
-      throw new ConflictException('Mobile Number already exists');
-    }
-
-    const existingManufacturer = await this.manufacturerModel
-      .findOne({ vendor_phone: { $in: variants } })
-      .select('_id')
-      .lean()
-      .exec();
-    if (existingManufacturer) {
-      throw new ConflictException('Mobile Number already exists');
+    try {
+      await this.globalPhoneUniqueness.assertPhoneAvailable(mobile, {
+        excludeUserId,
+        conflictMessage: ADMIN_MOBILE_UNAVAILABLE_MESSAGE,
+      });
+    } catch (e) {
+      if (e instanceof ConflictException) {
+        throwTeamMemberMobileDuplicateIssue();
+      }
+      throw e;
     }
   }
 
-  /** Attach sector names for API; strips category_* and internal fields from output. */
+  /** Attach fixed CMS sector names for API; strips category_* and internal fields. */
   private async attachSectorsToTeamMemberRows<
     T extends Record<string, unknown>,
   >(rows: Array<T & { sector_ids: number[] }>): Promise<
@@ -671,15 +653,18 @@ export class AdminService {
         TeamMemberSectorFields
     >
   > {
-    const allSectorIds = new Set<number>();
+    const legacyIds = new Set<number>();
     for (const row of rows) {
       for (const sid of row.sector_ids) {
-        allSectorIds.add(sid);
+        if (!isTeamMemberSectorId(sid)) {
+          legacyIds.add(sid);
+        }
       }
     }
-    const sectorNameMap = await this.sectorsService.getSectorNamesByNumericIds([
-      ...allSectorIds,
-    ]);
+    const legacyNameMap =
+      legacyIds.size > 0
+        ? await this.sectorsService.getSectorNamesByNumericIds([...legacyIds])
+        : new Map<number, string>();
 
     return rows.map((row) => {
       const {
@@ -697,14 +682,22 @@ export class AdminService {
         sector_id?: number;
       };
 
-      const sector_ids = [...storedSectorIds].sort((a, b) => a - b);
+      const sector_ids = [...storedSectorIds]
+        .filter((id) => isTeamMemberSectorId(id) || legacyNameMap.has(id))
+        .sort((a, b) => a - b);
       const sectors = sector_ids.map((id) => ({
         id,
-        name: sectorNameMap.get(id) ?? '',
+        name: isTeamMemberSectorId(id)
+          ? getTeamMemberSectorNameById(id)
+          : (legacyNameMap.get(id) ?? ''),
       }));
       const sector_id = sector_ids[0] ?? null;
       const sector_name =
-        sector_id !== null ? (sectorNameMap.get(sector_id) ?? '') : null;
+        sector_id !== null
+          ? isTeamMemberSectorId(sector_id)
+            ? getTeamMemberSectorNameById(sector_id)
+            : (legacyNameMap.get(sector_id) ?? '')
+          : null;
 
       return {
         ...rest,
@@ -1975,7 +1968,7 @@ export class AdminService {
     // and send credentials via email (see RbacService).
     const passwordHash = await bcrypt.hash(crypto.randomBytes(8).toString('hex'), 10);
 
-    const sector_ids = await this.assertTeamMemberSectorsExist(data.sector_ids);
+    const sector_ids = this.assertTeamMemberSectorsValid(data.sector_ids);
 
     const teamMember: Partial<VendorUser> = {
       // Canonical + legacy alias (some modules still query vendorId)
@@ -2014,7 +2007,7 @@ export class AdminService {
           throw new ConflictException('Email already exists');
         }
         if ('phone' in pattern || keyVal.phone !== undefined) {
-          throw new ConflictException('Mobile Number already exists');
+          throwTeamMemberMobileDuplicateIssue();
         }
         throw new ConflictException('Duplicate record');
       }
@@ -2791,7 +2784,7 @@ export class AdminService {
 
     const $unset: Record<string, string> = {};
     if (data.sector_ids !== undefined) {
-      const sector_ids = await this.assertTeamMemberSectorsExist(data.sector_ids);
+      const sector_ids = this.assertTeamMemberSectorsValid(data.sector_ids);
       $set.sector_ids = sector_ids;
       if (sector_ids.length > 0) {
         $set.sector_id = sector_ids[0];
@@ -2823,7 +2816,7 @@ export class AdminService {
           throw new ConflictException('Email already exists');
         }
         if ('phone' in pattern || keyVal.phone !== undefined) {
-          throw new ConflictException('Mobile Number already exists');
+          throwTeamMemberMobileDuplicateIssue();
         }
         throw new ConflictException('Duplicate record');
       }

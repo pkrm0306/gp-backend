@@ -5,12 +5,17 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import type { Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
 import { Model } from 'mongoose';
-import { deleteUploadedFile, uploadFile } from '../utils/upload-file.util';
+import {
+  deleteUploadedFile,
+  uploadFile,
+  type UploadResult,
+} from '../utils/upload-file.util';
 import { Standard, StandardDocument } from './schemas/standard.schema';
 import {
   StandardIdCounter,
@@ -31,6 +36,11 @@ import {
 import {
   hasExplicitCategoryIdFields,
 } from './utils/merge-category-ids.util';
+import { mergeResourceStandardTypeFilters } from './utils/parse-resource-standard-types.util';
+import {
+  normalizeStandardRelativePath,
+  resolveStandardPublicFileUrl,
+} from './utils/standard-public-file-url.util';
 import {
   hasExplicitSectorAssignmentFields,
   mergeSectorIdsFromFormObject,
@@ -81,9 +91,9 @@ export class StandardsService implements OnModuleInit {
       page: query.page ?? 1,
       limit: query.limit ?? 10,
       search: String(query.search || '').trim().toLowerCase(),
-      resource_standard_type: String(query.resource_standard_type || '')
-        .trim()
-        .toLowerCase(),
+      resource_standard_types: mergeResourceStandardTypeFilters(query)
+        .map((t) => t.toLowerCase())
+        .sort(),
       category_id: query.category_id ?? null,
       sector: query.sector ?? null,
       status: query.status ?? null,
@@ -108,7 +118,6 @@ export class StandardsService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    this.ensureUploadDir();
     await this.syncStandardIdCounter();
     await this.backfillStandardCategoriesFromLegacy().catch((error) => {
       this.logger.warn(
@@ -117,11 +126,51 @@ export class StandardsService implements OnModuleInit {
     });
   }
 
-  ensureUploadDir(): void {
-    const dir = join(process.cwd(), 'uploads', 'standards');
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+  private multerFileByteLength(file: Express.Multer.File): number {
+    if (file?.buffer?.length) {
+      return file.buffer.length;
     }
+    return 0;
+  }
+
+  /**
+   * Persist standard PDF/image only via shared `uploadFile()` (`upload-file.util.ts`).
+   */
+  private async uploadStandardDocument(
+    file: Express.Multer.File,
+  ): Promise<UploadResult> {
+    if (this.multerFileByteLength(file) <= 0) {
+      throw new BadRequestException(
+        'Standard document is empty or unreadable. Re-select the PDF/image and try again.',
+      );
+    }
+    try {
+      return await uploadFile(file, 'standards');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('requires file buffer')) {
+        throw new BadRequestException(
+          'Standard document could not be read. Use multipart field **file** (PDF, JPG, or PNG, max 10MB).',
+        );
+      }
+      throw e;
+    }
+  }
+
+  private standardFileFieldsFromUpload(
+    file: Express.Multer.File,
+    upload: UploadResult,
+  ): Pick<
+    StandardDocument,
+    'filename' | 'file_url' | 'storage_type' | 's3_key' | 'original_filename'
+  > {
+    return {
+      filename: upload.relativePath,
+      file_url: upload.fileUrl,
+      storage_type: upload.storage,
+      s3_key: upload.s3Key,
+      original_filename: file.originalname || upload.fileName,
+    };
   }
 
   private async getMaxStandardIdFromCollection(): Promise<number> {
@@ -169,6 +218,12 @@ export class StandardsService implements OnModuleInit {
       throw new BadRequestException('Invalid standard id');
     }
     return n;
+  }
+
+  private formFlagIsTrue(value: unknown): boolean {
+    if (value === undefined || value === null) return false;
+    const s = String(value).trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
   }
 
   /** Resolves path `categoryId` to numeric `category_id` stored on standards (see CategoriesService). */
@@ -245,6 +300,9 @@ export class StandardsService implements OnModuleInit {
     if (d.sector !== undefined && d.sector !== null && d.sector !== '') {
       return true;
     }
+    if (d.sector_id !== undefined && d.sector_id !== null && d.sector_id !== '') {
+      return true;
+    }
     return false;
   }
 
@@ -258,15 +316,20 @@ export class StandardsService implements OnModuleInit {
         name: { $regex: new RegExp(escapeRegex(query.search.trim()), 'i') },
       });
     }
-    if (
-      query.resource_standard_type !== undefined &&
-      query.resource_standard_type.trim() !== ''
-    ) {
-      const t = query.resource_standard_type.trim();
+    const standardTypes = mergeResourceStandardTypeFilters(query);
+    if (standardTypes.length === 1) {
       parts.push({
         resource_standard_type: {
-          $regex: new RegExp(`^${escapeRegex(t)}$`, 'i'),
+          $regex: new RegExp(`^${escapeRegex(standardTypes[0]!)}$`, 'i'),
         },
+      });
+    } else if (standardTypes.length > 1) {
+      parts.push({
+        $or: standardTypes.map((t) => ({
+          resource_standard_type: {
+            $regex: new RegExp(`^${escapeRegex(t)}$`, 'i'),
+          },
+        })),
       });
     }
     if (query.status !== undefined) {
@@ -527,7 +590,18 @@ export class StandardsService implements OnModuleInit {
         limit: number;
       }>(cacheKey);
       if (cached && Array.isArray(cached.data)) {
-        return cached;
+        return {
+          ...cached,
+          data: cached.data.map((row) => {
+            const doc = row as {
+              filename?: string;
+              file_url?: string;
+              storage_type?: string;
+              description?: unknown;
+            };
+            return this.ensureDescriptionField(this.enrichStandardFileUrl(doc));
+          }),
+        };
       }
     } catch (error) {
       this.logger.warn(
@@ -598,32 +672,84 @@ export class StandardsService implements OnModuleInit {
     return enriched;
   }
 
-  /** Legacy rows may omit file_url; derive local URL from filename when needed. */
+  /**
+   * Ensures API always exposes a working public URL (`/uploads/standards/...` or S3 https).
+   * Legacy rows may have `file_url: /standards/foo.pdf` — normalized here.
+   */
   private enrichStandardFileUrl<
     T extends { filename?: string; file_url?: string; storage_type?: string },
-  >(doc: T): T & { file_url?: string } {
-    if (doc.file_url) {
+  >(doc: T): T & { file_url?: string; file?: string; pdf?: string } {
+    const file_url = resolveStandardPublicFileUrl(doc);
+    if (!file_url) {
       return doc;
     }
-    if (doc.storage_type === 's3') {
-      return doc;
-    }
-    if (doc.filename) {
-      const path = doc.filename.replace(/^\/+/, '');
-      return {
-        ...doc,
-        file_url: `/uploads/${path.split('/').map(encodeURIComponent).join('/')}`,
-      };
-    }
-    return doc;
+    return {
+      ...doc,
+      file_url,
+      file: file_url,
+      pdf: file_url,
+    };
   }
 
-  private fileMetaForDelete(doc: StandardDocument) {
-    const storage_type = doc.storage_type ?? 'local';
+  /** Stream local file or redirect to S3/CloudFront for GET /api/standards/:id/file */
+  async streamStandardFile(id: number, res: Response): Promise<void> {
+    const doc = await this.standardModel.findOne({ id }).lean().exec();
+    if (!doc) {
+      throw new NotFoundException('Standard not found');
+    }
+
+    const publicUrl = resolveStandardPublicFileUrl(doc);
+    const storage = String(doc.storage_type ?? '').toLowerCase();
+
+    if (
+      publicUrl &&
+      (/^https?:\/\//i.test(publicUrl) || storage === 's3')
+    ) {
+      res.redirect(302, publicUrl);
+      return;
+    }
+
+    const rel = normalizeStandardRelativePath(
+      String(doc.filename ?? doc.file_url ?? ''),
+    );
+    if (!rel) {
+      throw new NotFoundException('File not available for this standard');
+    }
+
+    const absolute = join(process.cwd(), 'uploads', rel);
+    if (!existsSync(absolute)) {
+      throw new NotFoundException('File not found on server');
+    }
+
+    const ext = rel.split('.').pop()?.toLowerCase() ?? '';
+    const contentType =
+      ext === 'pdf'
+        ? 'application/pdf'
+        : ext === 'png'
+          ? 'image/png'
+          : ext === 'jpg' || ext === 'jpeg'
+            ? 'image/jpeg'
+            : 'application/octet-stream';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', 'inline');
+    res.sendFile(absolute);
+  }
+
+  private fileMetaForDelete(doc: {
+    storage_type?: string;
+    s3_key?: string;
+    filename?: string;
+  }) {
+    const storage_type = (doc.storage_type ?? 'local') as 'local' | 's3';
+    const relativePath = String(doc.filename ?? '').replace(/^\/+/, '');
+    if (!relativePath && storage_type !== 's3') {
+      return null;
+    }
     return {
-      storage_type: storage_type as 'local' | 's3',
+      storage_type,
       s3_key: doc.s3_key,
-      relativePath: doc.filename.replace(/^\/+/, ''),
+      relativePath,
     };
   }
 
@@ -642,7 +768,7 @@ export class StandardsService implements OnModuleInit {
         'Category fields are no longer accepted. Send **sector** only (numeric id from GET /api/sectors).',
       );
     }
-    const upload = await uploadFile(file, 'standards');
+    const upload = await this.uploadStandardDocument(file);
     const now = new Date();
     const numericId = await this.nextStandardId();
 
@@ -666,11 +792,7 @@ export class StandardsService implements OnModuleInit {
       description: dto.description?.trim() ?? '',
       resource_standard_type: dto.resource_standard_type.trim(),
       status: dto.status ?? 1,
-      filename: upload.relativePath,
-      file_url: upload.fileUrl,
-      storage_type: upload.storage,
-      s3_key: upload.s3Key,
-      original_filename: file.originalname || upload.fileName,
+      ...this.standardFileFieldsFromUpload(file, upload),
       created_at: now,
       updated_at: now,
     });
@@ -710,8 +832,18 @@ export class StandardsService implements OnModuleInit {
         dto.resource_standard_type.trim() !== '') ||
       dto.status !== undefined ||
       explicitSector;
-    if (!hasText && !file) {
+    const wantsRemoveFile = this.formFlagIsTrue(
+      rawBody?.remove_file ?? rawBody?.delete_file ?? dto.remove_file ?? dto.delete_file,
+    );
+
+    if (!hasText && !file && !wantsRemoveFile) {
       throw new BadRequestException('No fields to update');
+    }
+
+    if (wantsRemoveFile && !file) {
+      throw new BadRequestException(
+        'Upload a new document (field **file**) to replace the current file, or keep the existing file.',
+      );
     }
 
     const set: Record<string, unknown> = { updated_at: new Date() };
@@ -746,13 +878,15 @@ export class StandardsService implements OnModuleInit {
     }
 
     if (file) {
-      await deleteUploadedFile(this.fileMetaForDelete(existing));
-      const upload = await uploadFile(file, 'standards');
-      set.filename = upload.relativePath;
-      set.file_url = upload.fileUrl;
-      set.storage_type = upload.storage;
-      set.s3_key = upload.s3Key ?? null;
-      set.original_filename = file.originalname || upload.fileName;
+      const deleteMeta = this.fileMetaForDelete(existing);
+      if (deleteMeta) {
+        await deleteUploadedFile(deleteMeta);
+      }
+      const upload = await this.uploadStandardDocument(file);
+      Object.assign(set, this.standardFileFieldsFromUpload(file, upload));
+      if (!upload.s3Key) {
+        set.s3_key = null;
+      }
     }
 
     const updated = await this.standardModel
@@ -794,13 +928,27 @@ export class StandardsService implements OnModuleInit {
     if (!existing) {
       throw new NotFoundException('Standard not found');
     }
-    await deleteUploadedFile(this.fileMetaForDelete(existing));
+    const deleteMeta = this.fileMetaForDelete(existing);
+    if (deleteMeta) {
+      await deleteUploadedFile(deleteMeta);
+    }
     await this.standardCategoryModel.deleteMany({ standard_id: id }).exec();
     await this.standardModel.deleteOne({ id }).exec();
     await this.invalidateStandardListCache();
   }
 
-  async buildCsvExport(query: ListStandardsQueryDto): Promise<string> {
+  async buildCsvExport(
+    query: Pick<
+      ListStandardsQueryDto,
+      | 'search'
+      | 'resource_standard_type'
+      | 'category_id'
+      | 'sector'
+      | 'status'
+      | 'sortBy'
+      | 'order'
+    >,
+  ): Promise<string> {
     const sortBy = query.sortBy ?? 'id';
     const order = query.order ?? 'asc';
     const sort: Record<string, 1 | -1> = {

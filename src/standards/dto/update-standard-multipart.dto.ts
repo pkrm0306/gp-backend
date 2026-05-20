@@ -59,6 +59,31 @@ export class UpdateStandardMultipartDto {
   @IsOptional()
   'sectorIds[]'?: unknown;
 
+  /** Legacy admin UI aliases (ignored when **sectors** / **sector_ids** are sent). */
+  @Allow()
+  @IsOptional()
+  sector_id?: unknown;
+
+  @Allow()
+  @IsOptional()
+  category_id?: unknown;
+
+  @Allow()
+  @IsOptional()
+  category_ids?: unknown;
+
+  @Allow()
+  @IsOptional()
+  'category_ids[]'?: unknown;
+
+  @Allow()
+  @IsOptional()
+  categoryIds?: unknown;
+
+  @Allow()
+  @IsOptional()
+  'categoryIds[]'?: unknown;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -82,4 +107,13 @@ export class UpdateStandardMultipartDto {
   @IsInt()
   @IsEnum([0, 1])
   status?: 0 | 1;
+
+  /** Admin UI: remove attached PDF without uploading a replacement (handled in service). */
+  @Allow()
+  @IsOptional()
+  remove_file?: string;
+
+  @Allow()
+  @IsOptional()
+  delete_file?: string;
 }

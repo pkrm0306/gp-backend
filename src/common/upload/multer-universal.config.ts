@@ -37,6 +37,31 @@ const CERTIFICATION_EXTENSIONS = new Set([
   '.xlsx',
 ]);
 
+function certificationMultipartFileFilter(
+  _req: unknown,
+  file: Express.Multer.File,
+  cb: (error: Error | null, acceptFile: boolean) => void,
+): void {
+  if (!file) {
+    cb(null, true);
+    return;
+  }
+  const fileExt = extname(file.originalname || '').toLowerCase();
+  if (
+    CERTIFICATION_MIMES.has(file.mimetype) ||
+    CERTIFICATION_EXTENSIONS.has(fileExt)
+  ) {
+    cb(null, true);
+    return;
+  }
+  cb(
+    new BadRequestException(
+      'Invalid file type. Only PNG, JPEG, PDF, Word (.doc, .docx), and Excel (.xls, .xlsx) files are allowed.',
+    ) as unknown as null,
+    false,
+  );
+}
+
 /**
  * Memory storage for S3 or local upload via `uploadFile()` helper.
  * Allowed: PDF, JPG, PNG — max 10MB.
@@ -51,6 +76,39 @@ export function universalMemoryMulterOptions(): Options {
       } else {
         cb(null, false);
       }
+    },
+  };
+}
+
+const STANDARD_DOC_EXTENSIONS = new Set(['.pdf', '.jpg', '.jpeg', '.png']);
+
+/**
+ * Standards create/update (`file` field). Memory buffer → shared `uploadFile()` in
+ * `src/utils/upload-file.util.ts` (local `uploads/standards/` or S3).
+ */
+export function standardsDocumentMemoryMulterOptions(): Options {
+  return {
+    storage: memoryStorage(),
+    limits: { fileSize: TEN_MB },
+    fileFilter: (_req, file, cb) => {
+      if (!file?.originalname) {
+        cb(null, true);
+        return;
+      }
+      const ext = extname(file.originalname || '').toLowerCase();
+      if (
+        UNIVERSAL_MIMES.has(file.mimetype) ||
+        STANDARD_DOC_EXTENSIONS.has(ext)
+      ) {
+        cb(null, true);
+        return;
+      }
+      cb(
+        new BadRequestException(
+          'Standard document must be PDF, JPG, or PNG (max 10MB).',
+        ) as unknown as null,
+        false,
+      );
     },
   };
 }
@@ -111,25 +169,29 @@ export function certificationMultipartMemoryMulterOptions(): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB },
-    fileFilter: (_req, file, cb) => {
-      if (!file) {
-        cb(null, true);
-        return;
-      }
-      const fileExt = extname(file.originalname || '').toLowerCase();
-      if (
-        CERTIFICATION_MIMES.has(file.mimetype) ||
-        CERTIFICATION_EXTENSIONS.has(fileExt)
-      ) {
-        cb(null, true);
-        return;
-      }
-      cb(
-        new BadRequestException(
-          'Invalid file type. Only PNG, JPEG, PDF, Word (.doc, .docx), and Excel (.xls, .xlsx) files are allowed.',
-        ) as unknown as null,
-        false,
-      );
-    },
+    fileFilter: certificationMultipartFileFilter,
+  };
+}
+
+/**
+ * Waste management supporting documents — same types as certification, but much
+ * larger default per-file limit (large PDFs / directories). 413 from Multer was
+ * caused by the 10MB certification cap.
+ *
+ * Set **WM_SUPPORTING_DOCS_MAX_FILE_MB** (megabytes) to override; default **1024** (1 GB).
+ */
+export function wasteManagementMultipartMemoryMulterOptions(): Options {
+  const raw = process.env.WM_SUPPORTING_DOCS_MAX_FILE_MB;
+  let maxMb = 1024;
+  if (raw !== undefined && raw !== '') {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) {
+      maxMb = n;
+    }
+  }
+  return {
+    storage: memoryStorage(),
+    limits: { fileSize: maxMb * 1024 * 1024 },
+    fileFilter: certificationMultipartFileFilter,
   };
 }

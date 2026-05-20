@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -19,6 +20,10 @@ import { CreateSectorDto } from './dto/create-sector.dto';
 import { UpdateSectorDto } from './dto/update-sector.dto';
 import { UpdateSectorStatusDto } from './dto/update-sector-status.dto';
 import { RedisService } from '../common/redis/redis.service';
+import {
+  Category,
+  CategoryDocument,
+} from '../categories/schemas/category.schema';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -42,9 +47,41 @@ export class SectorsService implements OnModuleInit {
     private sectorModel: Model<SectorDocument>,
     @InjectModel(SectorIdCounter.name)
     private counterModel: Model<SectorIdCounterDocument>,
+    @InjectModel(Category.name)
+    private categoryModel: Model<CategoryDocument>,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
   ) {}
+
+  /** Block sector delete when one or more categories still reference this sector id. */
+  private async assertSectorNotAllocatedToCategories(sectorId: number): Promise<void> {
+    const total = await this.categoryModel.countDocuments({ sector: sectorId }).exec();
+    if (total === 0) {
+      return;
+    }
+
+    const sample = await this.categoryModel
+      .find({ sector: sectorId })
+      .select('category_name')
+      .sort({ category_name: 1 })
+      .limit(5)
+      .lean()
+      .exec();
+
+    const names = sample
+      .map((c) => String(c.category_name ?? '').trim())
+      .filter(Boolean);
+    const nameHint =
+      names.length > 0
+        ? `: ${names.join(', ')}${total > names.length ? ', …' : ''}`
+        : '';
+
+    throw new ConflictException(
+      `This sector cannot be deleted because it is assigned to ${total} ` +
+        `categor${total === 1 ? 'y' : 'ies'}${nameHint}. ` +
+        'Reassign or remove those categories first.',
+    );
+  }
 
   private getSectorListCacheTtlSeconds(): number {
     const ttl = parseInt(
@@ -333,6 +370,8 @@ export class SectorsService implements OnModuleInit {
   }
 
   async softDelete(id: number) {
+    await this.assertSectorNotAllocatedToCategories(id);
+
     const updated = await this.sectorModel
       .findOneAndUpdate(
         { id, ...this.notDeletedFilter() },

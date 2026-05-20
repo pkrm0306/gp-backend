@@ -9,6 +9,13 @@ import {
   ActivityLog,
   ActivityLogDocument,
 } from './schemas/activity-log.schema';
+import { ActivityLogAccessService } from './activity-log-access.service';
+import {
+  ActivityLogCaller,
+  formatActivityLogRow,
+  normalizeUrnNo,
+  urnCandidates,
+} from './activity-log.util';
 
 export interface LogActivityInput {
   vendor_id: string | Types.ObjectId;
@@ -30,6 +37,7 @@ export class ActivityLogService {
   constructor(
     @InjectModel(ActivityLog.name)
     private activityLogModel: Model<ActivityLogDocument>,
+    private readonly activityLogAccessService: ActivityLogAccessService,
   ) {}
 
   /**
@@ -102,13 +110,15 @@ export class ActivityLogService {
    * Sorted by created_at ascending for timeline display
    */
   async getActivityLogsByUrn(urnNo: string): Promise<ActivityLogDocument[]> {
+    const normalized = normalizeUrnNo(urnNo);
+    if (!normalized) {
+      throw new BadRequestException('URN number is required');
+    }
     try {
-      const activityLogs = await this.activityLogModel
-        .find({ urn_no: urnNo })
-        .sort({ created_at: 1 }) // Ascending order for timeline
+      return this.activityLogModel
+        .find({ urn_no: { $in: urnCandidates(normalized) } })
+        .sort({ created_at: 1 })
         .exec();
-
-      return activityLogs;
     } catch (error: any) {
       console.error(
         '[Activity Log] Error getting activity logs by URN:',
@@ -121,5 +131,21 @@ export class ActivityLogService {
           'Failed to get activity logs. Please check the logs for details.',
       );
     }
+  }
+
+  /**
+   * Timeline for admin or vendor — vendor may only read owned URNs.
+   */
+  async getActivityLogsByUrnForCaller(
+    urnNo: string,
+    user?: ActivityLogCaller,
+  ): Promise<Record<string, unknown>[]> {
+    const normalized =
+      await this.activityLogAccessService.assertCallerCanReadUrnLogs(
+        urnNo,
+        user,
+      );
+    const rows = await this.getActivityLogsByUrn(normalized);
+    return rows.map((row) => formatActivityLogRow(row));
   }
 }

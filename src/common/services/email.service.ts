@@ -269,4 +269,101 @@ The GreenPro Team
 
     await this.sendEmail(email, subject, htmlBody, textBody);
   }
+
+  /** Admin manufacturer email change includes a new random password; profile self-edit does not. */
+  async sendVendorLoginEmailUpdatedEmail(
+    email: string,
+    vendorName?: string,
+    password?: string,
+  ): Promise<void> {
+    const safeName = this.escapeHtml(vendorName?.trim() || 'Vendor');
+    const safeEmail = this.escapeHtml(email);
+    const safePassword = password ? this.escapeHtml(password) : '';
+
+    if (password) {
+      const subject = 'GreenPro - Your vendor portal login credentials';
+      const htmlBody = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Vendor portal credentials</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background-color: #166534; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+          <h1 style="margin: 0;">Vendor portal access</h1>
+        </div>
+        <div style="background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px;">
+          <p>Hello ${safeName},</p>
+          <p>Your GreenPro vendor portal login has been updated. Use these credentials to sign in:</p>
+          <div style="background-color: white; padding: 20px; border-left: 4px solid #16a34a; margin: 20px 0;">
+            <p style="margin: 5px 0;"><strong>Email:</strong> ${safeEmail}</p>
+            <p style="margin: 5px 0;"><strong>Password:</strong> ${safePassword}</p>
+          </div>
+          <p style="margin-top: 20px;">For security, please sign in and change your password after your first login.</p>
+          <p>Best regards,<br>The GreenPro Team</p>
+        </div>
+      </body>
+      </html>
+    `;
+      const textBody = `
+Hello ${vendorName?.trim() || 'Vendor'},
+
+Your GreenPro vendor portal login has been updated. Use these credentials to sign in:
+
+Email: ${email}
+Password: ${password}
+
+For security, please sign in and change your password after your first login.
+
+Best regards,
+The GreenPro Team
+      `;
+      await this.sendEmail(email, subject, htmlBody, textBody);
+      return;
+    }
+
+    const subject = 'GreenPro - Your login email was updated';
+    const htmlBody = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Login email updated</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background-color: #166534; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+          <h1 style="margin: 0;">Login email updated</h1>
+        </div>
+        <div style="background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px;">
+          <p>Hello ${safeName},</p>
+          <p>Your GreenPro vendor portal login email has been updated to:</p>
+          <div style="background-color: white; padding: 20px; border-left: 4px solid #16a34a; margin: 20px 0;">
+            <p style="margin: 5px 0;"><strong>Email:</strong> ${safeEmail}</p>
+          </div>
+          <p>Your password is unchanged. Sign in with this email and your existing password.</p>
+          <p>If you cannot sign in, use <strong>Forgot password</strong> on the login page.</p>
+          <p>Best regards,<br>The GreenPro Team</p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const textBody = `
+Hello ${vendorName?.trim() || 'Vendor'},
+
+Your GreenPro vendor portal login email has been updated to: ${email}
+
+Your password is unchanged. Sign in with this email and your existing password.
+
+If you cannot sign in, use Forgot password on the login page.
+
+Best regards,
+The GreenPro Team
+    `;
+
+    await this.sendEmail(email, subject, htmlBody, textBody);
+  }
 }

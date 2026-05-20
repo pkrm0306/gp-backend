@@ -1,9 +1,12 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Model, ClientSession, Connection, Types } from 'mongoose';
@@ -32,8 +35,17 @@ import {
 } from './utils/list-manufacturers-query.util';
 import { uploadFile } from '../utils/upload-file.util';
 import { ManufacturerIdGenerationService } from './manufacturer-id-generation.service';
+import { EmailService } from '../common/services/email.service';
+import {
+  GlobalPhoneUniquenessService,
+  GLOBAL_PHONE_UNAVAILABLE_MESSAGE,
+} from '../common/services/global-phone-uniqueness.service';
+import { buildPhoneLookupVariants } from '../common/utils/phone-lookup.util';
+import { AuthService } from '../auth/auth.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
 import ExcelJS from 'exceljs';
+import * as crypto from 'crypto';
+import * as bcrypt from 'bcryptjs';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -99,6 +111,8 @@ type VendorProfileBrandingMulterFiles = {
 
 @Injectable()
 export class ManufacturersService {
+  private readonly logger = new Logger(ManufacturersService.name);
+
   constructor(
     @InjectModel(Manufacturer.name)
     private manufacturerModel: Model<ManufacturerDocument>,
@@ -109,7 +123,415 @@ export class ManufacturersService {
     @InjectConnection() private connection: Connection,
     private vendorUsersService: VendorUsersService,
     private readonly manufacturerIdGeneration: ManufacturerIdGenerationService,
+    private readonly emailService: EmailService,
+    @Inject(forwardRef(() => AuthService))
+    private readonly authService: AuthService,
+    private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
   ) {}
+
+  private normalizeVendorEmail(raw: unknown): string {
+    return String(raw ?? '').trim().toLowerCase();
+  }
+
+  private vendorEmailDuplicateMessage(): string {
+    return 'This email id is already registered';
+  }
+
+  private vendorEmailCaseInsensitiveRegex(normalized: string): RegExp {
+    return new RegExp(`^${escapeRegex(normalized)}$`, 'i');
+  }
+
+  /** Ensures login email is not used by another manufacturer or portal user account. */
+  async assertVendorEmailAvailableForManufacturer(
+    email: string,
+    manufacturerId: Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<void> {
+    const normalized = this.normalizeVendorEmail(email);
+    if (!normalized) {
+      throw new BadRequestException('vendor_email is required');
+    }
+
+    const emailRx = this.vendorEmailCaseInsensitiveRegex(normalized);
+    const mfgIdStr = manufacturerId.toString();
+
+    const mfgQuery = this.manufacturerModel
+      .findOne({
+        vendor_email: emailRx,
+        _id: { $ne: manufacturerId },
+      })
+      .select('_id')
+      .lean();
+    if (session) mfgQuery.session(session);
+    if (await mfgQuery.exec()) {
+      throw new ConflictException(this.vendorEmailDuplicateMessage());
+    }
+
+    const usersQuery = this.vendorUserModel
+      .find({ email: emailRx })
+      .select('_id manufacturerId vendorId')
+      .lean();
+    if (session) usersQuery.session(session);
+    const usersWithEmail = await usersQuery.exec();
+
+    for (const row of usersWithEmail) {
+      const ownerId =
+        row.manufacturerId?.toString() || row.vendorId?.toString() || '';
+      if (!ownerId || ownerId !== mfgIdStr) {
+        throw new ConflictException(this.vendorEmailDuplicateMessage());
+      }
+    }
+  }
+
+  /** Returns false when another manufacturer or user already uses this email. */
+  async isVendorEmailAvailableForManufacturer(
+    manufacturerId: string,
+    email: string,
+  ): Promise<boolean> {
+    try {
+      await this.assertVendorEmailAvailableForManufacturer(
+        email,
+        new Types.ObjectId(manufacturerId),
+      );
+      return true;
+    } catch (e) {
+      if (e instanceof ConflictException) {
+        return false;
+      }
+      throw e;
+    }
+  }
+
+  /** Ensures phone is not used by another manufacturer or portal user. */
+  async assertVendorPhoneAvailableForManufacturer(
+    phone: string,
+    manufacturerId: Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<void> {
+    const trimmed = String(phone ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('vendor_phone is required');
+    }
+    await this.globalPhoneUniqueness.assertPhoneAvailable(trimmed, {
+      excludeManufacturerId: manufacturerId,
+      session,
+    });
+  }
+
+  async isVendorPhoneAvailableForManufacturer(
+    manufacturerId: string,
+    phone: string,
+  ): Promise<boolean> {
+    try {
+      await this.assertVendorPhoneAvailableForManufacturer(
+        phone,
+        new Types.ObjectId(manufacturerId),
+      );
+      return true;
+    } catch (e) {
+      if (e instanceof ConflictException) {
+        return false;
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Validates vendor email/phone in parallel and returns every conflict message
+   * (so the client can show email and phone errors on one submit).
+   */
+  private async collectManufacturerContactConflicts(
+    manufacturerId: string,
+    fields: { email?: string; phone?: string },
+    options?: {
+      excludeUserId?: string;
+      session?: ClientSession;
+    },
+  ): Promise<string[]> {
+    const conflicts: string[] = [];
+    const tasks: Array<Promise<void>> = [];
+
+    if (fields.email !== undefined) {
+      const normalized = this.normalizeVendorEmail(fields.email);
+      if (!normalized) {
+        conflicts.push('vendor_email is required');
+      } else {
+        tasks.push(
+          this.isVendorEmailAvailableForManufacturer(
+            manufacturerId,
+            normalized,
+          ).then((ok) => {
+            if (!ok) {
+              conflicts.push(this.vendorEmailDuplicateMessage());
+            }
+          }),
+        );
+      }
+    }
+
+    if (fields.phone !== undefined) {
+      const trimmed = String(fields.phone).trim();
+      if (trimmed) {
+        tasks.push(
+          this.globalPhoneUniqueness
+            .isPhoneAvailable(trimmed, {
+              excludeManufacturerId: manufacturerId,
+              excludeUserId: options?.excludeUserId,
+              session: options?.session,
+            })
+            .then((ok) => {
+              if (!ok) {
+                conflicts.push(GLOBAL_PHONE_UNAVAILABLE_MESSAGE);
+              }
+            }),
+        );
+      }
+    }
+
+    await Promise.all(tasks);
+    return conflicts;
+  }
+
+  private async assertVendorPhoneAvailableForUserId(
+    phone: string,
+    userId: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    const trimmed = String(phone ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('Phone is required');
+    }
+    await this.globalPhoneUniqueness.assertPhoneAvailable(trimmed, {
+      excludeUserId: userId,
+      session,
+    });
+  }
+
+  /** Vendor profile row without a linked manufacturer (rare). */
+  private async assertVendorEmailAvailableForUserId(
+    email: string,
+    userId: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    const normalized = this.normalizeVendorEmail(email);
+    if (!normalized) {
+      throw new BadRequestException('Email is required');
+    }
+
+    const emailRx = this.vendorEmailCaseInsensitiveRegex(normalized);
+
+    const mfgQuery = this.manufacturerModel
+      .findOne({ vendor_email: emailRx })
+      .select('_id')
+      .lean();
+    if (session) mfgQuery.session(session);
+    if (await mfgQuery.exec()) {
+      throw new ConflictException(this.vendorEmailDuplicateMessage());
+    }
+
+    const userFilter: Record<string, unknown> = { email: emailRx };
+    if (Types.ObjectId.isValid(userId)) {
+      userFilter._id = { $ne: new Types.ObjectId(userId) };
+    }
+    const usersQuery = this.vendorUserModel
+      .find(userFilter)
+      .select('_id')
+      .limit(1)
+      .lean();
+    if (session) usersQuery.session(session);
+    if (await usersQuery.exec()) {
+      throw new ConflictException(this.vendorEmailDuplicateMessage());
+    }
+  }
+
+  /**
+   * Keeps vendor_users.email in sync with manufacturer.vendor_email (login uses both).
+   */
+  async syncVendorUserEmailsForManufacturer(
+    manufacturerId: Types.ObjectId,
+    newEmail: string,
+    session?: ClientSession,
+  ): Promise<number> {
+    const normalized = this.normalizeVendorEmail(newEmail);
+    if (!normalized) return 0;
+
+    const result = await this.vendorUserModel.updateMany(
+      {
+        $or: [{ manufacturerId }, { vendorId: manufacturerId }],
+        type: { $in: ['vendor', 'partner'] },
+      },
+      { $set: { email: normalized, updatedAt: new Date() } },
+      session ? { session } : undefined,
+    );
+    return result.modifiedCount ?? 0;
+  }
+
+  /** Keeps primary vendor user `name` in sync with manufacturer.vendor_name. */
+  private async syncVendorUserNamesForManufacturer(
+    manufacturerId: Types.ObjectId,
+    newName: string,
+    session?: ClientSession,
+  ): Promise<number> {
+    const trimmed = String(newName ?? '').trim();
+    if (!trimmed) return 0;
+
+    const result = await this.vendorUserModel.updateMany(
+      {
+        $or: [{ manufacturerId }, { vendorId: manufacturerId }],
+        type: 'vendor',
+      },
+      { $set: { name: trimmed, updatedAt: new Date() } },
+      session ? { session } : undefined,
+    );
+    return result.modifiedCount ?? 0;
+  }
+
+  /**
+   * Vendor display name: use stored vendor_name unless legacy rows copied company name
+   * into vendor_name — then prefer the linked vendor user's contact name.
+   */
+  private resolveVendorDisplayName(
+    manufacturer: {
+      vendor_name?: string | null;
+      manufacturerName?: string | null;
+    },
+    primaryVendorUserName?: string,
+  ): string {
+    const stored = String(manufacturer.vendor_name ?? '').trim();
+    const company = String(manufacturer.manufacturerName ?? '').trim();
+    const userName = String(primaryVendorUserName ?? '').trim();
+
+    if (
+      userName &&
+      (!stored ||
+        (company && stored.toLowerCase() === company.toLowerCase()))
+    ) {
+      return userName;
+    }
+    return stored || userName;
+  }
+
+  private async loadPrimaryVendorNamesByManufacturerIds(
+    ids: Types.ObjectId[],
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (!ids.length) return map;
+
+    const users = await this.vendorUserModel
+      .find({
+        $or: [
+          { manufacturerId: { $in: ids } },
+          { vendorId: { $in: ids } },
+        ],
+        type: 'vendor',
+        status: { $ne: 2 },
+      })
+      .select('manufacturerId vendorId name')
+      .lean()
+      .exec();
+
+    for (const row of users) {
+      const mid =
+        row.manufacturerId?.toString() || row.vendorId?.toString() || '';
+      if (!mid || map.has(mid)) continue;
+      const name = String(row.name ?? '').trim();
+      if (name) map.set(mid, name);
+    }
+    return map;
+  }
+
+  private formatManufacturerApiRow(
+    m: {
+      _id: Types.ObjectId | string;
+      manufacturerName?: string | null;
+      vendor_name?: string | null;
+      gpInternalId?: string | null;
+      manufacturerInitial?: string | null;
+      manufacturerImage?: string | null;
+      manufacturerStatus?: number | null;
+      vendor_email?: string | null;
+      vendor_phone?: string | null;
+      vendor_status?: number | null;
+      createdAt?: Date;
+      updatedAt?: Date;
+    },
+    options: {
+      primaryVendorUserName?: string;
+      manufacturer_product_count?: number;
+      manufacturer_vendor_count?: number;
+    } = {},
+  ) {
+    const idStr = String(m._id);
+    const vendorDisplay = this.resolveVendorDisplayName(
+      m,
+      options.primaryVendorUserName,
+    );
+    const iniRaw = String(m.manufacturerInitial ?? '').trim();
+    const manufacturerInitial = iniRaw ? iniRaw : null;
+    const mSt = Number(m.manufacturerStatus ?? 0);
+    const vSt = Number(m.vendor_status ?? 0);
+    const companyName = String(m.manufacturerName ?? '').trim();
+
+    return {
+      _id: m._id,
+      manufacturerName: companyName,
+      /** Company / organization name (admin grid "Manufacturer Name"). */
+      companyName,
+      gpInternalId: m.gpInternalId ?? null,
+      manufacturerInitial,
+      initial: manufacturerInitial,
+      manufacturerImage: m.manufacturerImage ?? null,
+      manufacturerStatus: mSt,
+      manufacturerStatusLabel: manufacturerStatusLabel(mSt),
+      vendor_name: vendorDisplay,
+      /** Primary contact name — not the company name. */
+      vendorName: vendorDisplay,
+      vendor_email: m.vendor_email ?? '',
+      vendor_phone: m.vendor_phone ?? '',
+      vendor_status: vSt,
+      vendorStatusLabel: vendorStatusLabel(vSt),
+      statusToggle: vSt === 1 ? ('On' as const) : ('Off' as const),
+      manufacturer_product_count: options.manufacturer_product_count,
+      manufacturer_vendor_count: options.manufacturer_vendor_count,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
+    };
+  }
+
+  async findByIdForApi(id: string) {
+    const manufacturer = await this.findById(id);
+    if (!manufacturer) return null;
+
+    const names = await this.loadPrimaryVendorNamesByManufacturerIds([
+      manufacturer._id,
+    ]);
+    const counts = await this.countForManufacturer(manufacturer._id);
+    return this.formatManufacturerApiRow(manufacturer, {
+      primaryVendorUserName: names.get(manufacturer._id.toString()),
+      manufacturer_product_count: counts.manufacturer_product_count,
+      manufacturer_vendor_count: counts.manufacturer_vendor_count,
+    });
+  }
+
+  /**
+   * New random login password for all vendor/partner users on a manufacturer (admin email change).
+   */
+  private async resetVendorLoginPasswordsForManufacturer(
+    manufacturerId: Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<string> {
+    const plainPassword = crypto.randomBytes(8).toString('hex');
+    const passwordHash = await bcrypt.hash(plainPassword, 10);
+    await this.vendorUserModel.updateMany(
+      {
+        $or: [{ manufacturerId }, { vendorId: manufacturerId }],
+        type: { $in: ['vendor', 'partner'] },
+      },
+      { $set: { password: passwordHash, updatedAt: new Date() } },
+      session ? { session } : undefined,
+    );
+    return plainPassword;
+  }
 
   async create(
     data: Partial<Manufacturer>,
@@ -244,7 +666,13 @@ export class ManufacturersService {
     if (!normalized) {
       return null;
     }
-    return this.manufacturerModel.findOne({ vendor_phone: normalized }).exec();
+    const variants = buildPhoneLookupVariants(normalized);
+    if (!variants.length) {
+      return null;
+    }
+    return this.manufacturerModel
+      .findOne({ vendor_phone: { $in: variants } })
+      .exec();
   }
 
   async findByCompanyName(
@@ -303,9 +731,15 @@ export class ManufacturersService {
 
     const showGpIdentifiers = Boolean(vendorUser.isVerified);
 
+    const vendorDisplay = this.resolveVendorDisplayName(
+      manufacturer,
+      vendorUser.name,
+    );
+
     return {
       _id: manufacturer._id,
       manufacturerName: manufacturer.manufacturerName,
+      companyName: manufacturer.manufacturerName ?? '',
       gpInternalId: showGpIdentifiers
         ? (manufacturer.gpInternalId ?? null)
         : null,
@@ -314,7 +748,8 @@ export class ManufacturersService {
         : null,
       manufacturerImage: manufacturer.manufacturerImage ?? null,
       manufacturerStatus: manufacturer.manufacturerStatus ?? 0,
-      vendor_name: manufacturer.vendor_name ?? '',
+      vendor_name: vendorDisplay,
+      vendorName: vendorDisplay,
       vendor_email: manufacturer.vendor_email ?? '',
       vendor_phone: manufacturer.vendor_phone ?? '',
       vendor_website: manufacturer.vendor_website ?? '',
@@ -706,6 +1141,29 @@ export class ManufacturersService {
       const { resolvedManufacturer, vendorUser } =
         await this.resolveManufacturerForVendorProfile(authUser);
 
+      if (resolvedManufacturer) {
+        const profileContactConflicts =
+          await this.collectManufacturerContactConflicts(
+            resolvedManufacturer._id.toString(),
+            {
+              email:
+                updateDto.email !== undefined &&
+                String(updateDto.email).trim()
+                  ? updateDto.email
+                  : undefined,
+              phone:
+                updateDto.mobile !== undefined &&
+                String(updateDto.mobile).trim()
+                  ? updateDto.mobile
+                  : undefined,
+            },
+            { excludeUserId: userId, session },
+          );
+        if (profileContactConflicts.length > 0) {
+          throw new ConflictException(profileContactConflicts);
+        }
+      }
+
       if (!resolvedManufacturer) {
         if (brandingAttempted) {
           throw new BadRequestException(
@@ -719,17 +1177,35 @@ export class ManufacturersService {
         if (updateDto.designation !== undefined) {
           vendorUserUpdate.designation = updateDto.designation;
         }
-        if (updateDto.email !== undefined) {
-          vendorUserUpdate.email = updateDto.email;
+        if (updateDto.email !== undefined && String(updateDto.email).trim()) {
+          const newEmail = this.normalizeVendorEmail(updateDto.email);
+          await this.assertVendorEmailAvailableForUserId(
+            newEmail,
+            userId,
+            session,
+          );
+          vendorUserUpdate.email = newEmail;
         }
-        if (updateDto.mobile !== undefined) {
-          vendorUserUpdate.phone = updateDto.mobile;
+        if (updateDto.mobile !== undefined && String(updateDto.mobile).trim()) {
+          await this.assertVendorPhoneAvailableForUserId(
+            String(updateDto.mobile).trim(),
+            userId,
+            session,
+          );
+          vendorUserUpdate.phone = String(updateDto.mobile).trim();
         }
 
         if (Object.keys(vendorUserUpdate).length > 0) {
-          await this.vendorUserModel
-            .findByIdAndUpdate(userId, vendorUserUpdate, { new: true, session })
-            .exec();
+          try {
+            await this.vendorUserModel
+              .findByIdAndUpdate(userId, vendorUserUpdate, { new: true, session })
+              .exec();
+          } catch (e: unknown) {
+            if ((e as { code?: number })?.code === 11000) {
+              throw new ConflictException(this.vendorEmailDuplicateMessage());
+            }
+            throw e;
+          }
         }
 
         await session.commitTransaction();
@@ -780,22 +1256,6 @@ export class ManufacturersService {
         }
       }
 
-      if (updateDto.mobile) {
-        const phoneExists = await this.manufacturerModel
-          .findOne({
-            _id: { $ne: resolvedManufacturer._id },
-            vendor_phone: updateDto.mobile,
-          })
-          .select('_id')
-          .lean()
-          .exec();
-        if (phoneExists) {
-          throw new BadRequestException(
-            'Phone number already exists. Please change it.',
-          );
-        }
-      }
-
       const updateData: Partial<Manufacturer> = {};
       if (updateDto.companyName) {
         updateData.manufacturerName = updateDto.companyName;
@@ -824,8 +1284,18 @@ export class ManufacturersService {
       if (panDocUrlToApply !== undefined) {
         updateData.vendorPanDocument = panDocUrlToApply;
       }
-      if (updateDto.email) {
-        updateData.vendor_email = updateDto.email;
+      let profileEmailChanged = false;
+      let profileNotifyEmail: string | null = null;
+      if (updateDto.email !== undefined && String(updateDto.email).trim()) {
+        const newEmail = this.normalizeVendorEmail(updateDto.email);
+        const oldEmail = this.normalizeVendorEmail(
+          resolvedManufacturer.vendor_email,
+        );
+        if (newEmail !== oldEmail) {
+          profileEmailChanged = true;
+          profileNotifyEmail = newEmail;
+        }
+        updateData.vendor_email = newEmail;
       }
       if (updateDto.mobile) {
         updateData.vendor_phone = updateDto.mobile;
@@ -839,6 +1309,14 @@ export class ManufacturersService {
         );
       }
 
+      if (profileEmailChanged && profileNotifyEmail) {
+        await this.syncVendorUserEmailsForManufacturer(
+          resolvedManufacturer._id,
+          profileNotifyEmail,
+          session,
+        );
+      }
+
       const vendorUserSelfPatch: Partial<VendorUser> = {};
       if (updateDto.name !== undefined && String(updateDto.name).trim()) {
         vendorUserSelfPatch.name = String(updateDto.name).trim();
@@ -847,7 +1325,7 @@ export class ManufacturersService {
         vendorUserSelfPatch.designation = String(updateDto.designation).trim();
       }
       if (updateDto.email !== undefined && String(updateDto.email).trim()) {
-        vendorUserSelfPatch.email = String(updateDto.email).trim().toLowerCase();
+        vendorUserSelfPatch.email = this.normalizeVendorEmail(updateDto.email);
       }
       if (updateDto.mobile !== undefined && String(updateDto.mobile).trim()) {
         vendorUserSelfPatch.phone = String(updateDto.mobile).trim();
@@ -863,9 +1341,12 @@ export class ManufacturersService {
         } catch (e: unknown) {
           const code = (e as { code?: number })?.code;
           if (code === 11000) {
-            throw new BadRequestException(
-              'Email or phone is already used by another account for this organization.',
-            );
+            const keyPattern = (e as { keyPattern?: Record<string, unknown> })
+              ?.keyPattern;
+            if (keyPattern && 'phone' in keyPattern) {
+              throw new ConflictException(GLOBAL_PHONE_UNAVAILABLE_MESSAGE);
+            }
+            throw new ConflictException(this.vendorEmailDuplicateMessage());
           }
           throw e;
         }
@@ -875,6 +1356,23 @@ export class ManufacturersService {
       const updated = await this.findById(resolvedManufacturer._id.toString());
       if (!updated) {
         throw new NotFoundException('Manufacturer not found');
+      }
+      if (profileEmailChanged && profileNotifyEmail) {
+        await this.authService.invalidateSessionsForManufacturer(
+          resolvedManufacturer._id.toString(),
+        );
+        this.emailService.sendInBackground(() =>
+          this.emailService
+            .sendVendorLoginEmailUpdatedEmail(
+              profileNotifyEmail,
+              String(updated.vendor_name ?? updated.manufacturerName ?? ''),
+            )
+            .catch((err) => {
+              this.logger.warn(
+                `Vendor login email notification failed for ${profileNotifyEmail}: ${(err as Error).message || 'unknown error'}`,
+              );
+            }),
+        );
       }
       return this.toProfilePayloadShape(updated);
     } catch (error) {
@@ -993,9 +1491,29 @@ export class ManufacturersService {
     dto: UpdateManufacturerDto,
     imagePath?: string,
   ) {
+    let notifyEmailChange: {
+      email: string;
+      vendorName: string;
+      password: string;
+    } | null = null;
+
     try {
       const manufacturerId = new Types.ObjectId(id);
-      return await this.manufacturerIdGeneration.withTransaction(
+
+      if (dto.vendor_email !== undefined || dto.vendor_phone !== undefined) {
+        const contactConflicts = await this.collectManufacturerContactConflicts(
+          id,
+          {
+            email: dto.vendor_email,
+            phone: dto.vendor_phone,
+          },
+        );
+        if (contactConflicts.length > 0) {
+          throw new ConflictException(contactConflicts);
+        }
+      }
+
+      const manufacturer = await this.manufacturerIdGeneration.withTransaction(
         async (session) => {
           const existing = await this.manufacturerModel
             .findById(manufacturerId)
@@ -1010,14 +1528,25 @@ export class ManufacturersService {
             manufacturerName: dto.manufacturerName,
             updatedAt: new Date(),
           };
-          if (dto.vendor_name !== undefined) {
-            updateData.vendor_name = dto.vendor_name;
-          }
+          let vendorEmailChanged = false;
           if (dto.vendor_email !== undefined) {
-            updateData.vendor_email = dto.vendor_email;
+            const newEmail = this.normalizeVendorEmail(dto.vendor_email);
+            const oldEmail = this.normalizeVendorEmail(existing.vendor_email);
+            if (newEmail !== oldEmail) {
+              vendorEmailChanged = true;
+            }
+            updateData.vendor_email = newEmail;
           }
           if (dto.vendor_phone !== undefined) {
-            updateData.vendor_phone = dto.vendor_phone;
+            updateData.vendor_phone = String(dto.vendor_phone).trim();
+          }
+          let vendorNameChanged = false;
+          if (dto.vendor_name !== undefined) {
+            const newVendorName = String(dto.vendor_name).trim();
+            const oldVendorName = String(existing.vendor_name ?? '').trim();
+            updateData.vendor_name = newVendorName;
+            vendorNameChanged =
+              newVendorName !== oldVendorName && newVendorName.length > 0;
           }
           if (imagePath) {
             updateData.manufacturerImage = imagePath;
@@ -1087,20 +1616,73 @@ export class ManufacturersService {
             }
           }
 
-          const manufacturer = await this.manufacturerModel
+          const updated = await this.manufacturerModel
             .findByIdAndUpdate(manufacturerId, updateData, {
               new: true,
               session,
             })
             .exec();
-          if (!manufacturer) {
+          if (!updated) {
             throw new NotFoundException('Manufacturer not found');
           }
-          return manufacturer;
+
+          if (vendorEmailChanged && updateData.vendor_email) {
+            await this.syncVendorUserEmailsForManufacturer(
+              manufacturerId,
+              String(updateData.vendor_email),
+              session,
+            );
+            const newPassword =
+              await this.resetVendorLoginPasswordsForManufacturer(
+                manufacturerId,
+                session,
+              );
+            notifyEmailChange = {
+              email: String(updateData.vendor_email),
+              vendorName: this.resolveVendorDisplayName(updated),
+              password: newPassword,
+            };
+          }
+
+          if (vendorNameChanged && updateData.vendor_name) {
+            await this.syncVendorUserNamesForManufacturer(
+              manufacturerId,
+              String(updateData.vendor_name),
+              session,
+            );
+          }
+
+          return updated;
         },
       );
+
+      if (notifyEmailChange) {
+        await this.authService.invalidateSessionsForManufacturer(id);
+        const { email, vendorName, password } = notifyEmailChange;
+        this.emailService.sendInBackground(() =>
+          this.emailService
+            .sendVendorLoginEmailUpdatedEmail(email, vendorName, password)
+            .catch((error) => {
+              this.logger.warn(
+                `Vendor login credentials email failed for ${email}: ${(error as Error).message || 'unknown error'}`,
+              );
+            }),
+        );
+      }
+
+      return manufacturer;
     } catch (error: any) {
       if (error?.code === 11000) {
+        const keyPattern = error?.keyPattern as Record<string, unknown> | undefined;
+        if (keyPattern && ('email' in keyPattern || 'vendor_email' in keyPattern)) {
+          throw new ConflictException(this.vendorEmailDuplicateMessage());
+        }
+        if (
+          keyPattern &&
+          ('phone' in keyPattern || 'vendor_phone' in keyPattern)
+        ) {
+          throw new ConflictException(GLOBAL_PHONE_UNAVAILABLE_MESSAGE);
+        }
         throw new ConflictException(
           'Duplicate manufacturer identifier (initial or internal id)',
         );
@@ -1141,6 +1723,15 @@ export class ManufacturersService {
         { new: true },
       )
       .exec();
+
+    const loginEmail = this.normalizeVendorEmail(updated?.vendor_email);
+    if (updated && loginEmail) {
+      await this.syncVendorUserEmailsForManufacturer(
+        manufacturerId,
+        loginEmail,
+      );
+    }
+
     return updated;
   }
 
@@ -1389,6 +1980,12 @@ export class ManufacturersService {
         .exec()) as Record<string, unknown>[];
     }
 
+    const manufacturerIds = rawRows.map(
+      (raw) => new Types.ObjectId(String(raw._id)),
+    );
+    const vendorNamesByMfgId =
+      await this.loadPrimaryVendorNamesByManufacturerIds(manufacturerIds);
+
     return Promise.all(
       rawRows.map(async (raw) => {
         const mid = new Types.ObjectId(String(raw._id));
@@ -1396,9 +1993,17 @@ export class ManufacturersService {
         const ini = String(raw.manufacturerInitial ?? '').trim();
         const mSt = Number(raw.manufacturerStatus ?? 0);
         const vSt = Number(raw.vendor_status ?? 0);
+        const vendorDisplay = this.resolveVendorDisplayName(
+          {
+            vendor_name: raw.vendor_name as string | undefined,
+            manufacturerName: raw.manufacturerName as string | undefined,
+          },
+          vendorNamesByMfgId.get(mid.toString()),
+        );
         return {
           _id: String(raw._id),
           manufacturerName: String(raw.manufacturerName ?? ''),
+          companyName: String(raw.manufacturerName ?? ''),
           gpInternalId: String(raw.gpInternalId ?? ''),
           initial: ini,
           manufacturerStatus: mSt,
@@ -1406,7 +2011,8 @@ export class ManufacturersService {
           vendor_status: vSt,
           vendorStatusLabel: vendorStatusLabel(vSt),
           statusToggle: vSt === 1 ? ('On' as const) : ('Off' as const),
-          vendor_name: String(raw.vendor_name ?? ''),
+          vendor_name: vendorDisplay,
+          vendorName: vendorDisplay,
           vendor_email: String(raw.vendor_email ?? ''),
           vendor_phone: String(raw.vendor_phone ?? ''),
           manufacturer_product_count: counts.manufacturer_product_count,
@@ -1542,36 +2148,19 @@ export class ManufacturersService {
       this.manufacturerModel.countDocuments(filter).exec(),
     ]);
 
+    const manufacturerIds = rows.map((m) => new Types.ObjectId(String(m._id)));
+    const vendorNamesByMfgId =
+      await this.loadPrimaryVendorNamesByManufacturerIds(manufacturerIds);
+
     const data = await Promise.all(
       rows.map(async (m) => {
         const mid = new Types.ObjectId(String(m._id));
         const counts = await this.countForManufacturer(mid);
-        const iniRaw = String(m.manufacturerInitial ?? '').trim();
-        const manufacturerInitial = iniRaw ? iniRaw : null;
-        const mSt = Number(m.manufacturerStatus ?? 0);
-        const vSt = Number(m.vendor_status ?? 0);
-        return {
-          _id: m._id,
-          manufacturerName: m.manufacturerName,
-          gpInternalId: m.gpInternalId ?? null,
-          manufacturerInitial,
-          /** Alias for grids/exports that key the column as `initial` */
-          initial: manufacturerInitial,
-          manufacturerImage: m.manufacturerImage ?? null,
-          manufacturerStatus: mSt,
-          manufacturerStatusLabel: manufacturerStatusLabel(mSt),
-          vendor_name: m.vendor_name ?? '',
-          vendor_email: m.vendor_email ?? '',
-          vendor_phone: m.vendor_phone ?? '',
-          vendor_status: vSt,
-          vendorStatusLabel: vendorStatusLabel(vSt),
-          /** Same as Excel export Status column: On when vendor_status === 1 */
-          statusToggle: vSt === 1 ? ('On' as const) : ('Off' as const),
+        return this.formatManufacturerApiRow(m, {
+          primaryVendorUserName: vendorNamesByMfgId.get(mid.toString()),
           manufacturer_product_count: counts.manufacturer_product_count,
           manufacturer_vendor_count: counts.manufacturer_vendor_count,
-          createdAt: m.createdAt,
-          updatedAt: m.updatedAt,
-        };
+        });
       }),
     );
 

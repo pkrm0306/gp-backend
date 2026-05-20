@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ManufacturersService } from './manufacturers.service';
 import { ManufacturersController } from './manufacturers.controller';
@@ -24,6 +24,8 @@ import { AdminManufacturerActionsController } from './manufacturers.admin.contro
 import { VendorController } from './vendor.controller';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { EmailService } from '../common/services/email.service';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -38,13 +40,19 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
     ]),
     VendorUsersModule,
     RbacModule,
+    forwardRef(() => AuthModule),
   ],
   controllers: [
     ManufacturersController,
     VendorController,
     AdminManufacturerActionsController,
   ],
-  providers: [ManufacturersService, ManufacturerIdGenerationService, PermissionsGuard],
+  providers: [
+    ManufacturersService,
+    ManufacturerIdGenerationService,
+    PermissionsGuard,
+    EmailService,
+  ],
   exports: [ManufacturersService, ManufacturerIdGenerationService],
 })
 export class ManufacturersModule {}

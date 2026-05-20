@@ -6,14 +6,13 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import * as fs from 'fs';
-import * as path from 'path';
 import {
   AllProductDocument,
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { normalizeDocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { DeleteDocumentQueryDto } from './dto/delete-document-query.dto';
+import { deleteUploadedFileByDocumentLink } from '../utils/upload-file.util';
 
 @Injectable()
 export class DocumentsService {
@@ -38,23 +37,18 @@ export class DocumentsService {
     return process.env.DOCUMENT_DELETE_REMOVE_FILE !== 'false';
   }
 
-  private tryDeleteFile(documentLink?: string): void {
+  private async tryDeleteFile(documentLink?: string): Promise<void> {
     if (!this.shouldDeletePhysicalFile() || !documentLink) {
       return;
     }
 
-    if (/^https?:\/\//i.test(documentLink)) {
-      return;
-    }
-
-    const resolvedPath = path.resolve(process.cwd(), documentLink);
     try {
-      if (fs.existsSync(resolvedPath)) {
-        fs.unlinkSync(resolvedPath);
-      }
+      await deleteUploadedFileByDocumentLink(documentLink);
     } catch (error) {
-      // Physical file delete failures should not block record soft-delete.
-      console.warn(`Document file cleanup failed for "${resolvedPath}":`, error);
+      console.warn(
+        `Document file cleanup failed for "${documentLink}":`,
+        error,
+      );
     }
   }
 
@@ -87,7 +81,7 @@ export class DocumentsService {
       throw new NotFoundException('Document not found for provided urnNo and sectionKey');
     }
 
-    this.tryDeleteFile(document.documentLink);
+    await this.tryDeleteFile(document.documentLink);
 
     const now = new Date();
     await this.allProductDocumentModel.updateOne(

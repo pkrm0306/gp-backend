@@ -38,9 +38,9 @@ import {
   hasExplicitCategoryIdFields,
 } from '../standards/utils/merge-category-ids.util';
 import {
-  hasExplicitSectorAssignmentFields,
-  mergeSectorIdsFromFormObject,
-} from '../standards/utils/merge-sector-ids-from-form.util';
+  mergeTeamMemberSectorIdsFromFormObject,
+  hasExplicitTeamMemberSectorFields,
+} from './utils/merge-team-member-sectors-from-form.util';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -133,7 +133,7 @@ function TeamMemberEditDocs() {
       summary: 'Edit team member',
       description:
         '**POST** or **PATCH** — same handler. Multipart form: **id** (team member from list), name, designation, email, mobile, optional **image** (270×400px recommended), social URLs. ' +
-        'Optional **sectors** multiselect (numeric ids from GET /api/sectors): send **sectors** JSON array, **sectors[]**, **sector_ids**, or legacy **sector**. When any sector field is sent, linked categories are replaced with all categories in those sectors. Omit sector fields to leave assignment unchanged. Category fields are not accepted. ' +
+        '**Sectors** multiselect — fixed options only (GET **/admin/team-member/sector-options**): Building, Industries, Consumer Products, Facility Services. Send names or ids 1–4 via **sectors**, **sectors[]**, **sector_ids**, etc. Omit sector fields to leave assignment unchanged. Category fields are not accepted. ' +
         'Same JWT workarounds as create (**x-access-token** / **access_token**) if Bearer is dropped on multipart.',
     }),
     ApiConsumes('multipart/form-data'),
@@ -180,14 +180,20 @@ function TeamMemberEditDocs() {
           },
           sectors: {
             oneOf: [
-              { type: 'array', items: { type: 'integer' } },
-              { type: 'string', description: 'JSON array of sector ids' },
+              {
+                type: 'array',
+                items: {
+                  oneOf: [{ type: 'integer' }, { type: 'string' }],
+                },
+              },
+              { type: 'string', description: 'JSON array of sector names or ids' },
             ],
-            description: 'Multiselect sector ids (GET /api/sectors)',
+            description:
+              'Multiselect: Building, Industries, Consumer Products, Facility Services',
           },
           sector: {
             oneOf: [{ type: 'integer' }, { type: 'string' }],
-            description: 'Legacy single sector id',
+            description: 'Single sector name or id (1–4)',
           },
           'sectors[]': {
             oneOf: [
@@ -2123,7 +2129,7 @@ export class AdminController {
     summary: 'Create team member',
     description:
       'Use **Authorize** (Bearer) as usual. Swagger sometimes drops `Authorization` on multipart uploads — then send the same JWT via **x-access-token** header or **access_token** query param. ' +
-      'Optional **sectors** multiselect (numeric ids from GET /api/sectors): **sectors**, **sectors[]**, **sector_ids** / **sectorIds**, or legacy **sector**. Category fields are not accepted (send sectors instead).',
+      '**Sectors** multiselect — fixed options only (GET **/admin/team-member/sector-options**): Building, Industries, Consumer Products, Facility Services. Send **sectors** as JSON array of names or ids 1–4, **sectors[]**, **sector_ids**, etc. Category fields are not accepted.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiHeader({
@@ -2168,10 +2174,20 @@ export class AdminController {
         },
         sectors: {
           oneOf: [
-            { type: 'array', items: { type: 'integer' } },
-            { type: 'string', description: 'JSON array of sector ids, e.g. "[1,2]"' },
+            {
+              type: 'array',
+              items: {
+                oneOf: [{ type: 'integer' }, { type: 'string' }],
+              },
+            },
+            {
+              type: 'string',
+              description:
+                'JSON array of sector names or ids, e.g. ["Building","Industries"] or [1,2]',
+            },
           ],
-          description: 'Multiselect sector ids from GET /api/sectors',
+          description:
+            'Multiselect: Building, Industries, Consumer Products, Facility Services',
         },
         sector: {
           oneOf: [{ type: 'integer' }, { type: 'string' }],
@@ -2220,7 +2236,7 @@ export class AdminController {
         'Category fields are no longer accepted. Send **sectors** only (numeric ids from GET /api/sectors).',
       );
     }
-    const mergedSectorIds = mergeSectorIdsFromFormObject(body);
+    const mergedSectorIds = mergeTeamMemberSectorIdsFromFormObject(body);
     const dto = plainToClass(CreateTeamMemberDto, {
       name: body.name,
       designation: body.designation,
@@ -2304,8 +2320,8 @@ export class AdminController {
         'Category fields are no longer accepted. Send **sectors** only (numeric ids from GET /api/sectors).',
       );
     }
-    const explicitSectors = hasExplicitSectorAssignmentFields(body);
-    const mergedSectorIds = mergeSectorIdsFromFormObject(body);
+    const explicitSectors = hasExplicitTeamMemberSectorFields(body);
+    const mergedSectorIds = mergeTeamMemberSectorIdsFromFormObject(body);
     const dto = plainToClass(EditTeamMemberDto, {
       id: body.id,
       name: body.name,
@@ -2505,6 +2521,36 @@ export class AdminController {
       body?.status,
     );
     return { message: 'Subscriber status updated successfully', data };
+  }
+
+  @Get('team-member/sector-options')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Fixed team member sector options',
+    description:
+      'Returns the four allowed CMS team-member sectors for multiselect (not from GET /api/sectors): Building, Industries, Consumer Products, Facility Services.',
+  })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'number', example: 1 },
+              name: { type: 'string', example: 'Building' },
+            },
+          },
+        },
+      },
+    },
+  })
+  listTeamMemberSectorOptions() {
+    return this.adminService.listTeamMemberSectorOptions();
   }
 
   @Get('team-member/list')
@@ -2805,7 +2851,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get team member by id',
     description:
-      'Returns one team member for the **View** modal: name, designation, email, mobile, displayOrder, team, status (**Active** / **Inactive**), image URL, social URLs, **sector_ids** / **sectorIds** / **sectors** (multiselect; no category fields). Soft-deleted excluded.',
+      'Returns one team member for the **View** modal: name, designation, email, mobile, displayOrder, team, status (**Active** / **Inactive**), image URL, social URLs, **sectors** (fixed: Building, Industries, Consumer Products, Facility Services). Soft-deleted excluded.',
   })
   @ApiParam({ name: 'id', description: 'Team member MongoDB id' })
   @ApiResponse({ status: 200, description: 'Team member details' })

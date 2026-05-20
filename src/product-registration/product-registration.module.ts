@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { ProductRegistrationController } from './product-registration.controller';
 import { ProductsController } from './products.controller';
 import { AdminProductsController } from './admin-products.controller';
+import { AdminUrnController } from './admin-urn.controller';
 import { ProductController } from './product.controller';
 import { ProductRegistrationService } from './product-registration.service';
 import { EoiNumberService } from './services/eoi-number.service';
@@ -44,6 +45,7 @@ import { UrnSiteVisitsModule } from '../urn-site-visits/urn-site-visits.module';
     ProductRegistrationController,
     ProductsController,
     AdminProductsController,
+    AdminUrnController,
     ProductController,
   ],
   providers: [

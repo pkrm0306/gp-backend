@@ -1,9 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { AuthSessionInvalidationService } from './auth-session-invalidation.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
@@ -24,12 +25,18 @@ import { RbacModule } from '../rbac/rbac.module';
       }),
       inject: [ConfigService],
     }),
-    ManufacturersModule,
+    forwardRef(() => ManufacturersModule),
     VendorUsersModule,
     RbacModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, CaptchaService, EmailService],
-  exports: [AuthService, JwtStrategy],
+  providers: [
+    AuthService,
+    AuthSessionInvalidationService,
+    JwtStrategy,
+    CaptchaService,
+    EmailService,
+  ],
+  exports: [AuthService, AuthSessionInvalidationService, JwtStrategy],
 })
 export class AuthModule {}

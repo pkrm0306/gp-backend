@@ -12,6 +12,7 @@ import {
   Put,
   Query,
   Req,
+  Res,
   StreamableFile,
   UploadedFile,
   UseInterceptors,
@@ -27,12 +28,14 @@ import {
 } from '@nestjs/swagger';
 import { StandardsService } from './standards.service';
 import { ListStandardsQueryDto } from './dto/list-standards-query.dto';
+import { ListStandardsExportQueryDto } from './dto/list-standards-export-query.dto';
 import { ListStandardsByCategoryQueryDto } from './dto/list-standards-by-category-query.dto';
 import { ListStandardsBySectorQueryDto } from './dto/list-standards-by-sector-query.dto';
 import { CreateStandardMultipartDto } from './dto/create-standard-multipart.dto';
 import { UpdateStandardMultipartDto } from './dto/update-standard-multipart.dto';
 import { UpdateStandardStatusDto } from './dto/update-standard-status.dto';
-import { universalMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { standardsDocumentMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import type { Response } from 'express';
 
 @ApiTags('Standards')
 @Controller('api/standards')
@@ -43,7 +46,7 @@ export class StandardsController {
   @ApiOperation({
     summary: 'List standards (paginated)',
     description:
-      'Pagination, search on name, filter by resource_standard_type, **category_id** (legacy primary or any linked category), **sector** (numeric sector `id` from GET /api/sectors — any category in that sector), and status, sort. Each row includes **category_ids**, **categories** `{ id, name }[]`, legacy **category_id** / **category_name**, and **sector_id** / **sector_ids** / **sector_name** (from the primary category’s sector) for admin sector dropdowns.',
+      'Pagination, search on name, filter by **resource_standard_type** (single) or **resource_standard_types** (multi-select, comma-separated), **category_id**, **sector**, and status, sort. Each row includes **category_ids**, **categories**, and sector fields for admin dropdowns.',
   })
   @ApiResponse({ status: 200, description: 'Paginated list' })
   async findAll(@Query() query: ListStandardsQueryDto) {
@@ -101,16 +104,31 @@ export class StandardsController {
   @ApiOperation({
     summary: 'Export standards as CSV',
     description:
-      'Applies search, resource_standard_type, **category_id**, **sector**, and status filters (no pagination).',
+      'Applies search, resource_standard_type / resource_standard_types, **category_id**, **sector**, and status filters. ' +
+      'Returns all matching rows as CSV (no page/limit). Prefer this over GET /api/standards?limit=… for export.',
   })
   @ApiResponse({ status: 200, description: 'CSV download' })
-  async exportCsv(@Query() query: ListStandardsQueryDto) {
+  async exportCsv(@Query() query: ListStandardsExportQueryDto) {
     const csv = await this.standardsService.buildCsvExport(query);
     const buf = Buffer.from(csv, 'utf-8');
     return new StreamableFile(buf, {
       type: 'text/csv; charset=utf-8',
       disposition: 'attachment; filename="standards-export.csv"',
     });
+  }
+
+  @Get(':id/file')
+  @ApiOperation({
+    summary: 'View standard document (PDF/image)',
+    description:
+      'Streams the file from local disk or redirects to the public S3/CloudFront URL. No auth required so admin can open in a new tab.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric standard id' })
+  @ApiResponse({ status: 302, description: 'Redirect to S3 URL' })
+  @ApiResponse({ status: 404, description: 'Standard or file not found' })
+  async streamFile(@Param('id') id: string, @Res({ passthrough: false }) res: Response) {
+    const numericId = this.standardsService.parseStandardId(id);
+    await this.standardsService.streamStandardFile(numericId, res);
   }
 
   @Get(':id')
@@ -132,12 +150,14 @@ export class StandardsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('file', universalMemoryMulterOptions()))
+  @UseInterceptors(FileInterceptor('file', standardsDocumentMemoryMulterOptions()))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Create standard (file upload)',
     description:
-      'Form: **sectors** (required, multiselect) — one or more numeric sector ids from GET /api/sectors (sector names for the admin dropdown come from that list). Send as JSON array string `[1,2]`, repeated **sectors** / **sectors[]**, **sector_ids**, or **sectorIds**; legacy single **sector** is merged in. The standard is linked to **all** categories in each selected sector (union, deduped). Do not send category_id / category_ids / categoryIds. name; description (optional); resource_standard_type; status (optional, default 1); file (required). PDF, JPG, or PNG, max 10MB. Primary **category_id** on the document is the first category id in the merged set.',
+      'Form: **sectors** (required, multiselect) — one or more numeric sector ids from GET /api/sectors. The standard is linked to **all** categories in each selected sector (union). ' +
+      '**file** (required): PDF, JPG, or PNG, max 10MB — stored only via the shared **uploadFile()** helper (`src/utils/upload-file.util.ts`, folder `standards`, local or S3). ' +
+      'Also: name, description (optional), resource_standard_type, status (optional, default 1).',
   })
   @ApiBody({
     schema: {
@@ -204,13 +224,19 @@ export class StandardsController {
     };
   }
 
+  @Put(':id/edit')
+  @Patch(':id/edit')
   @Put(':id')
-  @UseInterceptors(FileInterceptor('file', universalMemoryMulterOptions()))
+  @Patch(':id')
+  @UseInterceptors(FileInterceptor('file', standardsDocumentMemoryMulterOptions()))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Update standard',
     description:
-      'Optional **sectors** (multiselect) or legacy **sector** — when sent, replaces linked categories with the **union** of all categories across the selected sectors (GET /api/sectors). Category fields are not accepted. Other fields: name, description, resource_standard_type, status, file. At least one field or file required.',
+      'Supports **PUT** or **PATCH** on `/api/standards/:id` (and legacy `/api/standards/:id/edit`). ' +
+      'Optional **sectors** (multiselect) or legacy **sector** — when sent, replaces linked categories with the union across selected sectors. ' +
+      'Optional **file**: new PDF/JPG/PNG via shared **uploadFile()** (`uploads/standards/` or S3); previous file is removed when a new file is uploaded. ' +
+      'Other fields: name, description, resource_standard_type, status. At least one field or file required.',
   })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiBody({

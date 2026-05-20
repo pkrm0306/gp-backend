@@ -5,7 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
-import { Model, Connection, Types, ClientSession } from 'mongoose';
+import { Model, Connection, Types } from 'mongoose';
 import {
   ProcessManufacturing,
   ProcessManufacturingDocument,
@@ -17,9 +17,11 @@ import {
 import { CreateProcessManufacturingDto } from './dto/create-process-manufacturing.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
-import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import {
+  deleteUploadedFile,
+  uploadFile,
+  UploadResult,
+} from '../utils/upload-file.util';
 
 @Injectable()
 export class ProcessManufacturingService implements OnModuleInit {
@@ -66,9 +68,18 @@ export class ProcessManufacturingService implements OnModuleInit {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-    fileType: 'energy_conservation' | 'energy_consumption',
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  ): Promise<UploadResult> {
+    return uploadFile(file, `urns/${urnNo}`);
+  }
+
+  private async rollbackCreatedUploads(uploads: UploadResult[]): Promise<void> {
+    for (const upload of uploads) {
+      await deleteUploadedFile({
+        storage_type: upload.storage,
+        s3_key: upload.s3Key,
+        relativePath: upload.relativePath,
+      });
+    }
   }
 
   /**
@@ -83,15 +94,10 @@ export class ProcessManufacturingService implements OnModuleInit {
     const session = await this.connection.startSession();
     session.startTransaction();
 
-    // Track file paths for cleanup/replacement
-    let createdFileFullPaths: string[] = [];
-    let oldFileLinksToDeleteAfterCommit: string[] = [];
+    const createdUploads: UploadResult[] = [];
 
     try {
-      // Convert vendorId to ObjectId
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-
-      // Get current date
       const now = new Date();
       const existingManufacturing = await this.processManufacturingModel
         .findOne({ urnNo: createProcessManufacturingDto.urnNo })
@@ -108,67 +114,47 @@ export class ProcessManufacturingService implements OnModuleInit {
         ? energyConsumptionDocumentsFiles
         : [];
 
-      // Handle file uploads and set flags
+      const conservationDisplayName =
+        createProcessManufacturingDto.energyConservationSupportingDocumentsFileName?.trim() ||
+        '';
+      const consumptionDisplayName =
+        createProcessManufacturingDto.energyConsumptionDocumentsFileName?.trim() ||
+        '';
+
       let energyConservationSupportingDocuments =
         existingManufacturing?.energyConservationSupportingDocuments ?? 0;
-      const energyConservationFilePaths: string[] = [];
+      const energyConservationUploads: UploadResult[] = [];
       if (energyConservationFiles.length > 0) {
         for (const energyConservationSupportingDocumentsFile of energyConservationFiles) {
-          const energyConservationFilePath = await this.saveFileToUrnFolder(
+          const uploaded = await this.saveFileToUrnFolder(
             energyConservationSupportingDocumentsFile,
             createProcessManufacturingDto.urnNo,
-            'energy_conservation',
           );
-          energyConservationFilePaths.push(energyConservationFilePath);
-          createdFileFullPaths.push(path.join('uploads', energyConservationFilePath));
+          energyConservationUploads.push(uploaded);
+          createdUploads.push(uploaded);
         }
         energyConservationSupportingDocuments = 1;
       }
 
       let energyConsumptionDocuments =
         existingManufacturing?.energyConsumptionDocuments ?? 0;
-      const energyConsumptionFilePaths: string[] = [];
+      const energyConsumptionUploads: UploadResult[] = [];
       if (energyConsumptionFiles.length > 0) {
         for (const energyConsumptionDocumentsFile of energyConsumptionFiles) {
-          const energyConsumptionFilePath = await this.saveFileToUrnFolder(
+          const uploaded = await this.saveFileToUrnFolder(
             energyConsumptionDocumentsFile,
             createProcessManufacturingDto.urnNo,
-            'energy_consumption',
           );
-          energyConsumptionFilePaths.push(energyConsumptionFilePath);
-          createdFileFullPaths.push(path.join('uploads', energyConsumptionFilePath));
+          energyConsumptionUploads.push(uploaded);
+          createdUploads.push(uploaded);
         }
         energyConsumptionDocuments = 1;
       }
 
-      if (energyConservationFiles.length > 0 || energyConsumptionFiles.length > 0) {
-        const existingDocs = await this.allProductDocumentModel
-          .find({
-            urnNo: createProcessManufacturingDto.urnNo,
-            documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
-            isDeleted: { $ne: true },
-          })
-          .session(session);
-        oldFileLinksToDeleteAfterCommit = existingDocs
-          .map((d) => d.documentLink)
-          .filter(Boolean);
-        if (existingDocs.length) {
-          await this.allProductDocumentModel.updateMany(
-            { _id: { $in: existingDocs.map((d) => d._id) } },
-            {
-              $set: {
-                isDeleted: true,
-                deletedAt: now,
-                deletedBy: vendorObjectId,
-                updatedDate: now,
-              },
-            },
-            { session },
-          );
-        }
-      }
+      // Do not soft-delete existing all_product_documents rows here. Vendors add
+      // documents incrementally; removing every PROCESS_MANUFACTURING doc on each
+      // upload left only the latest batch visible and deleted prior files from disk.
 
-      // Create process manufacturing data
       const processManufacturingData = {
         vendorId: vendorObjectId,
         urnNo: createProcessManufacturingDto.urnNo,
@@ -197,9 +183,9 @@ export class ProcessManufacturingService implements OnModuleInit {
         )
         .exec();
 
-      // Insert uploaded documents into all_product_documents (master table)
       const docsToInsert = [];
-      for (let i = 0; i < energyConservationFilePaths.length; i++) {
+      for (let i = 0; i < energyConservationUploads.length; i++) {
+        const uploaded = energyConservationUploads[i];
         const productDocumentId = await this.sequenceHelper.getProductDocumentId();
         docsToInsert.push({
           productDocumentId,
@@ -209,14 +195,16 @@ export class ProcessManufacturingService implements OnModuleInit {
           documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
           documentFormSubsection: 'energy_conservation_supporting_documents',
           formPrimaryId: savedProcessManufacturing.processManufacturingId,
-          documentName: path.basename(energyConservationFilePaths[i]),
+          documentName:
+            conservationDisplayName || uploaded.fileName,
           documentOriginalName: energyConservationFiles[i].originalname,
-          documentLink: energyConservationFilePaths[i],
+          documentLink: uploaded.fileUrl,
           createdDate: now,
           updatedDate: now,
         });
       }
-      for (let i = 0; i < energyConsumptionFilePaths.length; i++) {
+      for (let i = 0; i < energyConsumptionUploads.length; i++) {
+        const uploaded = energyConsumptionUploads[i];
         const productDocumentId = await this.sequenceHelper.getProductDocumentId();
         docsToInsert.push({
           productDocumentId,
@@ -226,9 +214,9 @@ export class ProcessManufacturingService implements OnModuleInit {
           documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
           documentFormSubsection: 'energy_consumption_documents',
           formPrimaryId: savedProcessManufacturing.processManufacturingId,
-          documentName: path.basename(energyConsumptionFilePaths[i]),
+          documentName: consumptionDisplayName || uploaded.fileName,
           documentOriginalName: energyConsumptionFiles[i].originalname,
-          documentLink: energyConsumptionFilePaths[i],
+          documentLink: uploaded.fileUrl,
           createdDate: now,
           updatedDate: now,
         });
@@ -240,35 +228,17 @@ export class ProcessManufacturingService implements OnModuleInit {
       await session.commitTransaction();
       session.endSession();
 
-      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
-        const normalizedPath = String(fileLink).replace(/\\/g, '/');
-        if (normalizedPath && fs.existsSync(normalizedPath)) {
-          try {
-            fs.unlinkSync(normalizedPath);
-          } catch {
-            // Ignore post-commit cleanup issues
-          }
-        }
-      }
-
       return savedProcessManufacturing;
     } catch (error: any) {
       await session.abortTransaction();
       session.endSession();
 
-      // Clean up uploaded files if transaction fails (files were moved to URN folder)
-      try {
-        for (const fullPath of createdFileFullPaths) {
-          if (fs.existsSync(fullPath)) {
-            fs.unlinkSync(fullPath);
-          }
-        }
-      } catch (cleanupError: any) {
+      await this.rollbackCreatedUploads(createdUploads).catch((cleanupError) => {
         console.error(
           '[Process Manufacturing] File cleanup error:',
           cleanupError,
         );
-      }
+      });
 
       console.error('[Process Manufacturing] Create error:', error);
       throw new InternalServerErrorException(

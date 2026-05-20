@@ -4,6 +4,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { AuthService } from '../auth.service';
+import { AuthSessionInvalidationService } from '../auth-session-invalidation.service';
 
 function tokenFromAccessTokenHeader(req: Request): string | null {
   const h = req.headers['x-access-token'];
@@ -21,6 +22,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private configService: ConfigService,
     private readonly authService: AuthService,
+    private readonly sessionInvalidation: AuthSessionInvalidationService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
@@ -38,6 +40,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (await this.authService.isTokenRevoked(payload?.jti)) {
       throw new UnauthorizedException('Token has been revoked');
     }
+
+    await this.sessionInvalidation.assertSessionActive({
+      iat: payload?.iat,
+      userId: payload?.userId,
+      manufacturerId: payload?.manufacturerId,
+      vendorId: payload?.vendorId,
+    });
 
     const role = payload.role || payload.type;
     if (!payload.userId || !role) {

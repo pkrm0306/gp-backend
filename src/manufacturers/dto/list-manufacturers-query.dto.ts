@@ -129,12 +129,14 @@ export class ListManufacturersQueryDto {
   status?: Array<'active' | 'inactive'>;
 
   @ApiPropertyOptional({
-    enum: ['createdAt', 'manufacturerName'],
+    enum: ['createdAt', 'updatedAt', 'manufacturerName'],
     default: 'createdAt',
+    description:
+      'Sort field. Admin verified/unverified lists use `updatedAt`; legacy clients may use `createdAt`.',
   })
   @IsOptional()
-  @IsEnum(['createdAt', 'manufacturerName'])
-  sortBy?: 'createdAt' | 'manufacturerName' = 'createdAt';
+  @IsIn(['createdAt', 'updatedAt', 'manufacturerName'])
+  sortBy?: 'createdAt' | 'updatedAt' | 'manufacturerName' = 'createdAt';
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'desc' })
   @IsOptional()

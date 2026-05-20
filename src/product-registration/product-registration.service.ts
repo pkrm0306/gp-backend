@@ -39,6 +39,8 @@ import { StatesService } from '../states/states.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { formatPaymentRecords } from '../payments/payment-proposal.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { enrichUrnDetailRowsWithSharedProcessData } from './utils/consolidate-urn-detail-items.util';
+import { urnLookupMatchExpr } from './utils/urn-lookup-match.util';
 import { RedisService } from '../common/redis/redis.service';
 import { UrnSiteVisitsService } from '../urn-site-visits/urn-site-visits.service';
 
@@ -1606,6 +1608,10 @@ export class ProductRegistrationService {
     const setDoc: Record<string, unknown> = { updatedDate: now };
     if (dto.updateStatusType === 'urn_status') {
       setDoc.urnStatus = dto.updateStatusTo;
+      // Resend to vendor (5): keep product active so vendor forms stay editable with prior data.
+      if (dto.updateStatusTo === 5) {
+        setDoc.productStatus = 1;
+      }
     } else {
       setDoc.productStatus = dto.updateStatusTo;
     }
@@ -2361,9 +2367,7 @@ export class ProductRegistrationService {
           pipeline: [
             {
               $match: {
-                $expr: {
-                  $eq: ['$urnNo', '$$urnNo'],
-                },
+                $expr: urnLookupMatchExpr(),
               },
             },
           ],

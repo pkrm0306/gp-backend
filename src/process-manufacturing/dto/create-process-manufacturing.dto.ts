@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsNumber,
   IsIn,
+  Min,
 } from 'class-validator';
 
 export class CreateProcessManufacturingDto {
@@ -50,6 +51,7 @@ export class CreateProcessManufacturingDto {
     required: false,
   })
   @IsNumber()
+  @Min(0)
   @IsOptional()
   totalEnergyConsumption?: number;
 

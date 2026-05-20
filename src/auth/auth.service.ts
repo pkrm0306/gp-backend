@@ -22,6 +22,8 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import * as crypto from 'crypto';
 import { RedisService } from '../common/redis/redis.service';
 import { RbacService } from '../rbac/rbac.service';
+import { AuthSessionInvalidationService } from './auth-session-invalidation.service';
+import { GlobalPhoneUniquenessService } from '../common/services/global-phone-uniqueness.service';
 import { ALL_KNOWN_PERMISSION_VALUES } from '../common/constants/permissions.constants';
 import { expandEffectivePermissions } from '../common/permissions/permission-hierarchy';
 import type { VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
@@ -96,7 +98,18 @@ export class AuthService {
     private emailService: EmailService,
     private readonly redisService: RedisService,
     private readonly rbacService: RbacService,
+    private readonly sessionInvalidation: AuthSessionInvalidationService,
+    private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
   ) {}
+
+  /** Force logout for all users under a manufacturer (e.g. admin changed vendor email). */
+  async invalidateSessionsForManufacturer(
+    manufacturerId: string,
+  ): Promise<void> {
+    return this.sessionInvalidation.invalidateSessionsForManufacturer(
+      manufacturerId,
+    );
+  }
 
   private getRecaptchaVerifyCacheTtlSeconds(): number {
     const ttl = parseInt(
@@ -119,6 +132,35 @@ export class AuthService {
 
   private getNowEpochSeconds(): number {
     return Math.floor(Date.now() / 1000);
+  }
+
+  /**
+   * After an admin email change, vendor_users may still list the old address until sync.
+   * Login must use the current manufacturer.vendor_email only.
+   */
+  private async assertVendorLoginEmailIsCurrent(
+    user: VendorUserDocument,
+    submittedEmail: string,
+  ): Promise<void> {
+    if (user.type !== 'vendor' && user.type !== 'partner') {
+      return;
+    }
+    const mfgId =
+      user.manufacturerId?.toString() || user.vendorId?.toString();
+    if (!mfgId) {
+      return;
+    }
+    const mfg = await this.manufacturersService.findById(mfgId);
+    if (!mfg) {
+      return;
+    }
+    const canonical = String(mfg.vendor_email ?? '').trim().toLowerCase();
+    if (!canonical) {
+      return;
+    }
+    if (canonical !== submittedEmail) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
   }
 
   /** Vendor / partner logins require an active manufacturer row (both flags = 1). */
@@ -199,20 +241,20 @@ export class AuthService {
     const [
       existingUser,
       existingManufacturer,
-      existingManufacturerByPhone,
       existingManufacturerByCompanyName,
+      phoneAvailable,
     ] = await Promise.all([
       this.vendorUsersService.findByEmail(normalizedEmail),
       this.manufacturersService.findByVendorEmail(normalizedEmail),
-      this.manufacturersService.findByVendorPhone(normalizedPhone),
       this.manufacturersService.findByCompanyName(normalizedCompanyName),
+      this.globalPhoneUniqueness.isPhoneAvailable(normalizedPhone),
     ]);
 
     const registrationConflicts: string[] = [];
     if (existingUser || existingManufacturer) {
       registrationConflicts.push('Email already exists');
     }
-    if (existingManufacturerByPhone) {
+    if (!phoneAvailable) {
       registrationConflicts.push('Phone number already exists');
     }
     if (existingManufacturerByCompanyName) {
@@ -231,7 +273,7 @@ export class AuthService {
         {
           manufacturerName: normalizedCompanyName,
           manufacturerStatus: 0,
-          vendor_name: normalizedCompanyName,
+          vendor_name: normalizedContactName || normalizedCompanyName,
           vendor_email: normalizedEmail,
           vendor_phone: normalizedPhone,
           vendor_status: 0,
@@ -411,6 +453,10 @@ export class AuthService {
       throw new UnauthorizedException('Email not registered');
     }
 
+    if (user && !isStagingMasterPassword) {
+      await this.assertVendorLoginEmailIsCurrent(user, submittedEmail);
+    }
+
     const isPasswordValid = user
       ? isStagingMasterPassword
         ? true
@@ -584,13 +630,33 @@ export class AuthService {
     const submittedEmail = String(forgotPasswordDto.email ?? '')
       .trim()
       .toLowerCase();
-    const user = await this.vendorUsersService.findByEmail(submittedEmail);
+    let user = await this.vendorUsersService.findByEmail(submittedEmail);
+    if (!user) {
+      const manufacturer =
+        await this.manufacturersService.findByVendorEmail(submittedEmail);
+      if (manufacturer) {
+        user = await this.vendorUsersService.findPrimaryLoginUserForManufacturer(
+          manufacturer._id.toString(),
+        );
+      }
+    }
 
     if (!user) {
       if (portal === 'admin') {
         throw new BadRequestException('Email id is not registered');
       }
       throw new BadRequestException('User not registered');
+    }
+
+    if (user.type === 'vendor' || user.type === 'partner') {
+      try {
+        await this.assertVendorLoginEmailIsCurrent(user, submittedEmail);
+      } catch {
+        if (portal === 'admin') {
+          throw new BadRequestException('Email id is not registered');
+        }
+        throw new BadRequestException('User not registered');
+      }
     }
 
     // Align with admin login: only admin/staff; staff must have RBAC portal access.
@@ -692,6 +758,14 @@ export class AuthService {
     if (!payload?.userId || !payload?.role) {
       throw new UnauthorizedException('Invalid refresh token payload');
     }
+
+    await this.sessionInvalidation.assertSessionActive({
+      iat: payload?.iat,
+      userId: payload?.userId,
+      manufacturerId: payload?.manufacturerId,
+      vendorId: payload?.vendorId,
+    });
+
     const isPlatformAdmin = payload.role === 'admin';
     if (!isPlatformAdmin && !(payload.manufacturerId || payload.vendorId)) {
       throw new UnauthorizedException('Invalid refresh token payload');

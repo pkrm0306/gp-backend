@@ -80,7 +80,9 @@ export class ManufacturersController {
   })
   async findAll(@Query() query: ListManufacturersQueryDto) {
     if (query.id) {
-      const manufacturer = await this.manufacturersService.findById(query.id);
+      const manufacturer = await this.manufacturersService.findByIdForApi(
+        query.id,
+      );
       if (!manufacturer) {
         throw new NotFoundException('Manufacturer not found');
       }
@@ -90,6 +92,64 @@ export class ManufacturersController {
       };
     }
     return this.manufacturersService.findAllPaginated(query);
+  }
+
+  @Get(':id/check-vendor-email')
+  @ApiOperation({
+    summary: 'Check vendor email uniqueness',
+    description:
+      'Returns whether **email** is available for this manufacturer (not used by another manufacturer or portal user).',
+  })
+  @ApiParam({ name: 'id', description: 'Manufacturer MongoDB id' })
+  @ApiResponse({ status: 200, description: '{ available: boolean }' })
+  async checkVendorEmail(
+    @Param('id') id: string,
+    @Query('email') email: string,
+  ) {
+    const trimmed = String(email ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('Query parameter "email" is required');
+    }
+    const available =
+      await this.manufacturersService.isVendorEmailAvailableForManufacturer(
+        id,
+        trimmed,
+      );
+    return {
+      message: available
+        ? 'Email is available'
+        : 'This email id is already registered',
+      data: { available },
+    };
+  }
+
+  @Get(':id/check-vendor-phone')
+  @ApiOperation({
+    summary: 'Check vendor phone uniqueness',
+    description:
+      'Returns whether **phone** is available globally (not used by another manufacturer, admin, vendor, staff, or partner).',
+  })
+  @ApiParam({ name: 'id', description: 'Manufacturer MongoDB id' })
+  @ApiResponse({ status: 200, description: '{ available: boolean }' })
+  async checkVendorPhone(
+    @Param('id') id: string,
+    @Query('phone') phone: string,
+  ) {
+    const trimmed = String(phone ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('Query parameter "phone" is required');
+    }
+    const available =
+      await this.manufacturersService.isVendorPhoneAvailableForManufacturer(
+        id,
+        trimmed,
+      );
+    return {
+      message: available
+        ? 'Phone number is available'
+        : 'Phone number already exists',
+      data: { available },
+    };
   }
 
   @Put(':id')
@@ -157,11 +217,13 @@ export class ManufacturersController {
     const imagePath = image
       ? (await uploadFile(image, 'manufacturers')).fileUrl
       : undefined;
-    const data = await this.manufacturersService.updateManufacturerDetails(
+    await this.manufacturersService.updateManufacturerDetails(
       id,
       dto,
       imagePath,
     );
+    const data =
+      (await this.manufacturersService.findByIdForApi(id)) ?? null;
     return { message: 'Manufacturer updated successfully', data };
   }
 

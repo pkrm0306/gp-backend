@@ -81,7 +81,11 @@ function resolveAction(method: string, pathNorm: string): string {
   if (m === 'PATCH' && /^\/payments\/[^/]+$/i.test(pathNorm)) {
     return AUDIT_ACTION.PAYMENT_UPDATED;
   }
-  if (m === 'PATCH' && pathNorm.endsWith('/api/admin/products/urn-status')) {
+  if (
+    m === 'PATCH' &&
+    (pathNorm.endsWith('/api/admin/products/urn-status') ||
+      /\/admin\/urn\/[^/]+\/status$/i.test(pathNorm))
+  ) {
     return AUDIT_ACTION.PRODUCT_URN_STATUS_UPDATED;
   }
   if (m === 'POST' && pathNorm.endsWith('/activity-log')) {
@@ -109,12 +113,15 @@ function inferResource(
   }
   if (
     method.toUpperCase() === 'PATCH' &&
-    pathNorm.endsWith('/api/admin/products/urn-status')
+    (pathNorm.endsWith('/api/admin/products/urn-status') ||
+      /\/admin\/urn\/([^/]+)\/status$/i.test(pathNorm))
   ) {
+    const urnFromPath = pathNorm.match(/\/admin\/urn\/([^/]+)\/status$/i)?.[1];
     const urn =
-      typeof (req.body as { urnNo?: string })?.urnNo === 'string'
+      (urnFromPath ? decodeURIComponent(urnFromPath) : undefined) ||
+      (typeof (req.body as { urnNo?: string })?.urnNo === 'string'
         ? (req.body as { urnNo: string }).urnNo.trim()
-        : undefined;
+        : undefined);
     if (urn) {
       return { type: 'Product', id: urn, urn_no: urn };
     }

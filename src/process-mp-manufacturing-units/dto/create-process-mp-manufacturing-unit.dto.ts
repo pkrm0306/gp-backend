@@ -1,11 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  IsString,
-  IsNotEmpty,
-  IsOptional,
-  IsNumber,
-  IsIn,
-} from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsString, IsNotEmpty, IsOptional, IsIn, IsNumber } from 'class-validator';
+import { IsOptionalNonNegativeNumber } from '../validators/optional-non-negative-number.decorator';
+import { normalizeRenewableEnergyUtilization } from '../utils/normalize-renewable-energy.util';
 
 export class CreateProcessMpManufacturingUnitDto {
   @ApiProperty({
@@ -23,14 +20,30 @@ export class CreateProcessMpManufacturingUnitDto {
   unitName?: string;
 
   @ApiProperty({
-    description: "Renewable energy utilization ('yes' or 'no')",
+    description:
+      "Renewable energy utilization (stored as yes/no; accepts 1/0, 2=no, booleans, off/none, etc.)",
     required: false,
     enum: ['yes', 'no'],
   })
-  @IsString()
+  @Transform(({ value }) => normalizeRenewableEnergyUtilization(value))
   @IsOptional()
   @IsIn(['yes', 'no'])
   renewableEnergyUtilization?: 'yes' | 'no';
+
+  @ApiProperty({
+    description:
+      'Existing unit id — when provided, updates that row instead of creating',
+    required: false,
+    example: 15,
+  })
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  })
+  @IsNumber()
+  @IsOptional()
+  processMpManufacturingUnitId?: number;
 
   @ApiProperty({ required: false }) @IsString() @IsOptional() ecdYear1?: string;
   @ApiProperty({ required: false }) @IsString() @IsOptional() ecdYear2?: string;
@@ -41,16 +54,13 @@ export class CreateProcessMpManufacturingUnitDto {
   ecdProductionUnit?: string;
 
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdProductionYear1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdProductionYear2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdProductionYear3?: number;
 
   @ApiProperty({ required: false })
@@ -58,16 +68,13 @@ export class CreateProcessMpManufacturingUnitDto {
   @IsOptional()
   ecdElectricUnit?: string;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdElectricYear1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdElectricYear2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdElectricYear3?: number;
 
   @ApiProperty({ required: false })
@@ -84,77 +91,59 @@ export class CreateProcessMpManufacturingUnitDto {
   ecdThermalUnitFuel3?: string;
 
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel1Year1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel1Year2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel1Year3?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel2Year1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel2Year2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel2Year3?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel3Year1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel3Year2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdThermalFuel3Year3?: number;
 
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel1Year1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel1Year2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel1Year3?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel2Year1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel2Year2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel2Year3?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel3Year1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel3Year2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   ecdCalorificFuel3Year3?: number;
 
   @ApiProperty({ required: false })
@@ -175,57 +164,51 @@ export class CreateProcessMpManufacturingUnitDto {
   wcdWaterUnit?: string;
 
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   wcdProductionYear1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   wcdProductionYear2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   wcdProductionYear3?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   wcdWaterYear1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   wcdWaterYear2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   wcdWaterYear3?: number;
 
   @ApiProperty({ required: false }) @IsString() @IsOptional() reYear?: string;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   reSolarPhotovoltaic?: number;
-  @ApiProperty({ required: false }) @IsNumber() @IsOptional() reWind?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
+  reWind?: number;
+  @ApiProperty({ required: false })
+  @IsOptionalNonNegativeNumber()
   reBiomass?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   reSolarThermal?: number;
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
   reOthersUnit?: string;
-  @ApiProperty({ required: false }) @IsNumber() @IsOptional() reOthers?: number;
+  @ApiProperty({ required: false })
+  @IsOptionalNonNegativeNumber()
+  reOthers?: number;
 
   @ApiProperty({
     required: false,
     description: 'Offsite renewable power (0/1 or count)',
     example: 0,
   })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   offsiteRenewablePower?: number;
 
   @ApiProperty({
@@ -234,18 +217,16 @@ export class CreateProcessMpManufacturingUnitDto {
     enum: [0, 1],
     example: 0,
   })
-  @IsNumber()
   @IsOptional()
+  @IsNumber()
   @IsIn([0, 1])
   processMpManufacturingUnitStatus?: number;
 
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   calculateBulkSec?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   calculateBulkSwc?: number;
 
   @ApiProperty({ required: false }) @IsString() @IsOptional() calculateBulkSecMultipled?: string;

@@ -1,6 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsArray,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
+import { normalizeResourceStandardTypeList } from '../utils/parse-resource-standard-types.util';
 
 export class ListStandardsQueryDto {
   @ApiPropertyOptional({ default: 1 })
@@ -10,12 +19,15 @@ export class ListStandardsQueryDto {
   @Min(1)
   page?: number = 1;
 
-  @ApiPropertyOptional({ default: 10 })
+  @ApiPropertyOptional({
+    default: 10,
+    description: 'Page size (max 500). For CSV export use GET /api/standards/export instead.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(500)
   limit?: number = 10;
 
   @ApiPropertyOptional({
@@ -25,10 +37,24 @@ export class ListStandardsQueryDto {
   @IsString()
   search?: string;
 
-  @ApiPropertyOptional({ example: 'Energy' })
+  @ApiPropertyOptional({
+    example: 'Environmental',
+    description: 'Single standard type (legacy). Merged with resource_standard_types.',
+  })
   @IsOptional()
   @IsString()
   resource_standard_type?: string;
+
+  @ApiPropertyOptional({
+    example: 'Environmental,Energy',
+    description:
+      'Multi-select standard types. Comma-separated string, JSON array string, or repeated query param (resource_standard_types or resource_standard_types[]).',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeResourceStandardTypeList(value))
+  @IsArray()
+  @IsString({ each: true })
+  resource_standard_types?: string[];
 
   @ApiPropertyOptional({
     example: 1,

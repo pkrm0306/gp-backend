@@ -16,7 +16,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const request = ctx.getRequest();
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let message = 'Internal server error';
+    let message: string | string[] = 'Internal server error';
     let error = 'Internal Server Error';
 
     if (exception instanceof HttpException) {
@@ -26,9 +26,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       if (typeof exceptionResponse === 'string') {
         message = exceptionResponse;
       } else if (typeof exceptionResponse === 'object') {
-        const responseObj = exceptionResponse as any;
-        message = responseObj.message || message;
-        error = responseObj.error || error;
+        const responseObj = exceptionResponse as Record<string, unknown>;
+        message = (responseObj.message as string | string[]) || message;
+        error = (responseObj.error as string) || error;
       }
     } else if (exception instanceof SyntaxError) {
       status = HttpStatus.BAD_REQUEST;
@@ -88,6 +88,26 @@ export class HttpExceptionFilter implements ExceptionFilter {
       message,
       error,
     };
+
+    if (exception instanceof HttpException) {
+      const body = exception.getResponse();
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        const extra = body as Record<string, unknown>;
+        if (extra.code && typeof extra.code === 'string') {
+          apiResponse.code = extra.code;
+        }
+        if (
+          extra.fieldErrors &&
+          typeof extra.fieldErrors === 'object' &&
+          !Array.isArray(extra.fieldErrors)
+        ) {
+          apiResponse.fieldErrors = extra.fieldErrors as Record<string, string>;
+        }
+        if (Array.isArray(extra.issues)) {
+          apiResponse.issues = extra.issues as ApiResponse['issues'];
+        }
+      }
+    }
 
     response.status(status).json(apiResponse);
   }
