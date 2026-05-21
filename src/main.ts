@@ -103,6 +103,7 @@ const ALLOWED_CORS_ORIGINS = [
   'https://vendor-five-zeta.vercel.app',
   'https://cursor-greenpro-demo1.vercel.app',
   'https://greenpro-demo1.vercel.app',
+  'https://demo1-portal-two.vercel.app',
 ];
 
 function buildCorsOrigins(): string[] {
