@@ -105,6 +105,7 @@ const ALLOWED_CORS_ORIGINS = [
   'https://greenpro-demo1.vercel.app',
   'https://demo1-portal-two.vercel.app',
   'https://admin-zwyy08rcy-prabhas-projects-0ea6425f.vercel.app',
+  'https://demo1-admin-oq6t6e647-prabhas-projects-0ea6425f.vercel.app',
 ];
 
 function buildCorsOrigins(): string[] {
