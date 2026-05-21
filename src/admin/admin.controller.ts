@@ -69,7 +69,7 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { validate } from 'class-validator';
 import { plainToClass } from 'class-transformer';
-import type { Request } from 'express';
+import type { Express, Request } from 'express';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
 import {
@@ -79,10 +79,21 @@ import {
 import { GALLERY_TYPES, GalleryType } from '../events/schemas/event.schema';
 import { uploadFile } from '../utils/upload-file.util';
 import {
+  createBannerDiskMulterOptions,
+  pickBannerImageFile,
+} from './utils/banner-image-upload.util';
+import {
   DashboardActivityQueryDto,
   DashboardMetricsQueryDto,
   DashboardRecentProductsQueryDto,
 } from './dto/dashboard-metrics-query.dto';
+
+const bannerImageMultipartFields = [
+  { name: 'image', maxCount: 1 },
+  { name: 'bannerImage', maxCount: 1 },
+  { name: 'banner_image', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+];
 
 const storage = diskStorage({
   destination: join(process.cwd(), 'uploads', 'manufacturers'),
@@ -554,6 +565,11 @@ export class AdminController {
               sequenceNumber: { type: 'number' },
               description: { type: 'string' },
               is_active: { type: 'boolean' },
+              imageSource: {
+                type: 'string',
+                enum: ['binary_upload', 'manual_url'],
+                description: 'binary_upload = multipart file; manual_url = image URL/path',
+              },
             },
           },
         },
@@ -576,44 +592,33 @@ export class AdminController {
   @Permissions(PERMISSIONS.BANNERS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
-    FileInterceptor('image', {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'banners'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `banner-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        cb(
-          null,
-          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
-        );
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+    FileFieldsInterceptor(bannerImageMultipartFields, createBannerDiskMulterOptions()),
   )
   @ApiOperation({
     summary: 'Create banner',
     description:
-      'Creates a banner for the logged-in vendor.',
+      'Creates a banner for the logged-in vendor. Image file may be sent as multipart field **image**, **bannerImage**, **banner_image**, or **file** (first non-empty file wins). Otherwise send **imageUrl** (http(s) or `/uploads/...`). Server stores **imageSource**: `binary_upload` vs `manual_url` from that choice.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        image: { type: 'string', format: 'binary' },
+        image: { type: 'string', format: 'binary', description: 'Primary file field name' },
+        bannerImage: { type: 'string', format: 'binary' },
+        banner_image: { type: 'string', format: 'binary' },
+        file: { type: 'string', format: 'binary' },
         imageUrl: { type: 'string', description: 'Optional if image uploaded' },
         title: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
         sequenceNumber: { type: 'number', example: 1 },
         description: { type: 'string' },
+        imageSource: {
+          type: 'string',
+          enum: ['binary_upload', 'manual_url'],
+          description:
+            'Optional; server derives from whether multipart `image` or `imageUrl` was used.',
+        },
       },
     },
   })
@@ -625,11 +630,12 @@ export class AdminController {
   async createBanner(
     @CurrentUser() user: { vendorId: string },
     @Body() body: any,
-    @UploadedFile() file?: any,
+    @UploadedFiles() files?: Record<string, Express.Multer.File[]>,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
+    const uploadedFile = pickBannerImageFile(files);
     const dto = plainToClass(CreateBannerDto, {
       imageUrl: body.imageUrl,
       title: body.title ?? body.heading,
@@ -637,6 +643,7 @@ export class AdminController {
       sequenceNumber:
         body.sequenceNumber ?? body.sequence ?? body.displayOrder ?? body.order,
       description: body.description ?? body.bannerDescription,
+      imageSource: body.imageSource,
     });
     const errors = await validate(dto);
     if (errors.length > 0) {
@@ -646,14 +653,18 @@ export class AdminController {
       throw new BadRequestException(errorMessages.join(', '));
     }
 
-    const imageUrl = file ? (await uploadFile(file, 'banners')).fileUrl : dto.imageUrl;
+    const imageUrl = uploadedFile
+      ? (await uploadFile(uploadedFile, 'banners')).fileUrl
+      : dto.imageUrl;
     if (!imageUrl) {
       throw new BadRequestException('Banner image is required');
     }
-    const data = await this.adminService.createBanner(user.vendorId, {
-      ...dto,
-      imageUrl,
-    });
+    const resolvedImageSource = uploadedFile ? 'binary_upload' : 'manual_url';
+    const data = await this.adminService.createBanner(
+      user.vendorId,
+      { ...dto, imageUrl },
+      resolvedImageSource,
+    );
     return { message: 'Banner created successfully', data };
   }
 
@@ -661,32 +672,12 @@ export class AdminController {
   @Permissions(PERMISSIONS.BANNERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
-    FileInterceptor('image', {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'banners'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `banner-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        cb(
-          null,
-          typeof file.mimetype === 'string' && file.mimetype.startsWith('image/'),
-        );
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+    FileFieldsInterceptor(bannerImageMultipartFields, createBannerDiskMulterOptions()),
   )
   @ApiOperation({
     summary: 'Edit banner',
     description:
-      'Edits a banner for the logged-in vendor.',
+      'Edits a banner for the logged-in vendor. New image: multipart **image**, **bannerImage**, **banner_image**, or **file**. New URL: **imageUrl**. Server sets **imageSource** only when the image changes.',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id (from banner list)' })
   @ApiConsumes('multipart/form-data')
@@ -696,11 +687,20 @@ export class AdminController {
       required: ['title', 'sequenceNumber', 'description'],
       properties: {
         image: { type: 'string', format: 'binary' },
+        bannerImage: { type: 'string', format: 'binary' },
+        banner_image: { type: 'string', format: 'binary' },
+        file: { type: 'string', format: 'binary' },
         imageUrl: { type: 'string', description: 'Optional if image uploaded' },
         title: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
         sequenceNumber: { type: 'number', example: 1 },
         description: { type: 'string' },
+        imageSource: {
+          type: 'string',
+          enum: ['binary_upload', 'manual_url'],
+          description:
+            'Optional; when `image` or `imageUrl` is sent, server updates stored image source.',
+        },
       },
     },
   })
@@ -711,11 +711,13 @@ export class AdminController {
     @CurrentUser() user: { vendorId: string },
     @Param('id') id: string,
     @Body() body: any,
-    @UploadedFile() file?: any,
+    @UploadedFiles() files?: Record<string, Express.Multer.File[]>,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
+
+    const uploadedFile = pickBannerImageFile(files);
 
     const dto = plainToClass(EditBannerDto, {
       imageUrl: body.imageUrl,
@@ -723,6 +725,7 @@ export class AdminController {
       status: body.status,
       sequenceNumber: body.sequenceNumber,
       description: body.description,
+      imageSource: body.imageSource,
     });
 
     const errors = await validate(dto, { skipMissingProperties: true });
@@ -734,7 +737,7 @@ export class AdminController {
     }
 
     if (
-      !file &&
+      !uploadedFile &&
       dto.imageUrl === undefined &&
       dto.title === undefined &&
       dto.status === undefined &&
@@ -744,9 +747,22 @@ export class AdminController {
       throw new BadRequestException('Provide at least one field to update');
     }
 
-    const imageUrl = file ? (await uploadFile(file, 'banners')).fileUrl : dto.imageUrl;
+    const imageUrl = uploadedFile
+      ? (await uploadFile(uploadedFile, 'banners')).fileUrl
+      : dto.imageUrl;
+    let imageSource: 'binary_upload' | 'manual_url' | undefined;
+    if (uploadedFile) {
+      imageSource = 'binary_upload';
+    } else if (
+      dto.imageUrl !== undefined &&
+      dto.imageUrl !== null &&
+      String(dto.imageUrl).trim() !== ''
+    ) {
+      imageSource = 'manual_url';
+    }
     const data = await this.adminService.updateBanner(user.vendorId, id, {
       ...(imageUrl ? { imageUrl } : {}),
+      ...(imageSource !== undefined ? { imageSource } : {}),
       ...(dto.title !== undefined ? { title: dto.title } : {}),
       ...(dto.status !== undefined ? { status: dto.status } : {}),
       ...(dto.sequenceNumber !== undefined
@@ -2073,7 +2089,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get banner by id',
     description:
-      'Returns one banner for the **View Banner** modal: **title**, **sequenceNumber**, and **banner description**. Vendor-scoped.',
+      'Returns one banner for the **View Banner** modal: **imageUrl**, **imageSource** (`binary_upload` vs `manual_url`), **title**, **sequenceNumber**, and **description**. Vendor-scoped.',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id' })
   @ApiResponse({ status: 200, description: 'Banner details' })

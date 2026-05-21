@@ -756,6 +756,13 @@ export class AdminService {
     return normalized;
   }
 
+  /** How the banner image was stored: multipart upload vs URL/path in form. */
+  private resolveBannerImageSource(
+    stored: unknown,
+  ): 'binary_upload' | 'manual_url' {
+    return stored === 'binary_upload' ? 'binary_upload' : 'manual_url';
+  }
+
   private resolveArticleImagePath(imageUrl?: string | null): string {
     const raw = String(imageUrl ?? '').trim();
     if (!raw) return '';
@@ -2298,7 +2305,11 @@ export class AdminService {
     return enriched;
   }
 
-  async createBanner(vendorId: string, dto: CreateBannerDto) {
+  async createBanner(
+    vendorId: string,
+    dto: CreateBannerDto & { imageUrl: string },
+    resolvedImageSource: 'binary_upload' | 'manual_url',
+  ) {
     let vendorObjectId: Types.ObjectId;
     try {
       vendorObjectId = new Types.ObjectId(vendorId);
@@ -2335,6 +2346,7 @@ export class AdminService {
       vendorId: vendorObjectId,
       banner_image: this.resolveBannerImagePath(dto.imageUrl),
       imageUrl: String(dto.imageUrl ?? '').trim(),
+      imageSource: resolvedImageSource,
       heading: dto.title.trim(),
       sequenceNumber,
       description: dto.description.trim(),
@@ -2350,6 +2362,7 @@ export class AdminService {
     return {
       id: String(o._id),
       imageUrl: this.resolveBannerImageForResponse(o.imageUrl, o.banner_image),
+      imageSource: this.resolveBannerImageSource((o as any).imageSource),
       heading: o.heading,
       title: o.heading,
       sequenceNumber: Number(o.sequenceNumber ?? 1),
@@ -2377,7 +2390,9 @@ export class AdminService {
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl heading sequenceNumber description status')
+      .select(
+        'banner_image imageUrl imageSource heading sequenceNumber description status',
+      )
       .lean()
       .exec();
 
@@ -2387,6 +2402,7 @@ export class AdminService {
         s_no: index + 1,
         id: String(b._id),
         imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
+        imageSource: this.resolveBannerImageSource((b as any).imageSource),
         heading: b.heading,
         title: b.heading,
         sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -2408,7 +2424,9 @@ export class AdminService {
         ],
       })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
-      .select('banner_image imageUrl heading sequenceNumber description status')
+      .select(
+        'banner_image imageUrl imageSource heading sequenceNumber description status',
+      )
       .lean()
       .exec();
 
@@ -2416,6 +2434,7 @@ export class AdminService {
       s_no: index + 1,
       id: String(b._id),
       imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
+      imageSource: this.resolveBannerImageSource((b as any).imageSource),
       heading: b.heading,
       title: b.heading,
       sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -2441,7 +2460,9 @@ export class AdminService {
         _id: bannerObjectId,
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
-      .select('banner_image imageUrl heading sequenceNumber description status')
+      .select(
+        'banner_image imageUrl imageSource heading sequenceNumber description status',
+      )
       .lean()
       .exec();
 
@@ -2452,6 +2473,7 @@ export class AdminService {
     return {
       id: String(b._id),
       imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
+      imageSource: this.resolveBannerImageSource((b as any).imageSource),
       heading: b.heading,
       title: b.heading,
       sequenceNumber: Number((b as any).sequenceNumber ?? 1),
@@ -2466,6 +2488,7 @@ export class AdminService {
     bannerId: string,
     payload: {
       imageUrl?: string;
+      imageSource?: 'binary_upload' | 'manual_url';
       title?: string;
       sequenceNumber?: number;
       description?: string;
@@ -2531,6 +2554,9 @@ export class AdminService {
       $set.imageUrl = payload.imageUrl.trim();
       $set.banner_image = this.resolveBannerImagePath(payload.imageUrl);
     }
+    if (payload.imageSource !== undefined) {
+      $set.imageSource = payload.imageSource;
+    }
 
     const updated = await this.bannerModel
       .findByIdAndUpdate(bannerObjectId, { $set }, { new: true })
@@ -2548,6 +2574,7 @@ export class AdminService {
         (updated as any).imageUrl,
         (updated as any).banner_image,
       ),
+      imageSource: this.resolveBannerImageSource((updated as any).imageSource),
       heading: updated.heading,
       title: updated.heading,
       sequenceNumber: Number((updated as any).sequenceNumber ?? 1),

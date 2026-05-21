@@ -31,7 +31,7 @@ import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { AdminService } from '../admin/admin.service';
 import { ProductRegistrationService } from '../product-registration/product-registration.service';
-import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
+import { PublicCertifiedProductsListDto } from './dto/public-certified-products-list.dto';
 import { PublicCategoryManufacturersDto } from './dto/public-category-manufacturers.dto';
 import { PublicManufacturerCategoriesDto } from './dto/public-manufacturer-categories.dto';
 import { EmailService } from '../common/services/email.service';
@@ -299,7 +299,7 @@ export class WebsiteService {
   }
 
   /** Public certified products (Redis; key from request body). */
-  async getPublicCertifiedProducts(dto: AdminListProductsDto) {
+  async getPublicCertifiedProducts(dto: PublicCertifiedProductsListDto) {
     const cacheKey = this.redisService.buildKey(
       'website',
       'public',

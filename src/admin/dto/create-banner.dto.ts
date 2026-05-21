@@ -62,6 +62,11 @@ export class CreateBannerDto {
   @IsString()
   status?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'How the image was supplied (informational). On create, the server sets **binary_upload** when multipart `image` is sent, otherwise **manual_url** from `imageUrl`.',
+    enum: ['binary_upload', 'manual_url'],
+  })
   @IsOptional()
   @IsString()
   @IsIn(['binary_upload', 'manual_url'])

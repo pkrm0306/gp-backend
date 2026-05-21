@@ -8,6 +8,7 @@ import {
   Allow,
   ValidateIf,
   IsNotEmpty,
+  IsMongoId,
 } from 'class-validator';
 
 /** Swagger/clients often send "" or null for unchanged optional fields — treat as omitted. */
@@ -59,6 +60,16 @@ export class UpdateProductDto {
   @IsString()
   @IsNotEmpty()
   eoiNo: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Category MongoDB ObjectId (admin EOI edit). Omit or send empty to leave unchanged.',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @ValidateIf((_, value) => value !== undefined)
+  @IsMongoId()
+  categoryId?: string;
 
   @ApiPropertyOptional({ description: 'Product image URL' })
   @Transform(({ value }) => omitEmptyOptional(value))

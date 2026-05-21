@@ -19,7 +19,7 @@ import { ContactSubmitDto } from './dto/contact-submit.dto';
 import { CategoriesService } from '../categories/categories.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { ListCategoriesQueryDto } from '../categories/dto/list-categories-query.dto';
-import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
+import { PublicCertifiedProductsListDto } from './dto/public-certified-products-list.dto';
 import { PublicCategoryManufacturersDto } from './dto/public-category-manufacturers.dto';
 import { PublicManufacturerCategoriesDto } from './dto/public-manufacturer-categories.dto';
 import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
@@ -107,12 +107,12 @@ export class WebsiteController {
     description:
       'Public API for certified products only. Accepts the same filters as POST /api/admin/products/list, with status forced to [2].',
   })
-  @ApiBody({ type: AdminListProductsDto })
+  @ApiBody({ type: PublicCertifiedProductsListDto })
   @ApiResponse({
     status: 200,
     description: 'Certified products retrieved successfully',
   })
-  async listPublicCertifiedProducts(@Body() dto: AdminListProductsDto) {
+  async listPublicCertifiedProducts(@Body() dto: PublicCertifiedProductsListDto) {
     return this.websiteService.getPublicCertifiedProducts(dto);
   }
 

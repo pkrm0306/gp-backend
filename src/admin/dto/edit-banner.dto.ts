@@ -67,6 +67,11 @@ export class EditBannerDto {
   @IsString()
   status?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'How the image was supplied (informational). On edit, the server sets **binary_upload** when a new `image` file is sent, or **manual_url** when `imageUrl` is provided.',
+    enum: ['binary_upload', 'manual_url'],
+  })
   @IsOptional()
   @IsString()
   @IsIn(['binary_upload', 'manual_url'])

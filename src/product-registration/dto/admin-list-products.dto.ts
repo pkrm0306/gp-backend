@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  Allow,
   IsArray,
   IsIn,
   IsInt,
@@ -39,9 +40,18 @@ function normalizeOptionalNumber(value: unknown): number | undefined {
 }
 
 export class AdminListProductsDto {
+  /**
+   * UI-only field some admin clients send; not used by the API.
+   * Whitelisted so ValidationPipe `forbidNonWhitelisted` does not reject the body.
+   */
+  @Allow()
+  urnStatusLabels?: unknown;
+
   @ApiPropertyOptional({
     description:
-      'Lifecycle status filter. Supports single value or array. Example: [0,1]',
+      'EOI productStatus filter (single value or array). **Admin list / export:** only **0 = Pending** and **1 = Submitted** are allowed. ' +
+      'Omitted or empty → server applies `[0, 1]` for `POST /api/admin/products/list` and `POST /api/admin/products/export` only. ' +
+      '(Other callers may pass different filters via service code.)',
     type: [Number],
     example: [0, 1],
   })
@@ -49,6 +59,7 @@ export class AdminListProductsDto {
   @Transform(({ value }) => normalizeNumberArray(value))
   @IsArray()
   @IsInt({ each: true })
+  @IsIn([0, 1], { each: true })
   status?: number[];
 
   @ApiPropertyOptional({

@@ -18,6 +18,10 @@ import {
   ProductPlantDocument,
 } from './schemas/product-plant.schema';
 import {
+  Category,
+  CategoryDocument,
+} from '../categories/schemas/category.schema';
+import {
   RegisterProductDto,
   BulkRegisterProductDto,
 } from './dto/register-product.dto';
@@ -75,6 +79,8 @@ export class ProductRegistrationService {
     private productModel: Model<ProductDocument>,
     @InjectModel(ProductPlant.name)
     private productPlantModel: Model<ProductPlantDocument>,
+    @InjectModel(Category.name)
+    private categoryModel: Model<CategoryDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private eoiNumberService: EoiNumberService,
@@ -192,13 +198,11 @@ export class ProductRegistrationService {
     const urnNo =
       e?.urnNo !== undefined && e?.urnNo !== null ? String(e.urnNo) : undefined;
 
-    const mapProductStatusLabel = (
-      code: number,
-    ): 'Pending' | 'Approved' | 'Rejected' => {
-      if (code === 3) return 'Rejected';
-      if (code === 2) return 'Approved';
-      return 'Pending';
-    };
+    const productStatus = Number(e?.productStatus ?? 0);
+    const statusLabel = this.mapVendorProductStatusLabel(
+      productStatus,
+      e?.validtillDate as Date | string | null | undefined,
+    );
 
     return {
       _id: mongoId,
@@ -211,7 +215,7 @@ export class ProductRegistrationService {
       productDetails: e?.productDetails ?? null,
       categoryName: e?.categoryName,
       manufacturerName: e?.manufacturerName,
-      productStatus: e?.productStatus,
+      productStatus,
       createdDate: e?.createdDate,
       plantDetails: plants.map((p) => ({
         _id: p?._id,
@@ -226,7 +230,7 @@ export class ProductRegistrationService {
         plantStatus: p?.plantStatus,
         createdDate: p?.createdDate,
       })),
-      statusLabel: mapProductStatusLabel(Number(e?.productStatus ?? 0)),
+      statusLabel,
     };
   }
 
@@ -270,6 +274,8 @@ export class ProductRegistrationService {
     manufacturer_id: Types.ObjectId | string;
     manufacturerName?: string;
     manufacturer_name?: string;
+    vendor_email?: string;
+    vendor_phone?: string;
     total_urns: number;
     total_eois: number;
     urns: Array<{
@@ -289,11 +295,17 @@ export class ProductRegistrationService {
     const manufacturerName = String(
       m.manufacturerName ?? m.manufacturer_name ?? '',
     ).trim();
+    const email = String(m.vendor_email ?? '').trim();
+    const phone = String(m.vendor_phone ?? '').trim();
     return {
       manufacturer_id: String(m.manufacturer_id),
       manufacturerName,
       /** @deprecated Use manufacturerName — kept for older admin clients */
       manufacturer_name: manufacturerName,
+      vendor_email: email,
+      vendor_phone: phone,
+      email,
+      phone,
       total_urns: m.total_urns ?? 0,
       total_eois: m.total_eois ?? 0,
       urns,
@@ -520,16 +532,26 @@ export class ProductRegistrationService {
       if (item?.manufacturer_id && Array.isArray(item.urns)) {
         const groupManufacturerName =
           item.manufacturerName ?? item.manufacturer_name ?? '';
+        const groupVendorEmail = String(item.vendor_email ?? item.email ?? '').trim();
+        const groupVendorPhone = String(item.vendor_phone ?? item.phone ?? '').trim();
         for (const u of item.urns) {
           urnRows.push({
             ...u,
             manufacturerName: groupManufacturerName,
+            vendor_email: groupVendorEmail,
+            vendor_phone: groupVendorPhone,
+            email: groupVendorEmail,
+            phone: groupVendorPhone,
           });
           for (const e of u.eois ?? []) {
             eoiRows.push({
               ...e,
               urnNo: e.urnNo ?? u.urnNo ?? u.urn_number,
               manufacturerName: e.manufacturerName ?? groupManufacturerName,
+              vendor_email: groupVendorEmail,
+              vendor_phone: groupVendorPhone,
+              email: groupVendorEmail,
+              phone: groupVendorPhone,
             });
           }
         }
@@ -1519,6 +1541,23 @@ export class ProductRegistrationService {
         updateProductDto.renewedDate,
       );
 
+      if (updateProductDto.categoryId !== undefined) {
+        const categoryObjectId = this.toObjectId(
+          updateProductDto.categoryId,
+          'categoryId',
+        );
+        const categoryExists = await this.categoryModel
+          .findById(categoryObjectId)
+          .session(session)
+          .select('_id')
+          .lean()
+          .exec();
+        if (!categoryExists) {
+          throw new BadRequestException('Category not found');
+        }
+        updateData.categoryId = categoryObjectId;
+      }
+
       // Update product
       const updatedProduct = await this.productModel
         .findByIdAndUpdate(productObjectId, updateData, { new: true, session })
@@ -1526,6 +1565,20 @@ export class ProductRegistrationService {
 
       if (!updatedProduct) {
         throw new NotFoundException('Product not found after update');
+      }
+
+      if (updateProductDto.categoryId !== undefined) {
+        await this.productPlantModel
+          .updateMany(
+            matchActiveProductPlants({ productId: productObjectId }),
+            {
+              $set: {
+                categoryId: updateData.categoryId,
+              },
+            },
+            { session },
+          )
+          .exec();
       }
 
       await session.commitTransaction();
@@ -4009,6 +4062,42 @@ export class ProductRegistrationService {
                 ...matchActiveProductPlants(),
               },
             },
+            {
+              $lookup: {
+                from: 'states',
+                localField: 'stateId',
+                foreignField: '_id',
+                as: 'state',
+              },
+            },
+            {
+              $unwind: {
+                path: '$state',
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+            {
+              $project: {
+                _id: 1,
+                productPlantId: 1,
+                productId: 1,
+                eoiNo: 1,
+                urnNo: 1,
+                plantName: 1,
+                plantLocation: 1,
+                countryId: 1,
+                stateId: 1,
+                city: 1,
+                plantStatus: 1,
+                createdDate: 1,
+                stateName: {
+                  $ifNull: [
+                    '$state.stateName',
+                    { $ifNull: ['$state.state_name', '$state.name'] },
+                  ],
+                },
+              },
+            },
           ],
           as: 'plants',
         },
@@ -4140,10 +4229,17 @@ export class ProductRegistrationService {
           eoiNo: 1,
           productName: 1,
           productDetails: 1,
+          validtillDate: 1,
           categoryName: {
             $ifNull: ['$category.categoryName', '$category.category_name'],
           },
           manufacturerName: '$manufacturer.manufacturerName',
+          vendor_email: {
+            $ifNull: ['$manufacturer.vendor_email', ''],
+          },
+          vendor_phone: {
+            $ifNull: ['$manufacturer.vendor_phone', ''],
+          },
           plants: 1,
         },
       },
@@ -4152,6 +4248,8 @@ export class ProductRegistrationService {
           _id: { manufacturerId: '$manufacturerId', urnNo: '$urnNo' },
           manufacturer_id: { $first: '$manufacturerId' },
           manufacturerName: { $first: '$manufacturerName' },
+          vendor_email: { $first: '$vendor_email' },
+          vendor_phone: { $first: '$vendor_phone' },
           urnNo: { $first: '$urnNo' },
           createdDate: { $min: '$createdDate' },
           totalEoi: { $sum: 1 },
@@ -4165,6 +4263,7 @@ export class ProductRegistrationService {
               productName: '$productName',
               productDetails: '$productDetails',
               productStatus: '$productStatus',
+              validtillDate: '$validtillDate',
               createdDate: '$createdDate',
               categoryName: '$categoryName',
               manufacturerName: '$manufacturerName',
@@ -4178,6 +4277,8 @@ export class ProductRegistrationService {
           _id: '$_id.manufacturerId',
           manufacturer_id: { $first: '$manufacturer_id' },
           manufacturerName: { $first: '$manufacturerName' },
+          vendor_email: { $first: '$vendor_email' },
+          vendor_phone: { $first: '$vendor_phone' },
           total_urns: { $sum: 1 },
           total_eois: { $sum: '$totalEoi' },
           sortKey: { $max: '$createdDate' },
@@ -4208,6 +4309,8 @@ export class ProductRegistrationService {
                   _id: 0,
                   manufacturer_id: 1,
                   manufacturerName: 1,
+                  vendor_email: 1,
+                  vendor_phone: 1,
                   total_urns: 1,
                   total_eois: 1,
                   urns: 1,
@@ -4430,6 +4533,7 @@ export class ProductRegistrationService {
                 productName: 1,
                 productDetails: 1,
                 productStatus: 1,
+                validtillDate: 1,
                 createdDate: 1,
                 categoryName: {
                   $ifNull: [
@@ -4707,6 +4811,8 @@ export class ProductRegistrationService {
     const ws = workbook.addWorksheet('Products Export');
     ws.columns = [
       { header: 'Manufacturer Name', key: 'manufacturerName', width: 30 },
+      { header: 'Email', key: 'email', width: 28 },
+      { header: 'Phone', key: 'phone', width: 18 },
       { header: 'URN No', key: 'urnNo', width: 28 },
       { header: 'EOI No', key: 'eoiNo', width: 24 },
       { header: 'Product Name', key: 'productName', width: 32 },
@@ -4856,6 +4962,8 @@ export class ProductRegistrationService {
         };
         const header = [
           'Manufacturer Name',
+          'Email',
+          'Phone',
           'URN',
           'EOI Number',
           'Product ID',
@@ -4870,6 +4978,8 @@ export class ProductRegistrationService {
           lines.push(
             [
               row.manufacturerName,
+              row.email ?? row.vendor_email ?? '',
+              row.phone ?? row.vendor_phone ?? '',
               row.urnNo,
               row.eoiNo,
               row.productId,
@@ -4892,6 +5002,8 @@ export class ProductRegistrationService {
           ws1.columns = [
             { header: 'S.No', key: 'sno', width: 8 },
             { header: 'Manufacturer Name', key: 'manufacturerName', width: 28 },
+            { header: 'Email', key: 'email', width: 28 },
+            { header: 'Phone', key: 'phone', width: 18 },
             { header: 'URN', key: 'urnNo', width: 28 },
             { header: 'Created Date', key: 'createdDate', width: 24 },
             { header: 'URN Status', key: 'urnStatus', width: 16 },
@@ -4901,6 +5013,8 @@ export class ProductRegistrationService {
             ws1.addRow({
               sno: idx + 1,
               manufacturerName: u.manufacturerName ?? '',
+              email: u.email ?? u.vendor_email ?? '',
+              phone: u.phone ?? u.vendor_phone ?? '',
               urnNo: u.urnNo ?? u.urn_number,
               createdDate: u.createdDate ?? u.created_at,
               urnStatus: u.urnStatus ?? u.status,
@@ -4913,6 +5027,8 @@ export class ProductRegistrationService {
           const ws2 = workbook.addWorksheet('EOI Details');
           ws2.columns = [
             { header: 'Manufacturer Name', key: 'manufacturerName', width: 28 },
+            { header: 'Email', key: 'email', width: 28 },
+            { header: 'Phone', key: 'phone', width: 18 },
             { header: 'URN', key: 'urnNo', width: 28 },
             { header: 'EOI Number', key: 'eoiNo', width: 20 },
             { header: 'Product ID', key: 'productId', width: 12 },

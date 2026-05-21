@@ -24,12 +24,14 @@ import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { UrnSiteVisitsModule } from '../urn-site-visits/urn-site-visits.module';
+import { Category, CategorySchema } from '../categories/schemas/category.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       { name: ProductPlant.name, schema: ProductPlantSchema },
+      { name: Category.name, schema: CategorySchema },
     ]),
     PassportModule,
     AuthModule,

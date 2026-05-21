@@ -28,6 +28,20 @@ import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
 
+/**
+ * Admin EOI queue endpoints: only Pending (0) + Submitted (1).
+ * If the client omits `status` or sends an empty array, default to both.
+ */
+function resolveAdminListProductsBody(
+  dto: AdminListProductsDto,
+): AdminListProductsDto {
+  const hasStatus = Array.isArray(dto.status) && dto.status.length > 0;
+  return {
+    ...dto,
+    status: hasStatus ? dto.status : [0, 1],
+  };
+}
+
 @ApiTags('Admin Products')
 @Controller('api/admin/products')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -102,13 +116,16 @@ export class AdminProductsController {
     description:
       'Default **groupBy: manufacturer** paginates manufacturer groups. Each item includes `manufacturer_id`, `manufacturer_name`, `total_urns`, `total_eois`, and nested `urns[]` with `eois[]`. ' +
       'Search matches manufacturer name, URN, EOI, or product name; when a manufacturer qualifies, nested URNs/EOIs reflect filters (Option A). ' +
-      'Legacy **groupBy: urn** returns flat URN groups. `total` counts top-level groups (manufacturers or URNs).',
+      'Legacy **groupBy: urn** returns flat URN groups. `total` counts top-level groups (manufacturers or URNs). ' +
+      '**Status:** only **0 (Pending)** and **1 (Submitted)**; omit `status` to list both. Extra body keys like `urnStatusLabels` are ignored.',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Products listed successfully' })
   @HttpCode(HttpStatus.OK)
   async list(@Body() dto: AdminListProductsDto) {
-    return this.productRegistrationService.adminListProducts(dto);
+    return this.productRegistrationService.adminListProducts(
+      resolveAdminListProductsBody(dto),
+    );
   }
 
   @Post('export')
@@ -124,7 +141,9 @@ export class AdminProductsController {
   @ApiResponse({ status: 200, description: 'Excel file download' })
   async export(@Body() dto: AdminListProductsDto): Promise<StreamableFile> {
     const file =
-      await this.productRegistrationService.exportAdminProductsXlsx(dto);
+      await this.productRegistrationService.exportAdminProductsXlsx(
+        resolveAdminListProductsBody(dto),
+      );
     return new StreamableFile(file.buffer, {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       disposition: `attachment; filename="${file.fileName}"`,

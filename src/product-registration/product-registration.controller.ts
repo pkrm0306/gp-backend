@@ -341,6 +341,7 @@ export class ProductRegistrationController {
     description:
       'Updates the existing product row only — URN and EOI are never regenerated. ' +
       'Requires productName, productDetails, urnNo, and eoiNo; urnNo/eoiNo must match the product for {id} (400 on mismatch). ' +
+      'Optional categoryId updates the product and all active product plants for that product. ' +
       'Other fields remain optional.',
   })
   @ApiParam({
