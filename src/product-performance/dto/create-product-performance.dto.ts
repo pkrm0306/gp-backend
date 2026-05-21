@@ -5,7 +5,11 @@ import {
   IsOptional,
   IsNumber,
   IsIn,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { TestReportEntryDto } from './test-report-entry.dto';
 
 export class CreateProductPerformanceDto {
   @ApiProperty({
@@ -16,34 +20,6 @@ export class CreateProductPerformanceDto {
   @IsString()
   @IsNotEmpty()
   urnNo: string;
-
-  @ApiProperty({
-    description: 'EOI number',
-    example: 'EOI-20260305124230',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  eoiNo?: string;
-
-  @ApiProperty({
-    description: 'Product name',
-    example: 'Solar Panel 100W',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  productName?: string;
-
-  @ApiProperty({
-    description:
-      'Test report display name (required if uploading testReportFile). This is NOT the stored filename; it is a user-provided label.',
-    example: 'IEC Test Report - March 2026',
-    required: false,
-  })
-  @IsString()
-  @IsOptional()
-  testReportFileName?: string;
 
   @ApiProperty({
     description: 'Renewal type (0=Not Renewed, >0 = Renewed no of times)',
@@ -65,4 +41,46 @@ export class CreateProductPerformanceDto {
   @IsNumber()
   @IsIn([0, 1])
   productPerformanceStatus?: number;
+
+  @ApiProperty({
+    description:
+      'JSON array — **replaces** all test report rows for this URN (send the full list on every save). Format: [{"productName":"...","testReportFileName":"..."}]',
+    type: [TestReportEntryDto],
+    required: false,
+    example: [
+      {
+        productName: 'Solar Panel 100W',
+        testReportFileName: 'IEC Test Report - March 2026',
+      },
+    ],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TestReportEntryDto)
+  testReports?: TestReportEntryDto[];
+
+  /** @deprecated Use testReports[].testReportFileName — kept for single-file legacy submits */
+  @ApiProperty({
+    description: 'Legacy single test report display name when uploading one file',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  testReportFileName?: string;
+
+  /** @deprecated Use testReports[].productName */
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  productName?: string;
+
+  @ApiProperty({
+    description:
+      'JSON array of productDocumentId (or _id) values to keep for product performance documents. Omit to keep all on text-only save; [] to clear unlisted.',
+    required: false,
+    example: '[201,202,203]',
+  })
+  @IsOptional()
+  existingDocumentIds?: string[];
 }

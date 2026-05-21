@@ -39,6 +39,10 @@ export class AllProductDocument {
   @Prop({ required: true })
   documentLink: string; // stored path/url
 
+  /** Innovation supporting docs: `tech` | `process` | `social` (optional on other forms). */
+  @Prop({ required: false, enum: ['tech', 'process', 'social'] })
+  documentTag?: 'tech' | 'process' | 'social';
+
   @Prop({ required: true })
   createdDate: Date;
 

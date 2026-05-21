@@ -199,7 +199,14 @@ export class ProductsController {
                     type: 'number',
                     description: '0=No File Available, 1=File Available',
                   },
-                  statergies: { type: 'string' },
+                  statergies: {
+                    type: 'string',
+                    description: 'Product design strategies text (DB field name)',
+                  },
+                  strategies: {
+                    type: 'string',
+                    description: 'Same value as statergies (alias for clients)',
+                  },
                   productDesignSupportingDocument: {
                     type: 'number',
                     description: '0=No File Available, 1=File Available',

@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
+  NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
@@ -15,8 +16,10 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { CreateProcessInnovationDto } from './dto/create-process-innovation.dto';
+import { PatchInnovationDocumentTagDto } from './dto/patch-innovation-document-tag.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import type { InnovationDocumentTag } from './utils/innovation-document-tag.util';
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
@@ -78,12 +81,12 @@ export class ProcessInnovationService implements OnModuleInit {
     createProcessInnovationDto: CreateProcessInnovationDto,
     vendorId: string,
     innovationImplementationDocumentsFiles?: Express.Multer.File[],
+    innovationDocumentTags?: InnovationDocumentTag[],
   ): Promise<ProcessInnovationDocument> {
     const session = await this.connection.startSession();
     session.startTransaction();
 
     let createdFileFullPaths: string[] = [];
-    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
@@ -112,10 +115,10 @@ export class ProcessInnovationService implements OnModuleInit {
         for (const innovationImplementationDocumentsFile of uploadedInnovationFiles) {
           const innovationImplementationDocumentsFilePath =
             await this.saveFileToUrnFolder(
-            innovationImplementationDocumentsFile,
-            createProcessInnovationDto.urnNo,
-            'innovation_implementation',
-          );
+              innovationImplementationDocumentsFile,
+              createProcessInnovationDto.urnNo,
+              'innovation_implementation',
+            );
           innovationImplementationDocumentsFilePaths.push(
             innovationImplementationDocumentsFilePath,
           );
@@ -126,32 +129,8 @@ export class ProcessInnovationService implements OnModuleInit {
         innovationImplementationDocuments = 1;
       }
 
-      if (uploadedInnovationFiles.length > 0) {
-        const existingDocs = await this.allProductDocumentModel
-          .find({
-            urnNo: createProcessInnovationDto.urnNo,
-            documentForm: DocumentSectionKey.PROCESS_INNOVATION,
-            isDeleted: { $ne: true },
-          })
-          .session(session);
-        oldFileLinksToDeleteAfterCommit = existingDocs
-          .map((d) => d.documentLink)
-          .filter(Boolean);
-        if (existingDocs.length) {
-          await this.allProductDocumentModel.updateMany(
-            { _id: { $in: existingDocs.map((d) => d._id) } },
-            {
-              $set: {
-                isDeleted: true,
-                deletedAt: now,
-                deletedBy: vendorObjectId,
-                updatedDate: now,
-              },
-            },
-            { session },
-          );
-        }
-      }
+      // Append-only: do not soft-delete existing PROCESS_INNOVATION documents
+      // (same behaviour as process-manufacturing / process-waste-management).
 
       // Create process innovation data
       const processInnovationData = {
@@ -177,6 +156,7 @@ export class ProcessInnovationService implements OnModuleInit {
 
       // Insert uploaded document into all_product_documents (master table)
       if (innovationImplementationDocumentsFilePaths.length > 0) {
+        const tags = innovationDocumentTags ?? [];
         const docsToInsert = [];
         for (let i = 0; i < innovationImplementationDocumentsFilePaths.length; i++) {
           const productDocumentId =
@@ -194,6 +174,7 @@ export class ProcessInnovationService implements OnModuleInit {
             ),
             documentOriginalName: uploadedInnovationFiles[i].originalname,
             documentLink: innovationImplementationDocumentsFilePaths[i],
+            documentTag: tags[i] ?? 'tech',
             createdDate: now,
             updatedDate: now,
           });
@@ -203,17 +184,6 @@ export class ProcessInnovationService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
-
-      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
-        const normalizedPath = String(fileLink).replace(/\\/g, '/');
-        if (normalizedPath && fs.existsSync(normalizedPath)) {
-          try {
-            fs.unlinkSync(normalizedPath);
-          } catch {
-            // Ignore post-commit cleanup issues
-          }
-        }
-      }
 
       return savedProcessInnovation;
     } catch (error: any) {
@@ -268,5 +238,37 @@ export class ProcessInnovationService implements OnModuleInit {
         error.message || 'Failed to create process innovation record.',
       );
     }
+  }
+
+  async patchInnovationDocumentTag(
+    dto: PatchInnovationDocumentTagDto,
+    vendorId: string,
+  ) {
+    const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+    const urnNo = dto.urnNo.trim();
+    const updated = await this.allProductDocumentModel
+      .findOneAndUpdate(
+        {
+          productDocumentId: dto.productDocumentId,
+          urnNo,
+          vendorId: vendorObjectId,
+          documentForm: DocumentSectionKey.PROCESS_INNOVATION,
+          isDeleted: { $ne: true },
+        },
+        {
+          $set: {
+            documentTag: dto.documentTag,
+            updatedDate: new Date(),
+          },
+        },
+        { new: true },
+      )
+      .exec();
+    if (!updated) {
+      throw new NotFoundException(
+        `Innovation document ${dto.productDocumentId} not found for URN ${urnNo}`,
+      );
+    }
+    return updated;
   }
 }

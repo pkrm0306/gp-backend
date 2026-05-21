@@ -14,23 +14,24 @@ export class ProductPerformance {
   @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })
   vendorId: Types.ObjectId;
 
-  @Prop({ required: false, default: '' })
-  eoiNo?: string;
-
-  @Prop({ required: false, default: '' })
-  productName?: string;
-
-  @Prop({ required: false, default: '' })
-  testReportFileName?: string;
-
-  @Prop({ required: true, default: '' })
-  normalizedProductName: string;
-
-  @Prop({ required: true, default: '' })
-  normalizedTestReportFileName: string;
-
   @Prop({ required: true, type: Number, default: 0 })
-  testReportFiles: number; // 0=No File Available, 1=File Available
+  /** Count of uploaded test report files (0 = none on last save without files). */
+  testReportFiles: number;
+
+  @Prop({
+    type: [
+      {
+        productName: { type: String },
+        testReportFileName: { type: String },
+      },
+    ],
+    default: [],
+    required: false,
+  })
+  testReports?: Array<{
+    productName?: string;
+    testReportFileName: string;
+  }>;
 
   @Prop({ required: true, type: Number, default: 0 })
   renewalType: number; // 0=Not Renewed, >0 = Renewed no of times
@@ -48,6 +49,6 @@ export class ProductPerformance {
 export const ProductPerformanceSchema =
   SchemaFactory.createForClass(ProductPerformance);
 ProductPerformanceSchema.index(
-  { urnNo: 1, normalizedProductName: 1, normalizedTestReportFileName: 1 },
-  { unique: true, name: 'uniq_product_performance_urn_normalized_pair' },
+  { urnNo: 1, vendorId: 1 },
+  { unique: true, name: 'uniq_product_performance_per_vendor_urn' },
 );

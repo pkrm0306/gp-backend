@@ -390,6 +390,92 @@ export class ProductRegistrationService {
     };
   }
 
+  private formatProductPerformanceForUrnDetails(
+    raw: Record<string, unknown> | null | undefined,
+    testReportRows: Array<Record<string, unknown>> = [],
+  ): Record<string, unknown> | null {
+    if (!raw && testReportRows.length === 0) {
+      return null;
+    }
+
+    const testReports =
+      testReportRows.length > 0
+        ? testReportRows.map((r) => ({
+            _id: r._id,
+            productPerformanceTestReportId: r.productPerformanceTestReportId,
+            productName: String(r.productName ?? ''),
+            testReportFileName: String(r.testReportFileName ?? ''),
+          }))
+        : Array.isArray(raw?.testReports)
+          ? (raw.testReports as Array<Record<string, unknown>>).map((row) => ({
+              _id: row._id,
+              productPerformanceTestReportId: row.productPerformanceTestReportId,
+              productName: String(row.productName ?? ''),
+              testReportFileName: String(row.testReportFileName ?? ''),
+            }))
+          : [];
+
+    return {
+      _id: raw?._id,
+      processProductPerformanceId: raw?.processProductPerformanceId,
+      urnNo: raw?.urnNo,
+      vendorId: raw?.vendorId,
+      testReportFiles: raw?.testReportFiles ?? 0,
+      testReports,
+      renewalType: raw?.renewalType ?? 0,
+      productPerformanceStatus: raw?.productPerformanceStatus ?? 0,
+      createdDate: raw?.createdDate,
+      updatedDate: raw?.updatedDate,
+    };
+  }
+
+  private formatProductDesignForUrnDetails(
+    raw: Record<string, unknown> | null | undefined,
+    measureRows: Array<Record<string, unknown>> = [],
+  ): Record<string, unknown> | null {
+    if (!raw && measureRows.length === 0) {
+      return null;
+    }
+
+    const strategiesText = String(
+      raw?.statergies ?? raw?.strategies ?? '',
+    ).trim();
+
+    const measuresAndBenefits =
+      measureRows.length > 0
+        ? measureRows.map((m) => ({
+            _id: m._id,
+            productDesignMeasureId: m.productDesignMeasureId,
+            measuresImplemented: String(m.measures ?? m.measuresImplemented ?? ''),
+            benefitsAchieved: String(m.benefits ?? m.benefitsAchieved ?? ''),
+          }))
+        : Array.isArray(raw?.measuresAndBenefits)
+          ? (raw.measuresAndBenefits as Array<Record<string, unknown>>).map(
+              (row) => ({
+                measuresImplemented: String(row.measuresImplemented ?? ''),
+                benefitsAchieved: String(row.benefitsAchieved ?? ''),
+                _id: row._id,
+                productDesignMeasureId: row.productDesignMeasureId,
+              }),
+            )
+          : [];
+
+    return {
+      _id: raw?._id,
+      productDesignId: raw?.productDesignId,
+      urnNo: raw?.urnNo,
+      ecoVisionUpload: raw?.ecoVisionUpload ?? 0,
+      statergies: strategiesText,
+      strategies: strategiesText,
+      productDesignSupportingDocument:
+        raw?.productDesignSupportingDocument ?? 0,
+      productDesignStatus: raw?.productDesignStatus ?? 0,
+      measuresAndBenefits,
+      createdDate: raw?.createdDate,
+      updatedDate: raw?.updatedDate,
+    };
+  }
+
   private formatProductDetailsVendor(
     manufacturer: Record<string, unknown> | null | undefined,
     vendorFromCollection: Record<string, unknown> | null | undefined,
@@ -2128,34 +2214,42 @@ export class ProductRegistrationService {
         },
       });
 
-      // Stage 7: $lookup - Join with process_product_design collection (by urn_no)
+      // Stage 7: $lookup - Join with process_product_design (urn + vendor — one row per vendor)
       pipeline.push({
         $lookup: {
           from: 'process_product_design',
-          let: { urnNo: '$urnNo' },
+          let: { urnNo: '$urnNo', vendorId: '$vendorId' },
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $eq: ['$urnNo', '$$urnNo'],
+                  $and: [
+                    { $eq: ['$urnNo', '$$urnNo'] },
+                    { $eq: ['$vendorId', '$$vendorId'] },
+                  ],
                 },
               },
             },
+            { $sort: { updatedDate: -1, createdDate: -1 } },
+            { $limit: 1 },
           ],
           as: 'product_design',
         },
       });
 
-      // Stage 8: $lookup - Join with process_pd_measures collection (by urn_no)
+      // Stage 8: $lookup - Join with process_pd_measures (urn + vendor)
       pipeline.push({
         $lookup: {
           from: 'process_pd_measures',
-          let: { urnNo: '$urnNo' },
+          let: { urnNo: '$urnNo', vendorId: '$vendorId' },
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $eq: ['$urnNo', '$$urnNo'],
+                  $and: [
+                    { $eq: ['$urnNo', '$$urnNo'] },
+                    { $eq: ['$vendorId', '$$vendorId'] },
+                  ],
                 },
               },
             },
@@ -2165,17 +2259,18 @@ export class ProductRegistrationService {
         },
       });
 
-      // Stage 9: $lookup - Join with all_product_documents (only product_design docs for this urn)
+      // Stage 9: $lookup - Join with all_product_documents (product_design, urn + vendor)
       pipeline.push({
         $lookup: {
           from: 'all_product_documents',
-          let: { urnNo: '$urnNo' },
+          let: { urnNo: '$urnNo', vendorId: '$vendorId' },
           pipeline: [
             {
               $match: {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
+                    { $eq: ['$vendorId', '$$vendorId'] },
                     { $eq: ['$documentForm', DocumentSectionKey.PRODUCT_DESIGN] },
                     { $ne: ['$isDeleted', true] },
                   ],
@@ -2188,35 +2283,63 @@ export class ProductRegistrationService {
         },
       });
 
-      // Stage 10: $lookup - Join with process_product_performance collection (by urn_no)
+      // Stage 10: $lookup - Join with process_product_performance (urn + vendor)
       pipeline.push({
         $lookup: {
           from: 'process_product_performance',
-          let: { urnNo: '$urnNo' },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $eq: ['$urnNo', '$$urnNo'],
-                },
-              },
-            },
-          ],
-          as: 'product_performance',
-        },
-      });
-
-      // Stage 11: $lookup - Join with all_product_documents (only product_performance docs for this urn)
-      pipeline.push({
-        $lookup: {
-          from: 'all_product_documents',
-          let: { urnNo: '$urnNo' },
+          let: { urnNo: '$urnNo', vendorId: '$vendorId' },
           pipeline: [
             {
               $match: {
                 $expr: {
                   $and: [
                     { $eq: ['$urnNo', '$$urnNo'] },
+                    { $eq: ['$vendorId', '$$vendorId'] },
+                  ],
+                },
+              },
+            },
+            { $sort: { updatedDate: -1, createdDate: -1 } },
+            { $limit: 1 },
+          ],
+          as: 'product_performance',
+        },
+      });
+
+      // Stage 10b: $lookup - Join with process_pp_test_reports (urn + vendor)
+      pipeline.push({
+        $lookup: {
+          from: 'process_pp_test_reports',
+          let: { urnNo: '$urnNo', vendorId: '$vendorId' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$urnNo', '$$urnNo'] },
+                    { $eq: ['$vendorId', '$$vendorId'] },
+                  ],
+                },
+              },
+            },
+            { $sort: { productPerformanceTestReportId: 1 } },
+          ],
+          as: 'product_performance_test_reports',
+        },
+      });
+
+      // Stage 11: $lookup - Join with all_product_documents (product_performance, urn + vendor)
+      pipeline.push({
+        $lookup: {
+          from: 'all_product_documents',
+          let: { urnNo: '$urnNo', vendorId: '$vendorId' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$urnNo', '$$urnNo'] },
+                    { $eq: ['$vendorId', '$$vendorId'] },
                     { $eq: ['$documentForm', DocumentSectionKey.PRODUCT_PERFORMANCE] },
                     { $ne: ['$isDeleted', true] },
                   ],
@@ -2686,6 +2809,7 @@ export class ProductRegistrationService {
               else: null,
             },
           },
+          product_performance_test_reports: 1,
           product_performance_documents: 1,
           raw_materials_hazardous_products: 1,
           raw_materials_hazardous_products_documents: 1,
@@ -2962,22 +3086,6 @@ export class ProductRegistrationService {
         payments: formatPaymentRecords(
           (product.payments as Record<string, unknown>[]) || [],
         ),
-        product_design: product.product_design
-          ? {
-              _id: product.product_design._id,
-              productDesignId: product.product_design.productDesignId,
-              urnNo: product.product_design.urnNo,
-              ecoVisionUpload: product.product_design.ecoVisionUpload,
-              statergies: product.product_design.statergies,
-              productDesignSupportingDocument:
-                product.product_design.productDesignSupportingDocument,
-              productDesignStatus: product.product_design.productDesignStatus,
-              measuresAndBenefits:
-                product.product_design.measuresAndBenefits || [],
-              createdDate: product.product_design.createdDate,
-              updatedDate: product.product_design.updatedDate,
-            }
-          : null,
         product_design_measures: (product.product_design_measures || []).map(
           (m) => ({
             _id: m._id,
@@ -2986,9 +3094,17 @@ export class ProductRegistrationService {
             productDesignId: m.productDesignId,
             measures: m.measures,
             benefits: m.benefits,
+            measuresImplemented: m.measures,
+            benefitsAchieved: m.benefits,
             createdDate: m.createdDate,
             updatedDate: m.updatedDate,
           }),
+        ),
+        product_design: this.formatProductDesignForUrnDetails(
+          product.product_design as Record<string, unknown> | null,
+          (product.product_design_measures || []) as Array<
+            Record<string, unknown>
+          >,
         ),
         product_design_documents: (product.product_design_documents || []).map(
           (d) => ({
@@ -3007,25 +3123,23 @@ export class ProductRegistrationService {
             updatedDate: d.updatedDate,
           }),
         ),
-        product_performance: product.product_performance
-          ? {
-              _id: product.product_performance._id,
-              processProductPerformanceId:
-                product.product_performance.processProductPerformanceId,
-              urnNo: product.product_performance.urnNo,
-              vendorId: product.product_performance.vendorId,
-              eoiNo: product.product_performance.eoiNo,
-              productName: product.product_performance.productName,
-              testReportFileName:
-                product.product_performance.testReportFileName,
-              testReportFiles: product.product_performance.testReportFiles,
-              renewalType: product.product_performance.renewalType,
-              productPerformanceStatus:
-                product.product_performance.productPerformanceStatus,
-              createdDate: product.product_performance.createdDate,
-              updatedDate: product.product_performance.updatedDate,
-            }
-          : null,
+        product_performance_test_reports: (
+          product.product_performance_test_reports || []
+        ).map((r) => ({
+          _id: r._id,
+          productPerformanceTestReportId: r.productPerformanceTestReportId,
+          urnNo: r.urnNo,
+          productName: r.productName,
+          testReportFileName: r.testReportFileName,
+          createdDate: r.createdDate,
+          updatedDate: r.updatedDate,
+        })),
+        product_performance: this.formatProductPerformanceForUrnDetails(
+          product.product_performance as Record<string, unknown> | null,
+          (product.product_performance_test_reports || []) as Array<
+            Record<string, unknown>
+          >,
+        ),
         product_performance_documents: (
           product.product_performance_documents || []
         ).map((d) => ({
@@ -3686,6 +3800,7 @@ export class ProductRegistrationService {
           documentName: d.documentName,
           documentOriginalName: d.documentOriginalName,
           documentLink: d.documentLink,
+          documentTag: d.documentTag,
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
         })),
@@ -3740,10 +3855,12 @@ export class ProductRegistrationService {
         urnNo.trim(),
       );
 
-      return formattedResults.map((row) => ({
-        ...row,
-        siteVisits,
-      }));
+      return enrichUrnDetailRowsWithSharedProcessData(
+        formattedResults.map((row) => ({
+          ...row,
+          siteVisits,
+        })),
+      );
     } catch (error: any) {
       console.error('[Get Product Details by URN] Error:', error);
       console.error('[Get Product Details by URN] Error stack:', error.stack);

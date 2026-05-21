@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Patch,
   Body,
   UseGuards,
   UseInterceptors,
@@ -21,6 +22,8 @@ import { ProcessInnovationService } from './process-innovation.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProcessInnovationDto } from './dto/create-process-innovation.dto';
+import { PatchInnovationDocumentTagDto } from './dto/patch-innovation-document-tag.dto';
+import { parseInnovationDocumentTagsForUpload } from './utils/innovation-document-tag.util';
 
 @ApiTags('Process Innovation')
 @Controller('process-innovation')
@@ -38,7 +41,9 @@ export class ProcessInnovationController {
   @ApiOperation({
     summary: 'Create process innovation data',
     description:
-      'Creates process innovation data with innovation implementation documents file upload. File is stored in URN-specific folder (uploads/urns/{urn_no}/). Supports multiple file types: PNG, JPEG, PDF, Word, and Excel files. Document metadata is stored in the master all_product_documents table.',
+      'Creates or updates process innovation data with supporting documents. Files under uploads/urns/{urn_no}/. ' +
+      'Optional **innovationDocumentTags**: JSON array string (same order as files), e.g. `["tech","process","social"]`. ' +
+      'Omitted or short arrays default missing slots to **tech**. New rows append to `all_product_documents` (existing innovation docs are not removed).',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -67,6 +72,12 @@ export class ProcessInnovationController {
           description:
             'Innovation implementation documents display name (required if uploading innovationImplementationDocumentsFile)',
           example: 'Innovation Implementation Documents - March 2026',
+        },
+        innovationDocumentTags: {
+          type: 'string',
+          description:
+            'JSON array of tags **tech** | **process** | **social**, one per file in upload order. Example: `["tech","process"]`. Optional; defaults to tech.',
+          example: '["tech","process","social"]',
         },
         innovationImplementationDocumentsFile: {
           type: 'array',
@@ -112,6 +123,15 @@ export class ProcessInnovationController {
     if (!user?.vendorId)
       throw new BadRequestException('Vendor ID not found in token');
 
+    const innovationImplementationDocumentsFiles = (files || []).filter(
+      (f) => f.fieldname === 'innovationImplementationDocumentsFile',
+    );
+
+    const innovationDocumentTags = parseInnovationDocumentTagsForUpload(
+      body.innovationDocumentTags ?? body.innovationDocumentTagsJson,
+      innovationImplementationDocumentsFiles.length,
+    );
+
     const dto: CreateProcessInnovationDto = {
       urnNo: body.urnNo,
       innovationImplementationDetails: body.innovationImplementationDetails,
@@ -120,11 +140,11 @@ export class ProcessInnovationController {
         : undefined,
       innovationImplementationDocumentsFileName:
         body.innovationImplementationDocumentsFileName,
+      innovationDocumentTags:
+        innovationImplementationDocumentsFiles.length > 0
+          ? innovationDocumentTags
+          : undefined,
     };
-
-    const innovationImplementationDocumentsFiles = (files || []).filter(
-      (f) => f.fieldname === 'innovationImplementationDocumentsFile',
-    );
 
     // Validate file name if file is uploaded
     if (
@@ -141,7 +161,32 @@ export class ProcessInnovationController {
       dto,
       user.vendorId,
       innovationImplementationDocumentsFiles,
+      innovationDocumentTags,
     );
+    return { success: true, data };
+  }
+
+  @Patch('document-tag')
+  @ApiOperation({
+    summary: 'Update tag on one innovation supporting document',
+    description:
+      'Sets **documentTag** (`tech` | `process` | `social`) on a row in `all_product_documents` for this vendor and URN. ' +
+      'Use **productDocumentId** from `process_innovation_documents` in URN details.',
+  })
+  @ApiBody({ type: PatchInnovationDocumentTagDto })
+  @ApiResponse({ status: 200, description: 'Tag updated' })
+  @ApiResponse({ status: 404, description: 'Document not found' })
+  async patchDocumentTag(
+    @CurrentUser() user: any,
+    @Body() body: PatchInnovationDocumentTagDto,
+  ) {
+    if (!user?.vendorId)
+      throw new BadRequestException('Vendor ID not found in token');
+    const data =
+      await this.processInnovationService.patchInnovationDocumentTag(
+        body,
+        user.vendorId,
+      );
     return { success: true, data };
   }
 }

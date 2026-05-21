@@ -22,7 +22,15 @@ export class CreateProductDesignDto {
   urnNo: string;
 
   @ApiProperty({
-    description: 'Strategies (text field)',
+    description: 'Strategies text (preferred field name)',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  strategies?: string;
+
+  @ApiProperty({
+    description: 'Legacy alias for strategies (typo kept for compatibility)',
     required: false,
   })
   @IsString()
@@ -41,7 +49,8 @@ export class CreateProductDesignDto {
   productDesignStatus?: number;
 
   @ApiProperty({
-    description: 'Array of measures implemented and benefits achieved',
+    description:
+      'JSON array — **replaces** all measures for this URN (not merged). Send the full list on every save.',
     type: [MeasureBenefitDto],
     required: false,
     example: [
@@ -61,4 +70,22 @@ export class CreateProductDesignDto {
   @ValidateNested({ each: true })
   @Type(() => MeasureBenefitDto)
   measuresAndBenefits?: MeasureBenefitDto[];
+
+  @ApiProperty({
+    description:
+      'JSON array of product document ids (_id or productDocumentId) to keep for eco vision. Omit to keep all existing eco docs on text-only save; send [] to clear.',
+    required: false,
+    example: '["507f1f77bcf86cd799439011"]',
+  })
+  @IsOptional()
+  existingEcoVisionDocumentIds?: string[];
+
+  @ApiProperty({
+    description:
+      'JSON array of product document ids to keep for supporting documents. Omit to keep all existing supporting docs on text-only save; send [] to clear.',
+    required: false,
+    example: '["507f1f77bcf86cd799439012"]',
+  })
+  @IsOptional()
+  existingSupportingDocumentIds?: string[];
 }

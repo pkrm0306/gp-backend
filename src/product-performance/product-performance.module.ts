@@ -5,6 +5,10 @@ import {
   ProductPerformanceSchema,
 } from './schemas/product-performance.schema';
 import {
+  PpTestReport,
+  PpTestReportSchema,
+} from './schemas/pp-test-report.schema';
+import {
   AllProductDocument,
   AllProductDocumentSchema,
 } from '../product-design/schemas/all-product-document.schema';
@@ -18,6 +22,7 @@ import { AuthModule } from '../auth/auth.module';
   imports: [
     MongooseModule.forFeature([
       { name: ProductPerformance.name, schema: ProductPerformanceSchema },
+      { name: PpTestReport.name, schema: PpTestReportSchema },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),
     ProductRegistrationModule, // For SequenceHelper

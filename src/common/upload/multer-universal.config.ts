@@ -173,6 +173,17 @@ export function certificationMultipartMemoryMulterOptions(): Options {
   };
 }
 
+/** Product performance — multiple test report files per request (max 20). */
+export function productPerformanceMultipartMemoryMulterOptions(
+  maxFiles = 20,
+): Options {
+  return {
+    storage: memoryStorage(),
+    limits: { fileSize: TEN_MB, files: maxFiles },
+    fileFilter: certificationMultipartFileFilter,
+  };
+}
+
 /**
  * Waste management supporting documents — same types as certification, but much
  * larger default per-file limit (large PDFs / directories). 413 from Multer was

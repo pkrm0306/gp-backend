@@ -268,6 +268,40 @@ export class SequenceHelper {
   }
 
   /**
+   * Get next product performance test report row ID
+   * Synced with max `productPerformanceTestReportId` in `process_pp_test_reports`
+   */
+  async getProductPerformanceTestReportId(): Promise<number> {
+    try {
+      const sequenceCollection = this.connection.collection('sequences');
+      const sequenceName = 'product_performance_test_report_id';
+
+      const reportsCollection = this.connection.collection(
+        'process_pp_test_reports',
+      );
+      const maxRow = await reportsCollection.findOne(
+        {},
+        {
+          sort: { productPerformanceTestReportId: -1 },
+          projection: { productPerformanceTestReportId: 1 },
+        },
+      );
+      const maxId = maxRow?.productPerformanceTestReportId || 0;
+
+      await sequenceCollection.updateOne(
+        { _id: sequenceName as any },
+        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { upsert: true },
+      );
+
+      return this.getNextSequenceValue(sequenceName);
+    } catch (error: any) {
+      console.error('Product performance test report ID sequence error:', error);
+      return this.getNextSequenceValue('product_performance_test_report_id');
+    }
+  }
+
+  /**
    * Get next raw materials hazardous products ID
    * Ensures sequence is synced with max existing rawMaterialsHazardousProductsId in `raw_materials_hazardous_products`
    */

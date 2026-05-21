@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
   IsNotEmpty,
@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsIn,
 } from 'class-validator';
+import type { InnovationDocumentTag } from '../utils/innovation-document-tag.util';
 
 export class CreateProcessInnovationDto {
   @ApiProperty({
@@ -46,4 +47,16 @@ export class CreateProcessInnovationDto {
   @IsString()
   @IsOptional()
   innovationImplementationDocumentsFileName?: string;
+
+  /**
+   * Set by the controller after parsing multipart field `innovationDocumentTags`
+   * (JSON string or comma-separated), one value per file in upload order.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Per-file tag: tech | process | social (same order as files). Set from body `innovationDocumentTags` JSON string.',
+    isArray: true,
+    enum: ['tech', 'process', 'social'],
+  })
+  innovationDocumentTags?: InnovationDocumentTag[];
 }

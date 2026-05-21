@@ -19,6 +19,7 @@ const SHARED_URN_ARRAY_KEYS = [
   'payments',
   'product_design_measures',
   'product_design_documents',
+  'product_performance_test_reports',
   'product_performance_documents',
   'process_manufacturing_documents',
   'process_mp_manufacturing_units',
