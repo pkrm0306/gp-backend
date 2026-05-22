@@ -77,13 +77,17 @@ describe('AdminService Banner Functionality', () => {
   it('creates banner with unique sequence number', async () => {
     bannerModel.exists.mockReturnValue(queryMock(null));
 
-    const result = await service.createBanner(vendorId, {
-      imageUrl: '/uploads/banners/home.jpg',
-      title: 'Home Banner',
-      sequenceNumber: 1,
-      description: 'Banner description',
-      status: 'active',
-    } as any);
+    const result = await service.createBanner(
+      vendorId,
+      {
+        imageUrl: '/uploads/banners/home.jpg',
+        title: 'Home Banner',
+        sequenceNumber: 1,
+        description: 'Banner description',
+        status: 'active',
+      } as any,
+      'manual_url',
+    );
 
     expect(bannerModel.exists).toHaveBeenCalled();
     expect(result.title).toBe('Home Banner');
@@ -97,12 +101,16 @@ describe('AdminService Banner Functionality', () => {
     bannerModel.exists.mockReturnValue(queryMock({ _id: new Types.ObjectId() }));
 
     await expect(
-      service.createBanner(vendorId, {
-        imageUrl: '/uploads/banners/home.jpg',
-        title: 'Home Banner',
-        sequenceNumber: 1,
-        description: 'Banner description',
-      } as any),
+      service.createBanner(
+        vendorId,
+        {
+          imageUrl: '/uploads/banners/home.jpg',
+          title: 'Home Banner',
+          sequenceNumber: 1,
+          description: 'Banner description',
+        } as any,
+        'manual_url',
+      ),
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
@@ -235,12 +243,16 @@ describe('AdminService Banner Functionality', () => {
 
   it('throws invalid vendor id on create', async () => {
     await expect(
-      service.createBanner('invalid-id', {
-        imageUrl: '/uploads/banners/home.jpg',
-        title: 'x',
-        sequenceNumber: 1,
-        description: 'y',
-      } as any),
+      service.createBanner(
+        'invalid-id',
+        {
+          imageUrl: '/uploads/banners/home.jpg',
+          title: 'x',
+          sequenceNumber: 1,
+          description: 'y',
+        } as any,
+        'manual_url',
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
