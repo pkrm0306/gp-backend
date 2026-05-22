@@ -22,7 +22,8 @@ export class CreateProductDesignDto {
   urnNo: string;
 
   @ApiProperty({
-    description: 'Strategies text (preferred field name)',
+    description:
+      'Strategies text (optional). Vendor requires at least one of strategies, measures, ecoVisionFile, or supportingDesignFile.',
     required: false,
   })
   @IsString()
@@ -50,7 +51,7 @@ export class CreateProductDesignDto {
 
   @ApiProperty({
     description:
-      'JSON array — **replaces** all measures for this URN (not merged). Send the full list on every save.',
+      'JSON array — **replaces** all measures for this URN. Optional; rows may have one column filled. Send the full list on every save.',
     type: [MeasureBenefitDto],
     required: false,
     example: [

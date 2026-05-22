@@ -24,6 +24,33 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsAdditivesService } from './raw-materials-additives.service';
 import { CreateRawMaterialsAdditivesDto } from './dto/create-raw-materials-additives.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseMultipartJsonArray,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const ADDITIVES_UNIT_ROW_KEYS = [
+  'unitName',
+  'year',
+  'year1',
+  'year1a',
+  'year1b',
+  'year1c',
+  'year2',
+  'year2a',
+  'year2b',
+  'year2c',
+  'year3',
+  'year3a',
+  'year3b',
+  'year3c',
+  'psc',
+  'coc',
+  'percentcoc',
+  'ppc',
+];
 
 @ApiTags('Raw Materials Additives')
 @Controller('raw-materials-additives')
@@ -41,7 +68,7 @@ export class RawMaterialsAdditivesController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'units'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         additivesFileName: {
@@ -94,21 +121,20 @@ export class RawMaterialsAdditivesController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    let units = body.units;
-    if (typeof body.units === 'string') {
-      try {
-        units = JSON.parse(body.units);
-      } catch {
-        throw new BadRequestException('Invalid units format. Expected JSON array.');
-      }
+    const units = parseMultipartJsonArray(body.units, 'units');
+
+    if (additivesFile) {
+      assertRawMaterialsDocumentTypes([additivesFile]);
     }
-    if (!Array.isArray(units) || units.length === 0) {
-      throw new BadRequestException('units must be a non-empty array');
-    }
+    assertAtLeastOneRawMaterialsField({
+      files: additivesFile ? [additivesFile] : [],
+      rows: units as Array<Record<string, unknown>>,
+      rowKeys: ADDITIVES_UNIT_ROW_KEYS,
+    });
 
     const dto: CreateRawMaterialsAdditivesDto = {
-      urnNo: body.urnNo,
-      units,
+      urnNo: parseRequiredRawMaterialsUrn(body),
+      units: units as CreateRawMaterialsAdditivesDto['units'],
       additivesFileName: body.additivesFileName,
     };
 

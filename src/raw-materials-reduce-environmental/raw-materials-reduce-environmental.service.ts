@@ -19,6 +19,16 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { resolveReduceEnvironmentalUnits } from '../common/raw-materials/raw-materials-upload.util';
+
+const QUARRYING_UNIT_KEYS = [
+  'location',
+  'enhancementOfMinesLife',
+  'topsoilConservation',
+  'waterTableManagement',
+  'restorationOfSpentMines',
+  'greenBeltDevelopmentAndBioDiversity',
+];
 
 type ReduceEnvironmentalUnitInput = {
   location: string;
@@ -58,17 +68,6 @@ export class RawMaterialsReduceEnvironmentalService {
     return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
 
-  private unitSignature(unit: ReduceEnvironmentalUnitInput): string {
-    return [
-      unit.location.trim(),
-      unit.enhancementOfMinesLife.trim(),
-      unit.topsoilConservation.trim(),
-      unit.waterTableManagement.trim(),
-      unit.restorationOfSpentMines.trim(),
-      unit.greenBeltDevelopmentAndBioDiversity.trim(),
-    ].join('|');
-  }
-
   async create(
     dto: CreateRawMaterialsReduceEnvironmentalDto,
     vendorId: string,
@@ -83,57 +82,10 @@ export class RawMaterialsReduceEnvironmentalService {
       const urnNo = dto.urnNo.trim();
       const now = new Date();
 
-      const unitsPayload: ReduceEnvironmentalUnitInput[] = Array.isArray(dto.units)
-        ? dto.units
-        : [
-            {
-              location: dto.location?.trim() || '',
-              enhancementOfMinesLife: dto.enhancementOfMinesLife?.trim() || '',
-              topsoilConservation: dto.topsoilConservation?.trim() || '',
-              waterTableManagement: dto.waterTableManagement?.trim() || '',
-              restorationOfSpentMines: dto.restorationOfSpentMines?.trim() || '',
-              greenBeltDevelopmentAndBioDiversity:
-                dto.greenBeltDevelopmentAndBioDiversity?.trim() || '',
-            },
-          ];
-
-      if (unitsPayload.length === 0) {
-        throw new BadRequestException('units must be a non-empty array');
-      }
-      for (const unit of unitsPayload) {
-        if (
-          !unit.location ||
-          !unit.enhancementOfMinesLife ||
-          !unit.topsoilConservation ||
-          !unit.waterTableManagement ||
-          !unit.restorationOfSpentMines ||
-          !unit.greenBeltDevelopmentAndBioDiversity
-        ) {
-          throw new BadRequestException(
-            'Each unit must include location, enhancementOfMinesLife, topsoilConservation, waterTableManagement, restorationOfSpentMines and greenBeltDevelopmentAndBioDiversity',
-          );
-        }
-      }
-
-      const existingRows = await this.model
-        .find({ urnNo, vendorId: vendorObjectId })
-        .sort({ rawMaterialsReduceEnvironmentalId: 1 })
-        .exec();
-
-      const existingBySignature = new Map<string, RawMaterialsReduceEnvironmentalDocument>();
-      for (const row of existingRows) {
-        const signature = this.unitSignature({
-          location: row.location,
-          enhancementOfMinesLife: row.enhancementOfMinesLife,
-          topsoilConservation: row.topsoilConservation,
-          waterTableManagement: row.waterTableManagement,
-          restorationOfSpentMines: row.restorationOfSpentMines,
-          greenBeltDevelopmentAndBioDiversity: row.greenBeltDevelopmentAndBioDiversity,
-        });
-        if (!existingBySignature.has(signature)) {
-          existingBySignature.set(signature, row);
-        }
-      }
+      const meaningfulUnits = resolveReduceEnvironmentalUnits(
+        dto as unknown as Record<string, unknown>,
+        QUARRYING_UNIT_KEYS,
+      ) as ReduceEnvironmentalUnitInput[];
 
       const rowsToInsert: Array<
         Omit<RawMaterialsReduceEnvironmental, 'createdDate' | 'updatedDate'> & {
@@ -141,16 +93,8 @@ export class RawMaterialsReduceEnvironmentalService {
           updatedDate: Date;
         }
       > = [];
-      const requestSeenSignatures = new Set<string>();
-      for (const unit of unitsPayload) {
-        const signature = this.unitSignature(unit);
 
-        // Prevent duplicate rows both against DB and within current payload.
-        if (requestSeenSignatures.has(signature) || existingBySignature.has(signature)) {
-          continue;
-        }
-        requestSeenSignatures.add(signature);
-
+      for (const unit of meaningfulUnits) {
         const generatedId = await this.sequenceHelper.getRawMaterialsReduceEnvironmentalId();
         rowsToInsert.push({
           rawMaterialsReduceEnvironmentalId: generatedId,
@@ -167,13 +111,12 @@ export class RawMaterialsReduceEnvironmentalService {
           updatedDate: now,
         });
       }
+
+      await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
       const createdRows =
         rowsToInsert.length > 0 ? await this.model.insertMany(rowsToInsert) : [];
 
-      const allRows = await this.model
-        .find({ urnNo, vendorId: vendorObjectId })
-        .sort({ rawMaterialsReduceEnvironmentalId: 1 })
-        .exec();
+      const allRows = createdRows;
 
       if (reduceEnvironmentalFile) {
         await this.allProductDocumentModel.updateMany(

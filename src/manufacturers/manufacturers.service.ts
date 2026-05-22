@@ -43,6 +43,7 @@ import {
 import { buildPhoneLookupVariants } from '../common/utils/phone-lookup.util';
 import { AuthService } from '../auth/auth.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
+import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import ExcelJS from 'exceljs';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
@@ -127,6 +128,7 @@ export class ManufacturersService {
     @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
     private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
+    private readonly zohoDealsService: ZohoDealsService,
   ) {}
 
   private normalizeVendorEmail(raw: unknown): string {
@@ -1732,7 +1734,36 @@ export class ManufacturersService {
       );
     }
 
+    if (updated) {
+      await this.convertVerifiedManufacturerLeadInZoho(updated).catch(
+        (error: any) => {
+          this.logger.warn(
+            `[verifyManufacturer] Zoho vendor lead conversion failed for ${updated._id}: ${
+              error?.message || error
+            }`,
+          );
+        },
+      );
+    }
+
     return updated;
+  }
+
+  private async convertVerifiedManufacturerLeadInZoho(
+    manufacturer: ManufacturerDocument,
+  ): Promise<void> {
+    const vendorInternalId = String(manufacturer.gpInternalId ?? '').trim();
+    if (!vendorInternalId) {
+      this.logger.warn(
+        `[verifyManufacturer] Skipping Zoho vendor lead conversion for ${manufacturer._id}: gpInternalId missing`,
+      );
+      return;
+    }
+
+    await this.zohoDealsService.convertRegisteredVendorLead({
+      manufacturerId: manufacturer._id.toString(),
+      vendorInternalId,
+    });
   }
 
   private assertCoreFieldsPresentForActivation(

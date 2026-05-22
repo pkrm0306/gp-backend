@@ -24,6 +24,12 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsHazardousProductsService } from './raw-materials-hazardous-products.service';
 import { CreateRawMaterialsHazardousProductsDto } from './dto/create-raw-materials-hazardous-products.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseRawMaterialsFormString,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Hazardous Products')
 @Controller('raw-materials-hazardous-products')
@@ -33,7 +39,11 @@ export class RawMaterialsHazardousProductsController {
   constructor(private readonly service: RawMaterialsHazardousProductsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create hazardous products record (per URN)' })
+  @ApiOperation({
+    summary: 'Create hazardous products record (per URN)',
+    description:
+      'Content fields are optional individually; at least one of productsName, productsTestReport, or productsTestReportFile is required (vendor also enforces in UI).',
+  })
   @UseInterceptors(
     FileInterceptor('productsTestReportFile', certificationMultipartMemoryMulterOptions()),
   )
@@ -70,21 +80,21 @@ export class RawMaterialsHazardousProductsController {
       throw new BadRequestException('Vendor ID not found in token');
 
     const dto: CreateRawMaterialsHazardousProductsDto = {
-      urnNo: body.urnNo,
-      productsName: body.productsName,
-      productsTestReport: body.productsTestReport,
-      productsTestReportFileName: body.productsTestReportFileName,
+      urnNo: parseRequiredRawMaterialsUrn(body),
+      productsName: parseRawMaterialsFormString(body.productsName),
+      productsTestReport: parseRawMaterialsFormString(body.productsTestReport),
+      productsTestReportFileName: parseRawMaterialsFormString(
+        body.productsTestReportFileName,
+      ),
     };
 
-    if (
-      productsTestReportFile &&
-      (!dto.productsTestReportFileName ||
-        dto.productsTestReportFileName.trim() === '')
-    ) {
-      throw new BadRequestException(
-        'productsTestReportFileName is required when uploading productsTestReportFile',
-      );
+    if (productsTestReportFile) {
+      assertRawMaterialsDocumentTypes([productsTestReportFile]);
     }
+    assertAtLeastOneRawMaterialsField({
+      files: productsTestReportFile ? [productsTestReportFile] : [],
+      textValues: [dto.productsName, dto.productsTestReport],
+    });
 
     const data = await this.service.create(
       dto,

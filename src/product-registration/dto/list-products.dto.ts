@@ -7,6 +7,7 @@ import {
   IsIn,
   IsMongoId,
   Matches,
+  IsArray,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
@@ -16,6 +17,18 @@ function normalizeOptionalString(value: unknown): string | undefined {
   }
   const v = String(value).trim();
   return v === '' ? undefined : v;
+}
+
+/** Query: `0,1` or repeated keys → EOI `productStatus` list. */
+function normalizeProductStatusListFromQuery(value: unknown): number[] | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const source = Array.isArray(value) ? value : String(value).split(',');
+  const parsed = source
+    .map((v) => Number(String(v).trim()))
+    .filter((v) => Number.isFinite(v));
+  return parsed.length > 0 ? parsed : undefined;
 }
 
 export class ListProductsDto {
@@ -55,7 +68,9 @@ export class ListProductsDto {
 
   @ApiProperty({
     description:
-      'Filter EOIs by productStatus. URN is included if any child matches. 4 = expired (certified past validtill). Certified (2) is excluded from the default list.',
+      'Filter EOIs by **single** `productStatus` (EOI list status). Prefer `productStatusList` for multiple values. ' +
+      'If **both** this and `productStatusList` are omitted, the list defaults to **Pending (0) + Submitted (1)** only. ' +
+      'URN is included if any child matches. `4` = expired certified (past validtill).',
     example: 0,
     required: false,
     enum: [0, 1, 2, 3, 4],
@@ -65,6 +80,31 @@ export class ListProductsDto {
   @IsInt()
   @IsIn([0, 1, 2, 3, 4])
   productStatus?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter EOIs by **multiple** EOI `productStatus` codes (comma-separated or repeated query param), e.g. **`0,1`** = Pending + Submitted. ' +
+      'Takes precedence over `productStatus` / `status` when non-empty. Values: **0** Pending, **1** Submitted, **2** Certified, **3** Rejected, **4** Expired certified.',
+    example: '0,1',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeProductStatusListFromQuery(value))
+  @IsArray()
+  @IsInt({ each: true })
+  @IsIn([0, 1, 2, 3, 4], { each: true })
+  productStatusList?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `productStatusList`.',
+    example: '0,1',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeProductStatusListFromQuery(value))
+  @IsArray()
+  @IsInt({ each: true })
+  @IsIn([0, 1, 2, 3, 4], { each: true })
+  product_status_list?: number[];
 
   @ApiPropertyOptional({
     description: 'Deprecated alias for productStatus',

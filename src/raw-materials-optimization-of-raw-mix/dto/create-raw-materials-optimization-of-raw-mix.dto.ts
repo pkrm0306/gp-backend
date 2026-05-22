@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsInt,
   IsNotEmpty,
@@ -53,7 +52,7 @@ export class CreateRawMaterialsOptimizationOfRawMixDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({
@@ -70,8 +69,8 @@ export class CreateRawMaterialsOptimizationOfRawMixDto {
     description: 'Manufacturing unit rows to replace in one request for this URN',
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => OptimizationOfRawMixUnitDto)
-  units: OptimizationOfRawMixUnitDto[];
+  units?: OptimizationOfRawMixUnitDto[];
 }

@@ -8,7 +8,7 @@ export class CreateRawMaterialsEliminationOfFormaldehydeDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({
@@ -16,16 +16,17 @@ export class CreateRawMaterialsEliminationOfFormaldehydeDto {
     example: 'Low-VOC board material',
   })
   @IsString()
-  @IsNotEmpty()
-  productsName: string;
+  @IsOptional()
+  productsName?: string;
 
   @ApiProperty({
     description: 'Products test report details',
     example: 'Formaldehyde elimination test report details/reference',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  productsTestReport: string;
+  @IsOptional()
+  productsTestReport?: string;
 
   @ApiProperty({
     description: 'Display name for uploaded supporting file',

@@ -26,6 +26,7 @@ import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { EmailService } from '../common/services/email.service';
 import { AuthModule } from '../auth/auth.module';
+import { ZohoModule } from '../zoho/zoho.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { AuthModule } from '../auth/auth.module';
     VendorUsersModule,
     RbacModule,
     forwardRef(() => AuthModule),
+    ZohoModule,
   ],
   controllers: [
     ManufacturersController,

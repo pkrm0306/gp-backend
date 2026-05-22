@@ -62,11 +62,15 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesServi
   async create(
     dto: CreateRawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesDto,
     vendorId: string,
-    ozoneReportFile: Express.Multer.File,
+    ozoneReportFile?: Express.Multer.File,
   ) {
     try {
       if (!ozoneReportFile) {
-        throw new BadRequestException('ozoneReportFile is required');
+        return {
+          urnNo: dto.urnNo.trim(),
+          vendorId: this.toObjectId(vendorId, 'vendorId').toString(),
+          documents: [],
+        };
       }
 
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');

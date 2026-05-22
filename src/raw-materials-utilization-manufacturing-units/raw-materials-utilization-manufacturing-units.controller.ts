@@ -19,6 +19,19 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsUtilizationManufacturingUnitsService } from './raw-materials-utilization-manufacturing-units.service';
 import { CreateRawMaterialsUtilizationManufacturingUnitsDto } from './dto/create-raw-materials-utilization-manufacturing-units.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  parseMultipartJsonArray,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const MANUFACTURING_UNIT_ROW_KEYS = [
+  'unitName',
+  'year',
+  'yeardata1',
+  'yeardata2',
+  'yeardata3',
+];
 
 @ApiTags('Raw Materials Utilization Manufacturing Units')
 @Controller('raw-materials-utilization-manufacturing-units')
@@ -37,7 +50,7 @@ export class RawMaterialsUtilizationManufacturingUnitsController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'units'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         units: {
@@ -73,21 +86,15 @@ export class RawMaterialsUtilizationManufacturingUnitsController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    let units = body.units;
-    if (typeof body.units === 'string') {
-      try {
-        units = JSON.parse(body.units);
-      } catch {
-        throw new BadRequestException('Invalid units format. Expected JSON array.');
-      }
-    }
-    if (!Array.isArray(units) || units.length === 0) {
-      throw new BadRequestException('units must be a non-empty array');
-    }
+    const units = parseMultipartJsonArray(body.units, 'units');
+    assertAtLeastOneRawMaterialsField({
+      rows: units as Array<Record<string, unknown>>,
+      rowKeys: MANUFACTURING_UNIT_ROW_KEYS,
+    });
 
     const dto: CreateRawMaterialsUtilizationManufacturingUnitsDto = {
-      urnNo: body.urnNo,
-      units,
+      urnNo: parseRequiredRawMaterialsUrn(body),
+      units: units as CreateRawMaterialsUtilizationManufacturingUnitsDto['units'],
     };
 
     const data = await this.service.create(dto, user.vendorId);

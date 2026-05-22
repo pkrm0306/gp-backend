@@ -184,6 +184,64 @@ export function productPerformanceMultipartMemoryMulterOptions(
   };
 }
 
+const PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES = new Set([
+  'supportingDesignFile',
+  'supportingDocumentFile',
+  'supportingDocumentFiles',
+  'supportingDocuments',
+  'productDesignSupportingDocument',
+  'supporting_document',
+  'supporting_documents',
+]);
+
+const SUPPORTING_DESIGN_EXTENSIONS = new Set(['.pdf', '.xls', '.xlsx']);
+const SUPPORTING_DESIGN_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+
+function productDesignMultipartFileFilter(
+  _req: unknown,
+  file: Express.Multer.File,
+  cb: (error: Error | null, acceptFile: boolean) => void,
+): void {
+  if (!file) {
+    cb(null, true);
+    return;
+  }
+  const field = String(file.fieldname ?? '');
+  if (PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES.has(field)) {
+    const fileExt = extname(file.originalname || '').toLowerCase();
+    if (
+      SUPPORTING_DESIGN_MIMES.has(file.mimetype) ||
+      SUPPORTING_DESIGN_EXTENSIONS.has(fileExt)
+    ) {
+      cb(null, true);
+      return;
+    }
+    cb(
+      new BadRequestException(
+        'Invalid supporting document type. Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed.',
+      ) as unknown as null,
+      false,
+    );
+    return;
+  }
+  certificationMultipartFileFilter(_req, file, cb);
+}
+
+/** Product design — eco vision (broad types) + supporting (PDF/Excel only), max 40 parts. */
+export function productDesignMultipartMemoryMulterOptions(
+  maxFiles = 40,
+): Options {
+  return {
+    storage: memoryStorage(),
+    limits: { fileSize: TEN_MB, files: maxFiles },
+    fileFilter: productDesignMultipartFileFilter,
+  };
+}
+
 /**
  * Waste management supporting documents — same types as certification, but much
  * larger default per-file limit (large PDFs / directories). 413 from Multer was

@@ -28,6 +28,7 @@ import {
   resolveVendorProposalApprovalStatus,
 } from './payment-proposal.util';
 import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
+import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 
 @Injectable()
 export class PaymentsService {
@@ -39,7 +40,26 @@ export class PaymentsService {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private activityLogService: ActivityLogService,
+    private readonly zohoDealsService: ZohoDealsService,
   ) {}
+
+  private resolveZohoPaymentAmount(payment: PaymentDetailsDocument): number {
+    return Number(payment.quoteTotal ?? payment.quoteAmount ?? 0);
+  }
+
+  private async syncApprovedPaymentToZohoDeal(
+    payment: PaymentDetailsDocument,
+    manufacturerId: string,
+  ): Promise<void> {
+    await this.zohoDealsService.updateDealPaymentDetails({
+      manufacturerId,
+      quoteNumber: payment.paymentId,
+      gstin: payment.vendorGstNo || payment.adminGstNo,
+      amount: this.resolveZohoPaymentAmount(payment),
+      transactionNumber: payment.paymentReferenceNo,
+      paymentMode: payment.paymentMode,
+    });
+  }
 
   /**
    * Certification Flow Status Mapping (URN status -> activity label)
@@ -977,6 +997,15 @@ export class PaymentsService {
             },
             urnStatus,
           );
+          await this.syncApprovedPaymentToZohoDeal(
+            updatedPayment,
+            anyProduct.manufacturerId.toString(),
+          ).catch((error: any) => {
+            console.warn(
+              `[Update Payment] Zoho deal payment update failed for ${normalizedUrn}:`,
+              error?.message || error,
+            );
+          });
         }
       }
 

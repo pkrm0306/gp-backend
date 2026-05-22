@@ -14,6 +14,7 @@ import {
   Product,
   ProductSchema,
 } from '../product-registration/schemas/product.schema';
+import { ZohoModule } from '../zoho/zoho.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import {
     ActivityLogModule,
     PassportModule,
     AuthModule,
+    ZohoModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],

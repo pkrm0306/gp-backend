@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { RM_PARTIAL_TEXT } from '../../common/raw-materials/raw-materials-schema.props';
 
 export type RawMaterialsEliminationOfProhibitedFlameSolventsProductsDocument =
   RawMaterialsEliminationOfProhibitedFlameSolventsProducts & Document;
@@ -18,10 +19,12 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProducts {
   @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })
   vendorId: Types.ObjectId;
 
-  @Prop({ required: true })
+  // @Prop({ required: true })
+  @Prop(RM_PARTIAL_TEXT)
   productsName: string;
 
-  @Prop({ required: true })
+  // @Prop({ required: true })
+  @Prop(RM_PARTIAL_TEXT)
   productsTestReport: string;
 
   @Prop({ required: true })

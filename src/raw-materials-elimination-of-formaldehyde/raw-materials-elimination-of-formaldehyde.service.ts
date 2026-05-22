@@ -64,8 +64,8 @@ export class RawMaterialsEliminationOfFormaldehydeService {
         rawMaterialsEliminationOfFormaldehydeId: id,
         urnNo: dto.urnNo.trim(),
         vendorId: vendorObjectId,
-        productsName: dto.productsName.trim(),
-        productsTestReport: dto.productsTestReport.trim(),
+        productsName: String(dto.productsName ?? '').trim(),
+        productsTestReport: String(dto.productsTestReport ?? '').trim(),
         createdDate: now,
         updatedDate: now,
       });

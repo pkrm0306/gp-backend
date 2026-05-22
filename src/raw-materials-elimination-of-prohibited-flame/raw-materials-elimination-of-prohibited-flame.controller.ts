@@ -24,6 +24,11 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsEliminationOfProhibitedFlameService } from './raw-materials-elimination-of-prohibited-flame.service';
 import { CreateRawMaterialsEliminationOfProhibitedFlameDto } from './dto/create-raw-materials-elimination-of-prohibited-flame.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Elimination Of Prohibited Flame')
 @Controller('raw-materials-elimination-of-prohibited-flame')
@@ -71,10 +76,17 @@ export class RawMaterialsEliminationOfProhibitedFlameController {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const dto: CreateRawMaterialsEliminationOfProhibitedFlameDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       measuresImplemented: body.measuresImplemented,
       prohibitedFlameFileName: body.prohibitedFlameFileName,
     };
+    if (prohibitedFlameFile) {
+      assertRawMaterialsDocumentTypes([prohibitedFlameFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: prohibitedFlameFile ? [prohibitedFlameFile] : [],
+      textValues: [dto.measuresImplemented],
+    });
     const data = await this.service.create(dto, user.vendorId, prohibitedFlameFile);
     return { success: true, data };
   }

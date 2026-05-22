@@ -1,10 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
   MaxLength,
   Min,
@@ -52,7 +52,7 @@ export class CreateRawMaterialsUtilizationManufacturingUnitsDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({
@@ -62,8 +62,8 @@ export class CreateRawMaterialsUtilizationManufacturingUnitsDto {
     required: true,
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => UtilizationManufacturingUnitDto)
-  units: UtilizationManufacturingUnitDto[];
+  units?: UtilizationManufacturingUnitDto[];
 }

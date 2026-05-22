@@ -44,9 +44,9 @@ export class ProductRegistrationController {
   @ApiOperation({
     summary: 'Vendor EOI list grouped by URN',
     description:
-      'Returns paginated URN groups (not flat products). Each group includes nested eois[]. ' +
-      'Certified EOIs (productStatus 2) are excluded by default. Pagination counts URNs. ' +
-      'When search matches any EOI in a URN, the full eois[] for that URN is returned (same filters, no search re-apply on children).',
+      'Returns paginated URN groups (not flat products). Each group includes nested **eois[]** with **EOI `productStatus`** and **statusLabel** (Pending / Submitted / …). ' +
+      '**Default filter:** **Pending (0) + Submitted (1)** only (uncertified queue). Override with **`productStatusList`** (e.g. `0,1` or `3`) or a single **`productStatus`** / **`status`**. ' +
+      'Pagination counts URNs. When search matches any EOI in a URN, the full **eois[]** for that URN is returned (same filters).',
   })
   @ApiQuery({
     name: 'page',
@@ -75,15 +75,30 @@ export class ProductRegistrationController {
     required: false,
     type: Number,
     description:
-      'Filter EOIs: 0=Pending, 1=Submitted, 3=Rejected, 4=Expired. Certified (2) excluded unless status=4.',
+      'Single EOI **productStatus** filter (0–4). If omitted and `productStatusList` is omitted, server defaults to **0 + 1** (Pending + Submitted).',
     example: 0,
     enum: [0, 1, 2, 3, 4],
+  })
+  @ApiQuery({
+    name: 'productStatusList',
+    required: false,
+    type: String,
+    description:
+      'Multiple EOI **productStatus** values: comma-separated or repeated param, e.g. **`0,1`**. Takes precedence over `productStatus` / `status` when set.',
+    example: '0,1',
+  })
+  @ApiQuery({
+    name: 'product_status_list',
+    required: false,
+    type: String,
+    description: 'Snake_case alias of `productStatusList`.',
+    example: '0,1',
   })
   @ApiQuery({
     name: 'status',
     required: false,
     type: Number,
-    description: 'Deprecated alias for productStatus',
+    description: 'Deprecated alias for `productStatus`',
     example: 0,
     enum: [0, 1, 2, 3, 4],
     deprecated: true,

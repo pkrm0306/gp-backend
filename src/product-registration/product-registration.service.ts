@@ -103,21 +103,49 @@ export class ProductRegistrationService {
     return Number.isFinite(ttl) && ttl > 0 ? ttl : 60;
   }
 
+  private resolveVendorListProductStatuses(
+    dto: ListProductsDto,
+  ): number[] | null {
+    const fromList =
+      Array.isArray(dto.productStatusList) && dto.productStatusList.length > 0
+        ? dto.productStatusList
+        : Array.isArray(dto.product_status_list) &&
+            dto.product_status_list.length > 0
+          ? dto.product_status_list
+          : null;
+    if (fromList) {
+      return fromList;
+    }
+    const single = dto.productStatus ?? dto.status;
+    if (
+      single !== undefined &&
+      single !== null &&
+      Number.isFinite(Number(single))
+    ) {
+      return [Number(single)];
+    }
+    return null;
+  }
+
   private buildVendorProductListCacheKey(
     listProductsDto: ListProductsDto,
     manufacturerId: string,
   ): string {
+    const resolvedForKey = this.resolveVendorListProductStatuses(listProductsDto);
     const normalized = {
       manufacturerId,
       page: listProductsDto.page ?? 1,
       limit: listProductsDto.limit ?? 10,
       search: String(listProductsDto.search || '').trim().toLowerCase(),
-      productStatus: listProductsDto.productStatus ?? listProductsDto.status ?? null,
+      productStatuses:
+        resolvedForKey === null
+          ? 'default_0_1'
+          : [...resolvedForKey].sort((a, b) => a - b),
       categoryId: listProductsDto.categoryId ?? null,
       dateFrom: listProductsDto.dateFrom ?? null,
       dateTo: listProductsDto.dateTo ?? null,
       sort: listProductsDto.sort === 'asc' ? 'asc' : 'desc',
-      v: 2,
+      v: 3,
     };
     return this.redisService.buildKey(
       'products',
@@ -128,6 +156,14 @@ export class ProductRegistrationService {
   }
 
   private buildAdminProductListCacheKey(dto: AdminListProductsDto): string {
+    const resolvedStatus = (() => {
+      for (const c of [dto.status, dto.productStatus, dto.product_status]) {
+        if (Array.isArray(c) && c.length > 0) {
+          return [...c].sort((a, b) => a - b);
+        }
+      }
+      return [];
+    })();
     const normalized = {
       page: dto.page ?? 1,
       limit: dto.limit ?? 10,
@@ -143,8 +179,8 @@ export class ProductRegistrationService {
       from: dto.from ?? dto.fromDate ?? null,
       to: dto.to ?? dto.toDate ?? null,
       validTillYear: dto.validTillYear ?? null,
-      status: Array.isArray(dto.status) ? [...dto.status].sort((a, b) => a - b) : [],
-      v: 5,
+      status: resolvedStatus,
+      v: 6,
     };
     return this.redisService.buildKey(
       'products',
@@ -199,6 +235,7 @@ export class ProductRegistrationService {
       e?.urnNo !== undefined && e?.urnNo !== null ? String(e.urnNo) : undefined;
 
     const productStatus = Number(e?.productStatus ?? 0);
+    const urnWorkflowStatus = Number(e?.urnStatus ?? 0);
     const statusLabel = this.mapVendorProductStatusLabel(
       productStatus,
       e?.validtillDate as Date | string | null | undefined,
@@ -215,7 +252,10 @@ export class ProductRegistrationService {
       productDetails: e?.productDetails ?? null,
       categoryName: e?.categoryName,
       manufacturerName: e?.manufacturerName,
+      /** EOI lifecycle code on `products.productStatus` (this is what list `status` filters). */
       productStatus,
+      /** URN workflow step from `products.urnStatus` (separate from EOI productStatus). */
+      urnWorkflowStatus,
       createdDate: e?.createdDate,
       plantDetails: plants.map((p) => ({
         _id: p?._id,
@@ -253,7 +293,7 @@ export class ProductRegistrationService {
     statusCodes: number[];
     eoiDocs: Record<string, unknown>[];
   }) {
-    const urnStatus = this.deriveAdminUrnStatus(urn.statusCodes ?? []);
+    const eoiSummaryStatus = this.deriveAdminUrnStatus(urn.statusCodes ?? []);
     const eois = (urn.eoiDocs ?? []).map((e) =>
       this.formatAdminListEoiEntry(e ?? {}),
     );
@@ -262,8 +302,11 @@ export class ProductRegistrationService {
       urnNo: urn.urnNo,
       total_eoi: urn.totalEoi,
       totalEoi: urn.totalEoi,
-      urnStatus,
-      status: urnStatus,
+      /** Rollup from child EOI `productStatus` codes — not manufacturer / vendor status. */
+      eoiSummaryStatus,
+      /** @deprecated Same as `eoiSummaryStatus`; name is misleading (not DB `urnStatus`). */
+      urnStatus: eoiSummaryStatus,
+      status: eoiSummaryStatus,
       created_at: urn.createdDate,
       createdDate: urn.createdDate,
       eois,
@@ -631,26 +674,51 @@ export class ProductRegistrationService {
   }
 
   /**
-   * Vendor uncertified list status filter. Default excludes certified (productStatus 2).
-   * Status 4 = expired certified (productStatus 2 with validtillDate in the past).
+   * Vendor uncertified EOI list — filters on **`products.productStatus`** (EOI list status), not manufacturer/vendor status.
+   * When `statuses` is omitted or empty, defaults to **Pending (0) + Submitted (1)** only.
+   * Code **4** = expired certified (`productStatus` 2 with `validtillDate` in the past).
+   * Explicit **2** alone (no 4) keeps legacy behaviour: no matching rows (empty `$in`).
    */
   private buildVendorListProductStatusMatch(
-    normalizedStatus: number | null | undefined,
-  ): Record<string, unknown> | null {
+    statuses: number[] | null | undefined,
+  ): Record<string, unknown> {
     const now = new Date();
-    if (normalizedStatus === undefined || normalizedStatus === null) {
-      return { productStatus: { $ne: 2 } };
+    const explicit = Array.isArray(statuses) && statuses.length > 0;
+    const effective = explicit ? statuses! : [0, 1];
+
+    const includeExpired = effective.includes(4);
+    const regularStatuses = effective.filter((s) => s !== 4);
+
+    if (
+      explicit &&
+      regularStatuses.length === 1 &&
+      regularStatuses[0] === 2 &&
+      !includeExpired
+    ) {
+      return { productStatus: { $in: [] } };
     }
-    if (normalizedStatus === 4) {
+
+    if (includeExpired && regularStatuses.length > 0) {
+      return {
+        $or: [
+          { productStatus: { $in: regularStatuses } },
+          {
+            productStatus: 2,
+            validtillDate: { $exists: true, $ne: null, $lt: now },
+          },
+        ],
+      };
+    }
+    if (includeExpired) {
       return {
         productStatus: 2,
         validtillDate: { $exists: true, $ne: null, $lt: now },
       };
     }
-    if (normalizedStatus === 2) {
-      return { productStatus: { $in: [] } };
+    if (regularStatuses.length === 1) {
+      return { productStatus: regularStatuses[0] };
     }
-    return { productStatus: normalizedStatus };
+    return { productStatus: { $in: regularStatuses } };
   }
 
   private ensureExportDir() {
@@ -1785,7 +1853,9 @@ export class ProductRegistrationService {
 
   /**
    * Vendor EOI list grouped by URN (paginate/sort URNs, not flat products).
-   * Excludes certified EOIs (productStatus 2) unless filtering status=4 (expired).
+   * Status filters apply to **`products.productStatus`** (EOI list status: Pending, Submitted, etc.), not manufacturer/vendor status.
+   * **Default** (no `productStatus` / `productStatusList`): **Pending (0) + Submitted (1)** only.
+   * Use `productStatusList=0,1` explicitly or a single `productStatus` / `status` to override. `4` includes expired certified rows (`productStatus` 2 past validtill).
    */
   async listProducts(listProductsDto: ListProductsDto, manufacturerId: string) {
     try {
@@ -1816,21 +1886,18 @@ export class ProductRegistrationService {
         page = 1,
         limit = 10,
         search,
-        productStatus,
-        status,
         sort = 'desc',
         categoryId,
         dateFrom,
         dateTo,
       } = listProductsDto;
 
+      const resolvedStatuses = this.resolveVendorListProductStatuses(listProductsDto);
+      const statusMatch = this.buildVendorListProductStatusMatch(resolvedStatuses);
+
       const skip = (page - 1) * limit;
       const sortOrder = sort === 'asc' ? 1 : -1;
       const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
-      const normalizedProductStatus = productStatus ?? status ?? null;
-      const statusMatch = this.buildVendorListProductStatusMatch(
-        normalizedProductStatus,
-      );
 
       const nativeMatch: Record<string, unknown> = {
         vendorId: vendorObjectId,
@@ -4138,7 +4205,14 @@ export class ProductRegistrationService {
       });
     }
 
-    const statuses = Array.isArray(dto.status) ? dto.status : [];
+    const statuses = (() => {
+      for (const c of [dto.status, dto.productStatus, dto.product_status]) {
+        if (Array.isArray(c) && c.length > 0) {
+          return c;
+        }
+      }
+      return [];
+    })();
     const includeExpired = statuses.includes(4);
     const regularStatuses = statuses.filter((s) => s !== 4);
 
@@ -4224,6 +4298,7 @@ export class ProductRegistrationService {
           urnNo: 1,
           createdDate: 1,
           productStatus: 1,
+          urnStatus: 1,
           _id: 1,
           productId: 1,
           eoiNo: 1,
@@ -4263,6 +4338,7 @@ export class ProductRegistrationService {
               productName: '$productName',
               productDetails: '$productDetails',
               productStatus: '$productStatus',
+              urnStatus: '$urnStatus',
               validtillDate: '$validtillDate',
               createdDate: '$createdDate',
               categoryName: '$categoryName',
@@ -4533,6 +4609,7 @@ export class ProductRegistrationService {
                 productName: 1,
                 productDetails: 1,
                 productStatus: 1,
+                urnStatus: 1,
                 validtillDate: 1,
                 createdDate: 1,
                 categoryName: {
@@ -4611,13 +4688,14 @@ export class ProductRegistrationService {
     }
 
     const grouped = (payload.data ?? []).map((u: any) => {
-      const urnStatus = this.deriveAdminUrnStatus(
+      const eoiSummaryStatus = this.deriveAdminUrnStatus(
         Array.isArray(u.statusCodes) ? u.statusCodes : [],
       );
       return {
         urnNo: u.urnNo,
         createdDate: u.createdDate,
-        urnStatus,
+        eoiSummaryStatus,
+        urnStatus: eoiSummaryStatus,
         totalEoi: u.totalEoi ?? 0,
         eois: Array.isArray(u.eois)
           ? u.eois.map((e: any) => this.formatAdminListEoiEntry(e ?? {}))

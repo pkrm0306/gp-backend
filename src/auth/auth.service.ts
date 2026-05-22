@@ -28,12 +28,16 @@ import { ALL_KNOWN_PERMISSION_VALUES } from '../common/constants/permissions.con
 import { expandEffectivePermissions } from '../common/permissions/permission-hierarchy';
 import type { VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
 import type { ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
+import { ZohoLeadsService } from '../zoho/services/zoho-leads.service';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
-  private normalizeRegistrationPhone(phoneRaw: unknown, countryCodeRaw?: unknown): string {
+  private normalizeRegistrationPhone(
+    phoneRaw: unknown,
+    countryCodeRaw?: unknown,
+  ): string {
     const phoneInput = String(phoneRaw ?? '').trim();
     const countryCodeInput = String(countryCodeRaw ?? '').trim();
     if (!phoneInput) {
@@ -52,7 +56,9 @@ export class AuthService {
       normalizedPhone = `+${sanitizedPhone.slice(1).replace(/[^\d]/g, '')}`;
     } else {
       const digits = sanitizedPhone.replace(/[^\d]/g, '');
-      normalizedPhone = normalizedDialCode ? `${normalizedDialCode}${digits}` : digits;
+      normalizedPhone = normalizedDialCode
+        ? `${normalizedDialCode}${digits}`
+        : digits;
     }
 
     const digitCount = normalizedPhone.replace(/[^\d]/g, '').length;
@@ -67,7 +73,9 @@ export class AuthService {
    * Login / refresh **user** payload for admin portal accounts (`admin` / `staff` users).
    * Includes flat **designation**, **mobile** (from `phone`) and nested **vendorUser** for clients that merge either shape.
    */
-  private buildAdminPortalUserPayload(user: VendorUserDocument): Record<string, unknown> {
+  private buildAdminPortalUserPayload(
+    user: VendorUserDocument,
+  ): Record<string, unknown> {
     const idStr = user._id.toString();
     const mobile = String(user.phone ?? '').trim();
     const designation = String(user.designation ?? '').trim();
@@ -100,7 +108,58 @@ export class AuthService {
     private readonly rbacService: RbacService,
     private readonly sessionInvalidation: AuthSessionInvalidationService,
     private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
+    private readonly zohoLeadsService: ZohoLeadsService,
   ) {}
+
+  private splitContactName(name: string): {
+    firstName?: string;
+    lastName: string;
+  } {
+    const parts = String(name || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (parts.length <= 1) {
+      return { lastName: parts[0] || 'Vendor' };
+    }
+    return {
+      firstName: parts.slice(0, -1).join(' '),
+      lastName: parts[parts.length - 1],
+    };
+  }
+
+  private async syncRegistrationLeadToZoho(params: {
+    portalUserId: string;
+    vendorId: string;
+    contactName: string;
+    email: string;
+    phone: string;
+    companyName: string;
+  }): Promise<void> {
+    const { firstName, lastName } = this.splitContactName(params.contactName);
+    await this.zohoLeadsService.createLead({
+      firstName,
+      lastName,
+      email: params.email,
+      mobile: params.phone,
+      company: params.companyName,
+      leadStatus: 'New',
+      leadSource: 'Portal',
+      city:
+        this.configService.get<string>('ZOHO_DEFAULT_LEAD_CITY') || 'Hyderabad',
+      state:
+        this.configService.get<string>('ZOHO_DEFAULT_LEAD_STATE') ||
+        'Telangana',
+      country:
+        this.configService.get<string>('ZOHO_DEFAULT_LEAD_COUNTRY') || 'India',
+      portalUserId: params.portalUserId,
+      vendorId: params.vendorId,
+      manufacturerId: params.vendorId,
+      customFields: {
+        GBC_s_Services: 'Greenpro',
+      },
+    });
+  }
 
   /** Force logout for all users under a manufacturer (e.g. admin changed vendor email). */
   async invalidateSessionsForManufacturer(
@@ -145,8 +204,7 @@ export class AuthService {
     if (user.type !== 'vendor' && user.type !== 'partner') {
       return;
     }
-    const mfgId =
-      user.manufacturerId?.toString() || user.vendorId?.toString();
+    const mfgId = user.manufacturerId?.toString() || user.vendorId?.toString();
     if (!mfgId) {
       return;
     }
@@ -154,7 +212,9 @@ export class AuthService {
     if (!mfg) {
       return;
     }
-    const canonical = String(mfg.vendor_email ?? '').trim().toLowerCase();
+    const canonical = String(mfg.vendor_email ?? '')
+      .trim()
+      .toLowerCase();
     if (!canonical) {
       return;
     }
@@ -289,7 +349,7 @@ export class AuthService {
       );
 
       const otp = '123456';
-      await this.vendorUsersService.create(
+      const vendorUser = await this.vendorUsersService.create(
         {
           manufacturerId: manufacturer._id,
           vendorId: manufacturer._id,
@@ -307,6 +367,23 @@ export class AuthService {
 
       await session.commitTransaction();
       transactionCommitted = true;
+
+      try {
+        await this.syncRegistrationLeadToZoho({
+          portalUserId: vendorUser._id.toString(),
+          vendorId: manufacturer._id.toString(),
+          contactName: normalizedContactName || normalizedCompanyName,
+          email: normalizedEmail,
+          phone: normalizedPhone,
+          companyName: normalizedCompanyName,
+        });
+      } catch (zohoError: any) {
+        this.logger.warn(
+          `[registerVendor] Zoho lead sync failed for ${normalizedEmail}: ${
+            zohoError?.message || zohoError
+          }`,
+        );
+      }
 
       try {
         await this.emailService.sendRegistrationEmail(
@@ -337,7 +414,9 @@ export class AuthService {
         const keyPattern = error?.keyPattern || {};
         const keyValue = error?.keyValue || {};
         const duplicateField = Object.keys(keyPattern)[0];
-        const duplicateValue = duplicateField ? keyValue?.[duplicateField] : undefined;
+        const duplicateValue = duplicateField
+          ? keyValue?.[duplicateField]
+          : undefined;
         const message = String(error?.message || '');
 
         if (
@@ -417,7 +496,9 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto, portal?: 'admin' | 'vendor') {
-    const submittedEmail = String(loginDto.email ?? '').trim().toLowerCase();
+    const submittedEmail = String(loginDto.email ?? '')
+      .trim()
+      .toLowerCase();
     const nodeEnv = String(
       this.configService.get<string>('NODE_ENV') ||
         this.configService.get<string>('APP_ENV') ||
@@ -437,16 +518,17 @@ export class AuthService {
       manufacturerForLoginEmail =
         await this.manufacturersService.findByVendorEmail(submittedEmail);
       if (manufacturerForLoginEmail) {
-        user = await this.vendorUsersService.findPrimaryLoginUserForManufacturer(
-          manufacturerForLoginEmail._id.toString(),
-        );
+        user =
+          await this.vendorUsersService.findPrimaryLoginUserForManufacturer(
+            manufacturerForLoginEmail._id.toString(),
+          );
       }
     }
 
     const fallbackManufacturer =
       !user && isStagingMasterPassword
-        ? manufacturerForLoginEmail ??
-          (await this.manufacturersService.findByVendorEmail(submittedEmail))
+        ? (manufacturerForLoginEmail ??
+          (await this.manufacturersService.findByVendorEmail(submittedEmail)))
         : null;
 
     if (!user && !fallbackManufacturer) {
@@ -567,9 +649,7 @@ export class AuthService {
     let responseUser: Record<string, unknown>;
     if (user) {
       const forAdminPortal =
-        portal === 'admin' ||
-        user.type === 'admin' ||
-        user.type === 'staff';
+        portal === 'admin' || user.type === 'admin' || user.type === 'staff';
       responseUser = forAdminPortal
         ? this.buildAdminPortalUserPayload(user)
         : {
@@ -635,9 +715,10 @@ export class AuthService {
       const manufacturer =
         await this.manufacturersService.findByVendorEmail(submittedEmail);
       if (manufacturer) {
-        user = await this.vendorUsersService.findPrimaryLoginUserForManufacturer(
-          manufacturer._id.toString(),
-        );
+        user =
+          await this.vendorUsersService.findPrimaryLoginUserForManufacturer(
+            manufacturer._id.toString(),
+          );
       }
     }
 

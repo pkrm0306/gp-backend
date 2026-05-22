@@ -24,6 +24,7 @@ import { certificationMultipartMemoryMulterOptions } from '../common/upload/mult
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsUtilizationRmcService } from './raw-materials-utilization-rmc.service';
+import { assertRawMaterialsDocumentTypes } from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Utilization RMC')
 @Controller('raw-materials-utilization-rmc')
@@ -75,6 +76,10 @@ export class RawMaterialsUtilizationRmcController {
     const file2 = uploadedFiles?.find((f) =>
       ['utilizationRmcFile2', 'step15File2', 'rawMaterials3152File'].includes(f.fieldname),
     );
+    const stepFiles = [file1, file2].filter(Boolean) as Express.Multer.File[];
+    if (stepFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(stepFiles);
+    }
 
     const data = await this.service.create(body, user.vendorId, { file1, file2 });
     return { success: true, data };
@@ -120,6 +125,10 @@ export class RawMaterialsUtilizationRmcController {
     const file2 = uploadedFiles?.find((f) =>
       ['utilizationRmcFile2', 'step15File2', 'rawMaterials3152File'].includes(f.fieldname),
     );
+    const stepFiles = [file1, file2].filter(Boolean) as Express.Multer.File[];
+    if (stepFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(stepFiles);
+    }
 
     const data = await this.service.create(body, user.vendorId, { file1, file2 }, urnNo.trim());
     return { success: true, data };

@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsProductsService } from './raw-materials-elimination-of-prohibited-flame-solvents-products.service';
 import { CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto } from './dto/create-raw-materials-elimination-of-prohibited-flame-solvents-products.dto';
+import { assertAtLeastOneRawMaterialsField } from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Elimination Of Prohibited Flame Solvents Products')
 @Controller('raw-materials-elimination-of-prohibited-flame-solvents-products')
@@ -46,6 +47,9 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
+    assertAtLeastOneRawMaterialsField({
+      textValues: [dto.productsName, dto.productsTestReport],
+    });
     const data = await this.service.create(dto, user.vendorId);
     return { success: true, data };
   }

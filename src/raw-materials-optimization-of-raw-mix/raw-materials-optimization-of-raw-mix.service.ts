@@ -19,6 +19,18 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import {
+  assertUnitYearFieldsPositive,
+  filterMeaningfulRows,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const RAW_MIX_UNIT_KEYS = [
+  'unitName',
+  'year',
+  'yeardata1',
+  'yeardata2',
+  'yeardata3',
+];
 
 type RawMixProductDocumentRow = {
   _id: unknown;
@@ -123,29 +135,29 @@ export class RawMaterialsOptimizationOfRawMixService {
         }
       > = [];
 
-      for (const unit of dto.units) {
-        if (
-          !unit?.unitName ||
-          unit.year === undefined ||
-          unit.yeardata1 === undefined ||
-          unit.yeardata2 === undefined ||
-          unit.yeardata3 === undefined
-        ) {
-          throw new BadRequestException(
-            'Each unit must include unitName, year, yeardata1, yeardata2, and yeardata3',
-          );
-        }
+      const meaningfulUnits = filterMeaningfulRows(
+        (dto.units ?? []) as unknown as Array<Record<string, unknown>>,
+        RAW_MIX_UNIT_KEYS,
+      );
 
+      assertUnitYearFieldsPositive(meaningfulUnits);
+
+      for (const unit of meaningfulUnits) {
+        // if (Number(unit.year ?? 0) <= 0) {
+        //   throw new BadRequestException(
+        //     'year must be greater than 0 for each unit',
+        //   );
+        // }
         const id = await this.sequenceHelper.getRawMaterialsOptimizationOfRawMixId();
         docsToCreate.push({
           rawMaterialsOptimizationOfRawMixId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: unit.unitName.trim(),
-          year: unit.year,
-          yeardata1: unit.yeardata1,
-          yeardata2: unit.yeardata2,
-          yeardata3: unit.yeardata3,
+          unitName: String(unit.unitName ?? '').trim(),
+          year: Number(unit.year ?? 0),
+          yeardata1: Number(unit.yeardata1 ?? 0),
+          yeardata2: Number(unit.yeardata2 ?? 0),
+          yeardata3: Number(unit.yeardata3 ?? 0),
           createdDate: now,
           updatedDate: now,
         });

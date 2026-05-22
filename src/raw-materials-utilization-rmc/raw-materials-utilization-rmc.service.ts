@@ -20,6 +20,10 @@ import { Product, ProductDocument } from '../product-registration/schemas/produc
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import {
+  hasAnyMeaningfulBodyField,
+  RAW_MATERIALS_AT_LEAST_ONE_MESSAGE,
+} from '../common/raw-materials/raw-materials-upload.util';
 
 type Step15Files = {
   file1?: Express.Multer.File;
@@ -28,14 +32,6 @@ type Step15Files = {
 
 @Injectable()
 export class RawMaterialsUtilizationRmcService {
-  private readonly ALWAYS_REQUIRED_FIELDS = new Set([
-    'consumptionYear1',
-    'consumptionYear2',
-    'consumptionYear3',
-    'totalQuantityOfOpcUsed',
-    'totalQuantityOfSupplementary',
-  ]);
-
   constructor(
     @InjectModel(RawMaterialsUtilizationRmc.name)
     private model: Model<RawMaterialsUtilizationRmcDocument>,
@@ -71,6 +67,26 @@ export class RawMaterialsUtilizationRmcService {
       message: 'Invalid Step 15 payload',
       fieldErrors,
     });
+  }
+
+  /** Partial-save: invalid/empty numerics become 0 (avoids Mongoose Cast to Number NaN). */
+  private safeRmcNumber(value: unknown, fallback = 0): number {
+    if (value === undefined || value === null || value === '') {
+      return fallback;
+    }
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  private sanitizeRmcNumericPayload(
+    payload: Record<string, number>,
+  ): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [key, value] of Object.entries(payload)) {
+      const n = Number(value);
+      out[key] = Number.isFinite(n) ? n : 0;
+    }
+    return out;
   }
 
   private getNumericSchemaFields(): string[] {
@@ -128,69 +144,32 @@ export class RawMaterialsUtilizationRmcService {
     return out;
   }
 
+  private wasFieldProvided(
+    input: Record<string, unknown>,
+    field: string,
+  ): boolean {
+    const value = input[field];
+    return value !== undefined && value !== null && value !== '';
+  }
+
   private parseAndNormalizePayload(rawInput: Record<string, any>) {
     const input = this.applyAliases(rawInput);
-    const fieldErrors: Record<string, string> = {};
     const numericFields = this.getNumericSchemaFields();
     const numericPayload: Record<string, number> = {};
 
     for (const field of numericFields) {
-      const value = input[field];
-      const required = this.ALWAYS_REQUIRED_FIELDS.has(field);
-
-      if (value === undefined || value === null || value === '') {
-        if (required) {
-          fieldErrors[field] = 'Field is required';
-        } else {
-          numericPayload[field] = 0;
-        }
-        continue;
-      }
-
-      const n = Number(value);
-      if (!Number.isFinite(n)) {
-        fieldErrors[field] = 'Must be numeric';
-        continue;
-      }
-      if (n < 0) {
-        fieldErrors[field] = 'Must be >= 0';
-        continue;
-      }
-
-      numericPayload[field] = n;
+      numericPayload[field] = this.safeRmcNumber(input[field], 0);
     }
 
-    const y1 = numericPayload.consumptionYear1;
-    const y2 = numericPayload.consumptionYear2;
-    const y3 = numericPayload.consumptionYear3;
-    for (const [key, value] of Object.entries({
-      consumptionYear1: y1,
-      consumptionYear2: y2,
-      consumptionYear3: y3,
-    })) {
-      if (value !== undefined && (!Number.isInteger(value) || value < 1900 || value > 2100)) {
-        fieldErrors[key] = 'Year must be an integer between 1900 and 2100';
-      }
-    }
-    if (y1 !== undefined && y2 !== undefined && y3 !== undefined) {
-      const distinct = new Set([y1, y2, y3]);
-      if (distinct.size !== 3) {
-        fieldErrors.consumptionYear3 =
-          'consumptionYear1, consumptionYear2 and consumptionYear3 must be distinct';
-      }
-    }
-
-    const denominator =
-      (numericPayload.totalQuantityOfOpcUsed ?? 0) +
-      (numericPayload.totalQuantityOfSupplementary ?? 0);
-    if (denominator <= 0) {
-      fieldErrors.totalQuantityOfOpcUsed =
-        'totalQuantityOfOpcUsed + totalQuantityOfSupplementary must be > 0';
-    }
-
-    if (Object.keys(fieldErrors).length > 0) {
-      this.buildValidationError(fieldErrors);
-    }
+    // Deferred Step 15 field validation (vendor partial-save; re-enable when product confirms).
+    // const fieldErrors: Record<string, string> = {};
+    // for (const field of numericFields) {
+    //   const n = numericPayload[field];
+    //   if (!Number.isFinite(n)) fieldErrors[field] = 'Must be numeric';
+    //   else if (n < 0) fieldErrors[field] = 'Must be >= 0';
+    // }
+    // year range 1900–2100 and distinct consumption years — commented out
+    // if (Object.keys(fieldErrors).length > 0) this.buildValidationError(fieldErrors);
 
     numericPayload.total1 =
       (numericPayload.cement1 ?? 0) +
@@ -254,15 +233,15 @@ export class RawMaterialsUtilizationRmcService {
       (numericPayload.productionYear3ClsmConcrete ?? 0) +
       (numericPayload.productionYear3AnyOtherTypes ?? 0);
 
-    numericPayload.opcSubstitution = Number(
-      (
-        (numericPayload.totalQuantityOfSupplementary ?? 0) /
-        ((numericPayload.totalQuantityOfOpcUsed ?? 0) +
-          (numericPayload.totalQuantityOfSupplementary ?? 0))
-      ).toFixed(4),
-    );
+    const opcUsed = numericPayload.totalQuantityOfOpcUsed ?? 0;
+    const supplementary = numericPayload.totalQuantityOfSupplementary ?? 0;
+    const opcDenom = opcUsed + supplementary;
+    numericPayload.opcSubstitution =
+      opcDenom > 0
+        ? Number((supplementary / opcDenom).toFixed(4))
+        : 0;
 
-    return numericPayload;
+    return this.sanitizeRmcNumericPayload(numericPayload);
   }
 
   private async ensureUrnOwnership(urnNo: string, vendorObjectId: Types.ObjectId): Promise<void> {
@@ -376,13 +355,14 @@ export class RawMaterialsUtilizationRmcService {
     payload: Record<string, number>,
   ): Promise<RawMaterialsUtilizationRmcDocument> {
     const now = new Date();
+    const safePayload = this.sanitizeRmcNumericPayload(payload);
     const existing = await this.model.findOne({ urnNo, vendorId: vendorObjectId }).exec();
 
     if (existing) {
       return await this.model
         .findOneAndUpdate(
           { urnNo, vendorId: vendorObjectId },
-          { $set: { ...payload, updatedDate: now } },
+          { $set: { ...safePayload, updatedDate: now } },
           { new: true, runValidators: false },
         )
         .exec();
@@ -393,7 +373,7 @@ export class RawMaterialsUtilizationRmcService {
       .findOneAndUpdate(
         { urnNo, vendorId: vendorObjectId },
         {
-          $set: { ...payload, updatedDate: now },
+          $set: { ...safePayload, updatedDate: now },
           $setOnInsert: {
             rawMaterialsUtilizationRmcId: id,
             urnNo,
@@ -495,6 +475,17 @@ export class RawMaterialsUtilizationRmcService {
       }
 
       await this.ensureUrnOwnership(urnNo, vendorObjectId);
+
+      const uploadFiles = [files?.file1, files?.file2].filter(
+        Boolean,
+      ) as Express.Multer.File[];
+      if (
+        uploadFiles.length === 0 &&
+        !hasAnyMeaningfulBodyField(dto ?? {})
+      ) {
+        throw new BadRequestException(RAW_MATERIALS_AT_LEAST_ONE_MESSAGE);
+      }
+
       const normalizedNumericPayload = this.parseAndNormalizePayload(dto ?? {});
       const upserted = await this.upsertStep15Document(urnNo, vendorObjectId, normalizedNumericPayload);
       await this.persistStep15Files(

@@ -11,6 +11,7 @@ import { VendorUsersModule } from '../vendor-users/vendor-users.module';
 import { CaptchaService } from '../common/services/captcha.service';
 import { EmailService } from '../common/services/email.service';
 import { RbacModule } from '../rbac/rbac.module';
+import { ZohoModule } from '../zoho/zoho.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { RbacModule } from '../rbac/rbac.module';
     forwardRef(() => ManufacturersModule),
     VendorUsersModule,
     RbacModule,
+    ZohoModule,
   ],
   controllers: [AuthController],
   providers: [

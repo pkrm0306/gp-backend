@@ -24,6 +24,22 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRecycledContentService } from './raw-materials-recycled-content.service';
 import { CreateRawMaterialsRecycledContentDto } from './dto/create-raw-materials-recycled-content.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseMultipartJsonArray,
+  pickUploadFile,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const RECYCLED_UNIT_ROW_KEYS = [
+  'unitName',
+  'year',
+  'unit1',
+  'yeardata1',
+  'unit2',
+  'yeardata2',
+];
 
 @ApiTags('Raw Materials Recycled Content')
 @Controller('raw-materials-recycled-content')
@@ -35,6 +51,8 @@ export class RawMaterialsRecycledContentController {
   @Post()
   @ApiOperation({
     summary: 'Create raw materials recycled content units (per URN)',
+    description:
+      '**units** and **recycledContentFile** are optional individually; at least one non-empty unit row or file is required (vendor enforces in UI). **units** replaces all rows for the URN.',
   })
   @UseInterceptors(
     AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
@@ -43,7 +61,7 @@ export class RawMaterialsRecycledContentController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'units'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         vendorId: { type: 'string', example: '66f1abcdef1234567890abcd' },
@@ -119,43 +137,29 @@ export class RawMaterialsRecycledContentController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    let units = body.units;
-    if (typeof body.units === 'string') {
-      try {
-        units = JSON.parse(body.units);
-      } catch {
-        throw new BadRequestException('Invalid units format. Expected JSON array.');
-      }
-    }
-    if (!Array.isArray(units) || units.length === 0) {
-      throw new BadRequestException('units must be a non-empty array');
-    }
-
-    const preferredFieldNames = [
+    const units = parseMultipartJsonArray(body.units, 'units');
+    const recycledContentFile = pickUploadFile(uploadedFiles, [
       'recycledContentFile',
       'file',
       'supportingDocument',
       'document',
-    ];
-    const recycledContentFile =
-      uploadedFiles?.find((f) => preferredFieldNames.includes(f.fieldname)) ??
-      uploadedFiles?.[0];
+    ]);
+
+    if (recycledContentFile) {
+      assertRawMaterialsDocumentTypes([recycledContentFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: recycledContentFile ? [recycledContentFile] : [],
+      rows: units as Array<Record<string, unknown>>,
+      rowKeys: RECYCLED_UNIT_ROW_KEYS,
+    });
 
     const dto: CreateRawMaterialsRecycledContentDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       vendorId: body.vendorId,
       recycledContentFileName: body.recycledContentFileName,
-      units,
+      units: units as CreateRawMaterialsRecycledContentDto['units'],
     };
-
-    if (
-      recycledContentFile &&
-      (!dto.recycledContentFileName || dto.recycledContentFileName.trim() === '')
-    ) {
-      throw new BadRequestException(
-        'recycledContentFileName is required when uploading recycledContentFile',
-      );
-    }
 
     const data = await this.service.create(dto, user.vendorId, recycledContentFile);
     return { success: true, data };

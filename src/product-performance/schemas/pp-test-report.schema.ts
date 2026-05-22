@@ -20,7 +20,7 @@ export class PpTestReport {
   @Prop({ default: '' })
   productName?: string;
 
-  @Prop({ required: true })
+  @Prop({ default: '' })
   testReportFileName: string;
 
   @Prop({ required: true })

@@ -8,7 +8,7 @@ export class CreateRawMaterialsGreenSupplyDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({

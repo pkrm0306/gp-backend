@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsInt,
   IsNotEmpty,
@@ -18,8 +17,8 @@ export class RecycledContentUnitDto {
     example: 'Test Unit 1',
   })
   @IsString()
-  @IsNotEmpty()
-  unitName: string;
+  @IsOptional()
+  unitName?: string;
 
   @ApiProperty({ example: 2024 })
   @Type(() => Number)
@@ -36,7 +35,7 @@ export class RecycledContentUnitDto {
   @ApiProperty({ example: 10 })
   @Type(() => Number)
   @IsInt()
-  @Min(1)
+  @Min(0)
   yeardata1: number;
 
   @ApiProperty({ example: 1 })
@@ -59,7 +58,7 @@ export class CreateRawMaterialsRecycledContentDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({
@@ -85,8 +84,8 @@ export class CreateRawMaterialsRecycledContentDto {
     description: 'Recycled content rows for the URN',
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => RecycledContentUnitDto)
-  units: RecycledContentUnitDto[];
+  units?: RecycledContentUnitDto[];
 }

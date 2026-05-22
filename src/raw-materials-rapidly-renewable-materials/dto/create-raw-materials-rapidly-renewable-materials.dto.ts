@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsInt,
   IsNotEmpty,
@@ -36,7 +35,7 @@ export class RapidlyRenewableUnitDto {
   @ApiProperty({ example: 10 })
   @Type(() => Number)
   @IsInt()
-  @Min(1)
+  @Min(0)
   yeardata1: number;
 
   @ApiProperty({ example: 1 })
@@ -59,7 +58,7 @@ export class CreateRawMaterialsRapidlyRenewableMaterialsDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({
@@ -85,8 +84,8 @@ export class CreateRawMaterialsRapidlyRenewableMaterialsDto {
     description: 'Rapidly renewable materials rows for the URN',
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => RapidlyRenewableUnitDto)
-  units: RapidlyRenewableUnitDto[];
+  units?: RapidlyRenewableUnitDto[];
 }

@@ -24,6 +24,11 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateRawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesDto } from './dto/create-raw-materials-elimination-of-ozone-depleting-global-warming-substances.dto';
 import { RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesService } from './raw-materials-elimination-of-ozone-depleting-global-warming-substances.service';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Elimination Of Ozone Depleting And Global Warming Substances')
 @Controller('raw-materials-elimination-of-ozone-depleting-global-warming-substances')
@@ -46,7 +51,7 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'ozoneReportFile'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         ozoneReportFileName: {
@@ -68,11 +73,19 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
     }
 
     const dto: CreateRawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       ozoneReportFileName: body.ozoneReportFileName,
     };
 
-    const data = await this.service.create(dto, user.vendorId, ozoneReportFile as Express.Multer.File);
+    if (ozoneReportFile) {
+      assertRawMaterialsDocumentTypes([ozoneReportFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: ozoneReportFile ? [ozoneReportFile] : [],
+      textValues: [dto.ozoneReportFileName],
+    });
+
+    const data = await this.service.create(dto, user.vendorId, ozoneReportFile);
     return { success: true, data };
   }
 

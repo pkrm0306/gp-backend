@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsInt,
   IsNotEmpty,
@@ -18,8 +17,8 @@ export class AdditivesUnitDto {
     example: 'Manufacturing Unit - A',
   })
   @IsString()
-  @IsNotEmpty()
-  unitName: string;
+  @IsOptional()
+  unitName?: string;
 
   @ApiProperty({ example: 100 })
   @Type(() => Number)
@@ -119,24 +118,26 @@ export class AdditivesUnitDto {
     example: 'PSC description',
   })
   @IsString()
-  @IsNotEmpty()
-  psc: string;
+  @IsOptional()
+  psc?: string;
 
   @ApiProperty({
     description: 'COC text value',
     example: 'COC description',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  coc: string;
+  @IsOptional()
+  coc?: string;
 
   @ApiProperty({
     description: 'Percent COC text value',
     example: '15%',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  percentcoc: string;
+  @IsOptional()
+  percentcoc?: string;
 }
 
 export class CreateRawMaterialsAdditivesDto {
@@ -146,7 +147,7 @@ export class CreateRawMaterialsAdditivesDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({
@@ -163,8 +164,8 @@ export class CreateRawMaterialsAdditivesDto {
     description: 'Manufacturing unit rows to replace in one request for this URN',
   })
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => AdditivesUnitDto)
-  units: AdditivesUnitDto[];
+  units?: AdditivesUnitDto[];
 }

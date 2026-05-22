@@ -24,6 +24,22 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRegionalMaterialsService } from './raw-materials-regional-materials.service';
 import { CreateRawMaterialsRegionalMaterialsDto } from './dto/create-raw-materials-regional-materials.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseMultipartJsonArray,
+  pickUploadFile,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const REGIONAL_UNIT_ROW_KEYS = [
+  'unitName',
+  'year',
+  'unit1',
+  'yeardata1',
+  'unit2',
+  'yeardata2',
+];
 
 @ApiTags('Raw Materials Regional Materials')
 @Controller('raw-materials-regional-materials')
@@ -43,7 +59,7 @@ export class RawMaterialsRegionalMaterialsController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'units'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         vendorId: { type: 'string', example: '66f1abcdef1234567890abcd' },
@@ -123,43 +139,29 @@ export class RawMaterialsRegionalMaterialsController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    let units = body.units;
-    if (typeof body.units === 'string') {
-      try {
-        units = JSON.parse(body.units);
-      } catch {
-        throw new BadRequestException('Invalid units format. Expected JSON array.');
-      }
-    }
-    if (!Array.isArray(units) || units.length === 0) {
-      throw new BadRequestException('units must be a non-empty array');
-    }
-
-    const preferredFieldNames = [
+    const units = parseMultipartJsonArray(body.units, 'units');
+    const regionalMaterialsFile = pickUploadFile(uploadedFiles, [
       'regionalMaterialsFile',
       'file',
       'supportingDocument',
       'document',
-    ];
-    const regionalMaterialsFile =
-      uploadedFiles?.find((f) => preferredFieldNames.includes(f.fieldname)) ??
-      uploadedFiles?.[0];
+    ]);
+
+    if (regionalMaterialsFile) {
+      assertRawMaterialsDocumentTypes([regionalMaterialsFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: regionalMaterialsFile ? [regionalMaterialsFile] : [],
+      rows: units as Array<Record<string, unknown>>,
+      rowKeys: REGIONAL_UNIT_ROW_KEYS,
+    });
 
     const dto: CreateRawMaterialsRegionalMaterialsDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       vendorId: body.vendorId,
       regionalMaterialsFileName: body.regionalMaterialsFileName,
-      units,
+      units: units as CreateRawMaterialsRegionalMaterialsDto['units'],
     };
-
-    if (
-      regionalMaterialsFile &&
-      (!dto.regionalMaterialsFileName || dto.regionalMaterialsFileName.trim() === '')
-    ) {
-      throw new BadRequestException(
-        'regionalMaterialsFileName is required when uploading regionalMaterialsFile',
-      );
-    }
 
     const data = await this.service.create(dto, user.vendorId, regionalMaterialsFile);
     return { success: true, data };

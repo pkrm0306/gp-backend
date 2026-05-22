@@ -24,6 +24,21 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsOptimizationOfRawMixService } from './raw-materials-optimization-of-raw-mix.service';
 import { CreateRawMaterialsOptimizationOfRawMixDto } from './dto/create-raw-materials-optimization-of-raw-mix.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseMultipartJsonArray,
+  pickUploadFile,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const RAW_MIX_UNIT_ROW_KEYS = [
+  'unitName',
+  'year',
+  'yeardata1',
+  'yeardata2',
+  'yeardata3',
+];
 
 @ApiTags('Raw Materials Optimization Of Raw Mix')
 @Controller('raw-materials-optimization-of-raw-mix')
@@ -45,7 +60,7 @@ export class RawMaterialsOptimizationOfRawMixController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'units'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         optimizationOfRawMixFileName: {
@@ -87,21 +102,20 @@ export class RawMaterialsOptimizationOfRawMixController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    let units = body.units;
-    if (typeof body.units === 'string') {
-      try {
-        units = JSON.parse(body.units);
-      } catch {
-        throw new BadRequestException('Invalid units format. Expected JSON array.');
-      }
+    const units = parseMultipartJsonArray(body.units, 'units');
+
+    if (optimizationOfRawMixFile) {
+      assertRawMaterialsDocumentTypes([optimizationOfRawMixFile]);
     }
-    if (!Array.isArray(units) || units.length === 0) {
-      throw new BadRequestException('units must be a non-empty array');
-    }
+    assertAtLeastOneRawMaterialsField({
+      files: optimizationOfRawMixFile ? [optimizationOfRawMixFile] : [],
+      rows: units as Array<Record<string, unknown>>,
+      rowKeys: RAW_MIX_UNIT_ROW_KEYS,
+    });
 
     const dto: CreateRawMaterialsOptimizationOfRawMixDto = {
-      urnNo: body.urnNo,
-      units,
+      urnNo: parseRequiredRawMaterialsUrn(body),
+      units: units as CreateRawMaterialsOptimizationOfRawMixDto['units'],
       optimizationOfRawMixFileName: body.optimizationOfRawMixFileName,
     };
 

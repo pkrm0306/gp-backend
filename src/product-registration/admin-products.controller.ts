@@ -29,16 +29,29 @@ import { Permissions } from '../common/decorators/permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
 
 /**
- * Admin EOI queue endpoints: only Pending (0) + Submitted (1).
- * If the client omits `status` or sends an empty array, default to both.
+ * Admin list filters EOIs by **product** `productStatus` (EOI lifecycle), not manufacturer/vendor status.
+ * Body may send `status`, `productStatus`, or `product_status` (first non-empty wins).
+ * If all are omitted or empty, default to Pending + Submitted `[0, 1]`.
  */
+function firstNonEmptyStatusArray(
+  dto: AdminListProductsDto,
+): number[] | undefined {
+  const candidates = [dto.status, dto.productStatus, dto.product_status];
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.length > 0) {
+      return c;
+    }
+  }
+  return undefined;
+}
+
 function resolveAdminListProductsBody(
   dto: AdminListProductsDto,
 ): AdminListProductsDto {
-  const hasStatus = Array.isArray(dto.status) && dto.status.length > 0;
+  const resolved = firstNonEmptyStatusArray(dto);
   return {
     ...dto,
-    status: hasStatus ? dto.status : [0, 1],
+    status: resolved ?? [0, 1],
   };
 }
 
@@ -117,7 +130,7 @@ export class AdminProductsController {
       'Default **groupBy: manufacturer** paginates manufacturer groups. Each item includes `manufacturer_id`, `manufacturer_name`, `total_urns`, `total_eois`, and nested `urns[]` with `eois[]`. ' +
       'Search matches manufacturer name, URN, EOI, or product name; when a manufacturer qualifies, nested URNs/EOIs reflect filters (Option A). ' +
       'Legacy **groupBy: urn** returns flat URN groups. `total` counts top-level groups (manufacturers or URNs). ' +
-      '**Status:** only **0 (Pending)** and **1 (Submitted)**; omit `status` to list both. Extra body keys like `urnStatusLabels` are ignored.',
+      '**EOI status (`productStatus`):** filter with `status`, `productStatus`, or `product_status` (array of **0–4**). Omit or send empty → defaults to **[0, 1]** (Pending + Submitted). Extra keys like `urnStatusLabels` / `urn_status_labels` are ignored.',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Products listed successfully' })

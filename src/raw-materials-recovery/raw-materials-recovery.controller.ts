@@ -24,6 +24,22 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRecoveryService } from './raw-materials-recovery.service';
 import { CreateRawMaterialsRecoveryDto } from './dto/create-raw-materials-recovery.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseMultipartJsonArray,
+  pickUploadFile,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const RECOVERY_UNIT_ROW_KEYS = [
+  'unitName',
+  'year',
+  'unit1',
+  'yeardata1',
+  'unit2',
+  'yeardata2',
+];
 
 @ApiTags('Raw Materials Recovery')
 @Controller('raw-materials-recovery')
@@ -43,7 +59,7 @@ export class RawMaterialsRecoveryController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'units'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         vendorId: { type: 'string', example: '66f1abcdef1234567890abcd' },
@@ -87,33 +103,28 @@ export class RawMaterialsRecoveryController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    let units = body.units;
-    if (typeof body.units === 'string') {
-      try {
-        units = JSON.parse(body.units);
-      } catch {
-        throw new BadRequestException('Invalid units format. Expected JSON array.');
-      }
-    }
-    if (!Array.isArray(units) || units.length === 0) {
-      throw new BadRequestException('units must be a non-empty array');
-    }
-
-    const preferredFieldNames = [
+    const units = parseMultipartJsonArray(body.units, 'units');
+    const recoveryFile = pickUploadFile(uploadedFiles, [
       'recoveryFile',
       'file',
       'supportingDocument',
       'document',
-    ];
-    const recoveryFile =
-      uploadedFiles?.find((f) => preferredFieldNames.includes(f.fieldname)) ??
-      uploadedFiles?.[0];
+    ]);
+
+    if (recoveryFile) {
+      assertRawMaterialsDocumentTypes([recoveryFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: recoveryFile ? [recoveryFile] : [],
+      rows: units as Array<Record<string, unknown>>,
+      rowKeys: RECOVERY_UNIT_ROW_KEYS,
+    });
 
     const dto: CreateRawMaterialsRecoveryDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       vendorId: body.vendorId,
       recoveryFileName: body.recoveryFileName,
-      units,
+      units: units as CreateRawMaterialsRecoveryDto['units'],
     };
 
     const data = await this.service.create(dto, user.vendorId, recoveryFile);

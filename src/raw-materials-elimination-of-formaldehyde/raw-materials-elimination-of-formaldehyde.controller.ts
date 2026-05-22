@@ -24,6 +24,11 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsEliminationOfFormaldehydeService } from './raw-materials-elimination-of-formaldehyde.service';
 import { CreateRawMaterialsEliminationOfFormaldehydeDto } from './dto/create-raw-materials-elimination-of-formaldehyde.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Elimination Of Formaldehyde')
 @Controller('raw-materials-elimination-of-formaldehyde')
@@ -69,11 +74,18 @@ export class RawMaterialsEliminationOfFormaldehydeController {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const dto: CreateRawMaterialsEliminationOfFormaldehydeDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       productsName: body.productsName,
       productsTestReport: body.productsTestReport,
       formaldehydeFileName: body.formaldehydeFileName,
     };
+    if (formaldehydeFile) {
+      assertRawMaterialsDocumentTypes([formaldehydeFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: formaldehydeFile ? [formaldehydeFile] : [],
+      textValues: [dto.productsName, dto.productsTestReport],
+    });
     const data = await this.service.create(dto, user.vendorId, formaldehydeFile);
     return { success: true, data };
   }

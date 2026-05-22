@@ -11,6 +11,18 @@ import {
 } from './schemas/raw-materials-utilization-manufacturing-units.schema';
 import { CreateRawMaterialsUtilizationManufacturingUnitsDto } from './dto/create-raw-materials-utilization-manufacturing-units.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import {
+  assertUnitYearFieldsPositive,
+  filterMeaningfulRows,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const MANUFACTURING_UNIT_KEYS = [
+  'unitName',
+  'year',
+  'yeardata1',
+  'yeardata2',
+  'yeardata3',
+];
 
 @Injectable()
 export class RawMaterialsUtilizationManufacturingUnitsService {
@@ -43,11 +55,10 @@ export class RawMaterialsUtilizationManufacturingUnitsService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
       const now = new Date();
-      const unitsPayload = dto.units;
-
-      if (!Array.isArray(unitsPayload) || unitsPayload.length === 0) {
-        throw new BadRequestException('units must be a non-empty array');
-      }
+      const meaningfulUnits = filterMeaningfulRows(
+        (dto.units ?? []) as unknown as Array<Record<string, unknown>>,
+        MANUFACTURING_UNIT_KEYS,
+      );
 
       const rowsToInsert: Array<
         Omit<RawMaterialsUtilizationManufacturingUnits, 'createdDate' | 'updatedDate'> & {
@@ -56,30 +67,25 @@ export class RawMaterialsUtilizationManufacturingUnitsService {
         }
       > = [];
 
-      for (const unit of unitsPayload) {
-        if (
-          !unit?.unitName ||
-          unit.year === undefined ||
-          unit.yeardata1 === undefined ||
-          unit.yeardata2 === undefined ||
-          unit.yeardata3 === undefined
-        ) {
-          throw new BadRequestException(
-            'Each unit must include unitName, year, yeardata1, yeardata2, and yeardata3',
-          );
-        }
+      assertUnitYearFieldsPositive(meaningfulUnits);
 
+      for (const unit of meaningfulUnits) {
+        // if (Number(unit.year ?? 0) <= 0) {
+        //   throw new BadRequestException(
+        //     'year must be greater than 0 for each manufacturing unit',
+        //   );
+        // }
         const id =
           await this.sequenceHelper.getRawMaterialsUtilizationManufacturingUnitsId();
         rowsToInsert.push({
           rawMaterialsUtilizationManufacturingUnitsId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: unit.unitName.trim(),
-          year: unit.year,
-          yeardata1: unit.yeardata1,
-          yeardata2: unit.yeardata2,
-          yeardata3: unit.yeardata3,
+          unitName: String(unit.unitName ?? '').trim(),
+          year: Number(unit.year ?? 0),
+          yeardata1: Number(unit.yeardata1 ?? 0),
+          yeardata2: Number(unit.yeardata2 ?? 0),
+          yeardata3: Number(unit.yeardata3 ?? 0),
           createdDate: now,
           updatedDate: now,
         });

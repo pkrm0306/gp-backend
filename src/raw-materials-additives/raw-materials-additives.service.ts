@@ -19,6 +19,28 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { filterMeaningfulRows } from '../common/raw-materials/raw-materials-upload.util';
+
+const ADDITIVES_UNIT_KEYS = [
+  'unitName',
+  'year',
+  'year1',
+  'year1a',
+  'year1b',
+  'year1c',
+  'year2',
+  'year2a',
+  'year2b',
+  'year2c',
+  'year3',
+  'year3a',
+  'year3b',
+  'year3c',
+  'psc',
+  'coc',
+  'percentcoc',
+  'ppc',
+];
 
 type AdditivesProductDocumentRow = {
   _id: unknown;
@@ -147,52 +169,34 @@ export class RawMaterialsAdditivesService {
         }
       > = [];
 
-      for (const unit of dto.units) {
-        const year1cValue = unit.year1c ?? 0;
-        if (
-          !unit?.unitName ||
-          unit.year1 === undefined ||
-          unit.year1a === undefined ||
-          unit.year1b === undefined ||
-          unit.year2 === undefined ||
-          unit.year2a === undefined ||
-          unit.year2b === undefined ||
-          unit.year2c === undefined ||
-          unit.year3 === undefined ||
-          unit.year3a === undefined ||
-          unit.year3b === undefined ||
-          unit.year3c === undefined ||
-          !unit.psc ||
-          !unit.coc ||
-          !unit.percentcoc
-        ) {
-          throw new BadRequestException(
-            'Each unit must include unitName, year1/year1a/year1b, year2/year2a/year2b/year2c, year3/year3a/year3b/year3c, psc, coc, and percentcoc',
-          );
-        }
+      const meaningfulUnits = filterMeaningfulRows(
+        (dto.units ?? []) as unknown as Array<Record<string, unknown>>,
+        ADDITIVES_UNIT_KEYS,
+      );
 
+      for (const unit of meaningfulUnits) {
         const id = await this.sequenceHelper.getRawMaterialsAdditivesId();
         docsToCreate.push({
           rawMaterialsAdditivesId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: unit.unitName.trim(),
-          year: unit.year,
-          year1: unit.year1,
-          year1a: unit.year1a,
-          year1b: unit.year1b,
-          year1c: year1cValue,
-          year2: unit.year2,
-          year2a: unit.year2a,
-          year2b: unit.year2b,
-          year2c: unit.year2c,
-          year3: unit.year3,
-          year3a: unit.year3a,
-          year3b: unit.year3b,
-          year3c: unit.year3c,
-          psc: unit.psc.trim(),
-          coc: unit.coc.trim(),
-          percentcoc: unit.percentcoc.trim(),
+          unitName: String(unit.unitName ?? '').trim(),
+          year: Number(unit.year ?? 0),
+          year1: Number(unit.year1 ?? 0),
+          year1a: Number(unit.year1a ?? 0),
+          year1b: Number(unit.year1b ?? 0),
+          year1c: Number(unit.year1c ?? 0),
+          year2: Number(unit.year2 ?? 0),
+          year2a: Number(unit.year2a ?? 0),
+          year2b: Number(unit.year2b ?? 0),
+          year2c: Number(unit.year2c ?? 0),
+          year3: Number(unit.year3 ?? 0),
+          year3a: Number(unit.year3a ?? 0),
+          year3b: Number(unit.year3b ?? 0),
+          year3c: Number(unit.year3c ?? 0),
+          psc: String(unit.psc ?? '').trim(),
+          coc: String(unit.coc ?? '').trim(),
+          percentcoc: String(unit.percentcoc ?? '').trim(),
           createdDate: now,
           updatedDate: now,
         });

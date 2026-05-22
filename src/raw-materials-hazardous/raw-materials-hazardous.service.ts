@@ -37,14 +37,30 @@ export class RawMaterialsHazardousService {
   ): Promise<RawMaterialsHazardousDocument> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const id = await this.sequenceHelper.getRawMaterialsHazardousId();
+      const urnNo = dto.urnNo.trim();
       const now = new Date();
+      const details = dto.details?.trim() ?? '';
+      const eoiNo = dto.eoiNo?.trim() ?? '';
 
+      const existing = await this.model
+        .findOne({ urnNo, vendorId: vendorObjectId })
+        .sort({ rawMaterialsHazardousId: -1 })
+        .exec();
+
+      if (existing) {
+        existing.details = details;
+        existing.eoiNo = eoiNo;
+        existing.updatedDate = now;
+        return await existing.save();
+      }
+
+      const id = await this.sequenceHelper.getRawMaterialsHazardousId();
       const doc = new this.model({
         rawMaterialsHazardousId: id,
-        urnNo: dto.urnNo.trim(),
+        urnNo,
         vendorId: vendorObjectId,
-        details: dto.details?.trim() || '',
+        eoiNo,
+        details,
         createdDate: now,
         updatedDate: now,
       });

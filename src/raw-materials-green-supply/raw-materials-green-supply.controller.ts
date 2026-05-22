@@ -24,6 +24,11 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsGreenSupplyService } from './raw-materials-green-supply.service';
 import { CreateRawMaterialsGreenSupplyDto } from './dto/create-raw-materials-green-supply.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Green Supply')
 @Controller('raw-materials-green-supply')
@@ -66,11 +71,19 @@ export class RawMaterialsGreenSupplyController {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const dto: CreateRawMaterialsGreenSupplyDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       awarenessAndEducation: body.awarenessAndEducation,
       measuresImplemented: body.measuresImplemented,
       greenSupplyFileName: body.greenSupplyFileName,
     };
+
+    if (greenSupplyFile) {
+      assertRawMaterialsDocumentTypes([greenSupplyFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: greenSupplyFile ? [greenSupplyFile] : [],
+      textValues: [dto.awarenessAndEducation, dto.measuresImplemented],
+    });
 
     const data = await this.service.create(dto, user.vendorId, greenSupplyFile);
     return { success: true, data };

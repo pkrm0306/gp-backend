@@ -41,17 +41,20 @@ function normalizeOptionalNumber(value: unknown): number | undefined {
 
 export class AdminListProductsDto {
   /**
-   * UI-only field some admin clients send; not used by the API.
+   * UI-only fields some admin clients send; not used by the API.
    * Whitelisted so ValidationPipe `forbidNonWhitelisted` does not reject the body.
+   * Clients may send camelCase or snake_case.
    */
   @Allow()
   urnStatusLabels?: unknown;
 
+  @Allow()
+  urn_status_labels?: unknown;
+
   @ApiPropertyOptional({
     description:
-      'EOI productStatus filter (single value or array). **Admin list / export:** only **0 = Pending** and **1 = Submitted** are allowed. ' +
-      'Omitted or empty → server applies `[0, 1]` for `POST /api/admin/products/list` and `POST /api/admin/products/export` only. ' +
-      '(Other callers may pass different filters via service code.)',
+      'EOI **productStatus** filter (same as `productStatus` / `product_status`). Values: **0** Pending, **1** Submitted, **2** Certified, **3** Rejected, **4** Expired (certified past validtill). ' +
+      'Omitted or empty → server uses `[0, 1]` for admin list/export. This filters **per EOI row** on `products.productStatus`, not manufacturer/vendor status.',
     type: [Number],
     example: [0, 1],
   })
@@ -59,8 +62,32 @@ export class AdminListProductsDto {
   @Transform(({ value }) => normalizeNumberArray(value))
   @IsArray()
   @IsInt({ each: true })
-  @IsIn([0, 1], { each: true })
+  @IsIn([0, 1, 2, 3, 4], { each: true })
   status?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Alias of `status` — EOI `productStatus` codes **0–4**.',
+    type: [Number],
+    example: [0, 1],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  @IsIn([0, 1, 2, 3, 4], { each: true })
+  productStatus?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Alias of `status` — EOI `product_status` / productStatus codes **0–4** (snake_case).',
+    type: [Number],
+    example: [0, 1],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  @IsIn([0, 1, 2, 3, 4], { each: true })
+  product_status?: number[];
 
   @ApiPropertyOptional({
     description: 'Product type filter: 0=online, 1=offline',

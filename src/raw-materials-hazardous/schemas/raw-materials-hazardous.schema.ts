@@ -14,7 +14,10 @@ export class RawMaterialsHazardous {
   @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })
   vendorId: Types.ObjectId;
 
-  @Prop({ required: false })
+  @Prop({ required: false, default: '' })
+  eoiNo?: string;
+
+  @Prop({ required: false, default: '' })
   details?: string;
 
   @Prop({ required: true })

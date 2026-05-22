@@ -6,7 +6,7 @@ export class CreateRawMaterialsUtilizationRmcDto {
   @ApiProperty({ example: 'URN-20260305124230' })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({

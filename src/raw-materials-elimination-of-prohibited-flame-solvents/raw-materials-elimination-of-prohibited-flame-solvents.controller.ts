@@ -24,6 +24,11 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsService } from './raw-materials-elimination-of-prohibited-flame-solvents.service';
 import { CreateRawMaterialsEliminationOfProhibitedFlameSolventsDto } from './dto/create-raw-materials-elimination-of-prohibited-flame-solvents.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Elimination Of Prohibited Flame Solvents')
 @Controller('raw-materials-elimination-of-prohibited-flame-solvents')
@@ -71,10 +76,17 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsController {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       details: body.details,
       prohibitedFlameSolventsFileName: body.prohibitedFlameSolventsFileName,
     };
+    if (prohibitedFlameSolventsFile) {
+      assertRawMaterialsDocumentTypes([prohibitedFlameSolventsFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: prohibitedFlameSolventsFile ? [prohibitedFlameSolventsFile] : [],
+      textValues: [dto.details],
+    });
     const data = await this.service.create(dto, user.vendorId, prohibitedFlameSolventsFile);
     return { success: true, data };
   }

@@ -8,7 +8,7 @@ export class CreateRawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstance
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({

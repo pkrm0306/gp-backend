@@ -24,6 +24,22 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRapidlyRenewableMaterialsService } from './raw-materials-rapidly-renewable-materials.service';
 import { CreateRawMaterialsRapidlyRenewableMaterialsDto } from './dto/create-raw-materials-rapidly-renewable-materials.dto';
+import {
+  assertAtLeastOneRawMaterialsField,
+  assertRawMaterialsDocumentTypes,
+  parseMultipartJsonArray,
+  pickUploadFile,
+  parseRequiredRawMaterialsUrn,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const RAPIDLY_RENEWABLE_UNIT_ROW_KEYS = [
+  'unitName',
+  'year',
+  'unit1',
+  'yeardata1',
+  'unit2',
+  'yeardata2',
+];
 
 @ApiTags('Raw Materials Rapidly Renewable Materials')
 @Controller('raw-materials-rapidly-renewable-materials')
@@ -45,7 +61,7 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'units'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         vendorId: { type: 'string', example: '66f1abcdef1234567890abcd' },
@@ -125,43 +141,29 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
-    let units = body.units;
-    if (typeof body.units === 'string') {
-      try {
-        units = JSON.parse(body.units);
-      } catch {
-        throw new BadRequestException('Invalid units format. Expected JSON array.');
-      }
-    }
-    if (!Array.isArray(units) || units.length === 0) {
-      throw new BadRequestException('units must be a non-empty array');
-    }
-
-    const preferredFieldNames = [
+    const units = parseMultipartJsonArray(body.units, 'units');
+    const rapidlyRenewableFile = pickUploadFile(uploadedFiles, [
       'rapidlyRenewableFile',
       'file',
       'supportingDocument',
       'document',
-    ];
-    const rapidlyRenewableFile =
-      uploadedFiles?.find((f) => preferredFieldNames.includes(f.fieldname)) ??
-      uploadedFiles?.[0];
+    ]);
+
+    if (rapidlyRenewableFile) {
+      assertRawMaterialsDocumentTypes([rapidlyRenewableFile]);
+    }
+    assertAtLeastOneRawMaterialsField({
+      files: rapidlyRenewableFile ? [rapidlyRenewableFile] : [],
+      rows: units as Array<Record<string, unknown>>,
+      rowKeys: RAPIDLY_RENEWABLE_UNIT_ROW_KEYS,
+    });
 
     const dto: CreateRawMaterialsRapidlyRenewableMaterialsDto = {
-      urnNo: body.urnNo,
+      urnNo: parseRequiredRawMaterialsUrn(body),
       vendorId: body.vendorId,
       rapidlyRenewableFileName: body.rapidlyRenewableFileName,
-      units,
+      units: units as CreateRawMaterialsRapidlyRenewableMaterialsDto['units'],
     };
-
-    if (
-      rapidlyRenewableFile &&
-      (!dto.rapidlyRenewableFileName || dto.rapidlyRenewableFileName.trim() === '')
-    ) {
-      throw new BadRequestException(
-        'rapidlyRenewableFileName is required when uploading rapidlyRenewableFile',
-      );
-    }
 
     const data = await this.service.create(dto, user.vendorId, rapidlyRenewableFile);
     return { success: true, data };

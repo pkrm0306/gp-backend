@@ -1,7 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
   IsArray,
   IsNotEmpty,
   IsOptional,
@@ -16,48 +15,53 @@ export class ReduceEnvironmentalUnitDto {
     example: 'Mine site location details',
   })
   @IsString()
-  @IsNotEmpty()
-  location: string;
+  @IsOptional()
+  location?: string;
 
   @ApiProperty({
     description: 'Enhancement of mines life',
     example: 'Measures for enhancement of mines life',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  enhancementOfMinesLife: string;
+  @IsOptional()
+  enhancementOfMinesLife?: string;
 
   @ApiProperty({
     description: 'Topsoil conservation',
     example: 'Topsoil conservation measures',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  topsoilConservation: string;
+  @IsOptional()
+  topsoilConservation?: string;
 
   @ApiProperty({
     description: 'Water table management',
     example: 'Water table management measures',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  waterTableManagement: string;
+  @IsOptional()
+  waterTableManagement?: string;
 
   @ApiProperty({
     description: 'Restoration of spent mines',
     example: 'Restoration plan details',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  restorationOfSpentMines: string;
+  @IsOptional()
+  restorationOfSpentMines?: string;
 
   @ApiProperty({
     description: 'Green belt development and biodiversity',
     example: 'Green belt development and biodiversity initiatives',
+    required: false,
   })
   @IsString()
-  @IsNotEmpty()
-  greenBeltDevelopmentAndBioDiversity: string;
+  @IsOptional()
+  greenBeltDevelopmentAndBioDiversity?: string;
 }
 
 export class CreateRawMaterialsReduceEnvironmentalDto {
@@ -67,7 +71,7 @@ export class CreateRawMaterialsReduceEnvironmentalDto {
   })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(20)
+  @MaxLength(64)
   urnNo: string;
 
   @ApiProperty({
@@ -78,7 +82,6 @@ export class CreateRawMaterialsReduceEnvironmentalDto {
   })
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => ReduceEnvironmentalUnitDto)
   units?: ReduceEnvironmentalUnitDto[];

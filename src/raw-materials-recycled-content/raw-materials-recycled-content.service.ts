@@ -21,6 +21,19 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import {
+  assertUnitYearFieldsPositive,
+  filterMeaningfulRows,
+} from '../common/raw-materials/raw-materials-upload.util';
+
+const RECYCLED_CONTENT_UNIT_KEYS = [
+  'unitName',
+  'year',
+  'unit1',
+  'yeardata1',
+  'unit2',
+  'yeardata2',
+];
 
 type RecycledContentProductDocumentRow = {
   _id: unknown;
@@ -133,24 +146,35 @@ export class RawMaterialsRecycledContentService {
         }
       > = [];
 
-      for (const unit of dto.units) {
-        if (unit.yeardata1 <= 0) {
-          throw new BadRequestException('yeardata1 must be greater than 0 for each unit');
-        }
+      const meaningfulUnits = filterMeaningfulRows(
+        (dto.units ?? []) as unknown as Array<Record<string, unknown>>,
+        RECYCLED_CONTENT_UNIT_KEYS,
+      );
 
-        const yeardata3 = (unit.yeardata2 / unit.yeardata1) * 100;
+      assertUnitYearFieldsPositive(meaningfulUnits);
+
+      for (const unit of meaningfulUnits) {
+        // if (Number(unit.yeardata1 ?? 0) <= 0) {
+        //   throw new BadRequestException(
+        //     'yeardata1 must be greater than 0 for each unit',
+        //   );
+        // }
+        const yeardata1 = Number(unit.yeardata1 ?? 0);
+        const yeardata2 = Number(unit.yeardata2 ?? 0);
+        const yeardata3 =
+          yeardata1 > 0 ? (yeardata2 / yeardata1) * 100 : 0;
         const id = await this.sequenceHelper.getRawMaterialsRecycledContentId();
 
         docsToCreate.push({
           rawMaterialsRecycledContentId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: unit.unitName.trim(),
-          year: unit.year,
-          unit1: unit.unit1,
-          yeardata1: unit.yeardata1,
-          unit2: unit.unit2,
-          yeardata2: unit.yeardata2,
+          unitName: String(unit.unitName ?? '').trim(),
+          year: Number(unit.year ?? 0),
+          unit1: Number(unit.unit1 ?? 0),
+          yeardata1,
+          unit2: Number(unit.unit2 ?? 0),
+          yeardata2,
           yeardata3,
           createdDate: now,
           updatedDate: now,
@@ -176,7 +200,7 @@ export class RawMaterialsRecycledContentService {
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: created[0].rawMaterialsRecycledContentId,
+          formPrimaryId: created[0]?.rawMaterialsRecycledContentId ?? 0,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: recycledContentFile.originalname,
           documentLink: storedRelativePath,
