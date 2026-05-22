@@ -198,7 +198,9 @@ export class RawMaterialsRapidlyRenewableMaterialsService {
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: created[0].rawMaterialsRapidlyRenewableMaterialsId,
+          formPrimaryId:
+            created[0]?.rawMaterialsRapidlyRenewableMaterialsId ??
+            productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: rapidlyRenewableFile.originalname,
           documentLink: storedRelativePath,

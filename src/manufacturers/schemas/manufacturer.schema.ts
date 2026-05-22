@@ -21,6 +21,14 @@ export class Manufacturer {
   @Prop({ default: 0 })
   manufacturerStatus: number;
 
+  /**
+   * After self-registration, false until the vendor completes email OTP.
+   * Admin **unverified** listings exclude `false` so pending-OTP rows stay hidden.
+   * Omitted on legacy rows (treated as eligible for the unverified list).
+   */
+  @Prop()
+  vendorPortalEmailVerified?: boolean;
+
   @Prop({ required: true })
   vendor_name: string;
 

@@ -222,7 +222,8 @@ export class RawMaterialsAdditivesService {
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: created[0].rawMaterialsAdditivesId,
+          formPrimaryId:
+            created[0]?.rawMaterialsAdditivesId ?? productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: additivesFile.originalname,
           documentLink: storedRelativePath,

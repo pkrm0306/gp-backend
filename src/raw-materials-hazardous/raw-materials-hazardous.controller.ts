@@ -19,11 +19,12 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import {
   parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -49,7 +50,7 @@ export class RawMaterialsHazardousController {
       'Accepts **multipart/form-data** (vendor default) or JSON. Fields: `urnNo` (required), `eoiNo` (optional), `details` (optional). Upserts by URN + vendor. At least one field required (vendor UI + server mirror).',
   })
   @UseInterceptors(
-    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -77,16 +78,20 @@ export class RawMaterialsHazardousController {
     const eoiNo = parseRawMaterialsFormString(body.eoiNo)?.trim() || undefined;
     const details = parseRawMaterialsFormString(body.details) ?? '';
 
-    const [hazardousCount, productCount] = await Promise.all([
+    const [detailsCount, productCount] = await Promise.all([
       this.service.countPersistedByUrn(urnNo, user.vendorId),
-      this.hazardousProductsService.countPersistedByUrn(urnNo, user.vendorId),
+      this.hazardousProductsService.countMeaningfulProductsByUrn(
+        urnNo,
+        user.vendorId,
+      ),
     ]);
 
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
       textValues: [details, eoiNo],
-      persistedRecordCount: hazardousCount + productCount,
+      persistedRecordCount: detailsCount + productCount,
     });
 
     const dto: CreateRawMaterialsHazardousDto = {

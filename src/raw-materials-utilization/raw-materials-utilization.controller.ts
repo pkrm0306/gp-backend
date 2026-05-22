@@ -21,7 +21,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
@@ -52,7 +52,7 @@ export class RawMaterialsUtilizationController {
     summary: 'Create raw materials utilization record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('utilizationFile', certificationMultipartMemoryMulterOptions()),
+    FileInterceptor('utilizationFile', rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -95,7 +95,7 @@ export class RawMaterialsUtilizationController {
       this.service.countPersistedByUrn(urnNo, user.vendorId),
       this.manufacturingUnitsService.countPersistedByUrn(urnNo, user.vendorId),
     ]);
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_UTILIZATION,

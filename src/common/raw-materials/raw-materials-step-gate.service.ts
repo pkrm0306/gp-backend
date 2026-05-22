@@ -1,6 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import {
+  Product,
+  ProductDocument,
+} from '../../product-registration/schemas/product.schema';
+import {
+  assertVendorCanEditUrn as assertVendorCanEditUrnShared,
+  VENDOR_URN_REVIEW_LOCK_MESSAGE,
+  VENDOR_URN_REVIEW_LOCK_STATUS,
+} from '../vendor/vendor-urn-edit.util';
 import {
   AllProductDocument,
   AllProductDocumentDocument,
@@ -9,7 +18,15 @@ import {
   DocumentSectionKey,
   normalizeDocumentSectionKey,
 } from '../constants/document-section-key.constants';
-import { assertAtLeastOneRawMaterialsField } from './raw-materials-upload.util';
+import {
+  assertAtLeastOneRawMaterialsField,
+  hasAnyMeaningfulBodyField,
+} from './raw-materials-upload.util';
+
+export {
+  VENDOR_URN_REVIEW_LOCK_MESSAGE,
+  VENDOR_URN_REVIEW_LOCK_STATUS,
+};
 
 export type RawMaterialsAtLeastOneParams = {
   vendorId: string;
@@ -22,6 +39,8 @@ export type RawMaterialsAtLeastOneParams = {
   rowKeys?: string[];
   /** Rows already stored for this step (tables without file metadata). */
   persistedRecordCount?: number;
+  /** Step 15 grid / multipart body (any non-metadata field). */
+  multipartBody?: Record<string, unknown>;
 };
 
 @Injectable()
@@ -29,7 +48,21 @@ export class RawMaterialsStepGateService {
   constructor(
     @InjectModel(AllProductDocument.name)
     private readonly allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private readonly productModel: Model<ProductDocument>,
   ) {}
+
+  async assertVendorCanEditUrn(vendorId: string, urnNo: string): Promise<void> {
+    await assertVendorCanEditUrnShared(this.productModel, vendorId, urnNo);
+  }
+
+  /** Review lock + vendor empty-form mirror (single entry for POST handlers). */
+  async assertStepSubmitAllowed(
+    params: RawMaterialsAtLeastOneParams,
+  ): Promise<void> {
+    await this.assertVendorCanEditUrn(params.vendorId, params.urnNo);
+    await this.assertAtLeastOne(params);
+  }
 
   /**
    * Vendor “≥ 1 field” mirror: incoming content, new files, saved documents, or persisted rows.
@@ -42,6 +75,10 @@ export class RawMaterialsStepGateService {
           params.documentForm,
         )
       : 0;
+
+    if (params.multipartBody && hasAnyMeaningfulBodyField(params.multipartBody)) {
+      return;
+    }
 
     assertAtLeastOneRawMaterialsField({
       files: params.files,

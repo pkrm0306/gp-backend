@@ -3,7 +3,6 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -12,6 +11,14 @@ import {
 } from './schemas/raw-materials-elimination-of-prohibited-flame-solvents-products.schema';
 import { CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto } from './dto/create-raw-materials-elimination-of-prohibited-flame-solvents-products.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import {
+  countMeaningfulRawMaterialsProductRows,
+  filterFormaldehydeStyleProductsForVendorDisplay,
+} from '../common/raw-materials/raw-materials-hazardous-display.util';
+import {
+  hasPartialRawMaterialsProductRow,
+  normalizeRawMaterialsProductRow,
+} from '../common/form-partial-field.util';
 
 @Injectable()
 export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsService {
@@ -35,8 +42,16 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsService {
   async create(
     dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto,
     vendorId: string,
-  ): Promise<RawMaterialsEliminationOfProhibitedFlameSolventsProductsDocument> {
+  ): Promise<RawMaterialsEliminationOfProhibitedFlameSolventsProductsDocument | null> {
     try {
+      const productRow = normalizeRawMaterialsProductRow({
+        productsName: dto.productsName,
+        productsTestReport: dto.productsTestReport,
+      });
+      if (!hasPartialRawMaterialsProductRow(productRow)) {
+        return null;
+      }
+
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const id =
         await this.sequenceHelper.getRawMaterialsEliminationOfProhibitedFlameSolventsProductsId();
@@ -46,8 +61,8 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsService {
         rawMaterialsEliminationProhibitedFlameSolventsProductsId: id,
         urnNo: dto.urnNo.trim(),
         vendorId: vendorObjectId,
-        productsName: String(dto.productsName ?? '').trim(),
-        productsTestReport: String(dto.productsTestReport ?? '').trim(),
+        productsName: productRow.productName,
+        productsTestReport: productRow.testReportReference,
         createdDate: now,
         updatedDate: now,
       });
@@ -68,17 +83,28 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsService {
     }
   }
 
+  async countMeaningfulProductsByUrn(
+    urnNo: string,
+    vendorId: string,
+  ): Promise<number> {
+    return countMeaningfulRawMaterialsProductRows(this.model, urnNo, vendorId);
+  }
+
   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
-    return countVendorUrnDocuments(this.model, urnNo, vendorId);
+    return this.countMeaningfulProductsByUrn(urnNo, vendorId);
   }
 
   async listByUrn(urnNo: string, vendorId: string) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      return await this.model
+      const rows = await this.model
         .find({ urnNo: urnNo.trim(), vendorId: vendorObjectId })
         .sort({ createdDate: 1 })
+        .lean()
         .exec();
+      return filterFormaldehydeStyleProductsForVendorDisplay(
+        rows as Array<Record<string, unknown>>,
+      );
     } catch (error: any) {
       console.error(
         '[Raw Materials Elimination Of Prohibited Flame Solvents Products] List error:',

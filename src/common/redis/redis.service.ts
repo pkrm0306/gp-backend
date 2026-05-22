@@ -20,7 +20,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit(): Promise<void> {
-    this.logger.warn('Redis package unavailable; using in-memory cache fallback');
+    this.logger.log(
+      'Using in-process cache (Map); no Redis server is used by RedisService. OK for local/single-instance; use a shared store if you scale horizontally.',
+    );
   }
 
   async onModuleDestroy(): Promise<void> {

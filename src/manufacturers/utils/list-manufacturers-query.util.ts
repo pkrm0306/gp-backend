@@ -90,7 +90,11 @@ export function resolveManufacturerScopeFilter(
     return { manufacturerStatus: 1 };
   }
   if (scope === 'unverified') {
-    return { manufacturerStatus: { $in: [0, 2] } };
+    return {
+      manufacturerStatus: { $in: [0, 2] },
+      /** Hide manufacturers still on the registration OTP step (`vendorPortalEmailVerified === false`). */
+      vendorPortalEmailVerified: { $ne: false },
+    };
   }
   if (query.manufacturerStatus !== undefined) {
     return { manufacturerStatus: query.manufacturerStatus };

@@ -198,7 +198,8 @@ export class RawMaterialsRecoveryService {
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: created[0].rawMaterialsRecoveryId,
+          formPrimaryId:
+            created[0]?.rawMaterialsRecoveryId ?? productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: recoveryFile.originalname,
           documentLink: storedRelativePath,

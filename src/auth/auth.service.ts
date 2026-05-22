@@ -174,6 +174,11 @@ export class AuthService {
     );
   }
 
+  /** Force logout for a single user (e.g. self-service or admin password change). */
+  async invalidateSessionsForUser(userId: string): Promise<void> {
+    return this.sessionInvalidation.invalidateSessionsForUser(userId);
+  }
+
   private getRecaptchaVerifyCacheTtlSeconds(): number {
     const ttl = parseInt(
       this.configService.get<string>('RECAPTCHA_VERIFY_CACHE_TTL_SECONDS') ||
@@ -227,8 +232,11 @@ export class AuthService {
     }
   }
 
-  /** Vendor / partner logins require an active manufacturer row (both flags = 1). */
-  private async assertVendorOrganizationActive(
+  /**
+   * Vendor portal users (vendor/partner/staff) require manufacturerStatus=1 and vendor_status=1.
+   * Used on login, refresh, and JWT validation so inactive orgs cannot keep using old tokens.
+   */
+  async assertVendorOrganizationActive(
     manufacturerId: string | undefined,
   ): Promise<void> {
     const id = String(manufacturerId ?? '').trim();
@@ -337,6 +345,7 @@ export class AuthService {
         {
           manufacturerName: normalizedCompanyName,
           manufacturerStatus: 0,
+          vendorPortalEmailVerified: false,
           vendor_name: normalizedContactName || normalizedCompanyName,
           vendor_email: normalizedEmail,
           vendor_phone: normalizedPhone,
@@ -487,6 +496,12 @@ export class AuthService {
 
     const manufacturerId =
       user.manufacturerId?.toString() || user.vendorId?.toString();
+    if (manufacturerId) {
+      await this.manufacturersService.markVendorPortalEmailVerified(
+        manufacturerId,
+      );
+    }
+
     let gpInternalId: string | null = null;
     let manufacturerInitial: string | null = null;
     if (manufacturerId) {
@@ -647,13 +662,13 @@ export class AuthService {
     // subject to RBAC_CACHE_TTL_SECONDS. Refresh the access token to pick up identity changes faster if needed.
 
     const accessToken = this.jwtService.sign(payload, {
-      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '10h',
+      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '24h',
       jwtid: accessTokenJti,
     });
 
     const refreshToken = this.jwtService.sign(payload, {
       expiresIn:
-        this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+        this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '24h',
       jwtid: refreshTokenJti,
     });
 
@@ -867,14 +882,26 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token payload');
     }
 
+    const mid = payload.manufacturerId || payload.vendorId;
+    const roleForOrg = String(payload.type || payload.role || '');
+    if (
+      !isPlatformAdmin &&
+      mid &&
+      ['vendor', 'partner', 'staff'].includes(roleForOrg)
+    ) {
+      await this.assertVendorOrganizationActive(
+        typeof mid === 'string' ? mid : String(mid),
+      );
+    }
+
     const newPayload: Record<string, unknown> = {
       userId: payload.userId,
       type: payload.type || payload.role,
       role: payload.role,
     };
-    const mid = payload.manufacturerId || payload.vendorId;
-    if (mid) {
-      newPayload.manufacturerId = mid;
+    const midForPayload = payload.manufacturerId || payload.vendorId;
+    if (midForPayload) {
+      newPayload.manufacturerId = midForPayload;
     }
     if (payload.name) {
       newPayload.name = payload.name;
@@ -886,13 +913,13 @@ export class AuthService {
     const accessTokenJti = crypto.randomUUID();
     const newRefreshTokenJti = crypto.randomUUID();
     const accessToken = this.jwtService.sign(newPayload, {
-      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '10h',
+      expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '24h',
       jwtid: accessTokenJti,
     });
 
     const refreshToken = this.jwtService.sign(newPayload, {
       expiresIn:
-        this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+        this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '24h',
       jwtid: newRefreshTokenJti,
     });
 

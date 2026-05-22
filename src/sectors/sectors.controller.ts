@@ -28,7 +28,7 @@ export class SectorsController {
   @ApiOperation({
     summary: 'List sectors (paginated)',
     description:
-      'Pagination, search on name (case-insensitive), filter by status, sort by id or name. Example: ?page=1&limit=10&search=IT&status=1&sortBy=id&order=desc',
+      'Pagination, search on name (case-insensitive), filter by status, sort by id or name. Example: ?page=1&limit=10&search=IT&status=1&sortBy=id&order=desc (limit up to 500; for full export use GET /api/sectors/export).',
   })
   @ApiResponse({
     status: 200,

@@ -19,7 +19,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRegionalMaterialsService } from './raw-materials-regional-materials.service';
@@ -58,7 +58,7 @@ export class RawMaterialsRegionalMaterialsController {
     summary: 'Create raw materials regional materials units (per URN)',
   })
   @UseInterceptors(
-    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -160,7 +160,7 @@ export class RawMaterialsRegionalMaterialsController {
       urnNo,
       user.vendorId,
     );
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,

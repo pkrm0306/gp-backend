@@ -3,7 +3,6 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -17,7 +16,14 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
+import {
+  countMeaningfulRawMaterialsProductRows,
+  filterFormaldehydeStyleProductsForVendorDisplay,
+} from '../common/raw-materials/raw-materials-hazardous-display.util';
+import {
+  hasPartialRawMaterialsProductRow,
+  normalizeRawMaterialsProductRow,
+} from '../common/form-partial-field.util';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 
@@ -45,28 +51,71 @@ export class RawMaterialsEliminationOfFormaldehydeService {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-    fileType: string,
   ): Promise<string> {
     return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  }
+
+  /** File-only: documents only — no formaldehyde product row. */
+  private async saveDocumentOnly(
+    urnNo: string,
+    vendorObjectId: Types.ObjectId,
+    file: Express.Multer.File,
+  ) {
+    const now = new Date();
+    const storedRelativePath = await this.saveFileToUrnFolder(file, urnNo);
+    const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+    const doc = await this.allProductDocumentModel.create({
+      productDocumentId,
+      vendorId: vendorObjectId,
+      urnNo,
+      eoiNo: '',
+      documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+      documentFormSubsection: 'supporting_documents',
+      formPrimaryId: productDocumentId,
+      documentName: path.basename(storedRelativePath),
+      documentOriginalName: file.originalname,
+      documentLink: storedRelativePath,
+      createdDate: now,
+      updatedDate: now,
+    });
+    return { documentOnly: true as const, documents: [doc] };
   }
 
   async create(
     dto: CreateRawMaterialsEliminationOfFormaldehydeDto,
     vendorId: string,
     formaldehydeFile?: Express.Multer.File,
-  ): Promise<RawMaterialsEliminationOfFormaldehydeDocument> {
+  ): Promise<
+    | RawMaterialsEliminationOfFormaldehydeDocument
+    | { documentOnly: true; documents: unknown[] }
+  > {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+      const urnNo = dto.urnNo.trim();
+      const productRow = normalizeRawMaterialsProductRow({
+        productsName: dto.productsName,
+        productsTestReport: dto.productsTestReport,
+      });
+      const hasProductText = hasPartialRawMaterialsProductRow(productRow);
+
+      if (!hasProductText && formaldehydeFile) {
+        return this.saveDocumentOnly(urnNo, vendorObjectId, formaldehydeFile);
+      }
+
+      if (!hasProductText) {
+        return { skipped: true } as any;
+      }
+
       const id =
         await this.sequenceHelper.getRawMaterialsEliminationOfFormaldehydeId();
       const now = new Date();
 
       const doc = new this.model({
         rawMaterialsEliminationOfFormaldehydeId: id,
-        urnNo: dto.urnNo.trim(),
+        urnNo,
         vendorId: vendorObjectId,
-        productsName: String(dto.productsName ?? '').trim(),
-        productsTestReport: String(dto.productsTestReport ?? '').trim(),
+        productsName: productRow.productName,
+        productsTestReport: productRow.testReportReference,
         createdDate: now,
         updatedDate: now,
       });
@@ -76,16 +125,17 @@ export class RawMaterialsEliminationOfFormaldehydeService {
       if (formaldehydeFile) {
         const storedRelativePath = await this.saveFileToUrnFolder(
           formaldehydeFile,
-          dto.urnNo.trim(),
-          'formaldehyde_supporting_document',
+          urnNo,
         );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+        const productDocumentId =
+          await this.sequenceHelper.getProductDocumentId();
         await this.allProductDocumentModel.create({
           productDocumentId,
           vendorId: vendorObjectId,
-          urnNo: dto.urnNo.trim(),
+          urnNo,
           eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+          documentForm:
+            DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
           documentFormSubsection: 'supporting_documents',
           formPrimaryId: id,
           documentName: path.basename(storedRelativePath),
@@ -112,17 +162,28 @@ export class RawMaterialsEliminationOfFormaldehydeService {
     }
   }
 
+  async countMeaningfulProductsByUrn(
+    urnNo: string,
+    vendorId: string,
+  ): Promise<number> {
+    return countMeaningfulRawMaterialsProductRows(this.model, urnNo, vendorId);
+  }
+
   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
-    return countVendorUrnDocuments(this.model, urnNo, vendorId);
+    return this.countMeaningfulProductsByUrn(urnNo, vendorId);
   }
 
   async listByUrn(urnNo: string, vendorId: string) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      return await this.model
+      const rows = await this.model
         .find({ urnNo: urnNo.trim(), vendorId: vendorObjectId })
         .sort({ createdDate: 1 })
+        .lean()
         .exec();
+      return filterFormaldehydeStyleProductsForVendorDisplay(
+        rows as Array<Record<string, unknown>>,
+      );
     } catch (error: any) {
       console.error(
         '[Raw Materials Elimination Of Formaldehyde] List error:',

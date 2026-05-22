@@ -6,6 +6,8 @@ import {
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
+  InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
@@ -91,7 +93,7 @@ export class ProductPerformanceController {
           type: 'array',
           items: { type: 'string', format: 'binary' },
           description:
-            'New test report files, optional (repeat per file, max 20). Labels may be derived from filenames when testReports is empty.',
+            'New test report files, optional (repeat per file, max 20). PDF/Excel only (.pdf, .xls, .xlsx). Stored in performance documents only.',
         },
         testReportFile: {
           type: 'array',
@@ -186,13 +188,19 @@ export class ProductPerformanceController {
         throw new BadRequestException('URN number is required');
       }
 
+      const urnNo = createProductPerformanceDto.urnNo.trim();
+      await this.productPerformanceService.assertVendorCanEditUrn(
+        String(vendorId),
+        urnNo,
+      );
+
       const uploadFiles = collectProductPerformanceUploadFiles(files);
 
       assertProductPerformanceTestReportFileTypes(uploadFiles);
 
       const retainedDocumentCount =
         await this.productPerformanceService.countRetainedProductPerformanceDocuments(
-          createProductPerformanceDto.urnNo.trim(),
+          urnNo,
           String(vendorId),
           createProductPerformanceDto.existingDocumentIds,
         );
@@ -233,16 +241,22 @@ export class ProductPerformanceController {
           ...performancePlain,
           testReports: testReportsResponse,
           testReportFiles: result.totalDocumentCount,
-        },
-        meta: {
           filesUploaded: result.filesUploaded,
-          testReportFiles: result.totalDocumentCount,
-          testReports: testReportsResponse,
         },
       };
     } catch (error: unknown) {
       console.error('Controller error:', error);
-      throw error;
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        error instanceof Error
+          ? error.message
+          : 'Failed to save product performance',
+      );
     }
   }
 }

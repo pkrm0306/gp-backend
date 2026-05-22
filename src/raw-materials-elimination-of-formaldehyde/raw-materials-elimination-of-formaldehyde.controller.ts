@@ -19,7 +19,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
@@ -49,7 +49,7 @@ export class RawMaterialsEliminationOfFormaldehydeController {
       'Create raw materials elimination of formaldehyde record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('formaldehydeFile', certificationMultipartMemoryMulterOptions()),
+    FileInterceptor('formaldehydeFile', rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -90,20 +90,23 @@ export class RawMaterialsEliminationOfFormaldehydeController {
     if (formaldehydeFile) {
       assertRawMaterialsDocumentTypes([formaldehydeFile]);
     }
-    const persistedRecordCount = await this.service.countPersistedByUrn(
-      urnNo,
-      user.vendorId,
-    );
-    await this.stepGate.assertAtLeastOne({
+    const meaningfulProductCount =
+      await this.service.countMeaningfulProductsByUrn(urnNo, user.vendorId);
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
       files: formaldehydeFile ? [formaldehydeFile] : [],
-      textValues: [productRow.productName, productRow.testReportReference],
-      persistedRecordCount,
+      rows: [productRow as Record<string, unknown>],
+      rowKeys: ['productName', 'testReportReference'],
+      persistedRecordCount: meaningfulProductCount,
     });
     const data = await this.service.create(dto, user.vendorId, formaldehydeFile);
-    return { success: true, data };
+    return {
+      success: true,
+      message: 'Raw materials formaldehyde saved successfully',
+      data,
+    };
   }
 
   @Get(':urn_no')

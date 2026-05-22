@@ -34,12 +34,15 @@ export class ListManufacturersQueryDto {
   @Min(1)
   page?: number = 1;
 
-  @ApiPropertyOptional({ default: 10 })
+  @ApiPropertyOptional({
+    default: 10,
+    description: 'Page size (max 500).',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(500)
   limit?: number = 10;
 
   @ApiPropertyOptional({
@@ -73,7 +76,7 @@ export class ListManufacturersQueryDto {
 
   @ApiPropertyOptional({
     description:
-      'List scope: `verified` (manufacturerStatus=1), `unverified` (0 or 2), or `all`. Use `verified` for the verified-manufacturers admin screen.',
+      'List scope: `verified` (manufacturerStatus=1), `unverified` (0 or 2, excluding vendors still on the registration OTP step), or `all`. Use `verified` for the verified-manufacturers admin screen.',
     enum: ['verified', 'unverified', 'all'],
     default: 'all',
   })

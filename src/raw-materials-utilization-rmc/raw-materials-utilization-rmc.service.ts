@@ -22,9 +22,11 @@ import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import {
+  countVendorUrnDocuments,
   hasAnyMeaningfulBodyField,
   RAW_MATERIALS_AT_LEAST_ONE_MESSAGE,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 
 type Step15Files = {
   file1?: Express.Multer.File;
@@ -42,6 +44,10 @@ export class RawMaterialsUtilizationRmcService {
     private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
   ) {}
+
+  async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+    return countVendorUrnDocuments(this.model, urnNo, vendorId);
+  }
 
   private toObjectId(
     id: string | Types.ObjectId,
@@ -476,6 +482,7 @@ export class RawMaterialsUtilizationRmcService {
       }
 
       await this.ensureUrnOwnership(urnNo, vendorObjectId);
+      await assertVendorCanEditUrn(this.productModel, vendorId, urnNo);
 
       const uploadFiles = [files?.file1, files?.file2].filter(
         Boolean,

@@ -99,7 +99,7 @@ export class RawMaterialsUtilizationManufacturingUnitsController {
       this.service.countPersistedByUrn(urnNo, user.vendorId),
       this.utilizationService.countPersistedByUrn(urnNo, user.vendorId),
     ]);
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_UTILIZATION,

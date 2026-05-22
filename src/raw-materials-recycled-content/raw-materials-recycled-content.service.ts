@@ -201,7 +201,8 @@ export class RawMaterialsRecycledContentService {
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: created[0]?.rawMaterialsRecycledContentId ?? 0,
+          formPrimaryId:
+            created[0]?.rawMaterialsRecycledContentId ?? productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: recycledContentFile.originalname,
           documentLink: storedRelativePath,

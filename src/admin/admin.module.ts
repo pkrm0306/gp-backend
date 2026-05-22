@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
@@ -51,9 +51,11 @@ import {
   ActivityLogSchema,
 } from '../activity-log/schemas/activity-log.schema';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
+    forwardRef(() => AuthModule),
     ManufacturersModule,
     RbacModule,
     CategoriesModule,

@@ -3,7 +3,6 @@ import { Type } from 'class-transformer';
 import {
   Allow,
   IsArray,
-  IsEnum,
   IsInt,
   IsOptional,
   IsString,
@@ -101,12 +100,10 @@ export class UpdateStandardMultipartDto {
   @MinLength(1)
   resource_standard_type?: string;
 
-  @ApiPropertyOptional({ enum: [0, 1] })
+  /** Ignored on multipart update. Use PATCH `.../status` to change active/inactive. */
+  @Allow()
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @IsEnum([0, 1])
-  status?: 0 | 1;
+  status?: unknown;
 
   /** Admin UI: remove attached PDF without uploading a replacement (handled in service). */
   @Allow()

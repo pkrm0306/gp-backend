@@ -4,6 +4,10 @@ import {
   AllProductDocument,
   AllProductDocumentSchema,
 } from '../../product-design/schemas/all-product-document.schema';
+import {
+  Product,
+  ProductSchema,
+} from '../../product-registration/schemas/product.schema';
 import { RawMaterialsStepGateService } from './raw-materials-step-gate.service';
 
 @Global()
@@ -11,6 +15,7 @@ import { RawMaterialsStepGateService } from './raw-materials-step-gate.service';
   imports: [
     MongooseModule.forFeature([
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
+      { name: Product.name, schema: ProductSchema },
     ]),
   ],
   providers: [RawMaterialsStepGateService],

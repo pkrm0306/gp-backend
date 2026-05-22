@@ -19,7 +19,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsGreenSupplyService } from './raw-materials-green-supply.service';
@@ -47,7 +47,7 @@ export class RawMaterialsGreenSupplyController {
     summary: 'Create raw materials green supply record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('greenSupplyFile', certificationMultipartMemoryMulterOptions()),
+    FileInterceptor('greenSupplyFile', rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -89,7 +89,7 @@ export class RawMaterialsGreenSupplyController {
       dto.urnNo,
       user.vendorId,
     );
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo: dto.urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY,

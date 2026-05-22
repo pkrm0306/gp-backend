@@ -19,7 +19,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsOptimizationOfRawMixService } from './raw-materials-optimization-of-raw-mix.service';
@@ -57,7 +57,7 @@ export class RawMaterialsOptimizationOfRawMixController {
     summary: 'Create raw materials optimization of raw mix record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('optimizationOfRawMixFile', certificationMultipartMemoryMulterOptions()),
+    FileInterceptor('optimizationOfRawMixFile', rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -115,7 +115,7 @@ export class RawMaterialsOptimizationOfRawMixController {
       urnNo,
       user.vendorId,
     );
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,

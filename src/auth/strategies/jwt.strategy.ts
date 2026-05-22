@@ -49,6 +49,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     const role = payload.role || payload.type;
+    if (
+      role &&
+      ['vendor', 'partner', 'staff'].includes(String(role)) &&
+      (payload.manufacturerId || payload.vendorId)
+    ) {
+      await this.authService.assertVendorOrganizationActive(
+        String(payload.manufacturerId || payload.vendorId || ''),
+      );
+    }
+
     if (!payload.userId || !role) {
       throw new UnauthorizedException('Invalid token payload');
     }

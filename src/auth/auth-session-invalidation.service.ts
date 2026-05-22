@@ -20,11 +20,19 @@ export class AuthSessionInvalidationService {
   ) {}
 
   private sessionInvalidationTtlSeconds(): number {
-    const raw =
-      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
-    const match = /^(\d+)d$/i.exec(String(raw).trim());
-    const days = match ? Number(match[1]) : 7;
-    return Math.max(days + 1, 8) * 24 * 60 * 60;
+    const raw = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '24h';
+    const s = String(raw).trim();
+    const dayMatch = /^(\d+)d$/i.exec(s);
+    if (dayMatch) {
+      const days = Number(dayMatch[1]);
+      return Math.max(days + 1, 1) * 24 * 60 * 60;
+    }
+    const hourMatch = /^(\d+)h$/i.exec(s);
+    if (hourMatch) {
+      const hours = Number(hourMatch[1]);
+      return Math.max(hours * 60 * 60 + 3600, 3600);
+    }
+    return 9 * 24 * 60 * 60;
   }
 
   private manufacturerKey(manufacturerId: string): string {

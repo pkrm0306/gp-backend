@@ -44,6 +44,10 @@ import { ActivityLogService } from '../activity-log/activity-log.service';
 import { formatPaymentRecords } from '../payments/payment-proposal.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { enrichUrnDetailRowsWithSharedProcessData } from './utils/consolidate-urn-detail-items.util';
+import {
+  filterFormaldehydeStyleProductsForVendorDisplay,
+  filterHazardousProductsForVendorDisplay,
+} from '../common/raw-materials/raw-materials-hazardous-display.util';
 import { urnLookupMatchExpr } from './utils/urn-lookup-match.util';
 import { RedisService } from '../common/redis/redis.service';
 import { UrnSiteVisitsService } from '../urn-site-visits/urn-site-visits.service';
@@ -3277,8 +3281,8 @@ export class ProductRegistrationService {
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
         })),
-        raw_materials_hazardous_products: (
-          product.raw_materials_hazardous_products || []
+        raw_materials_hazardous_products: filterHazardousProductsForVendorDisplay(
+          product.raw_materials_hazardous_products || [],
         ).map((r) => ({
           _id: r._id,
           rawMaterialsHazardousProductsId: r.rawMaterialsHazardousProductsId,
@@ -3340,7 +3344,9 @@ export class ProductRegistrationService {
           updatedDate: d.updatedDate,
         })),
         raw_materials_elimination_of_formaldehyde:
-          product.raw_materials_elimination_of_formaldehyde || [],
+          filterFormaldehydeStyleProductsForVendorDisplay(
+            product.raw_materials_elimination_of_formaldehyde || [],
+          ),
         raw_materials_elimination_of_formaldehyde_documents: (
           product.raw_materials_elimination_of_formaldehyde_documents || []
         ).map((d) => ({
@@ -3397,8 +3403,10 @@ export class ProductRegistrationService {
           updatedDate: d.updatedDate,
         })),
         raw_materials_elimination_of_prohibited_flame_solvents_products:
-          product.raw_materials_elimination_of_prohibited_flame_solvents_products ||
-          [],
+          filterFormaldehydeStyleProductsForVendorDisplay(
+            product.raw_materials_elimination_of_prohibited_flame_solvents_products ||
+              [],
+          ),
         raw_materials_green_supply: product.raw_materials_green_supply || [],
         raw_materials_green_supply_documents: (
           product.raw_materials_green_supply_documents || []

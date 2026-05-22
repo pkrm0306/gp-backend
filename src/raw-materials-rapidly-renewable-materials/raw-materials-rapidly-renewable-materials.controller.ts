@@ -19,7 +19,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRapidlyRenewableMaterialsService } from './raw-materials-rapidly-renewable-materials.service';
@@ -61,7 +61,7 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
     summary: 'Create raw materials rapidly renewable materials units (per URN)',
   })
   @UseInterceptors(
-    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -163,7 +163,7 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
       urnNo,
       user.vendorId,
     );
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS,

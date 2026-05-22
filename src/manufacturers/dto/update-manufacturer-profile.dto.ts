@@ -84,7 +84,6 @@ export class UpdateProfileDto {
   })
   @IsOptional()
   @IsString()
-  @MaxLength(64)
   panNumber?: string;
 
   @ApiProperty({ description: 'Email address', required: false })

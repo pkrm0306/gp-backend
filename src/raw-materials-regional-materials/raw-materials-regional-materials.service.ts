@@ -198,7 +198,8 @@ export class RawMaterialsRegionalMaterialsService {
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: created[0]?.rawMaterialsRegionalMaterialsId ?? 0,
+          formPrimaryId:
+            created[0]?.rawMaterialsRegionalMaterialsId ?? productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: regionalMaterialsFile.originalname,
           documentLink: storedRelativePath,

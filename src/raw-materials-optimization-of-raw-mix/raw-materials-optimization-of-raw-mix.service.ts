@@ -183,7 +183,8 @@ export class RawMaterialsOptimizationOfRawMixService {
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: created[0].rawMaterialsOptimizationOfRawMixId,
+          formPrimaryId:
+            created[0]?.rawMaterialsOptimizationOfRawMixId ?? productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: optimizationOfRawMixFile.originalname,
           documentLink: storedRelativePath,

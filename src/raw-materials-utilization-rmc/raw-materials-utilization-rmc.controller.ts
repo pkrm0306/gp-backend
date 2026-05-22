@@ -20,7 +20,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsUtilizationRmcService } from './raw-materials-utilization-rmc.service';
@@ -38,7 +38,7 @@ export class RawMaterialsUtilizationRmcController {
     summary: 'Create raw materials utilization RMC record (per URN)',
   })
   @UseInterceptors(
-    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -88,7 +88,7 @@ export class RawMaterialsUtilizationRmcController {
   @Put(':urnNo')
   @ApiOperation({ summary: 'Upsert raw materials step-15 payload by URN' })
   @UseInterceptors(
-    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({

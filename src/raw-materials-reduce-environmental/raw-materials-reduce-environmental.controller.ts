@@ -19,7 +19,7 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsReduceEnvironmentalService } from './raw-materials-reduce-environmental.service';
@@ -66,7 +66,7 @@ export class RawMaterialsReduceEnvironmentalController {
       'Accepts multipart or JSON. `units` / `mines` arrays replace rows for the URN; flat `location` (or `locations`) is used when arrays are empty.',
   })
   @UseInterceptors(
-    AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -165,7 +165,7 @@ export class RawMaterialsReduceEnvironmentalController {
       urnNo,
       user.vendorId,
     );
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm: [

@@ -19,7 +19,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsAdditivesService } from './raw-materials-additives.service';
@@ -67,7 +67,7 @@ export class RawMaterialsAdditivesController {
   @Post()
   @ApiOperation({ summary: 'Create raw materials additives record (per URN)' })
   @UseInterceptors(
-    FileInterceptor('additivesFile', certificationMultipartMemoryMulterOptions()),
+    FileInterceptor('additivesFile', rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -136,7 +136,7 @@ export class RawMaterialsAdditivesController {
       urnNo,
       user.vendorId,
     );
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,

@@ -3,7 +3,6 @@ import { Type } from 'class-transformer';
 import {
   Allow,
   IsArray,
-  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -104,10 +103,8 @@ export class CreateStandardMultipartDto {
   @IsNotEmpty()
   resource_standard_type: string;
 
-  @ApiPropertyOptional({ enum: [0, 1], default: 1 })
+  /** Ignored. New standards are always created as active (`status=1`). Use PATCH `.../status` to change. */
+  @Allow()
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @IsEnum([0, 1])
-  status?: 0 | 1;
+  status?: unknown;
 }

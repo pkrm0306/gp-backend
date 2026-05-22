@@ -19,7 +19,7 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsService } from './raw-materials-elimination-of-prohibited-flame-solvents.service';
@@ -48,7 +48,7 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsController {
       'Create raw materials elimination of prohibited flame solvents record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('prohibitedFlameSolventsFile', certificationMultipartMemoryMulterOptions()),
+    FileInterceptor('prohibitedFlameSolventsFile', rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -90,7 +90,7 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsController {
       dto.urnNo,
       user.vendorId,
     );
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo: dto.urnNo,
       documentForm:

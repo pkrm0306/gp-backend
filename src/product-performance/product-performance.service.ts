@@ -29,9 +29,13 @@ import {
 } from '../utils/upload-file.util';
 import {
   collectProductPerformanceUploadFiles,
-  labelFromUploadFile,
   PERFORMANCE_TEST_REPORT_SUBSECTION,
 } from './product-performance-upload.util';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
+import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 
 export type SavedTestReportRow = {
   _id?: Types.ObjectId;
@@ -52,9 +56,15 @@ export class ProductPerformanceService implements OnModuleInit {
     private ppTestReportModel: Model<PpTestReportDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
   ) {}
+
+  async assertVendorCanEditUrn(vendorId: string, urnNo: string): Promise<void> {
+    await assertVendorCanEditUrn(this.productModel, vendorId, urnNo);
+  }
 
   async onModuleInit() {
     const shouldSyncIndexes =
@@ -132,10 +142,9 @@ export class ProductPerformanceService implements OnModuleInit {
     return unique;
   }
 
-  /** Full replace list from request body only (never merged with DB or documents). */
+  /** Full replace list from request body only (never from upload filenames). */
   private parseIncomingTestReportRows(
     dto: CreateProductPerformanceDto,
-    uploadedFiles: Express.Multer.File[],
   ): Array<{
     productName: string;
     testReportFileName: string;
@@ -182,43 +191,7 @@ export class ProductPerformanceService implements OnModuleInit {
       });
     }
 
-    if (uploadedFiles.length === 0) {
-      return this.dedupeTestReportRows(parsedRows);
-    }
-
-    if (parsedRows.length === 0) {
-      const autoRows = uploadedFiles.map((file, index) => {
-        const testReportFileName = labelFromUploadFile(file, index);
-        const productName = defaultProductName;
-        return {
-          productName,
-          testReportFileName,
-          normalizedProductName: this.normalizedProductNameKey(productName),
-          normalizedTestReportFileName:
-            this.normalizedTestReportFileNameKey(testReportFileName),
-        };
-      });
-      return this.dedupeTestReportRows(autoRows);
-    }
-
-    const merged = [...parsedRows];
-    for (let i = parsedRows.length; i < uploadedFiles.length; i++) {
-      const file = uploadedFiles[i];
-      merged.push({
-        productName:
-          String(dto.testReports?.[i]?.productName ?? defaultProductName).trim() ||
-          defaultProductName,
-        testReportFileName: labelFromUploadFile(file, i),
-        normalizedProductName: this.normalizedProductNameKey(
-          dto.testReports?.[i]?.productName ?? defaultProductName,
-        ),
-        normalizedTestReportFileName: this.normalizedTestReportFileNameKey(
-          labelFromUploadFile(file, i),
-        ),
-      });
-    }
-
-    return this.dedupeTestReportRows(merged);
+    return this.dedupeTestReportRows(parsedRows);
   }
 
   private resolveDocumentIdRefs(ids: string[]): {
@@ -378,17 +351,12 @@ export class ProductPerformanceService implements OnModuleInit {
     }
 
     if (uploadedFiles.length) {
-      const newFileRowStart = Math.max(
-        0,
-        incomingRows.length - uploadedFiles.length,
-      );
       const docsToInsert = [];
       for (let i = 0; i < uploadedFiles.length; i++) {
         const file = uploadedFiles[i];
         const uploaded = await this.saveFileToUrnFolder(file, urnNo);
         createdFileFullPaths.push(uploaded.fileUrl);
 
-        const rowForFile = incomingRows[newFileRowStart + i];
         const productDocumentId =
           await this.sequenceHelper.getProductDocumentId();
         docsToInsert.push({
@@ -399,10 +367,7 @@ export class ProductPerformanceService implements OnModuleInit {
           documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE,
           documentFormSubsection: PERFORMANCE_TEST_REPORT_SUBSECTION,
           formPrimaryId,
-          documentName:
-            uploaded.fileName ||
-            rowForFile?.testReportFileName ||
-            `Test report ${i + 1}`,
+          documentName: uploaded.fileName || `Test report ${i + 1}`,
           documentOriginalName: file.originalname,
           documentLink: uploaded.fileUrl,
           createdDate: now,
@@ -525,7 +490,6 @@ export class ProductPerformanceService implements OnModuleInit {
       const uploadedFiles = collectProductPerformanceUploadFiles(files);
       const incomingRows = this.parseIncomingTestReportRows(
         createProductPerformanceDto,
-        uploadedFiles,
       );
       const embeddedTestReports = incomingRows.map((r) => ({
         productName: r.productName,

@@ -173,14 +173,94 @@ export function certificationMultipartMemoryMulterOptions(): Options {
   };
 }
 
-/** Product performance — multiple test report files per request (max 20). */
+const SUPPORTING_DESIGN_EXTENSIONS = new Set(['.pdf', '.xls', '.xlsx']);
+const SUPPORTING_DESIGN_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+
+const PRODUCT_PERFORMANCE_UPLOAD_FIELD_NAMES = new Set([
+  'files',
+  'testReportFile',
+  'testReportFiles',
+  'file',
+]);
+
+function productPerformanceMultipartFileFilter(
+  _req: unknown,
+  file: Express.Multer.File,
+  cb: (error: Error | null, acceptFile: boolean) => void,
+): void {
+  if (!file) {
+    cb(null, true);
+    return;
+  }
+  const field = String(file.fieldname ?? '');
+  if (PRODUCT_PERFORMANCE_UPLOAD_FIELD_NAMES.has(field)) {
+    const fileExt = extname(file.originalname || '').toLowerCase();
+    if (
+      SUPPORTING_DESIGN_MIMES.has(file.mimetype) ||
+      SUPPORTING_DESIGN_EXTENSIONS.has(fileExt)
+    ) {
+      cb(null, true);
+      return;
+    }
+    cb(
+      new BadRequestException(
+        'Invalid supporting document type. Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed.',
+      ) as unknown as null,
+      false,
+    );
+    return;
+  }
+  certificationMultipartFileFilter(_req, file, cb);
+}
+
+/** Product performance — test report files: PDF/Excel only (matches Product Design supporting docs). */
 export function productPerformanceMultipartMemoryMulterOptions(
   maxFiles = 20,
 ): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB, files: maxFiles },
-    fileFilter: certificationMultipartFileFilter,
+    fileFilter: productPerformanceMultipartFileFilter,
+  };
+}
+
+function rawMaterialsSupportingFileFilter(
+  _req: unknown,
+  file: Express.Multer.File,
+  cb: (error: Error | null, acceptFile: boolean) => void,
+): void {
+  if (!file) {
+    cb(null, true);
+    return;
+  }
+  const fileExt = extname(file.originalname || '').toLowerCase();
+  if (
+    SUPPORTING_DESIGN_MIMES.has(file.mimetype) ||
+    SUPPORTING_DESIGN_EXTENSIONS.has(fileExt)
+  ) {
+    cb(null, true);
+    return;
+  }
+  cb(
+    new BadRequestException(
+      'Invalid supporting document type. Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed.',
+    ) as unknown as null,
+    false,
+  );
+}
+
+/** Raw Materials steps — all upload fields PDF/Excel only, 10MB (vendor supporting docs). */
+export function rawMaterialsMultipartMemoryMulterOptions(
+  maxFiles = 20,
+): Options {
+  return {
+    storage: memoryStorage(),
+    limits: { fileSize: TEN_MB, files: maxFiles },
+    fileFilter: rawMaterialsSupportingFileFilter,
   };
 }
 
@@ -192,13 +272,6 @@ const PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES = new Set([
   'productDesignSupportingDocument',
   'supporting_document',
   'supporting_documents',
-]);
-
-const SUPPORTING_DESIGN_EXTENSIONS = new Set(['.pdf', '.xls', '.xlsx']);
-const SUPPORTING_DESIGN_MIMES = new Set([
-  'application/pdf',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ]);
 
 function productDesignMultipartFileFilter(

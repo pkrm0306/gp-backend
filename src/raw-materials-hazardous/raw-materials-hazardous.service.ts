@@ -11,7 +11,6 @@ import {
 } from './schemas/raw-materials-hazardous.schema';
 import { CreateRawMaterialsHazardousDto } from './dto/create-raw-materials-hazardous.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
-import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
 
 @Injectable()
 export class RawMaterialsHazardousService {
@@ -78,8 +77,22 @@ export class RawMaterialsHazardousService {
     }
   }
 
+  /** Non-empty hazardous details text counts as saved step data. */
   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
-    return countVendorUrnDocuments(this.model, urnNo, vendorId);
+    if (!Types.ObjectId.isValid(vendorId)) {
+      return 0;
+    }
+    const row = await this.model
+      .findOne({
+        urnNo: urnNo.trim(),
+        vendorId: new Types.ObjectId(vendorId),
+      })
+      .lean()
+      .exec();
+    if (!row) {
+      return 0;
+    }
+    return String(row.details ?? '').trim() ? 1 : 0;
   }
 
   async listByUrn(urnNo: string, vendorId: string) {

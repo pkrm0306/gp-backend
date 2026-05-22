@@ -57,20 +57,24 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
       productsName: productRow.productName,
       productsTestReport: productRow.testReportReference,
     };
-    const persistedRecordCount = await this.service.countPersistedByUrn(
-      urnNo,
-      user.vendorId,
-    );
-    await this.stepGate.assertAtLeastOne({
+    const meaningfulProductCount =
+      await this.service.countMeaningfulProductsByUrn(urnNo, user.vendorId);
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
       documentForm:
         DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
-      textValues: [productRow.productName, productRow.testReportReference],
-      persistedRecordCount,
+      rows: [productRow as Record<string, unknown>],
+      rowKeys: ['productName', 'testReportReference'],
+      persistedRecordCount: meaningfulProductCount,
     });
     const data = await this.service.create(dto, user.vendorId);
-    return { success: true, data };
+    return {
+      success: true,
+      message:
+        'Raw materials prohibited flame solvents products saved successfully',
+      data,
+    };
   }
 
   @Get(':urn_no')

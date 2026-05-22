@@ -157,7 +157,7 @@ export class StandardsController {
     description:
       'Form: **sectors** (required, multiselect) — one or more numeric sector ids from GET /api/sectors. The standard is linked to **all** categories in each selected sector (union). ' +
       '**file** (required): PDF, JPG, or PNG, max 10MB — stored only via the shared **uploadFile()** helper (`src/utils/upload-file.util.ts`, folder `standards`, local or S3). ' +
-      'Also: name, description (optional), resource_standard_type, status (optional, default 1).',
+      'Also: name, description (optional), resource_standard_type. New standards are always created **active** (`status=1`); use PATCH `.../status` to change.',
   })
   @ApiBody({
     schema: {
@@ -196,7 +196,6 @@ export class StandardsController {
         name: { type: 'string' },
         description: { type: 'string' },
         resource_standard_type: { type: 'string' },
-        status: { type: 'integer', enum: [0, 1] },
         file: {
           type: 'string',
           format: 'binary',
@@ -236,7 +235,7 @@ export class StandardsController {
       'Supports **PUT** or **PATCH** on `/api/standards/:id` (and legacy `/api/standards/:id/edit`). ' +
       'Optional **sectors** (multiselect) or legacy **sector** — when sent, replaces linked categories with the union across selected sectors. ' +
       'Optional **file**: new PDF/JPG/PNG via shared **uploadFile()** (`uploads/standards/` or S3); previous file is removed when a new file is uploaded. ' +
-      'Other fields: name, description, resource_standard_type, status. At least one field or file required.',
+      'Other fields: name, description, resource_standard_type. **status** is not changed from this endpoint — use PATCH `.../status`. At least one field or file required.',
   })
   @ApiParam({ name: 'id', description: 'Numeric standard id' })
   @ApiBody({
@@ -267,7 +266,6 @@ export class StandardsController {
         name: { type: 'string' },
         description: { type: 'string' },
         resource_standard_type: { type: 'string' },
-        status: { type: 'integer', enum: [0, 1] },
         file: {
           type: 'string',
           format: 'binary',

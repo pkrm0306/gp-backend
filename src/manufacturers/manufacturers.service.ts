@@ -547,6 +547,21 @@ export class ManufacturersService {
   }
 
   /**
+   * Called after vendor email OTP succeeds so admin **unverified** lists can include this manufacturer.
+   */
+  async markVendorPortalEmailVerified(manufacturerId: string): Promise<void> {
+    let oid: Types.ObjectId;
+    try {
+      oid = new Types.ObjectId(manufacturerId);
+    } catch {
+      return;
+    }
+    await this.manufacturerModel
+      .updateOne({ _id: oid }, { $set: { vendorPortalEmailVerified: true } })
+      .exec();
+  }
+
+  /**
    * Persists **gpInternalId** + **manufacturerInitial** for a not-yet-verified manufacturer,
    * using the same rules as {@link updateManufacturerDetails} for unverified rows.
    * Used after self-service vendor registration so admin unverified listings show IDs immediately.
@@ -1118,7 +1133,7 @@ export class ManufacturersService {
 
     let panNumberToApply = '';
     if (rawPanNumberOnly) {
-      panNumberToApply = this.normalizeIndianPan(rawPanNumberOnly).slice(0, 64);
+      panNumberToApply = this.normalizeIndianPan(rawPanNumberOnly);
     }
 
     let panDocUrlToApply: string | undefined;
@@ -1127,7 +1142,7 @@ export class ManufacturersService {
       if (this.looksLikeVendorAssetUrl(rawPanField)) {
         panDocUrlToApply = rawPanField;
       } else if (rawPanField && !panNumberToApply) {
-        panNumberToApply = this.normalizeIndianPan(rawPanField).slice(0, 64);
+        panNumberToApply = this.normalizeIndianPan(rawPanField);
       }
     }
 
@@ -1480,6 +1495,8 @@ export class ManufacturersService {
       password: changePasswordDto.newPassword,
     });
 
+    await this.authService.invalidateSessionsForUser(userId);
+
     return { message: 'Password changed successfully' };
   }
 
@@ -1812,6 +1829,12 @@ export class ManufacturersService {
         )
         .exec();
 
+      if (updated && newVendor === 0) {
+        await this.authService.invalidateSessionsForManufacturer(
+          manufacturerId.toString(),
+        );
+      }
+
       return updated;
     } catch (error: any) {
       if (error instanceof NotFoundException) {
@@ -1860,6 +1883,12 @@ export class ManufacturersService {
           { new: true },
         )
         .exec();
+
+      if (updated && vendor_status === 0) {
+        await this.authService.invalidateSessionsForManufacturer(
+          manufacturerId.toString(),
+        );
+      }
 
       return updated;
     } catch (error: any) {

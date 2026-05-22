@@ -14,6 +14,10 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { ProductPerformanceService } from './product-performance.service';
 import { ProductPerformanceController } from './product-performance.controller';
+import {
+  Product,
+  ProductSchema,
+} from '../product-registration/schemas/product.schema';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
@@ -24,6 +28,7 @@ import { AuthModule } from '../auth/auth.module';
       { name: ProductPerformance.name, schema: ProductPerformanceSchema },
       { name: PpTestReport.name, schema: PpTestReportSchema },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
+      { name: Product.name, schema: ProductSchema },
     ]),
     ProductRegistrationModule, // For SequenceHelper
     PassportModule,

@@ -4,6 +4,8 @@ import {
   BadRequestException,
   ConflictException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -98,6 +100,7 @@ import {
   type AdminDashboardMetricsResponse,
 } from './admin-dashboard-permissions.util';
 import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
+import { AuthService } from '../auth/auth.service';
 import { buildPhoneLookupVariants } from '../common/utils/phone-lookup.util';
 import {
   GlobalPhoneUniquenessService,
@@ -207,6 +210,8 @@ export class AdminService {
     private readonly manufacturerIdGeneration: ManufacturerIdGenerationService,
     private readonly productRegistrationService: ProductRegistrationService,
     private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
+    @Inject(forwardRef(() => AuthService))
+    private readonly authService: AuthService,
   ) {}
 
   async resolveDashboardMetricsFilters(
@@ -3622,6 +3627,10 @@ export class AdminService {
           { new: true },
         )
         .exec();
+
+      if (updatedVendor && newStatus === 0) {
+        await this.authService.invalidateSessionsForManufacturer(id);
+      }
 
       return updatedVendor;
     } catch (error: any) {

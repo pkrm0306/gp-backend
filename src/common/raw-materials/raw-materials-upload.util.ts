@@ -332,6 +332,10 @@ export function resolveReduceEnvironmentalUnits(
   return filterMeaningfulRows([legacy], rowKeys) as Array<Record<string, string>>;
 }
 
+export {
+  rawMaterialsMultipartMemoryMulterOptions,
+} from '../upload/multer-universal.config';
+
 export function collectAllUploadFiles(
   uploadedFiles?: Express.Multer.File[],
 ): Express.Multer.File[] {

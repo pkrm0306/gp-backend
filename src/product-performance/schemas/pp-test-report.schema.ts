@@ -23,10 +23,11 @@ export class PpTestReport {
   @Prop({ default: '' })
   testReportFileName: string;
 
-  @Prop({ required: true })
+  /** Partial rows: only productName or only testReportFileName may be filled (vendor UI). */
+  @Prop({ required: false, default: '' })
   normalizedProductName: string;
 
-  @Prop({ required: true })
+  @Prop({ required: false, default: '' })
   normalizedTestReportFileName: string;
 
   @Prop({ required: true })

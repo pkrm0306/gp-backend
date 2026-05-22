@@ -4,12 +4,12 @@ import {
   Get,
   Param,
   Body,
+  Req,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -19,19 +19,33 @@ import {
   ApiBody,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import type { Request } from 'express';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 import { RawMaterialsHazardousProductsService } from './raw-materials-hazardous-products.service';
 import { CreateRawMaterialsHazardousProductsDto } from './dto/create-raw-materials-hazardous-products.dto';
-import { normalizeRawMaterialsProductRow } from '../common/form-partial-field.util';
+import {
+  hasPartialRawMaterialsProductRow,
+  normalizeRawMaterialsProductRow,
+} from '../common/form-partial-field.util';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
+  pickUploadFile,
 } from '../common/raw-materials/raw-materials-upload.util';
+
+const HAZARDOUS_PRODUCT_FILE_FIELDS = [
+  'productsTestReportFile',
+  'productsTestReportFiles',
+  'file',
+  'files',
+  'document',
+];
 
 @ApiTags('Raw Materials Hazardous Products')
 @Controller('raw-materials-hazardous-products')
@@ -45,12 +59,12 @@ export class RawMaterialsHazardousProductsController {
 
   @Post()
   @ApiOperation({
-    summary: 'Create hazardous products record (per URN)',
+    summary: 'Save hazardous products and/or test report files (per URN)',
     description:
-      'Fields are optional individually; vendor requires at least one of product name, test report text, file upload, or previously saved step data.',
+      'Product name and test report reference are optional individually. File-only uploads are stored in hazardous products documents only — they do not populate the product metadata table on GET.',
   })
   @UseInterceptors(
-    FileInterceptor('productsTestReportFile', certificationMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -59,35 +73,67 @@ export class RawMaterialsHazardousProductsController {
       required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
-        productsName: {
-          type: 'string',
-          example: 'Hazardous chemical / raw material name',
-        },
-        productsTestReport: {
-          type: 'string',
-          example: 'Test report reference or summary',
-        },
-        productsTestReportFileName: {
-          type: 'string',
-          example: 'Hazardous Test Report - March 2026',
-        },
+        productsName: { type: 'string' },
+        productsTestReport: { type: 'string' },
+        productsTestReportFileName: { type: 'string' },
         productsTestReportFile: { type: 'string', format: 'binary' },
+        productsTestReportFiles: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
       },
     },
   })
-  @ApiResponse({ status: 201, description: 'Created successfully' })
-  async create(
-    @CurrentUser() user: any,
-    @Body() body: any,
-    @UploadedFile() productsTestReportFile?: Express.Multer.File,
-  ) {
-    if (!user?.vendorId)
+  @ApiResponse({ status: 201, description: 'Saved successfully' })
+  async create(@CurrentUser() user: any, @Req() req: Request) {
+    if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
+    }
 
+    const body = (req.body ?? {}) as Record<string, unknown>;
     const urnNo = parseRequiredRawMaterialsUrn(body);
-    const productRow = normalizeRawMaterialsProductRow(
-      body as Record<string, unknown>,
+    const uploadedFiles = collectAllUploadFiles(
+      req.files as Express.Multer.File[] | undefined,
     );
+    const uploadFiles = uploadedFiles.filter((f) =>
+      HAZARDOUS_PRODUCT_FILE_FIELDS.includes(String(f.fieldname ?? '')),
+    );
+    const primaryFile =
+      pickUploadFile(uploadFiles, HAZARDOUS_PRODUCT_FILE_FIELDS) ??
+      uploadFiles[0];
+
+    const productRow = normalizeRawMaterialsProductRow(body);
+    const hasProductText = hasPartialRawMaterialsProductRow(productRow);
+
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
+    }
+
+    const meaningfulProductCount =
+      await this.service.countMeaningfulProductsByUrn(urnNo, user.vendorId);
+
+    await this.stepGate.assertStepSubmitAllowed({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+      files: uploadFiles,
+      textValues: [productRow.productName, productRow.testReportReference],
+      persistedRecordCount: meaningfulProductCount,
+    });
+
+    if (!hasProductText && uploadFiles.length > 0) {
+      const data = await this.service.createDocumentsOnly(
+        urnNo,
+        user.vendorId,
+        uploadFiles,
+      );
+      return {
+        success: true,
+        message: 'Raw materials hazardous products saved successfully',
+        data,
+      };
+    }
+
     const dto: CreateRawMaterialsHazardousProductsDto = {
       urnNo,
       productsName: productRow.productName,
@@ -97,41 +143,31 @@ export class RawMaterialsHazardousProductsController {
       ),
     };
 
-    if (productsTestReportFile) {
-      assertRawMaterialsDocumentTypes([productsTestReportFile]);
-    }
-
-    const productCount = await this.service.countPersistedByUrn(
-      urnNo,
-      user.vendorId,
-    );
-
-    await this.stepGate.assertAtLeastOne({
-      vendorId: user.vendorId,
-      urnNo,
-      documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
-      files: productsTestReportFile ? [productsTestReportFile] : [],
-      textValues: [productRow.productName, productRow.testReportReference],
-      persistedRecordCount: productCount,
-    });
-
     const data = await this.service.create(
       dto,
       user.vendorId,
-      productsTestReportFile,
+      primaryFile,
     );
-    return { success: true, data };
+    return {
+      success: true,
+      message: 'Raw materials hazardous products saved successfully',
+      data,
+    };
   }
 
   @Get(':urn_no')
-  @ApiOperation({ summary: 'List hazardous products records by URN' })
+  @ApiOperation({
+    summary: 'List hazardous product rows for vendor table (excludes file-only stubs)',
+  })
   @ApiParam({ name: 'urn_no', example: 'URN-20260305124230' })
   @ApiResponse({ status: 200, description: 'Retrieved successfully' })
   async listByUrn(@CurrentUser() user: any, @Param('urn_no') urnNo: string) {
-    if (!user?.vendorId)
+    if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
-    if (!urnNo || urnNo.trim() === '')
+    }
+    if (!urnNo || urnNo.trim() === '') {
       throw new BadRequestException('URN number is required');
+    }
     const data = await this.service.listByUrn(urnNo.trim(), user.vendorId);
     return { success: true, data };
   }

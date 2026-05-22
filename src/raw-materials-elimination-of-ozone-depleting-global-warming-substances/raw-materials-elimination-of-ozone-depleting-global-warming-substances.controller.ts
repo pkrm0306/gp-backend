@@ -19,7 +19,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateRawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesDto } from './dto/create-raw-materials-elimination-of-ozone-depleting-global-warming-substances.dto';
@@ -44,7 +44,7 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
 
   @Post()
   @UseInterceptors(
-    FileInterceptor('ozoneReportFile', certificationMultipartMemoryMulterOptions()),
+    FileInterceptor('ozoneReportFile', rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiOperation({
     summary:
@@ -87,7 +87,7 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
       dto.urnNo,
       user.vendorId,
     );
-    await this.stepGate.assertAtLeastOne({
+    await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo: dto.urnNo,
       documentForm:

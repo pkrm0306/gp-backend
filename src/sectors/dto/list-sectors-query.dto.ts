@@ -10,12 +10,15 @@ export class ListSectorsQueryDto {
   @Min(1)
   page?: number = 1;
 
-  @ApiPropertyOptional({ default: 10 })
+  @ApiPropertyOptional({
+    default: 10,
+    description: 'Page size (max 500). Admin export may use a larger page; full CSV is also available at GET /api/sectors/export.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(500)
   limit?: number = 10;
 
   @ApiPropertyOptional({

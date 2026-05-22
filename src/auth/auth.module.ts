@@ -20,7 +20,7 @@ import { ZohoModule } from '../zoho/zoho.module';
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET') || 'secret',
         signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN') || '10h',
+          expiresIn: configService.get<string>('JWT_EXPIRES_IN') || '24h',
         },
       }),
       inject: [ConfigService],

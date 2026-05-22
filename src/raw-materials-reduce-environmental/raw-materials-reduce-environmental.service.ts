@@ -156,9 +156,9 @@ export class RawMaterialsReduceEnvironmentalService {
           documentForm: DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
           documentFormSubsection: 'supporting_documents',
           formPrimaryId:
-            createdRows[0]?.rawMaterialsReduceEnvironmentalId ||
-            allRows[0]?.rawMaterialsReduceEnvironmentalId ||
-            0,
+            createdRows[0]?.rawMaterialsReduceEnvironmentalId ??
+            allRows[0]?.rawMaterialsReduceEnvironmentalId ??
+            productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: reduceEnvironmentalFile.originalname,
           documentLink: storedRelativePath,

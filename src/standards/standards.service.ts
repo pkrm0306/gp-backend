@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -48,6 +49,16 @@ import {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Case-insensitive match for the same logical type/name pair (Mongo `$regex` anchors). */
+function nameAndTypeCaseInsensitiveFilter(name: string, resourceStandardType: string) {
+  return {
+    resource_standard_type: {
+      $regex: new RegExp(`^${escapeRegex(resourceStandardType)}$`, 'i'),
+    },
+    name: { $regex: new RegExp(`^${escapeRegex(name)}$`, 'i') },
+  };
 }
 
 function csvEscape(value: string | number | Date | null | undefined): string {
@@ -736,6 +747,35 @@ export class StandardsService implements OnModuleInit {
     res.sendFile(absolute);
   }
 
+  /**
+   * Standard names must be unique per **resource_standard_type** (case-insensitive for both).
+   */
+  private async assertUniqueStandardNameWithinType(
+    name: string,
+    resourceStandardType: string,
+    excludeStandardId?: number,
+  ): Promise<void> {
+    const nameTrim = String(name ?? '').trim();
+    const typeTrim = String(resourceStandardType ?? '').trim();
+    if (!nameTrim || !typeTrim) {
+      return;
+    }
+    const filter: Record<string, unknown> = {
+      ...nameAndTypeCaseInsensitiveFilter(nameTrim, typeTrim),
+    };
+    if (excludeStandardId !== undefined) {
+      filter.id = { $ne: excludeStandardId };
+    }
+    const dup = await this.standardModel
+      .findOne(filter)
+      .select('id')
+      .lean()
+      .exec();
+    if (dup) {
+      throw new ConflictException('Name already exists');
+    }
+  }
+
   private fileMetaForDelete(doc: {
     storage_type?: string;
     s3_key?: string;
@@ -768,9 +808,6 @@ export class StandardsService implements OnModuleInit {
         'Category fields are no longer accepted. Send **sector** only (numeric id from GET /api/sectors).',
       );
     }
-    const upload = await this.uploadStandardDocument(file);
-    const now = new Date();
-    const numericId = await this.nextStandardId();
 
     const mergedSectors = this.mergedSectorIdsFromCreateOrUpdate(
       dto,
@@ -785,13 +822,22 @@ export class StandardsService implements OnModuleInit {
     await this.categoriesService.assertNumericCategoriesExist(merged);
     const primary = merged[0]!;
 
+    await this.assertUniqueStandardNameWithinType(
+      dto.name,
+      dto.resource_standard_type,
+    );
+
+    const upload = await this.uploadStandardDocument(file);
+    const now = new Date();
+    const numericId = await this.nextStandardId();
+
     const doc = await this.standardModel.create({
       id: numericId,
       category_id: primary,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? '',
       resource_standard_type: dto.resource_standard_type.trim(),
-      status: dto.status ?? 1,
+      status: 1,
       ...this.standardFileFieldsFromUpload(file, upload),
       created_at: now,
       updated_at: now,
@@ -830,7 +876,6 @@ export class StandardsService implements OnModuleInit {
       dto.description !== undefined ||
       (dto.resource_standard_type !== undefined &&
         dto.resource_standard_type.trim() !== '') ||
-      dto.status !== undefined ||
       explicitSector;
     const wantsRemoveFile = this.formFlagIsTrue(
       rawBody?.remove_file ?? rawBody?.delete_file ?? dto.remove_file ?? dto.delete_file,
@@ -860,9 +905,6 @@ export class StandardsService implements OnModuleInit {
     ) {
       set.resource_standard_type = dto.resource_standard_type.trim();
     }
-    if (dto.status !== undefined) {
-      set.status = dto.status;
-    }
 
     let mergedForCategories: number[] | null = null;
     if (explicitSector) {
@@ -876,6 +918,16 @@ export class StandardsService implements OnModuleInit {
       await this.categoriesService.assertNumericCategoriesExist(mergedForCategories);
       set.category_id = mergedForCategories[0];
     }
+
+    const effectiveName = String(
+      set.name !== undefined ? set.name : existing.name ?? '',
+    ).trim();
+    const effectiveType = String(
+      set.resource_standard_type !== undefined
+        ? set.resource_standard_type
+        : existing.resource_standard_type ?? '',
+    ).trim();
+    await this.assertUniqueStandardNameWithinType(effectiveName, effectiveType, id);
 
     if (file) {
       const deleteMeta = this.fileMetaForDelete(existing);
