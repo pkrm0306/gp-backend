@@ -25,12 +25,14 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRapidlyRenewableMaterialsService } from './raw-materials-rapidly-renewable-materials.service';
 import { CreateRawMaterialsRapidlyRenewableMaterialsDto } from './dto/create-raw-materials-rapidly-renewable-materials.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseMultipartJsonArray,
   pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 const RAPIDLY_RENEWABLE_UNIT_ROW_KEYS = [
   'unitName',
@@ -42,12 +44,16 @@ const RAPIDLY_RENEWABLE_UNIT_ROW_KEYS = [
 ];
 
 @ApiTags('Raw Materials Rapidly Renewable Materials')
-@Controller('raw-materials-rapidly-renewable-materials')
+@Controller([
+  'raw-materials-rapidly-renewable-materials',
+  'raw-materials-rapdly-renewable-materials',
+])
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsRapidlyRenewableMaterialsController {
-  constructor(
+    constructor(
     private readonly service: RawMaterialsRapidlyRenewableMaterialsService,
+    private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
@@ -152,14 +158,23 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
     if (rapidlyRenewableFile) {
       assertRawMaterialsDocumentTypes([rapidlyRenewableFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS,
       files: rapidlyRenewableFile ? [rapidlyRenewableFile] : [],
       rows: units as Array<Record<string, unknown>>,
       rowKeys: RAPIDLY_RENEWABLE_UNIT_ROW_KEYS,
+      persistedRecordCount,
     });
 
     const dto: CreateRawMaterialsRapidlyRenewableMaterialsDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
+      urnNo,
       vendorId: body.vendorId,
       rapidlyRenewableFileName: body.rapidlyRenewableFileName,
       units: units as CreateRawMaterialsRapidlyRenewableMaterialsDto['units'],

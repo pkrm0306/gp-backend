@@ -25,12 +25,14 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsOptimizationOfRawMixService } from './raw-materials-optimization-of-raw-mix.service';
 import { CreateRawMaterialsOptimizationOfRawMixDto } from './dto/create-raw-materials-optimization-of-raw-mix.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseMultipartJsonArray,
   pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 const RAW_MIX_UNIT_ROW_KEYS = [
   'unitName',
@@ -45,8 +47,9 @@ const RAW_MIX_UNIT_ROW_KEYS = [
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsOptimizationOfRawMixController {
-  constructor(
+    constructor(
     private readonly service: RawMaterialsOptimizationOfRawMixService,
+    private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
@@ -107,14 +110,23 @@ export class RawMaterialsOptimizationOfRawMixController {
     if (optimizationOfRawMixFile) {
       assertRawMaterialsDocumentTypes([optimizationOfRawMixFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
       files: optimizationOfRawMixFile ? [optimizationOfRawMixFile] : [],
       rows: units as Array<Record<string, unknown>>,
       rowKeys: RAW_MIX_UNIT_ROW_KEYS,
+      persistedRecordCount,
     });
 
     const dto: CreateRawMaterialsOptimizationOfRawMixDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
+      urnNo,
       units: units as CreateRawMaterialsOptimizationOfRawMixDto['units'],
       optimizationOfRawMixFileName: body.optimizationOfRawMixFileName,
     };

@@ -9,7 +9,6 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
 import { CaptchaService } from '../common/services/captcha.service';
-import { EmailService } from '../common/services/email.service';
 import { RbacModule } from '../rbac/rbac.module';
 import { ZohoModule } from '../zoho/zoho.module';
 
@@ -37,7 +36,6 @@ import { ZohoModule } from '../zoho/zoho.module';
     AuthSessionInvalidationService,
     JwtStrategy,
     CaptchaService,
-    EmailService,
   ],
   exports: [AuthService, AuthSessionInvalidationService, JwtStrategy],
 })

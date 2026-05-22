@@ -11,6 +11,7 @@ import {
 } from './schemas/raw-materials-hazardous.schema';
 import { CreateRawMaterialsHazardousDto } from './dto/create-raw-materials-hazardous.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
 
 @Injectable()
 export class RawMaterialsHazardousService {
@@ -75,6 +76,10 @@ export class RawMaterialsHazardousService {
         error.message || 'Failed to create raw materials hazardous record.',
       );
     }
+  }
+
+  async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+    return countVendorUrnDocuments(this.model, urnNo, vendorId);
   }
 
   async listByUrn(urnNo: string, vendorId: string) {

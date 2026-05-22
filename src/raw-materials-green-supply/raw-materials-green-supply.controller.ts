@@ -25,17 +25,22 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsGreenSupplyService } from './raw-materials-green-supply.service';
 import { CreateRawMaterialsGreenSupplyDto } from './dto/create-raw-materials-green-supply.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 @ApiTags('Raw Materials Green Supply')
 @Controller('raw-materials-green-supply')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsGreenSupplyController {
-  constructor(private readonly service: RawMaterialsGreenSupplyService) {}
+    constructor(
+    private readonly service: RawMaterialsGreenSupplyService,
+    private readonly stepGate: RawMaterialsStepGateService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -80,9 +85,17 @@ export class RawMaterialsGreenSupplyController {
     if (greenSupplyFile) {
       assertRawMaterialsDocumentTypes([greenSupplyFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      dto.urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo: dto.urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY,
       files: greenSupplyFile ? [greenSupplyFile] : [],
       textValues: [dto.awarenessAndEducation, dto.measuresImplemented],
+      persistedRecordCount,
     });
 
     const data = await this.service.create(dto, user.vendorId, greenSupplyFile);

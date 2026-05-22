@@ -25,18 +25,21 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateRawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesDto } from './dto/create-raw-materials-elimination-of-ozone-depleting-global-warming-substances.dto';
 import { RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesService } from './raw-materials-elimination-of-ozone-depleting-global-warming-substances.service';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 @ApiTags('Raw Materials Elimination Of Ozone Depleting And Global Warming Substances')
 @Controller('raw-materials-elimination-of-ozone-depleting-global-warming-substances')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesController {
-  constructor(
+    constructor(
     private readonly service: RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesService,
+    private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
@@ -80,9 +83,18 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
     if (ozoneReportFile) {
       assertRawMaterialsDocumentTypes([ozoneReportFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      dto.urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo: dto.urnNo,
+      documentForm:
+        DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
       files: ozoneReportFile ? [ozoneReportFile] : [],
       textValues: [dto.ozoneReportFileName],
+      persistedRecordCount,
     });
 
     const data = await this.service.create(dto, user.vendorId, ozoneReportFile);

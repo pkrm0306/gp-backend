@@ -44,7 +44,7 @@ export class CreateProductPerformanceDto {
 
   @ApiProperty({
     description:
-      'JSON array — **replaces** all test report rows for this URN (optional; send full list on save). At least one of testReports (non-empty row) or files should be present (vendor enforces in UI). Format: [{"productName":"...","testReportFileName":"..."}]',
+      'JSON array — **replaces** all test report rows for this URN (optional; send full list on save). At least one of testReports (non-empty row), files, or retained product_performance_documents for this URN should be present. Format: [{"productName":"...","testReportFileName":"..."}]',
     type: [TestReportEntryDto],
     required: false,
     example: [

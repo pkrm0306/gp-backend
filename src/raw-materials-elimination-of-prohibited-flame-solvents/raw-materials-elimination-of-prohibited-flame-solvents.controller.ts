@@ -25,18 +25,21 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsService } from './raw-materials-elimination-of-prohibited-flame-solvents.service';
 import { CreateRawMaterialsEliminationOfProhibitedFlameSolventsDto } from './dto/create-raw-materials-elimination-of-prohibited-flame-solvents.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 @ApiTags('Raw Materials Elimination Of Prohibited Flame Solvents')
 @Controller('raw-materials-elimination-of-prohibited-flame-solvents')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsEliminationOfProhibitedFlameSolventsController {
-  constructor(
+    constructor(
     private readonly service: RawMaterialsEliminationOfProhibitedFlameSolventsService,
+    private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
@@ -83,9 +86,18 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsController {
     if (prohibitedFlameSolventsFile) {
       assertRawMaterialsDocumentTypes([prohibitedFlameSolventsFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      dto.urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo: dto.urnNo,
+      documentForm:
+        DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
       files: prohibitedFlameSolventsFile ? [prohibitedFlameSolventsFile] : [],
       textValues: [dto.details],
+      persistedRecordCount,
     });
     const data = await this.service.create(dto, user.vendorId, prohibitedFlameSolventsFile);
     return { success: true, data };

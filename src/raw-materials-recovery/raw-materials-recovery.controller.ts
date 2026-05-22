@@ -25,12 +25,14 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRecoveryService } from './raw-materials-recovery.service';
 import { CreateRawMaterialsRecoveryDto } from './dto/create-raw-materials-recovery.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseMultipartJsonArray,
   pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 const RECOVERY_UNIT_ROW_KEYS = [
   'unitName',
@@ -46,7 +48,10 @@ const RECOVERY_UNIT_ROW_KEYS = [
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsRecoveryController {
-  constructor(private readonly service: RawMaterialsRecoveryService) {}
+    constructor(
+    private readonly service: RawMaterialsRecoveryService,
+    private readonly stepGate: RawMaterialsStepGateService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -114,14 +119,23 @@ export class RawMaterialsRecoveryController {
     if (recoveryFile) {
       assertRawMaterialsDocumentTypes([recoveryFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
       files: recoveryFile ? [recoveryFile] : [],
       rows: units as Array<Record<string, unknown>>,
       rowKeys: RECOVERY_UNIT_ROW_KEYS,
+      persistedRecordCount,
     });
 
     const dto: CreateRawMaterialsRecoveryDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
+      urnNo,
       vendorId: body.vendorId,
       recoveryFileName: body.recoveryFileName,
       units: units as CreateRawMaterialsRecoveryDto['units'],

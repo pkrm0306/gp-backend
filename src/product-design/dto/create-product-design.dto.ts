@@ -23,7 +23,7 @@ export class CreateProductDesignDto {
 
   @ApiProperty({
     description:
-      'Strategies text (optional). Vendor requires at least one of strategies, measures, ecoVisionFile, or supportingDesignFile.',
+      'Strategies text (optional). At least one of strategies, measures (non-empty row), ecoVisionFile, supportingDesignFile, or retained product_design_documents for this URN should be present.',
     required: false,
   })
   @IsString()

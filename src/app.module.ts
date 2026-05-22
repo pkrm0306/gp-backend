@@ -52,6 +52,8 @@ import { DocumentsModule } from './documents/documents.module';
 import { RedisModule } from './common/redis/redis.module';
 import { GlobalPhoneUniquenessModule } from './common/services/global-phone-uniqueness.module';
 import { ZohoModule } from './zoho/zoho.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { RawMaterialsSharedModule } from './common/raw-materials/raw-materials-shared.module';
 
 @Module({
   imports: [
@@ -60,6 +62,8 @@ import { ZohoModule } from './zoho/zoho.module';
       envFilePath: '.env',
     }),
     RedisModule,
+    NotificationsModule,
+    RawMaterialsSharedModule,
     GlobalPhoneUniquenessModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],

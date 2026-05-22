@@ -27,6 +27,7 @@ import {
   ECO_VISION_SUBSECTION,
   SUPPORTING_SUBSECTION,
 } from './product-design-upload.util';
+import { normalizeMeasureBenefitRow } from '../common/form-partial-field.util';
 
 @Injectable()
 export class ProductDesignService implements OnModuleInit {
@@ -97,8 +98,11 @@ export class ProductDesignService implements OnModuleInit {
     }> = [];
 
     for (const row of rows) {
-      const measuresImplemented = String(row?.measuresImplemented ?? '').trim();
-      const benefitsAchieved = String(row?.benefitsAchieved ?? '').trim();
+      const normalized = normalizeMeasureBenefitRow(
+        row as Record<string, unknown>,
+      );
+      const measuresImplemented = normalized.measuresImplemented;
+      const benefitsAchieved = normalized.benefitsAchieved;
       const normalizedMeasures = measuresImplemented.toLowerCase();
       const normalizedBenefits = benefitsAchieved.toLowerCase();
 
@@ -230,6 +234,56 @@ export class ProductDesignService implements OnModuleInit {
       }
     }
     return { objectIds, productDocumentIds };
+  }
+
+  /**
+   * Count product_design documents that would remain after applying retention lists.
+   * `existing*DocumentIds` omitted → keep all docs of that subsection (vendor text-only save).
+   */
+  async countRetainedProductDesignDocuments(
+    urnNo: string,
+    vendorId: string,
+    existingEcoVisionDocumentIds?: string[],
+    existingSupportingDocumentIds?: string[],
+  ): Promise<{ ecoVision: number; supporting: number }> {
+    const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+    const ecoKeepRefs =
+      existingEcoVisionDocumentIds !== undefined
+        ? this.resolveDocumentIdRefs(existingEcoVisionDocumentIds)
+        : null;
+    const supportingKeepRefs =
+      existingSupportingDocumentIds !== undefined
+        ? this.resolveDocumentIdRefs(existingSupportingDocumentIds)
+        : null;
+
+    const existingDocs = await this.allProductDocumentModel
+      .find({
+        vendorId: vendorObjectId,
+        urnNo,
+        documentForm: DocumentSectionKey.PRODUCT_DESIGN,
+        isDeleted: { $ne: true },
+      })
+      .lean()
+      .exec();
+
+    let ecoVision = 0;
+    let supporting = 0;
+
+    for (const doc of existingDocs) {
+      const subsection = String(doc.documentFormSubsection ?? '');
+      if (subsection === ECO_VISION_SUBSECTION) {
+        const retain =
+          ecoKeepRefs === null || this.docMatchesIdRefs(doc, ecoKeepRefs);
+        if (retain) ecoVision += 1;
+      } else if (subsection === SUPPORTING_SUBSECTION) {
+        const retain =
+          supportingKeepRefs === null ||
+          this.docMatchesIdRefs(doc, supportingKeepRefs);
+        if (retain) supporting += 1;
+      }
+    }
+
+    return { ecoVision, supporting };
   }
 
   private docMatchesIdRefs(
@@ -477,6 +531,11 @@ export class ProductDesignService implements OnModuleInit {
           { urnNo: createProductDesignDto.urnNo, vendorId: vendorObjectId },
           { projection: { eoiNo: 1 } },
         );
+      if (!productRow) {
+        throw new NotFoundException(
+          'URN not found or does not belong to this vendor',
+        );
+      }
       const eoiNo: string | undefined = productRow?.eoiNo;
 
       const productDesignId = await this.sequenceHelper.getProductDesignId();

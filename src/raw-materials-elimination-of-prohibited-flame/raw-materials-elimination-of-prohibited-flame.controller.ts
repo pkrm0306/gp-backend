@@ -25,18 +25,21 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsEliminationOfProhibitedFlameService } from './raw-materials-elimination-of-prohibited-flame.service';
 import { CreateRawMaterialsEliminationOfProhibitedFlameDto } from './dto/create-raw-materials-elimination-of-prohibited-flame.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 @ApiTags('Raw Materials Elimination Of Prohibited Flame')
 @Controller('raw-materials-elimination-of-prohibited-flame')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsEliminationOfProhibitedFlameController {
-  constructor(
+    constructor(
     private readonly service: RawMaterialsEliminationOfProhibitedFlameService,
+    private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
@@ -83,9 +86,17 @@ export class RawMaterialsEliminationOfProhibitedFlameController {
     if (prohibitedFlameFile) {
       assertRawMaterialsDocumentTypes([prohibitedFlameFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      dto.urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo: dto.urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
       files: prohibitedFlameFile ? [prohibitedFlameFile] : [],
       textValues: [dto.measuresImplemented],
+      persistedRecordCount,
     });
     const data = await this.service.create(dto, user.vendorId, prohibitedFlameFile);
     return { success: true, data };

@@ -16,6 +16,7 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
 
 @Injectable()
 export class RawMaterialsHazardousProductsService {
@@ -107,6 +108,10 @@ export class RawMaterialsHazardousProductsService {
         error.message || 'Failed to create hazardous product record.',
       );
     }
+  }
+
+  async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+    return countVendorUrnDocuments(this.model, urnNo, vendorId);
   }
 
   async listByUrn(urnNo: string, vendorId: string) {

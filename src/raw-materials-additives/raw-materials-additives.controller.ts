@@ -25,11 +25,13 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsAdditivesService } from './raw-materials-additives.service';
 import { CreateRawMaterialsAdditivesDto } from './dto/create-raw-materials-additives.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseMultipartJsonArray,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 const ADDITIVES_UNIT_ROW_KEYS = [
   'unitName',
@@ -57,7 +59,10 @@ const ADDITIVES_UNIT_ROW_KEYS = [
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsAdditivesController {
-  constructor(private readonly service: RawMaterialsAdditivesService) {}
+    constructor(
+    private readonly service: RawMaterialsAdditivesService,
+    private readonly stepGate: RawMaterialsStepGateService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create raw materials additives record (per URN)' })
@@ -126,14 +131,23 @@ export class RawMaterialsAdditivesController {
     if (additivesFile) {
       assertRawMaterialsDocumentTypes([additivesFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
       files: additivesFile ? [additivesFile] : [],
       rows: units as Array<Record<string, unknown>>,
       rowKeys: ADDITIVES_UNIT_ROW_KEYS,
+      persistedRecordCount,
     });
 
     const dto: CreateRawMaterialsAdditivesDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
+      urnNo,
       units: units as CreateRawMaterialsAdditivesDto['units'],
       additivesFileName: body.additivesFileName,
     };

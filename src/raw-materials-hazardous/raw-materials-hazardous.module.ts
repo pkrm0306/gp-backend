@@ -9,6 +9,7 @@ import { RawMaterialsHazardousController } from './raw-materials-hazardous.contr
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
+import { RawMaterialsHazardousProductsModule } from '../raw-materials-hazardous-products/raw-materials-hazardous-products.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AuthModule } from '../auth/auth.module';
     ProductRegistrationModule,
     PassportModule,
     AuthModule,
+    RawMaterialsHazardousProductsModule,
   ],
   controllers: [RawMaterialsHazardousController],
   providers: [RawMaterialsHazardousService],

@@ -13,7 +13,11 @@ import { Connection } from 'mongoose';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
 import { CaptchaService } from '../common/services/captcha.service';
-import { EmailService } from '../common/services/email.service';
+import { NotificationHelper } from '../notifications/notification.helper';
+import {
+  NotificationChannel,
+  NotificationTemplateCode,
+} from '../notifications/interfaces/notification.types';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -103,7 +107,7 @@ export class AuthService {
     private manufacturersService: ManufacturersService,
     private vendorUsersService: VendorUsersService,
     private captchaService: CaptchaService,
-    private emailService: EmailService,
+    private readonly notificationHelper: NotificationHelper,
     private readonly redisService: RedisService,
     private readonly rbacService: RbacService,
     private readonly sessionInvalidation: AuthSessionInvalidationService,
@@ -386,15 +390,22 @@ export class AuthService {
       }
 
       try {
-        await this.emailService.sendRegistrationEmail(
-          normalizedEmail,
-          registerDto.password,
-          otp,
-        );
-      } catch (emailError: any) {
+        await this.notificationHelper.send({
+          type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
+          template: NotificationTemplateCode.USER_CREATED,
+          userId: vendorUser._id.toString(),
+          email: normalizedEmail,
+          payload: {
+            name: normalizedContactName || normalizedCompanyName,
+            email: normalizedEmail,
+            password: registerDto.password,
+            otp,
+          },
+        });
+      } catch (notifyError: any) {
         console.warn(
-          `[registerVendor] Email send failed for ${normalizedEmail}:`,
-          emailError?.message || emailError,
+          `[registerVendor] Notification send failed for ${normalizedEmail}:`,
+          notifyError?.message || notifyError,
         );
       }
 
@@ -766,9 +777,13 @@ export class AuthService {
       password: newPassword,
     });
 
-    this.emailService.sendInBackground(() =>
-      this.emailService.sendPasswordResetEmail(submittedEmail, newPassword),
-    );
+    this.notificationHelper.sendInBackground({
+      type: [NotificationChannel.EMAIL],
+      template: NotificationTemplateCode.PASSWORD_RESET,
+      userId: user._id.toString(),
+      email: submittedEmail,
+      payload: { newPassword },
+    });
 
     return {
       message: 'New password has been sent to your email',

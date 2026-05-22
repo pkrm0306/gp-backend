@@ -25,7 +25,6 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsReduceEnvironmentalService } from './raw-materials-reduce-environmental.service';
 import { CreateRawMaterialsReduceEnvironmentalDto } from './dto/create-raw-materials-reduce-environmental.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   collectAllUploadFiles,
   parseRawMaterialsFormString,
@@ -33,6 +32,9 @@ import {
   pickUploadFile,
   resolveReduceEnvironmentalUnits,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 const QUARRYING_UNIT_ROW_KEYS = [
   'location',
@@ -52,8 +54,9 @@ const QUARRYING_UNIT_ROW_KEYS = [
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsReduceEnvironmentalController {
-  constructor(
+    constructor(
     private readonly service: RawMaterialsReduceEnvironmentalService,
+    private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
@@ -157,15 +160,27 @@ export class RawMaterialsReduceEnvironmentalController {
     if (reduceEnvironmentalFile) {
       assertRawMaterialsDocumentTypes([reduceEnvironmentalFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: [
+        DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIRONMENTAL,
+        DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+      ],
       files: reduceEnvironmentalFile ? [reduceEnvironmentalFile] : [],
       rows: resolvedUnits,
       rowKeys: QUARRYING_UNIT_ROW_KEYS,
+      persistedRecordCount,
     });
 
     const first = resolvedUnits[0];
     const dto: CreateRawMaterialsReduceEnvironmentalDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
+      urnNo,
       units: resolvedUnits,
       location: first?.location,
       enhancementOfMinesLife: first?.enhancementOfMinesLife,

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   RawMaterialsUtilizationManufacturingUnits,
@@ -9,6 +9,7 @@ import { RawMaterialsUtilizationManufacturingUnitsController } from './raw-mater
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
+import { RawMaterialsUtilizationModule } from '../raw-materials-utilization/raw-materials-utilization.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { AuthModule } from '../auth/auth.module';
     ProductRegistrationModule,
     PassportModule,
     AuthModule,
+    forwardRef(() => RawMaterialsUtilizationModule),
   ],
   controllers: [RawMaterialsUtilizationManufacturingUnitsController],
   providers: [RawMaterialsUtilizationManufacturingUnitsService],

@@ -22,6 +22,7 @@ import {
 import { CreateProductPerformanceDto } from './dto/create-product-performance.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { normalizeTestReportRow } from '../common/form-partial-field.util';
 import {
   deleteUploadedFileByDocumentLink,
   uploadFile,
@@ -162,8 +163,13 @@ export class ProductPerformanceService implements OnModuleInit {
     }> = [];
 
     for (const row of rawRows) {
-      const productName = String(row?.productName ?? defaultProductName).trim();
-      const testReportFileName = String(row?.testReportFileName ?? '').trim();
+      const normalized = normalizeTestReportRow(
+        row as Record<string, unknown>,
+      );
+      const productName = (
+        normalized.productName || defaultProductName
+      ).trim();
+      const testReportFileName = normalized.testReportFileName.trim();
       if (!this.isMeaningfulTestReportRow(productName, testReportFileName)) {
         continue;
       }
@@ -234,6 +240,40 @@ export class ProductPerformanceService implements OnModuleInit {
       }
     }
     return { objectIds, productDocumentIds };
+  }
+
+  /**
+   * Count performance documents retained after applying existingDocumentIds.
+   * Omit existingDocumentIds → keep all docs on URN (vendor text-only save).
+   */
+  async countRetainedProductPerformanceDocuments(
+    urnNo: string,
+    vendorId: string,
+    existingDocumentIds?: string[],
+  ): Promise<number> {
+    const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+    const keepRefs =
+      existingDocumentIds !== undefined
+        ? this.resolveDocumentIdRefs(existingDocumentIds)
+        : null;
+
+    const existingDocs = await this.allProductDocumentModel
+      .find({
+        vendorId: vendorObjectId,
+        urnNo,
+        documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE,
+        isDeleted: { $ne: true },
+      })
+      .lean()
+      .exec();
+
+    let retained = 0;
+    for (const doc of existingDocs) {
+      const keep =
+        keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
+      if (keep) retained += 1;
+    }
+    return retained;
   }
 
   private docMatchesIdRefs(
@@ -498,6 +538,11 @@ export class ProductPerformanceService implements OnModuleInit {
           { urnNo, vendorId: vendorObjectId },
           { projection: { eoiNo: 1 } },
         );
+      if (!productRow) {
+        throw new NotFoundException(
+          'URN not found or does not belong to this vendor',
+        );
+      }
       const eoiNo: string | undefined = productRow?.eoiNo;
 
       const existingProductPerformance = await this.productPerformanceModel

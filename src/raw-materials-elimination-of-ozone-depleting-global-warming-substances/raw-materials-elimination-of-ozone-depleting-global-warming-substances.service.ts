@@ -113,6 +113,21 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesServi
     }
   }
 
+  async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+    if (!Types.ObjectId.isValid(vendorId)) {
+      return 0;
+    }
+    return this.allProductDocumentModel
+      .countDocuments({
+        urnNo: urnNo.trim(),
+        vendorId: new Types.ObjectId(vendorId),
+        documentForm:
+          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
+        isDeleted: { $ne: true },
+      })
+      .exec();
+  }
+
   async listByUrn(urnNo: string, vendorId: string) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');

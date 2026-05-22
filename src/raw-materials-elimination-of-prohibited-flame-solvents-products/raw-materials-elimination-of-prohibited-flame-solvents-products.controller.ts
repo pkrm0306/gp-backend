@@ -17,9 +17,12 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+import { normalizeRawMaterialsProductRow } from '../common/form-partial-field.util';
 import { RawMaterialsEliminationOfProhibitedFlameSolventsProductsService } from './raw-materials-elimination-of-prohibited-flame-solvents-products.service';
 import { CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto } from './dto/create-raw-materials-elimination-of-prohibited-flame-solvents-products.dto';
-import { assertAtLeastOneRawMaterialsField } from '../common/raw-materials/raw-materials-upload.util';
+import { parseRequiredRawMaterialsUrn } from '../common/raw-materials/raw-materials-upload.util';
 
 @ApiTags('Raw Materials Elimination Of Prohibited Flame Solvents Products')
 @Controller('raw-materials-elimination-of-prohibited-flame-solvents-products')
@@ -28,6 +31,7 @@ import { assertAtLeastOneRawMaterialsField } from '../common/raw-materials/raw-m
 export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController {
   constructor(
     private readonly service: RawMaterialsEliminationOfProhibitedFlameSolventsProductsService,
+    private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
@@ -41,14 +45,29 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
   @ApiResponse({ status: 201, description: 'Created successfully' })
   async create(
     @CurrentUser() user: any,
-    @Body()
-    dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto,
+    @Body() body: Record<string, unknown>,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
-    assertAtLeastOneRawMaterialsField({
-      textValues: [dto.productsName, dto.productsTestReport],
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const productRow = normalizeRawMaterialsProductRow(body);
+    const dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto = {
+      urnNo,
+      productsName: productRow.productName,
+      productsTestReport: productRow.testReportReference,
+    };
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm:
+        DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+      textValues: [productRow.productName, productRow.testReportReference],
+      persistedRecordCount,
     });
     const data = await this.service.create(dto, user.vendorId);
     return { success: true, data };

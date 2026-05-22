@@ -20,7 +20,9 @@ import { productDesignMultipartMemoryMulterOptions } from '../common/upload/mult
 import {
   assertSupportingDesignFileTypes,
   collectProductDesignUploadFiles,
-  hasAtLeastOneProductDesignFieldFilled,
+  hasAtLeastOneProductDesignContent,
+  normalizeMeasureBenefitRows,
+  PRODUCT_DESIGN_EMPTY_FORM_MESSAGE,
   parseMultipartJsonIdArray,
   parseMultipartNonNegativeInt,
 } from './product-design-upload.util';
@@ -44,9 +46,9 @@ export class ProductDesignController {
   @ApiOperation({
     summary: 'Create or update product design data',
     description:
-      'Saves product design for a URN. All content fields are **optional** individually; at least one of **strategies**, **measuresAndBenefits** (non-empty row), **ecoVisionFile**, or **supportingDesignFile** is required (vendor also enforces in UI). ' +
+      'Saves product design for a URN. **strategies**, **measuresAndBenefits**, **ecoVisionFile**, and **supportingDesignFile** are each optional; vendor requires at least one field (including saved documents on the URN). ' +
       '**measuresAndBenefits** replaces all measure rows (send the full list). **supportingDesignFile** = PDF/Excel only. ' +
-      '**existingEcoVisionDocumentIds** / **existingSupportingDocumentIds** retain prior uploads on text-only saves.',
+      '**existingEcoVisionDocumentIds** / **existingSupportingDocumentIds** control which prior uploads are kept.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -62,7 +64,7 @@ export class ProductDesignController {
         strategies: {
           type: 'string',
           description:
-            'Strategies text (optional). Eco-vision, supporting docs, and measures are also optional.',
+            'Strategies text (optional). No minimum length.',
           example: 'Product design strategies and approach',
         },
         statergies: {
@@ -168,6 +170,12 @@ export class ProductDesignController {
         }
       }
 
+      if (measuresAndBenefits !== undefined) {
+        measuresAndBenefits = normalizeMeasureBenefitRows(
+          measuresAndBenefits as Array<Record<string, unknown>>,
+        );
+      }
+
       const strategiesRaw =
         body.strategies !== undefined && body.strategies !== null
           ? String(body.strategies)
@@ -210,17 +218,25 @@ export class ProductDesignController {
 
       assertSupportingDesignFileTypes(supportingDocumentFiles);
 
+      const retained =
+        await this.productDesignService.countRetainedProductDesignDocuments(
+          createProductDesignDto.urnNo.trim(),
+          user.vendorId,
+          createProductDesignDto.existingEcoVisionDocumentIds,
+          createProductDesignDto.existingSupportingDocumentIds,
+        );
+
       if (
-        !hasAtLeastOneProductDesignFieldFilled({
+        !hasAtLeastOneProductDesignContent({
           strategies: strategiesRaw,
           measuresAndBenefits,
           ecoVisionFiles,
           supportingDocumentFiles,
+          retainedEcoVisionDocumentCount: retained.ecoVision,
+          retainedSupportingDocumentCount: retained.supporting,
         })
       ) {
-        throw new BadRequestException(
-          'At least one Product Design field is required.',
-        );
+        throw new BadRequestException(PRODUCT_DESIGN_EMPTY_FORM_MESSAGE);
       }
 
       const result = await this.productDesignService.createProductDesign(

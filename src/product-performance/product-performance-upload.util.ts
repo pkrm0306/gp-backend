@@ -1,3 +1,13 @@
+import { assertSupportingDesignFileTypes } from '../product-design/product-design-upload.util';
+import {
+  hasPartialTestReportRow,
+  normalizeTestReportRow,
+} from '../common/form-partial-field.util';
+
+/** Vendor empty-form copy (shared with product design / formAtLeastOneFieldMessage). */
+export const PRODUCT_PERFORMANCE_EMPTY_FORM_MESSAGE =
+  'Please fill in at least one field in the form before continuing.';
+
 /** Multipart field names accepted for test report file uploads. */
 export const PRODUCT_PERFORMANCE_UPLOAD_FIELD_NAMES = new Set([
   'files',
@@ -47,10 +57,37 @@ export function hasAtLeastOneProductPerformanceFieldFilled(params: {
     return true;
   }
   const rows = params.testReports ?? [];
-  return rows.some(
-    (row) =>
-      String(row?.productName ?? '').trim() ||
-      String(row?.testReportFileName ?? '').trim(),
+  return rows.some((row) =>
+    hasPartialTestReportRow(row as Record<string, unknown>),
   );
 }
-
+
+export { normalizeTestReportRow, normalizeTestReportRows } from '../common/form-partial-field.util';
+
+/** Vendor “≥ 1 field” rule including retained performance documents on the URN. */
+export function hasAtLeastOneProductPerformanceContent(params: {
+  testReports?: Array<{
+    productName?: string;
+    testReportFileName?: string;
+  }>;
+  uploadedFiles: Express.Multer.File[];
+  retainedDocumentCount?: number;
+}): boolean {
+  if (
+    hasAtLeastOneProductPerformanceFieldFilled({
+      testReports: params.testReports,
+      uploadedFiles: params.uploadedFiles,
+    })
+  ) {
+    return true;
+  }
+  return (params.retainedDocumentCount ?? 0) > 0;
+}
+
+/** Test report uploads: PDF and Excel only (matches vendor UI). */
+export function assertProductPerformanceTestReportFileTypes(
+  files: Express.Multer.File[],
+): void {
+  assertSupportingDesignFileTypes(files);
+}
+

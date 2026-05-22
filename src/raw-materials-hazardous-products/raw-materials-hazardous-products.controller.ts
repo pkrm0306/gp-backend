@@ -22,10 +22,12 @@ import {
 import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 import { RawMaterialsHazardousProductsService } from './raw-materials-hazardous-products.service';
 import { CreateRawMaterialsHazardousProductsDto } from './dto/create-raw-materials-hazardous-products.dto';
+import { normalizeRawMaterialsProductRow } from '../common/form-partial-field.util';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
@@ -36,13 +38,16 @@ import {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsHazardousProductsController {
-  constructor(private readonly service: RawMaterialsHazardousProductsService) {}
+  constructor(
+    private readonly service: RawMaterialsHazardousProductsService,
+    private readonly stepGate: RawMaterialsStepGateService,
+  ) {}
 
   @Post()
   @ApiOperation({
     summary: 'Create hazardous products record (per URN)',
     description:
-      'Content fields are optional individually; at least one of productsName, productsTestReport, or productsTestReportFile is required (vendor also enforces in UI).',
+      'Fields are optional individually; vendor requires at least one of product name, test report text, file upload, or previously saved step data.',
   })
   @UseInterceptors(
     FileInterceptor('productsTestReportFile', certificationMultipartMemoryMulterOptions()),
@@ -79,10 +84,14 @@ export class RawMaterialsHazardousProductsController {
     if (!user?.vendorId)
       throw new BadRequestException('Vendor ID not found in token');
 
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const productRow = normalizeRawMaterialsProductRow(
+      body as Record<string, unknown>,
+    );
     const dto: CreateRawMaterialsHazardousProductsDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
-      productsName: parseRawMaterialsFormString(body.productsName),
-      productsTestReport: parseRawMaterialsFormString(body.productsTestReport),
+      urnNo,
+      productsName: productRow.productName,
+      productsTestReport: productRow.testReportReference,
       productsTestReportFileName: parseRawMaterialsFormString(
         body.productsTestReportFileName,
       ),
@@ -91,9 +100,19 @@ export class RawMaterialsHazardousProductsController {
     if (productsTestReportFile) {
       assertRawMaterialsDocumentTypes([productsTestReportFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+
+    const productCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
       files: productsTestReportFile ? [productsTestReportFile] : [],
-      textValues: [dto.productsName, dto.productsTestReport],
+      textValues: [productRow.productName, productRow.testReportReference],
+      persistedRecordCount: productCount,
     });
 
     const data = await this.service.create(

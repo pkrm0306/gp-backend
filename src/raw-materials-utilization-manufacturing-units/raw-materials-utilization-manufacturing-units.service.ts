@@ -3,6 +3,7 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -112,6 +113,10 @@ export class RawMaterialsUtilizationManufacturingUnitsService {
           'Failed to create raw materials utilization manufacturing units record.',
       );
     }
+  }
+
+  async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+    return countVendorUrnDocuments(this.model, urnNo, vendorId);
   }
 
   async listByUrn(urnNo: string, vendorId: string) {

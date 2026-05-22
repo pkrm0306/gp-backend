@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import { extname } from 'path';
+import {
+  hasPartialMeasureBenefitRow,
+  normalizeMeasureBenefitRow,
+} from '../common/form-partial-field.util';
 
 /** Multipart field names for eco vision uploads (repeat per file). */
 export const PRODUCT_DESIGN_ECO_VISION_FIELD_NAMES = new Set([
@@ -59,6 +63,10 @@ export function assertSupportingDesignFileTypes(
   }
 }
 
+/** Exact copy for vendor toast / API 400 (productDesignFormFilled.ts). */
+export const PRODUCT_DESIGN_EMPTY_FORM_MESSAGE =
+  'Please fill in at least one field in the form before continuing.';
+
 export function hasAtLeastOneProductDesignFieldFilled(params: {
   strategies?: string;
   measuresAndBenefits?: Array<{
@@ -78,11 +86,44 @@ export function hasAtLeastOneProductDesignFieldFilled(params: {
     return true;
   }
   const rows = params.measuresAndBenefits ?? [];
-  return rows.some(
-    (row) =>
-      String(row?.measuresImplemented ?? '').trim() ||
-      String(row?.benefitsAchieved ?? '').trim(),
+  return rows.some((row) =>
+    hasPartialMeasureBenefitRow(row as Record<string, unknown>),
   );
+}
+
+export { normalizeMeasureBenefitRow, normalizeMeasureBenefitRows } from '../common/form-partial-field.util';
+
+/**
+ * Vendor “≥ 1 field” rule including persisted documents after existing*DocumentIds.
+ */
+export function hasAtLeastOneProductDesignContent(params: {
+  strategies?: string;
+  measuresAndBenefits?: Array<{
+    measuresImplemented?: string;
+    benefitsAchieved?: string;
+  }>;
+  ecoVisionFiles: Express.Multer.File[];
+  supportingDocumentFiles: Express.Multer.File[];
+  retainedEcoVisionDocumentCount?: number;
+  retainedSupportingDocumentCount?: number;
+}): boolean {
+  if (
+    hasAtLeastOneProductDesignFieldFilled({
+      strategies: params.strategies,
+      measuresAndBenefits: params.measuresAndBenefits,
+      ecoVisionFiles: params.ecoVisionFiles,
+      supportingDocumentFiles: params.supportingDocumentFiles,
+    })
+  ) {
+    return true;
+  }
+  if ((params.retainedEcoVisionDocumentCount ?? 0) > 0) {
+    return true;
+  }
+  if ((params.retainedSupportingDocumentCount ?? 0) > 0) {
+    return true;
+  }
+  return false;
 }
 
 function isValidUploadPart(file: Express.Multer.File): boolean {

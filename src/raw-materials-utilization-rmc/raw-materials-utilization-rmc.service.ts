@@ -20,6 +20,7 @@ import { Product, ProductDocument } from '../product-registration/schemas/produc
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import {
   hasAnyMeaningfulBodyField,
   RAW_MATERIALS_AT_LEAST_ONE_MESSAGE,
@@ -479,9 +480,25 @@ export class RawMaterialsUtilizationRmcService {
       const uploadFiles = [files?.file1, files?.file2].filter(
         Boolean,
       ) as Express.Multer.File[];
+      const [retainedDocumentCount, persistedRecordCount] = await Promise.all([
+        this.allProductDocumentModel
+          .countDocuments({
+            vendorId: vendorObjectId,
+            urnNo,
+            documentForm:
+              DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+            isDeleted: { $ne: true },
+          })
+          .exec(),
+        this.model
+          .countDocuments({ urnNo, vendorId: vendorObjectId })
+          .exec(),
+      ]);
       if (
         uploadFiles.length === 0 &&
-        !hasAnyMeaningfulBodyField(dto ?? {})
+        !hasAnyMeaningfulBodyField(dto ?? {}) &&
+        retainedDocumentCount === 0 &&
+        persistedRecordCount === 0
       ) {
         throw new BadRequestException(RAW_MATERIALS_AT_LEAST_ONE_MESSAGE);
       }

@@ -25,12 +25,14 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRegionalMaterialsService } from './raw-materials-regional-materials.service';
 import { CreateRawMaterialsRegionalMaterialsDto } from './dto/create-raw-materials-regional-materials.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseMultipartJsonArray,
   pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 const REGIONAL_UNIT_ROW_KEYS = [
   'unitName',
@@ -46,7 +48,10 @@ const REGIONAL_UNIT_ROW_KEYS = [
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsRegionalMaterialsController {
-  constructor(private readonly service: RawMaterialsRegionalMaterialsService) {}
+    constructor(
+    private readonly service: RawMaterialsRegionalMaterialsService,
+    private readonly stepGate: RawMaterialsStepGateService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -150,14 +155,23 @@ export class RawMaterialsRegionalMaterialsController {
     if (regionalMaterialsFile) {
       assertRawMaterialsDocumentTypes([regionalMaterialsFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
       files: regionalMaterialsFile ? [regionalMaterialsFile] : [],
       rows: units as Array<Record<string, unknown>>,
       rowKeys: REGIONAL_UNIT_ROW_KEYS,
+      persistedRecordCount,
     });
 
     const dto: CreateRawMaterialsRegionalMaterialsDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
+      urnNo,
       vendorId: body.vendorId,
       regionalMaterialsFileName: body.regionalMaterialsFileName,
       units: units as CreateRawMaterialsRegionalMaterialsDto['units'],

@@ -1,11 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
+import { Model, Types } from 'mongoose';
 import {
   assertSupportingDesignFileTypes,
   isAllowedSupportingDesignFile,
 } from '../../product-design/product-design-upload.util';
 
 export const RAW_MATERIALS_AT_LEAST_ONE_MESSAGE =
-  'At least one Raw Materials field is required for this step.';
+  'Please fill in at least one field in the form before continuing.';
 
 /** Align with product-design / payments; vendor URNs exceed legacy 20-char DTO limits. */
 export const RAW_MATERIALS_URN_MAX_LENGTH = 64;
@@ -210,7 +211,17 @@ export function assertAtLeastOneRawMaterialsField(params: {
   rowKeys?: string[];
   body?: Record<string, unknown>;
   bodyKeys?: string[];
+  /** Saved documents on URN for this step (vendor counts as filled). */
+  retainedDocumentCount?: number;
+  /** Persisted table/text rows already on URN for this step. */
+  persistedRecordCount?: number;
 }): void {
+  if ((params.retainedDocumentCount ?? 0) > 0) {
+    return;
+  }
+  if ((params.persistedRecordCount ?? 0) > 0) {
+    return;
+  }
   const files = params.files ?? [];
   if (files.length > 0) {
     return;
@@ -230,6 +241,23 @@ export function assertAtLeastOneRawMaterialsField(params: {
     return;
   }
   throw new BadRequestException(RAW_MATERIALS_AT_LEAST_ONE_MESSAGE);
+}
+
+/** Count persisted rows for a vendor URN (tables, product rows, text records). */
+export async function countVendorUrnDocuments(
+  model: Model<any>,
+  urnNo: string,
+  vendorId: string,
+): Promise<number> {
+  if (!Types.ObjectId.isValid(vendorId)) {
+    return 0;
+  }
+  return model
+    .countDocuments({
+      urnNo: urnNo.trim(),
+      vendorId: new Types.ObjectId(vendorId),
+    })
+    .exec();
 }
 
 export function pickUploadFile(

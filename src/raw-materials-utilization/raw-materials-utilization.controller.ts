@@ -8,6 +8,8 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -22,11 +24,14 @@ import {
 import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 import { RawMaterialsUtilizationService } from './raw-materials-utilization.service';
+import { RawMaterialsUtilizationManufacturingUnitsService } from '../raw-materials-utilization-manufacturing-units/raw-materials-utilization-manufacturing-units.service';
 import { CreateRawMaterialsUtilizationDto } from './dto/create-raw-materials-utilization.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
+  parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
 
@@ -35,7 +40,12 @@ import {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsUtilizationController {
-  constructor(private readonly service: RawMaterialsUtilizationService) {}
+  constructor(
+    private readonly service: RawMaterialsUtilizationService,
+    private readonly stepGate: RawMaterialsStepGateService,
+    @Inject(forwardRef(() => RawMaterialsUtilizationManufacturingUnitsService))
+    private readonly manufacturingUnitsService: RawMaterialsUtilizationManufacturingUnitsService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -72,17 +82,26 @@ export class RawMaterialsUtilizationController {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
+    const urnNo = parseRequiredRawMaterialsUrn(body);
     const dto: CreateRawMaterialsUtilizationDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
-      details: body.details,
-      utilizationFileName: body.utilizationFileName,
+      urnNo,
+      details: parseRawMaterialsFormString(body.details),
+      utilizationFileName: parseRawMaterialsFormString(body.utilizationFileName),
     };
     if (utilizationFile) {
       assertRawMaterialsDocumentTypes([utilizationFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const [utilCount, mfgCount] = await Promise.all([
+      this.service.countPersistedByUrn(urnNo, user.vendorId),
+      this.manufacturingUnitsService.countPersistedByUrn(urnNo, user.vendorId),
+    ]);
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_UTILIZATION,
       files: utilizationFile ? [utilizationFile] : [],
       textValues: [dto.details],
+      persistedRecordCount: utilCount + mfgCount,
     });
     const data = await this.service.create(dto, user.vendorId, utilizationFile);
     return { success: true, data };

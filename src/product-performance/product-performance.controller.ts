@@ -18,8 +18,11 @@ import {
 } from '@nestjs/swagger';
 import { productPerformanceMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import {
+  assertProductPerformanceTestReportFileTypes,
   collectProductPerformanceUploadFiles,
-  hasAtLeastOneProductPerformanceFieldFilled,
+  hasAtLeastOneProductPerformanceContent,
+  normalizeTestReportRows,
+  PRODUCT_PERFORMANCE_EMPTY_FORM_MESSAGE,
   parseMultipartJsonIdArray,
 } from './product-performance-upload.util';
 import { ProductPerformanceService } from './product-performance.service';
@@ -44,9 +47,9 @@ export class ProductPerformanceController {
   @ApiOperation({
     summary: 'Create or update product performance data',
     description:
-      'Saves product performance for a URN. **testReports** and **files** are optional individually; at least one non-empty row or new file is required (vendor also enforces in UI). ' +
+      'Saves product performance for a URN. **testReports** and **files** are each optional; vendor requires at least one field (including saved performance documents on the URN). ' +
       '**testReports** replaces all rows (full list each save). Rows may have only productName or only testReportFileName filled. ' +
-      '**files** — new uploads only (max 20). **existingDocumentIds** retains prior documents on text-only saves.',
+      '**files** — new uploads only (max 20, PDF/Excel). **existingDocumentIds** controls which prior documents are kept.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -74,7 +77,7 @@ export class ProductPerformanceController {
         testReports: {
           type: 'string',
           description:
-            'JSON array — **replaces** all test report rows (optional). At least one row or files required. Format: [{"productName":"...","testReportFileName":"..."}]',
+            'JSON array — **replaces** all test report rows (optional). Format: [{"productName":"...","testReportFileName":"..."}]',
           example:
             '[{"productName":"Solar Panel 100W","testReportFileName":"IEC Test Report - March 2026"}]',
         },
@@ -150,6 +153,12 @@ export class ProductPerformanceController {
         }
       }
 
+      if (testReports !== undefined) {
+        testReports = normalizeTestReportRows(
+          testReports as Array<Record<string, unknown>>,
+        );
+      }
+
       const createProductPerformanceDto: CreateProductPerformanceDto = {
         urnNo: String(body.urnNo ?? ''),
         renewalType:
@@ -179,15 +188,23 @@ export class ProductPerformanceController {
 
       const uploadFiles = collectProductPerformanceUploadFiles(files);
 
+      assertProductPerformanceTestReportFileTypes(uploadFiles);
+
+      const retainedDocumentCount =
+        await this.productPerformanceService.countRetainedProductPerformanceDocuments(
+          createProductPerformanceDto.urnNo.trim(),
+          String(vendorId),
+          createProductPerformanceDto.existingDocumentIds,
+        );
+
       if (
-        !hasAtLeastOneProductPerformanceFieldFilled({
+        !hasAtLeastOneProductPerformanceContent({
           testReports,
           uploadedFiles: uploadFiles,
+          retainedDocumentCount,
         })
       ) {
-        throw new BadRequestException(
-          'At least one Product Performance field is required.',
-        );
+        throw new BadRequestException(PRODUCT_PERFORMANCE_EMPTY_FORM_MESSAGE);
       }
 
       const result =

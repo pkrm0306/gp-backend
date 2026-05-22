@@ -23,10 +23,13 @@ export class PdMeasure {
   @Prop()
   benefits?: string;
 
-  @Prop({ required: true })
+  /** Partial rows: only measures or only benefits may be filled (vendor UI). */
+  // @Prop({ required: true })
+  @Prop({ required: false, default: '' })
   normalizedMeasures: string;
 
-  @Prop({ required: true })
+  // @Prop({ required: true })
+  @Prop({ required: false, default: '' })
   normalizedBenefits: string;
 
   @Prop({ required: true })

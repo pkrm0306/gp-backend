@@ -21,13 +21,14 @@ import {
 import type { Request } from 'express';
 import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import {
-  assertAtLeastOneRawMaterialsField,
   parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsHazardousService } from './raw-materials-hazardous.service';
+import { RawMaterialsHazardousProductsService } from '../raw-materials-hazardous-products/raw-materials-hazardous-products.service';
 import { CreateRawMaterialsHazardousDto } from './dto/create-raw-materials-hazardous.dto';
 
 @ApiTags('Raw Materials Hazardous')
@@ -35,13 +36,17 @@ import { CreateRawMaterialsHazardousDto } from './dto/create-raw-materials-hazar
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsHazardousController {
-  constructor(private readonly service: RawMaterialsHazardousService) {}
+  constructor(
+    private readonly service: RawMaterialsHazardousService,
+    private readonly hazardousProductsService: RawMaterialsHazardousProductsService,
+    private readonly stepGate: RawMaterialsStepGateService,
+  ) {}
 
   @Post()
   @ApiOperation({
     summary: 'Save raw materials hazardous details (Step 1 textarea, per URN)',
     description:
-      'Accepts **multipart/form-data** (vendor default) or JSON. Fields: `urnNo` (required), `eoiNo` (optional), `details` (optional). Upserts by URN + vendor.',
+      'Accepts **multipart/form-data** (vendor default) or JSON. Fields: `urnNo` (required), `eoiNo` (optional), `details` (optional). Upserts by URN + vendor. At least one field required (vendor UI + server mirror).',
   })
   @UseInterceptors(
     AnyFilesInterceptor(certificationMultipartMemoryMulterOptions()),
@@ -72,8 +77,16 @@ export class RawMaterialsHazardousController {
     const eoiNo = parseRawMaterialsFormString(body.eoiNo)?.trim() || undefined;
     const details = parseRawMaterialsFormString(body.details) ?? '';
 
-    assertAtLeastOneRawMaterialsField({
+    const [hazardousCount, productCount] = await Promise.all([
+      this.service.countPersistedByUrn(urnNo, user.vendorId),
+      this.hazardousProductsService.countPersistedByUrn(urnNo, user.vendorId),
+    ]);
+
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
       textValues: [details, eoiNo],
+      persistedRecordCount: hazardousCount + productCount,
     });
 
     const dto: CreateRawMaterialsHazardousDto = {

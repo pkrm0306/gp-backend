@@ -25,12 +25,14 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsRecycledContentService } from './raw-materials-recycled-content.service';
 import { CreateRawMaterialsRecycledContentDto } from './dto/create-raw-materials-recycled-content.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
   parseMultipartJsonArray,
   pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
+
 
 const RECYCLED_UNIT_ROW_KEYS = [
   'unitName',
@@ -46,7 +48,10 @@ const RECYCLED_UNIT_ROW_KEYS = [
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsRecycledContentController {
-  constructor(private readonly service: RawMaterialsRecycledContentService) {}
+    constructor(
+    private readonly service: RawMaterialsRecycledContentService,
+    private readonly stepGate: RawMaterialsStepGateService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -148,14 +153,23 @@ export class RawMaterialsRecycledContentController {
     if (recycledContentFile) {
       assertRawMaterialsDocumentTypes([recycledContentFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
       files: recycledContentFile ? [recycledContentFile] : [],
       rows: units as Array<Record<string, unknown>>,
       rowKeys: RECYCLED_UNIT_ROW_KEYS,
+      persistedRecordCount,
     });
 
     const dto: CreateRawMaterialsRecycledContentDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
+      urnNo,
       vendorId: body.vendorId,
       recycledContentFileName: body.recycledContentFileName,
       units: units as CreateRawMaterialsRecycledContentDto['units'],

@@ -6,6 +6,8 @@ import {
   Post,
   UseGuards,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,10 +19,12 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 import { RawMaterialsUtilizationManufacturingUnitsService } from './raw-materials-utilization-manufacturing-units.service';
+import { RawMaterialsUtilizationService } from '../raw-materials-utilization/raw-materials-utilization.service';
 import { CreateRawMaterialsUtilizationManufacturingUnitsDto } from './dto/create-raw-materials-utilization-manufacturing-units.dto';
 import {
-  assertAtLeastOneRawMaterialsField,
   parseMultipartJsonArray,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
@@ -40,6 +44,9 @@ const MANUFACTURING_UNIT_ROW_KEYS = [
 export class RawMaterialsUtilizationManufacturingUnitsController {
   constructor(
     private readonly service: RawMaterialsUtilizationManufacturingUnitsService,
+    private readonly stepGate: RawMaterialsStepGateService,
+    @Inject(forwardRef(() => RawMaterialsUtilizationService))
+    private readonly utilizationService: RawMaterialsUtilizationService,
   ) {}
 
   @Post()
@@ -86,14 +93,23 @@ export class RawMaterialsUtilizationManufacturingUnitsController {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
+    const urnNo = parseRequiredRawMaterialsUrn(body);
     const units = parseMultipartJsonArray(body.units, 'units');
-    assertAtLeastOneRawMaterialsField({
+    const [mfgCount, utilCount] = await Promise.all([
+      this.service.countPersistedByUrn(urnNo, user.vendorId),
+      this.utilizationService.countPersistedByUrn(urnNo, user.vendorId),
+    ]);
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_UTILIZATION,
       rows: units as Array<Record<string, unknown>>,
       rowKeys: MANUFACTURING_UNIT_ROW_KEYS,
+      persistedRecordCount: mfgCount + utilCount,
     });
 
     const dto: CreateRawMaterialsUtilizationManufacturingUnitsDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
+      urnNo,
       units: units as CreateRawMaterialsUtilizationManufacturingUnitsDto['units'],
     };
 

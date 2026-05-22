@@ -89,6 +89,26 @@ describe('ProductDesignService measures idempotency', () => {
     expect(store).toHaveLength(2);
   });
 
+  it('accepts row with only benefitsAchieved filled', () => {
+    const { service } = buildServiceWithMeasureStore();
+    const normalizedRows = (service as any).normalizeUniqueMeasures([
+      { measuresImplemented: '', benefitsAchieved: 'ssdfds' },
+    ]);
+    expect(normalizedRows).toHaveLength(1);
+    expect(normalizedRows[0].benefitsAchieved).toBe('ssdfds');
+    expect(normalizedRows[0].measuresImplemented).toBe('');
+  });
+
+  it('accepts vendor alias keys measures and benefits', () => {
+    const { service } = buildServiceWithMeasureStore();
+    const normalizedRows = (service as any).normalizeUniqueMeasures([
+      { measures: 'LED upgrade', benefits: '' },
+    ]);
+    expect(normalizedRows).toHaveLength(1);
+    expect(normalizedRows[0].measuresImplemented).toBe('LED upgrade');
+    expect(normalizedRows[0].benefitsAchieved).toBe('');
+  });
+
   it('treats whitespace and case variants as duplicates', () => {
     const { service } = buildServiceWithMeasureStore();
 

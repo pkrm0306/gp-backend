@@ -22,11 +22,14 @@ import {
 import { certificationMultipartMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 import { RawMaterialsEliminationOfFormaldehydeService } from './raw-materials-elimination-of-formaldehyde.service';
 import { CreateRawMaterialsEliminationOfFormaldehydeDto } from './dto/create-raw-materials-elimination-of-formaldehyde.dto';
+import { normalizeRawMaterialsProductRow } from '../common/form-partial-field.util';
 import {
-  assertAtLeastOneRawMaterialsField,
   assertRawMaterialsDocumentTypes,
+  parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
 
@@ -37,6 +40,7 @@ import {
 export class RawMaterialsEliminationOfFormaldehydeController {
   constructor(
     private readonly service: RawMaterialsEliminationOfFormaldehydeService,
+    private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
@@ -51,7 +55,7 @@ export class RawMaterialsEliminationOfFormaldehydeController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['urnNo', 'productsName', 'productsTestReport'],
+      required: ['urnNo'],
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         productsName: { type: 'string', example: 'Low-VOC board material' },
@@ -73,18 +77,30 @@ export class RawMaterialsEliminationOfFormaldehydeController {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
+    const urnNo = parseRequiredRawMaterialsUrn(body);
+    const productRow = normalizeRawMaterialsProductRow(
+      body as Record<string, unknown>,
+    );
     const dto: CreateRawMaterialsEliminationOfFormaldehydeDto = {
-      urnNo: parseRequiredRawMaterialsUrn(body),
-      productsName: body.productsName,
-      productsTestReport: body.productsTestReport,
-      formaldehydeFileName: body.formaldehydeFileName,
+      urnNo,
+      productsName: productRow.productName,
+      productsTestReport: productRow.testReportReference,
+      formaldehydeFileName: parseRawMaterialsFormString(body.formaldehydeFileName),
     };
     if (formaldehydeFile) {
       assertRawMaterialsDocumentTypes([formaldehydeFile]);
     }
-    assertAtLeastOneRawMaterialsField({
+    const persistedRecordCount = await this.service.countPersistedByUrn(
+      urnNo,
+      user.vendorId,
+    );
+    await this.stepGate.assertAtLeastOne({
+      vendorId: user.vendorId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
       files: formaldehydeFile ? [formaldehydeFile] : [],
-      textValues: [dto.productsName, dto.productsTestReport],
+      textValues: [productRow.productName, productRow.testReportReference],
+      persistedRecordCount,
     });
     const data = await this.service.create(dto, user.vendorId, formaldehydeFile);
     return { success: true, data };
