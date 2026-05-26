@@ -17,10 +17,9 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
-import { resolveReduceEnvironmentalUnits } from '../common/raw-materials/raw-materials-upload.util';
+import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
+import { filterMeaningfulRows } from '../common/raw-materials/raw-materials-upload.util';
 
 const QUARRYING_UNIT_KEYS = [
   'location',
@@ -29,6 +28,11 @@ const QUARRYING_UNIT_KEYS = [
   'waterTableManagement',
   'restorationOfSpentMines',
   'greenBeltDevelopmentAndBioDiversity',
+];
+
+const REDUCE_ENV_DOCUMENT_FORMS = [
+  DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+  DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIRONMENTAL,
 ];
 
 type ReduceEnvironmentalUnitInput = {
@@ -64,27 +68,102 @@ export class RawMaterialsReduceEnvironmentalService {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-    fileType: string,
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
+  }
+
+  private async syncDocuments(params: {
+    urnNo: string;
+    vendorObjectId: Types.ObjectId;
+    formPrimaryId: number;
+    uploadFiles: Express.Multer.File[];
+    existingDocumentIds?: string[];
+  }) {
+    const { urnNo, vendorObjectId, formPrimaryId, uploadFiles, existingDocumentIds } =
+      params;
+    const now = new Date();
+    const existingDocs = await this.allProductDocumentModel.find({
+      vendorId: vendorObjectId,
+      urnNo,
+      documentForm: { $in: REDUCE_ENV_DOCUMENT_FORMS },
+      isDeleted: { $ne: true },
+    });
+
+    const keepRefs = existingDocumentIds !== undefined ? existingDocumentIds : null;
+    const oldLinks: string[] = [];
+
+    if (keepRefs !== null) {
+      for (const doc of existingDocs) {
+        const keep =
+          keepRefs.includes(String(doc.productDocumentId)) ||
+          keepRefs.includes(String(doc._id));
+        if (!keep) {
+          if (doc.documentLink) oldLinks.push(doc.documentLink);
+          doc.isDeleted = true;
+          doc.deletedAt = now;
+          doc.deletedBy = vendorObjectId;
+          doc.updatedDate = now;
+          await doc.save();
+        }
+      }
+    }
+
+    const documents = [];
+    for (let i = 0; i < uploadFiles.length; i++) {
+      const file = uploadFiles[i];
+      const uploaded = await this.saveFileToUrnFolder(file, urnNo);
+      const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+      const d = await this.allProductDocumentModel.create({
+        productDocumentId,
+        vendorId: vendorObjectId,
+        urnNo,
+        eoiNo: '',
+        documentForm: DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+        documentFormSubsection: 'supporting_documents',
+        formPrimaryId: i === 0 ? formPrimaryId : productDocumentId,
+        documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
+        documentOriginalName: file.originalname,
+        documentLink: uploaded.fileUrl,
+        createdDate: now,
+        updatedDate: now,
+      });
+      documents.push(d);
+    }
+
+    for (const link of oldLinks) {
+      try {
+        await deleteUploadedFileByDocumentLink(link);
+      } catch {
+        // ignore
+      }
+    }
+
+    return documents;
   }
 
   async create(
     dto: CreateRawMaterialsReduceEnvironmentalDto,
     vendorId: string,
-    reduceEnvironmentalFile?: Express.Multer.File,
+    options?: {
+      replaceAllRows?: boolean;
+      uploadFiles?: Express.Multer.File[];
+      existingDocumentIds?: string[];
+    },
   ): Promise<{
     urnNo: string;
     vendorId: string;
     units: RawMaterialsReduceEnvironmentalDocument[];
+    documents?: unknown[];
   }> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
       const now = new Date();
+      const replaceAllRows = options?.replaceAllRows !== false;
 
-      const meaningfulUnits = resolveReduceEnvironmentalUnits(
-        dto as unknown as Record<string, unknown>,
+      const meaningfulUnits = filterMeaningfulRows(
+        (dto.units ?? []) as unknown as Array<Record<string, unknown>>,
         QUARRYING_UNIT_KEYS,
       ) as ReduceEnvironmentalUnitInput[];
 
@@ -96,7 +175,8 @@ export class RawMaterialsReduceEnvironmentalService {
       > = [];
 
       for (const unit of meaningfulUnits) {
-        const generatedId = await this.sequenceHelper.getRawMaterialsReduceEnvironmentalId();
+        const generatedId =
+          await this.sequenceHelper.getRawMaterialsReduceEnvironmentalId();
         rowsToInsert.push({
           rawMaterialsReduceEnvironmentalId: generatedId,
           urnNo,
@@ -113,64 +193,33 @@ export class RawMaterialsReduceEnvironmentalService {
         });
       }
 
-      await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+      if (replaceAllRows) {
+        await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+      }
+
       const createdRows =
         rowsToInsert.length > 0 ? await this.model.insertMany(rowsToInsert) : [];
 
-      const allRows = createdRows;
-
-      if (reduceEnvironmentalFile) {
-        await this.allProductDocumentModel.updateMany(
-          {
-            urnNo,
-            vendorId: vendorObjectId,
-            documentForm: {
-              $in: [
-                DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
-                DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIRONMENTAL,
-              ],
-            },
-            isDeleted: { $ne: true },
-          },
-          {
-            $set: {
-              isDeleted: true,
-              deletedAt: now,
-              deletedBy: vendorObjectId,
-              updatedDate: now,
-            },
-          },
-        );
-
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          reduceEnvironmentalFile,
+      const uploadFiles = options?.uploadFiles ?? [];
+      let documents: unknown[] | undefined;
+      if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+        const formPrimaryId =
+          createdRows[0]?.rawMaterialsReduceEnvironmentalId ??
+          (await this.sequenceHelper.getProductDocumentId());
+        documents = await this.syncDocuments({
           urnNo,
-          'reduce_environmental_supporting_document',
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId:
-            createdRows[0]?.rawMaterialsReduceEnvironmentalId ??
-            allRows[0]?.rawMaterialsReduceEnvironmentalId ??
-            productDocumentId,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: reduceEnvironmentalFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
+          vendorObjectId,
+          formPrimaryId,
+          uploadFiles,
+          existingDocumentIds: options?.existingDocumentIds,
         });
       }
 
       return {
         urnNo,
         vendorId: vendorObjectId.toString(),
-        units: allRows,
+        units: createdRows,
+        ...(documents ? { documents } : {}),
       };
     } catch (error: any) {
       console.error(

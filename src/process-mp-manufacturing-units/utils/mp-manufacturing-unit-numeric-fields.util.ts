@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-/** Numeric columns on process_mp_manufacturing_units (energy / water / renewable). */
+/** Numeric columns on process_mp_manufacturing_units (energy / water / renewable). Excludes **calculateBulkSec** / **calculateBulkSwc** — those may be negative from auto-calculation. */
 export const MP_MANUFACTURING_UNIT_NON_NEGATIVE_NUMBER_FIELDS = [
   'ecdProductionYear1',
   'ecdProductionYear2',
@@ -38,8 +38,6 @@ export const MP_MANUFACTURING_UNIT_NON_NEGATIVE_NUMBER_FIELDS = [
   'reSolarThermal',
   'reOthers',
   'offsiteRenewablePower',
-  'calculateBulkSec',
-  'calculateBulkSwc',
 ] as const;
 
 const FIELD_LABELS: Partial<Record<string, string>> = {

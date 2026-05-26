@@ -2,9 +2,10 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Connection, Types, ClientSession } from 'mongoose';
 import {
   RawMaterialsHazardousProducts,
   RawMaterialsHazardousProductsDocument,
@@ -21,8 +22,18 @@ import {
   normalizeRawMaterialsProductRow,
 } from '../common/form-partial-field.util';
 import { filterHazardousProductsForVendorDisplay } from '../common/raw-materials/raw-materials-hazardous-display.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
+import {
+  deleteUploadedFileByDocumentLink,
+  uploadFile,
+} from '../utils/upload-file.util';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+
+export type HazardousProductRowInput = {
+  productsName?: string;
+  productsTestReport?: string;
+  productsTestReportFileName?: string;
+};
 
 @Injectable()
 export class RawMaterialsHazardousProductsService {
@@ -31,6 +42,7 @@ export class RawMaterialsHazardousProductsService {
     private model: Model<RawMaterialsHazardousProductsDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
   ) {}
 
@@ -48,8 +60,9 @@ export class RawMaterialsHazardousProductsService {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
   }
 
   private mapDocument(doc: AllProductDocumentDocument) {
@@ -71,26 +84,376 @@ export class RawMaterialsHazardousProductsService {
     };
   }
 
-  /** Persist upload metadata only — no `raw_materials_hazardous_products` row. */
+  private toPublicProductRow(row: RawMaterialsHazardousProductsDocument | Record<string, unknown>) {
+    const o = typeof (row as RawMaterialsHazardousProductsDocument).toObject === 'function'
+      ? (row as RawMaterialsHazardousProductsDocument).toObject()
+      : row;
+    return {
+      _id: (o as { _id?: Types.ObjectId })._id,
+      rawMaterialsHazardousProductsId: (o as RawMaterialsHazardousProducts).rawMaterialsHazardousProductsId,
+      urnNo: (o as RawMaterialsHazardousProducts).urnNo,
+      vendorId: (o as RawMaterialsHazardousProducts).vendorId,
+      productsName: String((o as RawMaterialsHazardousProducts).productsName ?? ''),
+      productsTestReport: String((o as RawMaterialsHazardousProducts).productsTestReport ?? ''),
+      productsTestReportFileName: String(
+        (o as RawMaterialsHazardousProducts).productsTestReport ?? '',
+      ),
+      createdDate: (o as RawMaterialsHazardousProducts).createdDate,
+      updatedDate: (o as RawMaterialsHazardousProducts).updatedDate,
+    };
+  }
+
+  private parseMeaningfulProductRows(
+    products: HazardousProductRowInput[] | undefined,
+  ): Array<{ productName: string; testReportReference: string }> {
+    if (!Array.isArray(products)) {
+      return [];
+    }
+    const rows: Array<{ productName: string; testReportReference: string }> = [];
+    for (const item of products) {
+      const normalized = normalizeRawMaterialsProductRow(
+        item as Record<string, unknown>,
+      );
+      if (hasPartialRawMaterialsProductRow(normalized)) {
+        rows.push(normalized);
+      }
+    }
+    return rows;
+  }
+
+  private resolveDocumentIdRefs(ids: string[]): {
+    objectIds: Types.ObjectId[];
+    productDocumentIds: number[];
+  } {
+    const objectIds: Types.ObjectId[] = [];
+    const productDocumentIds: number[] = [];
+    for (const raw of ids) {
+      const value = String(raw).trim();
+      if (!value) continue;
+      if (Types.ObjectId.isValid(value)) {
+        objectIds.push(new Types.ObjectId(value));
+        continue;
+      }
+      const numericId = Number(value);
+      if (Number.isFinite(numericId)) {
+        productDocumentIds.push(numericId);
+      }
+    }
+    return { objectIds, productDocumentIds };
+  }
+
+  private docMatchesIdRefs(
+    doc: { _id?: Types.ObjectId; productDocumentId?: number },
+    refs: { objectIds: Types.ObjectId[]; productDocumentIds: number[] },
+  ): boolean {
+    if (
+      doc._id &&
+      refs.objectIds.some((id) => id.equals(doc._id as Types.ObjectId))
+    ) {
+      return true;
+    }
+    return (
+      doc.productDocumentId !== undefined &&
+      refs.productDocumentIds.includes(doc.productDocumentId)
+    );
+  }
+
+  async deleteAllProductsForUrn(
+    urnNo: string,
+    vendorId: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+    await this.model.deleteMany(
+      { urnNo: urnNo.trim(), vendorId: vendorObjectId },
+      { session },
+    );
+  }
+
+  /** Remove all product metadata rows for URN (details-only save / explicit clear). */
+  async clearAllProductsForUrn(urnNo: string, vendorId: string): Promise<void> {
+    await this.deleteAllProductsForUrn(urnNo, vendorId);
+  }
+
+  private async syncHazardousProductDocuments(params: {
+    urnNo: string;
+    vendorObjectId: Types.ObjectId;
+    eoiNo: string;
+    now: Date;
+    session: ClientSession;
+    uploadedFiles: Express.Multer.File[];
+    existingDocumentIds?: string[];
+    firstProductRowId?: number;
+    createdFileFullPaths: string[];
+  }): Promise<{
+    documents: ReturnType<RawMaterialsHazardousProductsService['mapDocument']>[];
+    oldFileLinksToDeleteAfterCommit: string[];
+  }> {
+    const {
+      urnNo,
+      vendorObjectId,
+      eoiNo,
+      now,
+      session,
+      uploadedFiles,
+      existingDocumentIds,
+      firstProductRowId,
+      createdFileFullPaths,
+    } = params;
+
+    const keepRefs =
+      existingDocumentIds !== undefined
+        ? this.resolveDocumentIdRefs(existingDocumentIds)
+        : null;
+
+    const existingDocs = await this.allProductDocumentModel
+      .find({
+        vendorId: vendorObjectId,
+        urnNo,
+        documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+        isDeleted: { $ne: true },
+      })
+      .session(session);
+
+    const retainIds: Types.ObjectId[] = [];
+    const deleteIds: Types.ObjectId[] = [];
+    const oldFileLinksToDeleteAfterCommit: string[] = [];
+
+    for (const doc of existingDocs) {
+      const retain =
+        keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
+      if (retain) {
+        retainIds.push(doc._id as Types.ObjectId);
+      } else {
+        deleteIds.push(doc._id as Types.ObjectId);
+        if (doc.documentLink) {
+          oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
+        }
+      }
+    }
+
+    if (deleteIds.length) {
+      await this.allProductDocumentModel.updateMany(
+        { _id: { $in: deleteIds } },
+        {
+          $set: {
+            isDeleted: true,
+            deletedAt: now,
+            deletedBy: vendorObjectId,
+            updatedDate: now,
+          },
+        },
+        { session },
+      );
+    }
+
+    const formPrimaryId = firstProductRowId ?? 0;
+    if (retainIds.length) {
+      await this.allProductDocumentModel.updateMany(
+        { _id: { $in: retainIds } },
+        { $set: { formPrimaryId, eoiNo, updatedDate: now } },
+        { session },
+      );
+    }
+
+    const documents: ReturnType<RawMaterialsHazardousProductsService['mapDocument']>[] =
+      [];
+    for (let i = 0; i < uploadedFiles.length; i++) {
+      const file = uploadedFiles[i];
+      const uploaded = await this.saveFileToUrnFolder(file, urnNo);
+      createdFileFullPaths.push(uploaded.fileUrl);
+      const productDocumentId =
+        await this.sequenceHelper.getProductDocumentId();
+      const linkFormPrimaryId =
+        i === 0 && firstProductRowId ? firstProductRowId : productDocumentId;
+      const inserted = await this.allProductDocumentModel.create(
+        [
+          {
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo,
+            eoiNo,
+            documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+            documentFormSubsection: 'products_test_report',
+            formPrimaryId: linkFormPrimaryId,
+            documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
+            documentOriginalName: file.originalname,
+            documentLink: uploaded.fileUrl,
+            createdDate: now,
+            updatedDate: now,
+          },
+        ],
+        { session },
+      );
+      documents.push(this.mapDocument(inserted[0]));
+    }
+
+    return { documents, oldFileLinksToDeleteAfterCommit };
+  }
+
+  /**
+   * Full replace: product table snapshot + document sync (Product Performance pattern).
+   */
+  async replaceByUrn(params: {
+    urnNo: string;
+    vendorId: string;
+    eoiNo?: string;
+    products?: HazardousProductRowInput[];
+    uploadedFiles?: Express.Multer.File[];
+    existingDocumentIds?: string[];
+  }): Promise<{
+    urnNo: string;
+    vendorId: string;
+    products: ReturnType<RawMaterialsHazardousProductsService['toPublicProductRow']>[];
+    documents: ReturnType<RawMaterialsHazardousProductsService['mapDocument']>[];
+  }> {
+    const session = await this.connection.startSession();
+    session.startTransaction();
+    const createdFileFullPaths: string[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
+
+    try {
+      const vendorObjectId = this.toObjectId(params.vendorId, 'vendorId');
+      const urnNo = params.urnNo.trim();
+      const eoiNo = String(params.eoiNo ?? '').trim();
+      const now = new Date();
+      const meaningfulRows = this.parseMeaningfulProductRows(params.products);
+      const uploadFiles = params.uploadedFiles ?? [];
+
+      if (
+        meaningfulRows.length === 0 &&
+        uploadFiles.length === 0 &&
+        params.existingDocumentIds === undefined
+      ) {
+        const existingDocCount = await this.allProductDocumentModel
+          .countDocuments({
+            vendorId: vendorObjectId,
+            urnNo,
+            documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+            isDeleted: { $ne: true },
+          })
+          .session(session);
+        if (existingDocCount === 0) {
+          throw new BadRequestException(
+            'Please fill in at least one field in the form before continuing.',
+          );
+        }
+      }
+
+      await this.deleteAllProductsForUrn(urnNo, params.vendorId, session);
+
+      const docsToInsert = [];
+      for (const row of meaningfulRows) {
+        const id = await this.sequenceHelper.getRawMaterialsHazardousProductsId();
+        docsToInsert.push({
+          rawMaterialsHazardousProductsId: id,
+          urnNo,
+          vendorId: vendorObjectId,
+          productsName: row.productName,
+          productsTestReport: row.testReportReference,
+          createdDate: now,
+          updatedDate: now,
+        });
+      }
+
+      const insertedProducts =
+        docsToInsert.length > 0
+          ? await this.model.insertMany(docsToInsert, { session })
+          : [];
+
+      const firstProductRowId = insertedProducts[0]?.rawMaterialsHazardousProductsId;
+
+      const docSync = await this.syncHazardousProductDocuments({
+        urnNo,
+        vendorObjectId,
+        eoiNo,
+        now,
+        session,
+        uploadedFiles: uploadFiles,
+        existingDocumentIds: params.existingDocumentIds,
+        firstProductRowId,
+        createdFileFullPaths,
+      });
+      oldFileLinksToDeleteAfterCommit = docSync.oldFileLinksToDeleteAfterCommit;
+
+      await session.commitTransaction();
+      session.endSession();
+
+      for (const link of oldFileLinksToDeleteAfterCommit) {
+        try {
+          await deleteUploadedFileByDocumentLink(link);
+        } catch {
+          // ignore post-commit cleanup errors
+        }
+      }
+
+      const retainedDocs =
+        docSync.documents.length > 0
+          ? docSync.documents
+          : (
+              await this.allProductDocumentModel
+                .find({
+                  vendorId: vendorObjectId,
+                  urnNo,
+                  documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+                  isDeleted: { $ne: true },
+                })
+                .sort({ productDocumentId: -1 })
+                .exec()
+            ).map((d) => this.mapDocument(d));
+
+      return {
+        urnNo,
+        vendorId: vendorObjectId.toString(),
+        products: insertedProducts.map((r) => this.toPublicProductRow(r)),
+        documents: retainedDocs,
+      };
+    } catch (error: unknown) {
+      await session.abortTransaction();
+      session.endSession();
+      for (const link of createdFileFullPaths) {
+        try {
+          await deleteUploadedFileByDocumentLink(link);
+        } catch {
+          // ignore
+        }
+      }
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+      console.error('[Raw Materials Hazardous Products] Replace error:', error);
+      throw new InternalServerErrorException(
+        error instanceof Error
+          ? error.message
+          : 'Failed to replace hazardous product records.',
+      );
+    }
+  }
+
+  /** Persist upload metadata only — no product table row. */
   private async saveDocumentOnly(
     urnNo: string,
     vendorObjectId: Types.ObjectId,
     file: Express.Multer.File,
+    eoiNo = '',
   ) {
     const now = new Date();
-    const storedRelativePath = await this.saveFileToUrnFolder(file, urnNo);
+    const uploaded = await this.saveFileToUrnFolder(file, urnNo);
     const productDocumentId = await this.sequenceHelper.getProductDocumentId();
     const doc = await this.allProductDocumentModel.create({
       productDocumentId,
       vendorId: vendorObjectId,
       urnNo,
-      eoiNo: '',
+      eoiNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
       documentFormSubsection: 'products_test_report',
       formPrimaryId: productDocumentId,
-      documentName: path.basename(storedRelativePath),
+      documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
       documentOriginalName: file.originalname,
-      documentLink: storedRelativePath,
+      documentLink: uploaded.fileUrl,
       createdDate: now,
       updatedDate: now,
     });
@@ -104,6 +467,7 @@ export class RawMaterialsHazardousProductsService {
     dto: CreateRawMaterialsHazardousProductsDto,
     vendorId: string,
     productsTestReportFile?: Express.Multer.File,
+    options?: { replaceTableBeforeInsert?: boolean },
   ) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
@@ -114,8 +478,17 @@ export class RawMaterialsHazardousProductsService {
       });
       const hasProductText = hasPartialRawMaterialsProductRow(productRow);
 
+      if (options?.replaceTableBeforeInsert) {
+        await this.deleteAllProductsForUrn(urnNo, vendorId);
+      }
+
       if (!hasProductText && productsTestReportFile) {
-        return this.saveDocumentOnly(urnNo, vendorObjectId, productsTestReportFile);
+        return this.saveDocumentOnly(
+          urnNo,
+          vendorObjectId,
+          productsTestReportFile,
+          String(dto.eoiNo ?? '').trim(),
+        );
       }
 
       if (!hasProductText && !productsTestReportFile) {
@@ -127,10 +500,11 @@ export class RawMaterialsHazardousProductsService {
 
       let storedRelativePath = '';
       if (productsTestReportFile) {
-        storedRelativePath = await this.saveFileToUrnFolder(
+        const uploaded = await this.saveFileToUrnFolder(
           productsTestReportFile,
           urnNo,
         );
+        storedRelativePath = uploaded.fileUrl;
       }
 
       const doc = new this.model({
@@ -152,7 +526,7 @@ export class RawMaterialsHazardousProductsService {
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo,
-          eoiNo: '',
+          eoiNo: String(dto.eoiNo ?? '').trim(),
           documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
           documentFormSubsection: 'products_test_report',
           formPrimaryId: id,
@@ -177,6 +551,7 @@ export class RawMaterialsHazardousProductsService {
     urnNo: string,
     vendorId: string,
     files: Express.Multer.File[],
+    eoiNo?: string,
   ) {
     const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
     const documents = [];
@@ -185,13 +560,13 @@ export class RawMaterialsHazardousProductsService {
         urnNo.trim(),
         vendorObjectId,
         file,
+        String(eoiNo ?? '').trim(),
       );
       documents.push(...result.documents);
     }
     return { documentOnly: true, documents };
   }
 
-  /** Meaningful product table rows only (excludes file-only placeholders). */
   async countMeaningfulProductsByUrn(
     urnNo: string,
     vendorId: string,
@@ -211,7 +586,6 @@ export class RawMaterialsHazardousProductsService {
     ).length;
   }
 
-  /** @deprecated Use countMeaningfulProductsByUrn — avoids counting empty stub rows. */
   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
     return this.countMeaningfulProductsByUrn(urnNo, vendorId);
   }

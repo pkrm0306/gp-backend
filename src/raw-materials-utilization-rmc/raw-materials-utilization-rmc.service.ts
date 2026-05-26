@@ -410,11 +410,18 @@ export class RawMaterialsUtilizationRmcService {
     }
 
     const now = new Date();
+    const step15DocumentSubsections = [
+      'step_15_1_supporting_document',
+      'step_15_2_supporting_document',
+      'supporting_documents',
+    ];
     await this.allProductDocumentModel.updateMany(
       {
         urnNo,
         vendorId: vendorObjectId,
-        documentForm: { $in: ['raw_materials_3_15_1', 'raw_materials_3_15_2'] },
+        documentForm:
+          DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+        documentFormSubsection: { $in: step15DocumentSubsections },
         isDeleted: { $ne: true },
       },
       {
@@ -429,7 +436,7 @@ export class RawMaterialsUtilizationRmcService {
 
     const createDoc = async (
       file: Express.Multer.File,
-      documentForm: 'raw_materials_3_15_1' | 'raw_materials_3_15_2',
+      documentFormSubsection: string,
       fileType: string,
     ) => {
       const storedRelativePath = await this.saveFileToUrnFolder(
@@ -443,8 +450,9 @@ export class RawMaterialsUtilizationRmcService {
         vendorId: vendorObjectId,
         urnNo,
         eoiNo: '',
-        documentForm,
-        documentFormSubsection: 'supporting_documents',
+        documentForm:
+          DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+        documentFormSubsection,
         formPrimaryId,
         documentName: fileNameHint?.trim() || path.basename(storedRelativePath),
         documentOriginalName: file.originalname,
@@ -455,10 +463,18 @@ export class RawMaterialsUtilizationRmcService {
     };
 
     if (files.file1) {
-      await createDoc(files.file1, 'raw_materials_3_15_1', 'step_15_1_supporting_document');
+      await createDoc(
+        files.file1,
+        'step_15_1_supporting_document',
+        'step_15_1_supporting_document',
+      );
     }
     if (files.file2) {
-      await createDoc(files.file2, 'raw_materials_3_15_2', 'step_15_2_supporting_document');
+      await createDoc(
+        files.file2,
+        'step_15_2_supporting_document',
+        'step_15_2_supporting_document',
+      );
     }
   }
 

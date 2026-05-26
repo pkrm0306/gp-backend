@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { IsString, IsNotEmpty, IsOptional, IsNumber } from 'class-validator';
 
 export class CreateProcessWmManufacturingUnitDto {
@@ -10,6 +11,21 @@ export class CreateProcessWmManufacturingUnitDto {
   @IsString()
   @IsNotEmpty()
   urnNo: string;
+
+  @ApiProperty({
+    description:
+      'Existing unit id — when provided, updates that row instead of creating',
+    required: false,
+    example: 58,
+  })
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  })
+  @IsNumber()
+  @IsOptional()
+  processWmManufacturingUnitId?: number;
 
   @ApiProperty({ description: 'Process waste management ID', required: false })
   @IsNumber()

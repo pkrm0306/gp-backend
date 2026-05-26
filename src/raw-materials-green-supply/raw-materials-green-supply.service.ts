@@ -3,7 +3,8 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
+import { hasAnyTrimmedText } from '../common/raw-materials/raw-materials-upload.util';
+import { replaceSingleRecordForUrn } from '../common/raw-materials/raw-materials-single-record-replace.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -17,7 +18,6 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 
@@ -45,7 +45,6 @@ export class RawMaterialsGreenSupplyService {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-    fileType: string,
   ): Promise<string> {
     return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
@@ -54,39 +53,53 @@ export class RawMaterialsGreenSupplyService {
     dto: CreateRawMaterialsGreenSupplyDto,
     vendorId: string,
     greenSupplyFile?: Express.Multer.File,
-  ): Promise<RawMaterialsGreenSupplyDocument> {
+  ): Promise<RawMaterialsGreenSupplyDocument | null> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const id = await this.sequenceHelper.getRawMaterialsGreenSupplyId();
+      const urnNo = dto.urnNo.trim();
       const now = new Date();
+      const awarenessAndEducation = dto.awarenessAndEducation?.trim() || '';
+      const measuresImplemented = dto.measuresImplemented?.trim() || '';
+      const hasText = hasAnyTrimmedText(awarenessAndEducation, measuresImplemented);
 
-      const doc = new this.model({
-        rawMaterialsGreenSupplyId: id,
-        urnNo: dto.urnNo.trim(),
-        vendorId: vendorObjectId,
-        awarenessAndEducation: dto.awarenessAndEducation?.trim() || '',
-        measuresImplemented: dto.measuresImplemented?.trim() || '',
-        createdDate: now,
-        updatedDate: now,
-      });
+      let formPrimaryId = 0;
+      let saved: RawMaterialsGreenSupplyDocument | null = null;
 
-      const saved = await doc.save();
+      if (hasText) {
+        const id = await this.sequenceHelper.getRawMaterialsGreenSupplyId();
+        formPrimaryId = id;
+        saved = await replaceSingleRecordForUrn(
+          this.model,
+          urnNo,
+          vendorObjectId,
+          {
+            rawMaterialsGreenSupplyId: id,
+            urnNo,
+            vendorId: vendorObjectId,
+            awarenessAndEducation,
+            measuresImplemented,
+            createdDate: now,
+            updatedDate: now,
+          },
+        );
+      } else {
+        await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+      }
 
       if (greenSupplyFile) {
         const storedRelativePath = await this.saveFileToUrnFolder(
           greenSupplyFile,
-          dto.urnNo.trim(),
-          'green_supply_supporting_document',
+          urnNo,
         );
         const productDocumentId = await this.sequenceHelper.getProductDocumentId();
         await this.allProductDocumentModel.create({
           productDocumentId,
           vendorId: vendorObjectId,
-          urnNo: dto.urnNo.trim(),
+          urnNo,
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: id,
+          formPrimaryId: formPrimaryId || productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: greenSupplyFile.originalname,
           documentLink: storedRelativePath,
@@ -108,7 +121,26 @@ export class RawMaterialsGreenSupplyService {
   }
 
   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
-    return countVendorUrnDocuments(this.model, urnNo, vendorId);
+    if (!Types.ObjectId.isValid(vendorId)) {
+      return 0;
+    }
+    const count = await this.model
+      .countDocuments({
+        urnNo: urnNo.trim(),
+        vendorId: new Types.ObjectId(vendorId),
+      })
+      .exec();
+    if (count > 0) {
+      return count;
+    }
+    return this.allProductDocumentModel
+      .countDocuments({
+        urnNo: urnNo.trim(),
+        vendorId: new Types.ObjectId(vendorId),
+        documentForm: DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY,
+        isDeleted: { $ne: true },
+      })
+      .exec();
   }
 
   async listByUrn(urnNo: string, vendorId: string) {

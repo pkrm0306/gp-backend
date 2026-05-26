@@ -76,6 +76,25 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesServi
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
       const now = new Date();
+
+      await this.allProductDocumentModel.updateMany(
+        {
+          vendorId: vendorObjectId,
+          urnNo,
+          documentForm:
+            DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
+          isDeleted: { $ne: true },
+        },
+        {
+          $set: {
+            isDeleted: true,
+            deletedAt: now,
+            deletedBy: vendorObjectId,
+            updatedDate: now,
+          },
+        },
+      );
+
       const storedRelativePath = await this.saveFileToUrnFolder(
         ozoneReportFile,
         urnNo,

@@ -169,6 +169,14 @@ export class AuthController {
     return this.authService.refresh(refreshTokenDto);
   }
 
+  /** Alias for older / alternate clients that call `POST /auth/refresh-token`. */
+  @Post('refresh-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Refresh access token (alias of POST /auth/refresh)' })
+  async refreshToken(@Body() refreshTokenDto: RefreshTokenDto) {
+    return this.authService.refresh(refreshTokenDto);
+  }
+
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)

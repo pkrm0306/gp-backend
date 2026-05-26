@@ -3,7 +3,8 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
+import { hasAnyTrimmedText } from '../common/raw-materials/raw-materials-upload.util';
+import { replaceSingleRecordForUrn } from '../common/raw-materials/raw-materials-single-record-replace.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -17,7 +18,6 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 
@@ -45,7 +45,6 @@ export class RawMaterialsUtilizationService {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-    fileType: string,
   ): Promise<string> {
     return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
@@ -54,29 +53,41 @@ export class RawMaterialsUtilizationService {
     dto: CreateRawMaterialsUtilizationDto,
     vendorId: string,
     utilizationFile?: Express.Multer.File,
-  ): Promise<RawMaterialsUtilizationDocument> {
+  ): Promise<RawMaterialsUtilizationDocument | null> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const id = await this.sequenceHelper.getRawMaterialsUtilizationId();
-      const now = new Date();
       const urnNo = dto.urnNo.trim();
+      const now = new Date();
+      const details = dto.details?.trim() || '';
+      const hasText = hasAnyTrimmedText(details);
 
-      const doc = new this.model({
-        rawMaterialsUtilizationId: id,
-        urnNo,
-        vendorId: vendorObjectId,
-        details: dto.details?.trim() || '',
-        createdDate: now,
-        updatedDate: now,
-      });
+      let formPrimaryId = 0;
+      let saved: RawMaterialsUtilizationDocument | null = null;
 
-      const saved = await doc.save();
+      if (hasText) {
+        const id = await this.sequenceHelper.getRawMaterialsUtilizationId();
+        formPrimaryId = id;
+        saved = await replaceSingleRecordForUrn(
+          this.model,
+          urnNo,
+          vendorObjectId,
+          {
+            rawMaterialsUtilizationId: id,
+            urnNo,
+            vendorId: vendorObjectId,
+            details,
+            createdDate: now,
+            updatedDate: now,
+          },
+        );
+      } else {
+        await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+      }
 
       if (utilizationFile) {
         const storedRelativePath = await this.saveFileToUrnFolder(
           utilizationFile,
           urnNo,
-          'raw_materials_utilization_supporting_document',
         );
         const productDocumentId = await this.sequenceHelper.getProductDocumentId();
         await this.allProductDocumentModel.create({
@@ -86,7 +97,7 @@ export class RawMaterialsUtilizationService {
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_UTILIZATION,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: id,
+          formPrimaryId: formPrimaryId || productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: utilizationFile.originalname,
           documentLink: storedRelativePath,
@@ -108,7 +119,26 @@ export class RawMaterialsUtilizationService {
   }
 
   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
-    return countVendorUrnDocuments(this.model, urnNo, vendorId);
+    if (!Types.ObjectId.isValid(vendorId)) {
+      return 0;
+    }
+    const count = await this.model
+      .countDocuments({
+        urnNo: urnNo.trim(),
+        vendorId: new Types.ObjectId(vendorId),
+      })
+      .exec();
+    if (count > 0) {
+      return count;
+    }
+    return this.allProductDocumentModel
+      .countDocuments({
+        urnNo: urnNo.trim(),
+        vendorId: new Types.ObjectId(vendorId),
+        documentForm: DocumentSectionKey.RAW_MATERIALS_UTILIZATION,
+        isDeleted: { $ne: true },
+      })
+      .exec();
   }
 
   async listByUrn(urnNo: string, vendorId: string) {

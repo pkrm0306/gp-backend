@@ -28,6 +28,7 @@ const SHARED_URN_ARRAY_KEYS = [
   'process_life_cycle_approach_documents',
   'process_product_stewardship_documents',
   'process_innovation_documents',
+  'all_urn_product_documents',
   'raw_materials_hazardous_products',
   'raw_materials_hazardous_products_documents',
   'raw_materials_additives',

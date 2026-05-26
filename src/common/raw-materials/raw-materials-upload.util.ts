@@ -14,6 +14,44 @@ export const RAW_MATERIALS_URN_MAX_LENGTH = 64;
 export const RAW_MATERIALS_EOI_NO_MAX_LENGTH = 32;
 
 /** Read a single string from multipart/form-data or JSON body fields. */
+export function parseMultipartBoolean(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') {
+    return false;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+/** Re-export for rowIndex / totalRows on per-row hazardous product POSTs. */
+export { parseMultipartNonNegativeInt } from '../../product-design/product-design-upload.util';
+
+/**
+ * Delete all product table rows for this URN before insert when:
+ * - replaceTable=true, or rowIndex=0, or legacy single POST (no handshake fields).
+ */
+/** Product-table steps: hazardous products, formaldehyde, solvents products, etc. */
+export function shouldReplaceRawMaterialsTableBeforeInsert(
+  body: Record<string, unknown>,
+): boolean {
+  if (parseMultipartBoolean(body.replaceTable)) {
+    return true;
+  }
+  const rowIndexRaw = body.rowIndex;
+  if (rowIndexRaw !== undefined && rowIndexRaw !== null && rowIndexRaw !== '') {
+    const rowIndex = Number(String(rowIndexRaw).trim());
+    return Number.isFinite(rowIndex) && rowIndex === 0;
+  }
+  const hasHandshake =
+    body.replaceTable !== undefined ||
+    body.rowIndex !== undefined ||
+    body.totalRows !== undefined;
+  return !hasHandshake;
+}
+
+/** @deprecated Use shouldReplaceRawMaterialsTableBeforeInsert */
+export const shouldReplaceHazardousProductsTableBeforeInsert =
+  shouldReplaceRawMaterialsTableBeforeInsert;
+
 export function parseRawMaterialsFormString(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
@@ -310,23 +348,34 @@ export function legacyReduceEnvironmentalRowFromDto(
   });
 }
 
+/** True when client sent `units` or `mines` (including `[]` to clear all rows). */
+export function hasExplicitReduceEnvironmentalArray(
+  body: Record<string, unknown>,
+): boolean {
+  const unitsSent =
+    body.units !== undefined && body.units !== null && body.units !== '';
+  const minesSent =
+    body.mines !== undefined && body.mines !== null && body.mines !== '';
+  return unitsSent || minesSent;
+}
+
 export function resolveReduceEnvironmentalUnits(
   dto: Record<string, unknown>,
   rowKeys: string[],
 ): Array<Record<string, string>> {
-  const unitsRaw = parseMultipartJsonArray(dto.units, 'units');
-  const minesRaw = parseMultipartJsonArray(dto.mines, 'mines');
-  const arraySource = unitsRaw.length > 0 ? unitsRaw : minesRaw;
-  const fromArray = arraySource.map((row) =>
-    normalizeReduceEnvironmentalUnitRow(
-      row && typeof row === 'object' ? (row as Record<string, unknown>) : {},
-    ),
-  );
-  const meaningfulFromArray = filterMeaningfulRows(fromArray, rowKeys) as Array<
-    Record<string, string>
-  >;
-  if (meaningfulFromArray.length > 0) {
-    return meaningfulFromArray;
+  if (hasExplicitReduceEnvironmentalArray(dto)) {
+    const unitsRaw = parseMultipartJsonArray(dto.units, 'units');
+    const minesRaw = parseMultipartJsonArray(dto.mines, 'mines');
+    const arraySource =
+      dto.units !== undefined && dto.units !== null && dto.units !== ''
+        ? unitsRaw
+        : minesRaw;
+    const fromArray = arraySource.map((row) =>
+      normalizeReduceEnvironmentalUnitRow(
+        row && typeof row === 'object' ? (row as Record<string, unknown>) : {},
+      ),
+    );
+    return filterMeaningfulRows(fromArray, rowKeys) as Array<Record<string, string>>;
   }
   const legacy = legacyReduceEnvironmentalRowFromDto(dto);
   return filterMeaningfulRows([legacy], rowKeys) as Array<Record<string, string>>;

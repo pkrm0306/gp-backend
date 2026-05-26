@@ -34,48 +34,52 @@ export class ProcessWmManufacturingUnitsService {
   async create(dto: CreateProcessWmManufacturingUnitDto, vendorId: string) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const id = await this.sequenceHelper.getProcessWmManufacturingUnitId();
       const now = new Date();
+      const urnNo = dto.urnNo.trim();
 
+      const {
+        processWmManufacturingUnitId: dtoUnitId,
+        urnNo: _dtoUrn,
+        ...fieldUpdates
+      } = dto;
+
+      if (dtoUnitId != null) {
+        const updated = await this.model
+          .findOneAndUpdate(
+            {
+              processWmManufacturingUnitId: dtoUnitId,
+              urnNo,
+              vendorId: vendorObjectId,
+            },
+            {
+              $set: {
+                ...fieldUpdates,
+                urnNo,
+                updatedDate: now,
+              },
+            },
+            { new: true },
+          )
+          .exec();
+        if (updated) {
+          return updated;
+        }
+        // Row was removed (e.g. user deleted the unit) but the client still sends the old id — insert a new unit instead of failing the whole WM save.
+      }
+
+      const id = await this.sequenceHelper.getProcessWmManufacturingUnitId();
       const doc = new this.model({
         processWmManufacturingUnitId: id,
         vendorId: vendorObjectId,
-        urnNo: dto.urnNo,
-        processWasteManagementId: dto.processWasteManagementId,
-        unitName: dto.unitName,
-        hazardousWasteYear1: dto.hazardousWasteYear1,
-        hazardousWasteYear2: dto.hazardousWasteYear2,
-        hazardousWasteYear3: dto.hazardousWasteYear3,
-        hazardousWasteProductionUnit: dto.hazardousWasteProductionUnit,
-        hazardousWasteQuantityUnit: dto.hazardousWasteQuantityUnit,
-        hazardousWasteProductionYear1: dto.hazardousWasteProductionYear1,
-        hazardousWasteProductionYear2: dto.hazardousWasteProductionYear2,
-        hazardousWasteProductionYear3: dto.hazardousWasteProductionYear3,
-        hazardousWasteQuantityYear1: dto.hazardousWasteQuantityYear1,
-        hazardousWasteQuantityYear2: dto.hazardousWasteQuantityYear2,
-        hazardousWasteQuantityYear3: dto.hazardousWasteQuantityYear3,
-        nonHazardousWasteYear1: dto.nonHazardousWasteYear1,
-        nonHazardousWasteYear2: dto.nonHazardousWasteYear2,
-        nonHazardousWasteYear3: dto.nonHazardousWasteYear3,
-        nonHazardousWasteProductionUnit: dto.nonHazardousWasteProductionUnit,
-        nonHazardousWasteWaterUnit: dto.nonHazardousWasteWaterUnit,
-        nonHazardousWasteProductionYear1: dto.nonHazardousWasteProductionYear1,
-        nonHazardousWasteProductionYear2: dto.nonHazardousWasteProductionYear2,
-        nonHazardousWasteProductionYear3: dto.nonHazardousWasteProductionYear3,
-        nonHazardousWasteWaterYear1: dto.nonHazardousWasteWaterYear1,
-        nonHazardousWasteWaterYear2: dto.nonHazardousWasteWaterYear2,
-        nonHazardousWasteWaterYear3: dto.nonHazardousWasteWaterYear3,
-        calculateBulkRshwd: dto.calculateBulkRshwd,
-        calculateBulkRsnhwd: dto.calculateBulkRsnhwd,
-        calculateBulkRshwdMultipled: dto.calculateBulkRshwdMultipled,
-        calculateBulkRsnhwdMultipled: dto.calculateBulkRsnhwdMultipled,
-        wmImplementationDetailsWmUnits: dto.wmImplementationDetailsWmUnits,
+        urnNo,
+        ...fieldUpdates,
         createdDate: now,
         updatedDate: now,
       });
 
       return await doc.save();
     } catch (error: any) {
+      if (error instanceof BadRequestException) throw error;
       console.error('[Process WM Manufacturing Units] Create error:', error);
       throw new InternalServerErrorException(
         error.message ||
@@ -96,6 +100,38 @@ export class ProcessWmManufacturingUnitsService {
       throw new InternalServerErrorException(
         error.message ||
           'Failed to list waste management manufacturing unit records.',
+      );
+    }
+  }
+
+  async deleteById(
+    processWmManufacturingUnitId: number,
+    urnNo: string,
+    vendorId: string,
+  ) {
+    try {
+      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+      const trimmedUrn = urnNo.trim();
+      const deleted = await this.model
+        .findOneAndDelete({
+          processWmManufacturingUnitId,
+          urnNo: trimmedUrn,
+          vendorId: vendorObjectId,
+        })
+        .exec();
+      // Idempotent: already removed (double delete, or client/server race).
+      if (!deleted) {
+        return null;
+      }
+      return deleted;
+    } catch (error: any) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      console.error('[Process WM Manufacturing Units] Delete error:', error);
+      throw new InternalServerErrorException(
+        error.message ||
+          'Failed to delete waste management manufacturing unit record.',
       );
     }
   }

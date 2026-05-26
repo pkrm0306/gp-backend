@@ -16,6 +16,7 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { deleteUploadedFileByDocumentLink } from '../utils/upload-file.util';
 import {
   countMeaningfulRawMaterialsProductRows,
   filterFormaldehydeStyleProductsForVendorDisplay,
@@ -51,8 +52,128 @@ export class RawMaterialsEliminationOfFormaldehydeService {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
+  }
+
+  async deleteAllProductsForUrn(urnNo: string, vendorId: string): Promise<void> {
+    const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+    await this.model.deleteMany({ urnNo: urnNo.trim(), vendorId: vendorObjectId });
+  }
+
+  private parseMeaningfulProducts(
+    products?: Array<{
+      productsName?: string;
+      productsTestReport?: string;
+    }>,
+  ) {
+    const rows: Array<{ productName: string; testReportReference: string }> = [];
+    for (const item of products ?? []) {
+      const n = normalizeRawMaterialsProductRow(item as Record<string, unknown>);
+      if (hasPartialRawMaterialsProductRow(n)) {
+        rows.push(n);
+      }
+    }
+    return rows;
+  }
+
+  async replaceByUrn(params: {
+    urnNo: string;
+    vendorId: string;
+    products?: Array<{ productsName?: string; productsTestReport?: string }>;
+    uploadedFiles?: Express.Multer.File[];
+    existingDocumentIds?: string[];
+  }) {
+    const vendorObjectId = this.toObjectId(params.vendorId, 'vendorId');
+    const urnNo = params.urnNo.trim();
+    const now = new Date();
+    const meaningful = this.parseMeaningfulProducts(params.products);
+    const uploadFiles = params.uploadedFiles ?? [];
+
+    await this.deleteAllProductsForUrn(urnNo, params.vendorId);
+
+    const inserted = [];
+    for (const row of meaningful) {
+      const id = await this.sequenceHelper.getRawMaterialsEliminationOfFormaldehydeId();
+      const doc = await this.model.create({
+        rawMaterialsEliminationOfFormaldehydeId: id,
+        urnNo,
+        vendorId: vendorObjectId,
+        productsName: row.productName,
+        productsTestReport: row.testReportReference,
+        createdDate: now,
+        updatedDate: now,
+      });
+      inserted.push(doc);
+    }
+
+    const keepIds = params.existingDocumentIds ?? [];
+    const existingDocs = await this.allProductDocumentModel.find({
+      vendorId: vendorObjectId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+      isDeleted: { $ne: true },
+    });
+
+    const keepRefs = params.existingDocumentIds !== undefined ? keepIds : null;
+    const oldLinks: string[] = [];
+    for (const doc of existingDocs) {
+      const keep =
+        keepRefs === null ||
+        keepIds.includes(String(doc.productDocumentId)) ||
+        keepIds.includes(String(doc._id));
+      if (!keep) {
+        if (doc.documentLink) oldLinks.push(doc.documentLink);
+        doc.isDeleted = true;
+        doc.deletedAt = now;
+        doc.deletedBy = vendorObjectId;
+        doc.updatedDate = now;
+        await doc.save();
+      }
+    }
+
+    const documents = [];
+    const firstId = inserted[0]?.rawMaterialsEliminationOfFormaldehydeId;
+    for (let i = 0; i < uploadFiles.length; i++) {
+      const file = uploadFiles[i];
+      const uploaded = await this.saveFileToUrnFolder(file, urnNo);
+      const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+      const d = await this.allProductDocumentModel.create({
+        productDocumentId,
+        vendorId: vendorObjectId,
+        urnNo,
+        eoiNo: '',
+        documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+        documentFormSubsection: 'supporting_documents',
+        formPrimaryId: i === 0 && firstId ? firstId : productDocumentId,
+        documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
+        documentOriginalName: file.originalname,
+        documentLink: uploaded.fileUrl,
+        createdDate: now,
+        updatedDate: now,
+      });
+      documents.push(d);
+    }
+
+    for (const link of oldLinks) {
+      try {
+        await deleteUploadedFileByDocumentLink(link);
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      urnNo,
+      vendorId: vendorObjectId.toString(),
+      products: filterFormaldehydeStyleProductsForVendorDisplay(
+        inserted.map((r) =>
+          typeof r.toObject === 'function' ? r.toObject() : r,
+        ) as Array<Record<string, unknown>>,
+      ),
+      documents,
+    };
   }
 
   /** File-only: documents only — no formaldehyde product row. */
@@ -62,7 +183,7 @@ export class RawMaterialsEliminationOfFormaldehydeService {
     file: Express.Multer.File,
   ) {
     const now = new Date();
-    const storedRelativePath = await this.saveFileToUrnFolder(file, urnNo);
+    const uploaded = await this.saveFileToUrnFolder(file, urnNo);
     const productDocumentId = await this.sequenceHelper.getProductDocumentId();
     const doc = await this.allProductDocumentModel.create({
       productDocumentId,
@@ -72,9 +193,9 @@ export class RawMaterialsEliminationOfFormaldehydeService {
       documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
       documentFormSubsection: 'supporting_documents',
       formPrimaryId: productDocumentId,
-      documentName: path.basename(storedRelativePath),
+      documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
       documentOriginalName: file.originalname,
-      documentLink: storedRelativePath,
+      documentLink: uploaded.fileUrl,
       createdDate: now,
       updatedDate: now,
     });
@@ -85,6 +206,7 @@ export class RawMaterialsEliminationOfFormaldehydeService {
     dto: CreateRawMaterialsEliminationOfFormaldehydeDto,
     vendorId: string,
     formaldehydeFile?: Express.Multer.File,
+    options?: { replaceTableBeforeInsert?: boolean },
   ): Promise<
     | RawMaterialsEliminationOfFormaldehydeDocument
     | { documentOnly: true; documents: unknown[] }
@@ -97,6 +219,10 @@ export class RawMaterialsEliminationOfFormaldehydeService {
         productsTestReport: dto.productsTestReport,
       });
       const hasProductText = hasPartialRawMaterialsProductRow(productRow);
+
+      if (options?.replaceTableBeforeInsert) {
+        await this.deleteAllProductsForUrn(urnNo, vendorId);
+      }
 
       if (!hasProductText && formaldehydeFile) {
         return this.saveDocumentOnly(urnNo, vendorObjectId, formaldehydeFile);
@@ -123,10 +249,7 @@ export class RawMaterialsEliminationOfFormaldehydeService {
       const saved = await doc.save();
 
       if (formaldehydeFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          formaldehydeFile,
-          urnNo,
-        );
+        const uploaded = await this.saveFileToUrnFolder(formaldehydeFile, urnNo);
         const productDocumentId =
           await this.sequenceHelper.getProductDocumentId();
         await this.allProductDocumentModel.create({
@@ -138,9 +261,9 @@ export class RawMaterialsEliminationOfFormaldehydeService {
             DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
           documentFormSubsection: 'supporting_documents',
           formPrimaryId: id,
-          documentName: path.basename(storedRelativePath),
+          documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
           documentOriginalName: formaldehydeFile.originalname,
-          documentLink: storedRelativePath,
+          documentLink: uploaded.fileUrl,
           createdDate: now,
           updatedDate: now,
         });

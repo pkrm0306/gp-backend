@@ -178,13 +178,20 @@ export class ProductRegistrationService {
       product_type: dto.product_type ?? null,
       categoryId: dto.categoryId ?? null,
       manufacturerId: dto.manufacturerId ?? null,
-      stateId: dto.stateId ?? null,
+      stateId: this.resolveAdminListPlantStateObjectId(dto) ?? null,
+      state_name: String(dto.state_name || '').trim().toLowerCase(),
+      stateLegacy: (() => {
+        const s = dto.state != null ? String(dto.state).trim() : '';
+        if (!s || /^[a-fA-F0-9]{24}$/.test(s)) return null;
+        return s.toLowerCase();
+      })(),
       city: String(dto.city || '').trim().toLowerCase(),
       from: dto.from ?? dto.fromDate ?? null,
       to: dto.to ?? dto.toDate ?? null,
       validTillYear: dto.validTillYear ?? null,
+      sectorIds: this.resolveAdminListSectorIds(dto)?.join(',') ?? null,
       status: resolvedStatus,
-      v: 6,
+      v: 8,
     };
     return this.redisService.buildKey(
       'products',
@@ -231,6 +238,47 @@ export class ProductRegistrationService {
     );
   }
 
+  /** Plant state Mongo id: `stateId` wins, else `state` when it is a 24-char hex id. */
+  private resolveAdminListPlantStateObjectId(
+    dto: AdminListProductsDto,
+  ): string | undefined {
+    for (const raw of [dto.stateId, dto.state] as const) {
+      const s = raw != null ? String(raw).trim() : '';
+      if (s && /^[a-fA-F0-9]{24}$/.test(s)) {
+        return s;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Plant state **name** substring filter: explicit `state_name`, or `state` when it is not an ObjectId.
+   */
+  private resolveAdminListPlantStateNameSearch(dto: AdminListProductsDto): string | undefined {
+    const explicit = dto.state_name != null ? String(dto.state_name).trim() : '';
+    if (explicit) return explicit;
+    const st = dto.state != null ? String(dto.state).trim() : '';
+    if (st && !/^[a-fA-F0-9]{24}$/.test(st)) {
+      return st;
+    }
+    return undefined;
+  }
+
+  /** Resolves sector filter from list DTO (multi list wins over single id). */
+  private resolveAdminListSectorIds(dto: AdminListProductsDto): number[] | null {
+    const multi = dto.sectorIds ?? dto.sector_ids;
+    if (Array.isArray(multi) && multi.length > 0) {
+      const uniq = [...new Set(multi.map((n) => Number(n)).filter((n) => Number.isFinite(n)))];
+      return uniq.length > 0 ? uniq : null;
+    }
+    const single = dto.sectorId ?? dto.sector_id;
+    if (single === undefined || single === null) {
+      return null;
+    }
+    const n = Number(single);
+    return Number.isFinite(n) ? [n] : null;
+  }
+
   /** Admin list EOI row — flat fields only; product description is `productDetails` (string). */
   private formatAdminListEoiEntry(e: Record<string, unknown>) {
     const plants = Array.isArray(e?.plants) ? (e.plants as Record<string, unknown>[]) : [];
@@ -244,6 +292,12 @@ export class ProductRegistrationService {
       productStatus,
       e?.validtillDate as Date | string | null | undefined,
     );
+    const sectorRaw = e?.sector;
+    const sectorNum =
+      sectorRaw === null || sectorRaw === undefined || sectorRaw === ''
+        ? null
+        : Number(sectorRaw);
+    const sectorNameRaw = e?.sectorName;
 
     return {
       _id: mongoId,
@@ -256,6 +310,11 @@ export class ProductRegistrationService {
       productDetails: e?.productDetails ?? null,
       categoryName: e?.categoryName,
       manufacturerName: e?.manufacturerName,
+      sector: sectorNum != null && Number.isFinite(sectorNum) ? sectorNum : null,
+      sectorName:
+        sectorNameRaw != null && String(sectorNameRaw).trim() !== ''
+          ? String(sectorNameRaw).trim()
+          : null,
       /** EOI lifecycle code on `products.productStatus` (this is what list `status` filters). */
       productStatus,
       /** URN workflow step from `products.urnStatus` (separate from EOI productStatus). */
@@ -661,6 +720,11 @@ export class ProductRegistrationService {
 
   private formatVendorListEoiEntry(e: Record<string, unknown>) {
     const productStatus = Number(e?.productStatus ?? 0);
+    const sectorRaw = e?.sector;
+    const sectorNum =
+      sectorRaw === null || sectorRaw === undefined || sectorRaw === ''
+        ? null
+        : Number(sectorRaw);
     return {
       _id: e?._id,
       eoiNo: e?.eoiNo,
@@ -674,6 +738,18 @@ export class ProductRegistrationService {
       createdDate: e?.createdDate,
       hpUnits: Number(e?.plantCount ?? 0),
       plantCount: Number(e?.plantCount ?? 0),
+      /** First plant (by createdDate) — manufacturing location for this EOI. */
+      city: e?.city != null && String(e.city).trim() !== '' ? String(e.city).trim() : null,
+      stateName:
+        e?.stateName != null && String(e.stateName).trim() !== ''
+          ? String(e.stateName).trim()
+          : null,
+      /** Category sector id + resolved label from `sectors` collection. */
+      sector: sectorNum != null && Number.isFinite(sectorNum) ? sectorNum : null,
+      sectorName:
+        e?.sectorName != null && String(e.sectorName).trim() !== ''
+          ? String(e.sectorName).trim()
+          : null,
     };
   }
 
@@ -2028,6 +2104,79 @@ export class ProductRegistrationService {
                 },
               },
               {
+                $lookup: {
+                  from: 'product_plants',
+                  let: { pid: '$_id' },
+                  pipeline: [
+                    {
+                      $match: {
+                        $expr: { $eq: ['$productId', '$$pid'] },
+                        is_deleted: { $ne: true },
+                      },
+                    },
+                    { $sort: { createdDate: 1 } },
+                    { $limit: 1 },
+                    {
+                      $lookup: {
+                        from: 'states',
+                        localField: 'stateId',
+                        foreignField: '_id',
+                        as: 'st',
+                      },
+                    },
+                    {
+                      $unwind: {
+                        path: '$st',
+                        preserveNullAndEmptyArrays: true,
+                      },
+                    },
+                    {
+                      $project: {
+                        _id: 0,
+                        city: 1,
+                        stateName: {
+                          $ifNull: ['$st.stateName', '$st.name'],
+                        },
+                      },
+                    },
+                  ],
+                  as: 'primaryPlant',
+                },
+              },
+              {
+                $unwind: {
+                  path: '$primaryPlant',
+                  preserveNullAndEmptyArrays: true,
+                },
+              },
+              {
+                $lookup: {
+                  from: 'sectors',
+                  let: { sectorId: '$category.sector' },
+                  pipeline: [
+                    {
+                      $match: {
+                        $expr: {
+                          $and: [
+                            { $ne: ['$$sectorId', null] },
+                            { $eq: ['$id', '$$sectorId'] },
+                          ],
+                        },
+                      },
+                    },
+                    { $limit: 1 },
+                    { $project: { _id: 0, name: 1 } },
+                  ],
+                  as: 'sectorDoc',
+                },
+              },
+              {
+                $unwind: {
+                  path: '$sectorDoc',
+                  preserveNullAndEmptyArrays: true,
+                },
+              },
+              {
                 $project: {
                   _id: 1,
                   eoiNo: 1,
@@ -2042,6 +2191,10 @@ export class ProductRegistrationService {
                       '$category.category_name',
                     ],
                   },
+                  sector: '$category.sector',
+                  sectorName: '$sectorDoc.name',
+                  city: '$primaryPlant.city',
+                  stateName: '$primaryPlant.stateName',
                 },
               },
               { $sort: { createdDate: -1 } },
@@ -2847,7 +3000,29 @@ export class ProductRegistrationService {
         },
       });
 
-      // Stage 26: $lookup - Join with process_comments collection (by urn_no)
+      // Stage 26: $lookup - all non-deleted vendor documents for this URN (Quick View / admin full list)
+      pipeline.push({
+        $lookup: {
+          from: 'all_product_documents',
+          let: { urnNo: '$urnNo' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$urnNo', '$$urnNo'] },
+                    { $ne: ['$isDeleted', true] },
+                  ],
+                },
+              },
+            },
+            { $sort: { productDocumentId: -1 } },
+          ],
+          as: 'all_urn_product_documents',
+        },
+      });
+
+      // Stage 27: $lookup - Join with process_comments collection (by urn_no)
       pipeline.push({
         $lookup: {
           from: 'process_comments',
@@ -2869,7 +3044,7 @@ export class ProductRegistrationService {
         },
       });
 
-      // Stage 27: $project - Format the response structure
+      // Stage 28: $project - Format the response structure
       pipeline.push({
         $project: {
           _id: 1,
@@ -3151,6 +3326,7 @@ export class ProductRegistrationService {
             },
           },
           process_innovation_documents: 1,
+          all_urn_product_documents: 1,
           process_comments: {
             $cond: {
               if: { $gt: [{ $size: '$process_comments' }, 0] },
@@ -3519,6 +3695,8 @@ export class ProductRegistrationService {
           updatedDate: d.updatedDate,
         })),
         raw_materials_reduce_environmental:
+          product.raw_materials_reduce_environmental || [],
+        raw_materials_reduce_enviromental:
           product.raw_materials_reduce_environmental || [],
         raw_materials_reduce_environmental_documents: (
           product.raw_materials_reduce_environmental_documents || []
@@ -3932,6 +4110,24 @@ export class ProductRegistrationService {
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
         })),
+        all_urn_product_documents: (product.all_urn_product_documents || []).map(
+          (d) => ({
+            _id: d._id,
+            productDocumentId: d.productDocumentId,
+            vendorId: d.vendorId,
+            urnNo: d.urnNo,
+            eoiNo: d.eoiNo,
+            documentForm: d.documentForm,
+            documentFormSubsection: d.documentFormSubsection,
+            formPrimaryId: d.formPrimaryId,
+            documentName: d.documentName,
+            documentOriginalName: d.documentOriginalName,
+            documentLink: d.documentLink,
+            documentTag: d.documentTag,
+            createdDate: d.createdDate,
+            updatedDate: d.updatedDate,
+          }),
+        ),
         process_comments: product.process_comments
           ? {
               ...product.process_comments,
@@ -4097,6 +4293,8 @@ export class ProductRegistrationService {
       basePipeline.push({ $match: nativeMatch });
     }
 
+    const sectorFilterIds = this.resolveAdminListSectorIds(dto);
+
     basePipeline.push(
       {
         $lookup: {
@@ -4126,6 +4324,13 @@ export class ProductRegistrationService {
           preserveNullAndEmptyArrays: true,
         },
       },
+    );
+    if (sectorFilterIds && sectorFilterIds.length > 0) {
+      basePipeline.push({
+        $match: { 'category.sector': { $in: sectorFilterIds } },
+      });
+    }
+    basePipeline.push(
       {
         $lookup: {
           from: 'product_plants',
@@ -4177,12 +4382,44 @@ export class ProductRegistrationService {
           as: 'plants',
         },
       },
+      {
+        $lookup: {
+          from: 'sectors',
+          let: { sid: '$category.sector' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [{ $ne: ['$$sid', null] }, { $eq: ['$id', '$$sid'] }],
+                },
+              },
+            },
+            { $limit: 1 },
+            { $project: { _id: 0, name: 1 } },
+          ],
+          as: '_adminSectorDoc',
+        },
+      },
+      {
+        $unwind: {
+          path: '$_adminSectorDoc',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
     );
 
-    if (dto.stateId || dto.city) {
+    const plantStateObjectId = this.resolveAdminListPlantStateObjectId(dto);
+    const plantStateNameSearch = this.resolveAdminListPlantStateNameSearch(dto);
+    if (plantStateObjectId || plantStateNameSearch || (dto.city && dto.city.trim() !== '')) {
       const plantMatch: Record<string, unknown> = {};
-      if (dto.stateId) {
-        plantMatch.stateId = this.toObjectId(dto.stateId, 'stateId');
+      if (plantStateObjectId) {
+        plantMatch.stateId = this.toObjectId(plantStateObjectId, 'stateId');
+      }
+      if (plantStateNameSearch && plantStateNameSearch.trim() !== '') {
+        plantMatch.stateName = new RegExp(
+          plantStateNameSearch.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i',
+        );
       }
       if (dto.city && dto.city.trim() !== '') {
         plantMatch.city = new RegExp(
@@ -4316,6 +4553,8 @@ export class ProductRegistrationService {
           categoryName: {
             $ifNull: ['$category.categoryName', '$category.category_name'],
           },
+          sector: '$category.sector',
+          sectorName: '$_adminSectorDoc.name',
           manufacturerName: '$manufacturer.manufacturerName',
           vendor_email: {
             $ifNull: ['$manufacturer.vendor_email', ''],
@@ -4350,6 +4589,8 @@ export class ProductRegistrationService {
               validtillDate: '$validtillDate',
               createdDate: '$createdDate',
               categoryName: '$categoryName',
+              sector: '$sector',
+              sectorName: '$sectorName',
               manufacturerName: '$manufacturerName',
               plants: '$plants',
             },
@@ -4495,6 +4736,7 @@ export class ProductRegistrationService {
       urnSortField,
     } = this.buildAdminListRowBase(dto);
     const sortField = urnSortField;
+    const sectorFilterIds = this.resolveAdminListSectorIds(dto);
 
     const urnSummaryPipeline: any[] = [
       ...rowBase,
@@ -4557,6 +4799,9 @@ export class ProductRegistrationService {
             {
               $unwind: { path: '$category', preserveNullAndEmptyArrays: true },
             },
+            ...(sectorFilterIds && sectorFilterIds.length > 0
+              ? [{ $match: { 'category.sector': { $in: sectorFilterIds } } }]
+              : []),
             {
               $lookup: {
                 from: 'product_plants',
@@ -4609,6 +4854,33 @@ export class ProductRegistrationService {
               },
             },
             {
+              $lookup: {
+                from: 'sectors',
+                let: { sid: '$category.sector' },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $and: [
+                          { $ne: ['$$sid', null] },
+                          { $eq: ['$id', '$$sid'] },
+                        ],
+                      },
+                    },
+                  },
+                  { $limit: 1 },
+                  { $project: { _id: 0, name: 1 } },
+                ],
+                as: '_adminSectorDoc',
+              },
+            },
+            {
+              $unwind: {
+                path: '$_adminSectorDoc',
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+            {
               $project: {
                 _id: 1,
                 productId: 1,
@@ -4627,6 +4899,8 @@ export class ProductRegistrationService {
                   ],
                 },
                 manufacturerName: '$manufacturer.manufacturerName',
+                sector: '$category.sector',
+                sectorName: '$_adminSectorDoc.name',
                 plants: 1,
               },
             },

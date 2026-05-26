@@ -167,10 +167,72 @@ export class AdminListProductsDto {
   @IsMongoId()
   stateId?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Alias for `stateId` when value is a **24-char hex** Mongo ObjectId. Otherwise treated as a **state name** substring filter on plant `stateName` (see `state_name`).',
+    example: '507f1f77bcf86cd799439013',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  state?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter plants by **state name** (case-insensitive partial match on plant `stateName`). Takes precedence over non-ObjectId `state` as a name filter.',
+    example: 'Telangana',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  state_name?: string;
+
   @ApiPropertyOptional({ description: 'Plant city', example: 'Mumbai' })
   @IsOptional()
   @IsString()
   city?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter EOIs whose category `sector` id matches (`categories.sector`). Single value; use `sectorIds` / `sector_ids` for multiple.',
+    example: 1,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalNumber(value))
+  @IsInt()
+  sectorId?: number;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `sectorId`.',
+    example: 1,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalNumber(value))
+  @IsInt()
+  sector_id?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter by multiple category sector ids (comma-separated or array). Takes precedence over `sectorId` / `sector_id` when non-empty.',
+    type: [Number],
+    example: [1, 2],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  sectorIds?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `sectorIds`.',
+    type: [Number],
+    example: [1, 2],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  sector_ids?: number[];
 
   @ApiPropertyOptional({
     description:

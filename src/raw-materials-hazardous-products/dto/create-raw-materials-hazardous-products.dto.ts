@@ -11,6 +11,11 @@ export class CreateRawMaterialsHazardousProductsDto {
   @IsNotEmpty()
   urnNo: string;
 
+  @ApiProperty({ description: 'EOI number', required: false })
+  @IsString()
+  @IsOptional()
+  eoiNo?: string;
+
   @ApiProperty({
     description: 'Products name (text)',
     example: 'Lead-free solder paste',

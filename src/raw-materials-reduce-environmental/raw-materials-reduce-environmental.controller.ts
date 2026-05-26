@@ -19,6 +19,7 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -27,14 +28,14 @@ import { CreateRawMaterialsReduceEnvironmentalDto } from './dto/create-raw-mater
 import {
   assertRawMaterialsDocumentTypes,
   collectAllUploadFiles,
+  hasExplicitReduceEnvironmentalArray,
   parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
-  pickUploadFile,
   resolveReduceEnvironmentalUnits,
+  shouldReplaceRawMaterialsTableBeforeInsert,
 } from '../common/raw-materials/raw-materials-upload.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
-
 
 const QUARRYING_UNIT_ROW_KEYS = [
   'location',
@@ -43,6 +44,14 @@ const QUARRYING_UNIT_ROW_KEYS = [
   'waterTableManagement',
   'restorationOfSpentMines',
   'greenBeltDevelopmentAndBioDiversity',
+];
+
+const REDUCE_ENV_FILE_FIELDS = [
+  'reduceEnvironmentalFile',
+  'file',
+  'supportingDocument',
+  'document',
+  'files',
 ];
 
 @ApiTags('Raw Materials Reduce Environmental')
@@ -54,16 +63,19 @@ const QUARRYING_UNIT_ROW_KEYS = [
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class RawMaterialsReduceEnvironmentalController {
-    constructor(
+  constructor(
     private readonly service: RawMaterialsReduceEnvironmentalService,
     private readonly stepGate: RawMaterialsStepGateService,
   ) {}
 
   @Post()
   @ApiOperation({
-    summary: 'Create raw materials reduce environmental record (per URN)',
+    summary: 'Save quarrying / reduce environmental mine rows (per URN)',
     description:
-      'Accepts multipart or JSON. `units` / `mines` arrays replace rows for the URN; flat `location` (or `locations`) is used when arrays are empty.',
+      '**Full replace** when `units` or `mines` JSON array is sent (including `[]` to clear). ' +
+      'Legacy per-row multipart: send `replaceTable=true` or `rowIndex=0` on the **first** mine row; ' +
+      'later rows append. Legacy single POST without handshake replaces with one row. ' +
+      'Multiple `reduceEnvironmentalFile` uploads supported. `existingDocumentIds`: omit = keep all docs; `[]` = remove unlisted.',
   })
   @UseInterceptors(
     AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
@@ -76,95 +88,69 @@ export class RawMaterialsReduceEnvironmentalController {
       properties: {
         urnNo: { type: 'string', example: 'URN-20260305124230' },
         units: {
-          oneOf: [
-            {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  location: { type: 'string', example: 'Mine site location details' },
-                  locations: { type: 'string', example: 'Mine site location (alias)' },
-                  enhancementOfMinesLife: {
-                    type: 'string',
-                    example: 'Measures for enhancement of mines life',
-                  },
-                  topsoilConservation: {
-                    type: 'string',
-                    example: 'Topsoil conservation measures',
-                  },
-                  waterTableManagement: {
-                    type: 'string',
-                    example: 'Water table management measures',
-                  },
-                  restorationOfSpentMines: {
-                    type: 'string',
-                    example: 'Restoration plan details',
-                  },
-                  greenBeltDevelopmentAndBioDiversity: {
-                    type: 'string',
-                    example: 'Green belt development and biodiversity initiatives',
-                  },
-                },
-              },
-            },
-            {
-              type: 'string',
-              description: 'JSON stringified units array for multipart/form-data',
-            },
-          ],
+          type: 'string',
+          description:
+            'JSON array — full snapshot of mine rows for this URN (replaces all existing rows)',
         },
         mines: {
           type: 'string',
-          description: 'Optional JSON array alias used by some vendor builds',
+          description: 'Alias for `units` when `units` is omitted',
         },
         location: { type: 'string', example: 'Mine site location details' },
         locations: { type: 'string', example: 'Mine site location (alias)' },
-        enhancementOfMinesLife: { type: 'string', example: 'Measures for enhancement of mines life' },
-        topsoilConservation: { type: 'string', example: 'Topsoil conservation measures' },
-        waterTableManagement: { type: 'string', example: 'Water table management measures' },
-        restorationOfSpentMines: { type: 'string', example: 'Restoration plan details' },
-        greenBeltDevelopmentAndBioDiversity: {
+        enhancementOfMinesLife: { type: 'string' },
+        topsoilConservation: { type: 'string' },
+        waterTableManagement: { type: 'string' },
+        restorationOfSpentMines: { type: 'string' },
+        greenBeltDevelopmentAndBioDiversity: { type: 'string' },
+        replaceTable: {
           type: 'string',
-          example: 'Green belt development and biodiversity initiatives',
+          description: 'true on first row of legacy per-row loop — deletes all rows before insert',
         },
-        reduceEnvironmentalFileName: {
+        rowIndex: { type: 'string', description: '0-based index in per-row save batch' },
+        totalRows: { type: 'string', description: 'Row count in per-row save batch' },
+        existingDocumentIds: {
           type: 'string',
-          example: 'Reduce Environmental Supporting Document - 2026',
+          description: 'JSON array of productDocumentId to retain',
         },
-        reduceEnvironmentalFile: { type: 'string', format: 'binary' },
+        reduceEnvironmentalFileName: { type: 'string' },
+        reduceEnvironmentalFile: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
       },
     },
   })
-  @ApiResponse({ status: 201, description: 'Created successfully' })
+  @ApiResponse({ status: 201, description: 'Saved successfully' })
   async create(@CurrentUser() user: any, @Req() req: Request) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
     const body = (req.body ?? {}) as Record<string, unknown>;
+    const urnNo = parseRequiredRawMaterialsUrn(body);
     const uploadedFiles = collectAllUploadFiles(
       req.files as Express.Multer.File[] | undefined,
+    ).filter((f) =>
+      REDUCE_ENV_FILE_FIELDS.includes(String(f.fieldname ?? '')),
     );
-    const reduceEnvironmentalFile = pickUploadFile(uploadedFiles, [
-      'reduceEnvironmentalFile',
-      'file',
-      'supportingDocument',
-      'document',
-    ]);
 
+    if (uploadedFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadedFiles);
+    }
+
+    const explicitArray = hasExplicitReduceEnvironmentalArray(body);
     const resolvedUnits = resolveReduceEnvironmentalUnits(
       body,
       QUARRYING_UNIT_ROW_KEYS,
     );
+    const replaceAllRows =
+      explicitArray || shouldReplaceRawMaterialsTableBeforeInsert(body);
 
-    if (reduceEnvironmentalFile) {
-      assertRawMaterialsDocumentTypes([reduceEnvironmentalFile]);
-    }
-    const urnNo = parseRequiredRawMaterialsUrn(body);
-    const persistedRecordCount = await this.service.countPersistedByUrn(
-      urnNo,
-      user.vendorId,
-    );
+    const persistedRecordCount = replaceAllRows
+      ? 0
+      : await this.service.countPersistedByUrn(urnNo, user.vendorId);
+
     await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
@@ -172,30 +158,25 @@ export class RawMaterialsReduceEnvironmentalController {
         DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIRONMENTAL,
         DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
       ],
-      files: reduceEnvironmentalFile ? [reduceEnvironmentalFile] : [],
+      files: uploadedFiles,
       rows: resolvedUnits,
       rowKeys: QUARRYING_UNIT_ROW_KEYS,
       persistedRecordCount,
     });
 
-    const first = resolvedUnits[0];
     const dto: CreateRawMaterialsReduceEnvironmentalDto = {
       urnNo,
       units: resolvedUnits,
-      location: first?.location,
-      enhancementOfMinesLife: first?.enhancementOfMinesLife,
-      topsoilConservation: first?.topsoilConservation,
-      waterTableManagement: first?.waterTableManagement,
-      restorationOfSpentMines: first?.restorationOfSpentMines,
-      greenBeltDevelopmentAndBioDiversity: first?.greenBeltDevelopmentAndBioDiversity,
       reduceEnvironmentalFileName:
         parseRawMaterialsFormString(body.reduceEnvironmentalFileName) ?? undefined,
     };
-    const data = await this.service.create(
-      dto,
-      user.vendorId,
-      reduceEnvironmentalFile,
-    );
+
+    const data = await this.service.create(dto, user.vendorId, {
+      replaceAllRows,
+      uploadFiles: uploadedFiles,
+      existingDocumentIds: parseMultipartJsonIdArray(body.existingDocumentIds),
+    });
+
     return {
       success: true,
       message: 'Reduce environmental quarrying details saved successfully',

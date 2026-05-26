@@ -21,6 +21,7 @@ import {
 import type { Request } from 'express';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import {
+  parseMultipartBoolean,
   parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
@@ -64,6 +65,11 @@ export class RawMaterialsHazardousController {
           type: 'string',
           example: 'Details of the test carried out for hazardous substances.',
         },
+        clearHazardousProducts: {
+          type: 'string',
+          description:
+            'When true, deletes all raw_materials_hazardous_products rows for this URN (details-only save)',
+        },
       },
     },
   })
@@ -101,6 +107,14 @@ export class RawMaterialsHazardousController {
     };
 
     const data = await this.service.create(dto, user.vendorId);
+
+    if (parseMultipartBoolean(body.clearHazardousProducts)) {
+      await this.hazardousProductsService.clearAllProductsForUrn(
+        urnNo,
+        user.vendorId,
+      );
+    }
+
     return {
       success: true,
       message: 'Hazardous details saved successfully',

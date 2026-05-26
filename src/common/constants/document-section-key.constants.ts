@@ -12,6 +12,8 @@ export enum DocumentSectionKey {
   RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES = 'raw_materials_elimination_of_ozone_depleting_global_warming_substances',
   RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME = 'raw_materials_elimination_of_prohibited_flame',
   RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS = 'raw_materials_elimination_of_prohibited_flame_solvents',
+  RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS_PRODUCTS =
+    'raw_materials_elimination_of_prohibited_flame_solvents_products',
   RAW_MATERIALS_REDUCE_ENVIROMENTAL = 'raw_materials_reduce_enviromental',
   RAW_MATERIALS_REDUCE_ENVIRONMENTAL = 'raw_materials_reduce_environmental',
   RAW_MATERIALS_ALTERNATIVE_RAW_MATERIALS = 'raw_materials_alternative_raw_materials',

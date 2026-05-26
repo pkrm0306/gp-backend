@@ -3,7 +3,8 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { countVendorUrnDocuments } from '../common/raw-materials/raw-materials-upload.util';
+import { hasAnyTrimmedText } from '../common/raw-materials/raw-materials-upload.util';
+import { replaceSingleRecordForUrn } from '../common/raw-materials/raw-materials-single-record-replace.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -17,7 +18,6 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 
@@ -45,7 +45,6 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-    fileType: string,
   ): Promise<string> {
     return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
   }
@@ -54,39 +53,68 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
     dto: CreateRawMaterialsEliminationOfProhibitedFlameDto,
     vendorId: string,
     prohibitedFlameFile?: Express.Multer.File,
-  ): Promise<RawMaterialsEliminationOfProhibitedFlameDocument> {
+  ): Promise<RawMaterialsEliminationOfProhibitedFlameDocument | null> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      const id =
-        await this.sequenceHelper.getRawMaterialsEliminationOfProhibitedFlameId();
+      const urnNo = dto.urnNo.trim();
       const now = new Date();
+      const measuresImplemented = dto.measuresImplemented?.trim() || '';
+      const hasText = hasAnyTrimmedText(measuresImplemented);
 
-      const doc = new this.model({
-        rawMaterialsEliminationOfProhibitedFlameId: id,
-        urnNo: dto.urnNo.trim(),
-        vendorId: vendorObjectId,
-        measuresImplemented: dto.measuresImplemented?.trim() || '',
-        createdDate: now,
-        updatedDate: now,
-      });
+      let formPrimaryId = 0;
+      let saved: RawMaterialsEliminationOfProhibitedFlameDocument | null = null;
 
-      const saved = await doc.save();
+      if (hasText) {
+        const id =
+          await this.sequenceHelper.getRawMaterialsEliminationOfProhibitedFlameId();
+        formPrimaryId = id;
+        saved = await replaceSingleRecordForUrn(
+          this.model,
+          urnNo,
+          vendorObjectId,
+          {
+            rawMaterialsEliminationOfProhibitedFlameId: id,
+            urnNo,
+            vendorId: vendorObjectId,
+            measuresImplemented,
+            createdDate: now,
+            updatedDate: now,
+          },
+        );
+      } else {
+        await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+      }
 
       if (prohibitedFlameFile) {
+        await this.allProductDocumentModel.updateMany(
+          {
+            vendorId: vendorObjectId,
+            urnNo,
+            documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
+            isDeleted: { $ne: true },
+          },
+          {
+            $set: {
+              isDeleted: true,
+              deletedAt: now,
+              deletedBy: vendorObjectId,
+              updatedDate: now,
+            },
+          },
+        );
         const storedRelativePath = await this.saveFileToUrnFolder(
           prohibitedFlameFile,
-          dto.urnNo.trim(),
-          'prohibited_flame_supporting_document',
+          urnNo,
         );
         const productDocumentId = await this.sequenceHelper.getProductDocumentId();
         await this.allProductDocumentModel.create({
           productDocumentId,
           vendorId: vendorObjectId,
-          urnNo: dto.urnNo.trim(),
+          urnNo,
           eoiNo: '',
           documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
           documentFormSubsection: 'supporting_documents',
-          formPrimaryId: id,
+          formPrimaryId: formPrimaryId || productDocumentId,
           documentName: path.basename(storedRelativePath),
           documentOriginalName: prohibitedFlameFile.originalname,
           documentLink: storedRelativePath,
@@ -112,7 +140,26 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
   }
 
   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
-    return countVendorUrnDocuments(this.model, urnNo, vendorId);
+    if (!Types.ObjectId.isValid(vendorId)) {
+      return 0;
+    }
+    const count = await this.model
+      .countDocuments({
+        urnNo: urnNo.trim(),
+        vendorId: new Types.ObjectId(vendorId),
+      })
+      .exec();
+    if (count > 0) {
+      return count;
+    }
+    return this.allProductDocumentModel
+      .countDocuments({
+        urnNo: urnNo.trim(),
+        vendorId: new Types.ObjectId(vendorId),
+        documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
+        isDeleted: { $ne: true },
+      })
+      .exec();
   }
 
   async listByUrn(urnNo: string, vendorId: string) {

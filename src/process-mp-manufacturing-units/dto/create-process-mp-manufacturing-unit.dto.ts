@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsString, IsNotEmpty, IsOptional, IsIn, IsNumber } from 'class-validator';
 import { IsOptionalNonNegativeNumber } from '../validators/optional-non-negative-number.decorator';
+import { IsOptionalNumber } from '../validators/optional-number.decorator';
 import { normalizeRenewableEnergyUtilization } from '../utils/normalize-renewable-energy.util';
 
 export class CreateProcessMpManufacturingUnitDto {
@@ -222,11 +223,29 @@ export class CreateProcessMpManufacturingUnitDto {
   @IsIn([0, 1])
   processMpManufacturingUnitStatus?: number;
 
-  @ApiProperty({ required: false })
-  @IsOptionalNonNegativeNumber()
+  @ApiProperty({
+    required: false,
+    description:
+      'Bulk SEC balance (may be negative when derived from auto-calculation).',
+  })
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  })
+  @IsOptionalNumber()
   calculateBulkSec?: number;
-  @ApiProperty({ required: false })
-  @IsOptionalNonNegativeNumber()
+  @ApiProperty({
+    required: false,
+    description:
+      'Bulk SWC balance (may be negative when derived from auto-calculation).',
+  })
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  })
+  @IsOptionalNumber()
   calculateBulkSwc?: number;
 
   @ApiProperty({ required: false }) @IsString() @IsOptional() calculateBulkSecMultipled?: string;
