@@ -1,5 +1,3 @@
-import { addMonths, subMonths, startOfDay } from 'date-fns';
-
 export type CertificationNotifyDates = {
   firstNotifyDate: Date;
   secondNotifyDate: Date;
@@ -10,6 +8,31 @@ export type CertificationDateBundle = {
   certifiedDate: Date;
   validtillDate: Date;
 } & CertificationNotifyDates;
+
+function startOfDay(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Calendar month add/subtract; clamp day to last day of target month (e.g. Dec 31 − 1 mo → Nov 30). */
+function addMonths(date: Date, months: number): Date {
+  const d = new Date(date);
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + months);
+  const lastDayOfMonth = new Date(
+    d.getFullYear(),
+    d.getMonth() + 1,
+    0,
+  ).getDate();
+  d.setDate(Math.min(day, lastDayOfMonth));
+  return d;
+}
+
+function subMonths(date: Date, months: number): Date {
+  return addMonths(date, -months);
+}
 
 /**
  * Validity end date for a newly certified product.
