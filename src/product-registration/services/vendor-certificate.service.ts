@@ -31,9 +31,18 @@ export type CertificateDownloadFile = {
   contentType: string;
 };
 
+type CategoryLean = {
+  categoryName?: string;
+  category_name?: string;
+};
+
+type ManufacturerLean = {
+  manufacturerName?: string;
+};
+
 type ProductWithRelations = ProductDocument & {
-  category?: CategoryDocument | null;
-  manufacturer?: ManufacturerDocument | null;
+  category?: CategoryLean | null;
+  manufacturer?: ManufacturerLean | null;
 };
 
 @Injectable()
@@ -170,8 +179,8 @@ export class VendorCertificateService {
     ]);
 
     return Object.assign(product, {
-      category: category as CategoryDocument | null,
-      manufacturer: manufacturer as ManufacturerDocument | null,
+      category,
+      manufacturer,
     });
   }
 
@@ -267,13 +276,10 @@ export class VendorCertificateService {
       doc.on('error', reject);
 
       const categoryName =
-        (product.category as { categoryName?: string; category_name?: string } | null)
-          ?.categoryName ??
-        (product.category as { category_name?: string } | null)?.category_name ??
+        product.category?.categoryName ??
+        product.category?.category_name ??
         '—';
-      const manufacturerName =
-        (product.manufacturer as { manufacturerName?: string } | null)
-          ?.manufacturerName ?? '—';
+      const manufacturerName = product.manufacturer?.manufacturerName ?? '—';
 
       doc
         .fontSize(22)
