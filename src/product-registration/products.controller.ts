@@ -15,6 +15,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { ProductRegistrationService } from './product-registration.service';
+import { UrnTabReviewService } from './urn-tab-review.service';
 import { UpdateUrnStatusDto } from './dto/update-urn-status.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -26,6 +27,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 export class ProductsController {
   constructor(
     private readonly productRegistrationService: ProductRegistrationService,
+    private readonly urnTabReviewService: UrnTabReviewService,
   ) {}
 
   @Get('renew-list')
@@ -94,6 +96,37 @@ export class ProductsController {
       console.error('Controller error:', error);
       throw error;
     }
+  }
+
+  @Get('urn-tab-review/:urn_no')
+  @ApiOperation({
+    summary: 'Get vendor Save & Next guidance after admin resend',
+    description:
+      'When urnStatus is 5 (admin sent back for corrections), returns which process tabs and raw material steps may be saved. Only rejected sections have canSaveAndNext=true; approved sections are read-only on the vendor panel.',
+  })
+  @ApiParam({
+    name: 'urn_no',
+    description: 'URN number',
+    example: 'URN-20240302120000',
+  })
+  @ApiResponse({ status: 200, description: 'Vendor tab review guidance' })
+  @ApiResponse({ status: 404, description: 'URN not found for this vendor' })
+  async getVendorUrnTabReviewGuidance(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Param('urn_no') urnNo: string,
+  ) {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const data = await this.urnTabReviewService.getVendorUrnTabReviewGuidance(
+      urnNo,
+      user.manufacturerId,
+    );
+    return {
+      success: true,
+      message: 'Vendor URN tab review guidance retrieved',
+      data,
+    };
   }
 
   @Get('details/:urn_no')

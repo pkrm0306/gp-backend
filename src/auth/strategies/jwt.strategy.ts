@@ -69,6 +69,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
     return {
       userId: payload.userId,
+      /** Alias for vendor APIs that read `user.id` from the JWT payload */
+      id: payload.userId,
+      vendorUserId: payload.userId,
       manufacturerId: manufacturerId ?? undefined,
       vendorId: manufacturerId ?? undefined,
       role,

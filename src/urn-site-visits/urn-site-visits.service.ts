@@ -18,7 +18,14 @@ import {
   Product,
   ProductDocument,
 } from '../product-registration/schemas/product.schema';
-import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
+import {
+  ProductPlant,
+  ProductPlantDocument,
+} from '../product-registration/schemas/product-plant.schema';
+import {
+  matchActiveProducts,
+  matchActiveProductPlants,
+} from '../product-registration/constants/active-product.filter';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 
 @Injectable()
@@ -28,6 +35,8 @@ export class UrnSiteVisitsService {
     private readonly siteVisitModel: Model<UrnSiteVisitDocument>,
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
+    @InjectModel(ProductPlant.name)
+    private readonly productPlantModel: Model<ProductPlantDocument>,
     private readonly activityLogService: ActivityLogService,
   ) {}
 
@@ -171,6 +180,160 @@ export class UrnSiteVisitsService {
     return currentStatus;
   }
 
+  private normalizePlantNameKey(name: string): string {
+    return String(name ?? '')
+      .trim()
+      .toLowerCase();
+  }
+
+  /**
+   * Active manufacturing plants for a URN — used for admin site-visit `name` dropdown.
+   */
+  async listPlantOptionsForUrn(urnNo: string): Promise<
+    Array<{
+      plantName: string;
+      label: string;
+      eoiNo: string;
+      plantLocation: string;
+      city: string;
+      stateName: string;
+      countryName: string;
+    }>
+  > {
+    const urnContext = await this.assertUrnExists(urnNo);
+    const urnOptions = this.urnCandidates(urnContext.normalizedUrn);
+
+    const rows = await this.productPlantModel
+      .aggregate([
+        {
+          $match: matchActiveProductPlants({
+            urnNo: { $in: urnOptions },
+          }),
+        },
+        {
+          $lookup: {
+            from: 'states',
+            localField: 'stateId',
+            foreignField: '_id',
+            as: 'state',
+          },
+        },
+        {
+          $unwind: {
+            path: '$state',
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $lookup: {
+            from: 'countries',
+            localField: 'countryId',
+            foreignField: '_id',
+            as: 'country',
+          },
+        },
+        {
+          $unwind: {
+            path: '$country',
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            plantName: 1,
+            eoiNo: 1,
+            plantLocation: 1,
+            city: 1,
+            stateName: {
+              $ifNull: [
+                '$state.stateName',
+                { $ifNull: ['$state.state_name', '$state.name'] },
+              ],
+            },
+            countryName: {
+              $ifNull: [
+                '$country.countryName',
+                { $ifNull: ['$country.country_name', '$country.name'] },
+              ],
+            },
+          },
+        },
+        { $sort: { plantName: 1, eoiNo: 1 } },
+      ])
+      .exec();
+
+    const byName = new Map<
+      string,
+      {
+        plantName: string;
+        label: string;
+        eoiNo: string;
+        plantLocation: string;
+        city: string;
+        stateName: string;
+        countryName: string;
+      }
+    >();
+
+    for (const row of rows) {
+      const plantName = String(row.plantName ?? '').trim();
+      if (!plantName) continue;
+      const key = this.normalizePlantNameKey(plantName);
+      const eoiNo = String(row.eoiNo ?? '').trim();
+      const entry = {
+        plantName,
+        eoiNo,
+        plantLocation: String(row.plantLocation ?? '').trim(),
+        city: String(row.city ?? '').trim(),
+        stateName: String(row.stateName ?? '').trim(),
+        countryName: String(row.countryName ?? '').trim(),
+        label: plantName,
+      };
+      const existing = byName.get(key);
+      if (!existing) {
+        byName.set(key, entry);
+        continue;
+      }
+      if (eoiNo && existing.eoiNo && existing.eoiNo !== eoiNo) {
+        const eois = new Set(
+          [existing.eoiNo, eoiNo].filter((v) => v.trim() !== ''),
+        );
+        entry.label = `${plantName} (${Array.from(eois).join(', ')})`;
+      }
+      byName.set(key, entry);
+    }
+
+    return Array.from(byName.values()).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    );
+  }
+
+  private async assertPlantNameForUrn(
+    urnNo: string,
+    plantName: string,
+  ): Promise<string> {
+    const normalizedName = plantName.trim();
+    if (!normalizedName) {
+      throw new BadRequestException('name is required');
+    }
+    const options = await this.listPlantOptionsForUrn(urnNo);
+    if (options.length === 0) {
+      throw new BadRequestException(
+        'No manufacturing plants are registered for this URN. Add plants on the product registration before scheduling a site visit.',
+      );
+    }
+    const key = this.normalizePlantNameKey(normalizedName);
+    const match = options.find(
+      (o) => this.normalizePlantNameKey(o.plantName) === key,
+    );
+    if (!match) {
+      throw new BadRequestException(
+        `name must be one of the manufacturing plants for this URN: ${options.map((o) => o.plantName).join(', ')}`,
+      );
+    }
+    return match.plantName;
+  }
+
   async list(dto: ListUrnSiteVisitsDto) {
     const urnContext = await this.assertUrnExists(dto.urnNo);
     const page = dto.page ?? 1;
@@ -249,7 +412,10 @@ export class UrnSiteVisitsService {
     actorUserId?: string,
   ): Promise<Record<string, unknown>> {
     const urnContext = await this.assertUrnExists(dto.urnNo);
-    const normalizedName = dto.name.trim();
+    const normalizedName = await this.assertPlantNameForUrn(
+      urnContext.normalizedUrn,
+      dto.name,
+    );
 
     const duplicate = await this.siteVisitModel
       .findOne({
@@ -328,7 +494,10 @@ export class UrnSiteVisitsService {
       {};
 
     if (dto.name !== undefined) {
-      const name = dto.name.trim();
+      const name = await this.assertPlantNameForUrn(
+        urnContext.normalizedUrn,
+        dto.name,
+      );
       if (name !== existing.name) {
         const duplicate = await this.siteVisitModel
           .findOne({

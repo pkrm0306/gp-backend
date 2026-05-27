@@ -28,6 +28,7 @@ import {
   SUPPORTING_SUBSECTION,
 } from './product-design-upload.util';
 import { normalizeMeasureBenefitRow } from '../common/form-partial-field.util';
+import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 
 @Injectable()
 export class ProductDesignService implements OnModuleInit {
@@ -40,6 +41,7 @@ export class ProductDesignService implements OnModuleInit {
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
   ) {}
 
   async onModuleInit() {
@@ -633,6 +635,14 @@ export class ProductDesignService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
+
+      const newUploadCount =
+        ecoVisionFiles.length + supportingDocumentFiles.length;
+      this.documentUploadNotification.notifyAfterDocumentsUploaded(
+        vendorId,
+        newUploadCount,
+        createProductDesignDto.urnNo,
+      );
 
       for (const fileLink of oldFileLinksToDeleteAfterCommit) {
         try {

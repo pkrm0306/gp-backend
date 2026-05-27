@@ -1,0 +1,362 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { Product, ProductDocument } from './schemas/product.schema';
+import { Category, CategoryDocument } from '../categories/schemas/category.schema';
+import {
+  UrnProcessTabReview,
+  UrnProcessTabReviewDocument,
+} from './schemas/urn-process-tab-review.schema';
+import {
+  PatchUrnTabReviewDto,
+  VendorUrnTabReviewSlotDto,
+} from './dto/urn-tab-review.dto';
+import {
+  ADMIN_REVIEW_URN_STATUS,
+  RAW_MATERIALS_TAB_KEY,
+  URN_TAB_REVIEW_STATUS,
+  VENDOR_RESUBMIT_URN_STATUS,
+} from './constants/urn-tab-review.constants';
+import { matchActiveProducts } from './constants/active-product.filter';
+import {
+  apiStepIdFromStored,
+  buildRequiredReviewSlots,
+  isProcessTabKey,
+  normalizeReviewStepId,
+  parseVisibleRawMaterialSteps,
+} from './helpers/urn-tab-review.util';
+
+@Injectable()
+export class UrnTabReviewService {
+  constructor(
+    @InjectModel(Product.name)
+    private readonly productModel: Model<ProductDocument>,
+    @InjectModel(Category.name)
+    private readonly categoryModel: Model<CategoryDocument>,
+    @InjectModel(UrnProcessTabReview.name)
+    private readonly reviewModel: Model<UrnProcessTabReviewDocument>,
+  ) {}
+
+  async ensurePendingReviewsForUrn(urnNo: string): Promise<void> {
+    const context = await this.loadUrnReviewContext(urnNo);
+    const slots = buildRequiredReviewSlots(context.visibleRawMaterialSteps);
+
+    for (const slot of slots) {
+      let stepId: number;
+      try {
+        stepId = normalizeReviewStepId(slot.tabKey, slot.stepId);
+      } catch {
+        continue;
+      }
+      await this.reviewModel.updateOne(
+        { urnNo, tabKey: slot.tabKey, stepId },
+        {
+          $setOnInsert: {
+            urnNo,
+            tabKey: slot.tabKey,
+            stepId,
+            reviewStatus: URN_TAB_REVIEW_STATUS.PENDING,
+            reviewedBy: null,
+            reviewedAt: null,
+            rejectionRemarks: null,
+          },
+        },
+        { upsert: true },
+      );
+    }
+  }
+
+  /**
+   * Vendor panel: after admin resend (`urnStatus === 5`), which tabs/steps may use Save & Next.
+   * Only sections with `reviewStatus === rejected` are editable; approved tabs are read-only.
+   */
+  async getVendorUrnTabReviewGuidance(urnNo: string, vendorId: string) {
+    const vendorObjectId = this.toVendorObjectId(vendorId);
+    const trimmedUrn = urnNo?.trim();
+    if (!trimmedUrn) {
+      throw new BadRequestException('urnNo is required');
+    }
+
+    const product = await this.productModel
+      .findOne(
+        matchActiveProducts({
+          urnNo: trimmedUrn,
+          vendorId: vendorObjectId,
+        }),
+      )
+      .select('urnNo urnStatus categoryId')
+      .lean()
+      .exec();
+
+    if (!product) {
+      throw new NotFoundException(
+        `No product found for URN: ${trimmedUrn}`,
+      );
+    }
+
+    const urnStatus = Number(product.urnStatus ?? 0);
+    const restrictSaveAndNext = urnStatus === VENDOR_RESUBMIT_URN_STATUS;
+
+    if (!restrictSaveAndNext) {
+      return {
+        urnNo: trimmedUrn,
+        urnStatus,
+        restrictSaveAndNext: false,
+        reviews: [] as Array<Record<string, unknown>>,
+        processTabs: {} as Record<string, VendorUrnTabReviewSlotDto>,
+        rawMaterialSteps: {} as Record<string, VendorUrnTabReviewSlotDto>,
+        summary: null,
+      };
+    }
+
+    const adminState = await this.getUrnTabReviews(trimmedUrn);
+    const processTabs: Record<string, VendorUrnTabReviewSlotDto> = {};
+    const rawMaterialSteps: Record<string, VendorUrnTabReviewSlotDto> = {};
+
+    const reviews = adminState.reviews.map((row) => {
+      const canSaveAndNext =
+        row.reviewStatus === URN_TAB_REVIEW_STATUS.REJECTED;
+      const slot: VendorUrnTabReviewSlotDto = {
+        tabKey: row.tabKey,
+        stepId: row.stepId,
+        label:
+          adminState.requiredTabs.find(
+            (t) => t.tabKey === row.tabKey && t.stepId === row.stepId,
+          )?.label ?? row.tabKey,
+        reviewStatus: row.reviewStatus,
+        rejectionRemarks:
+          row.rejectionRemarks != null ? String(row.rejectionRemarks) : null,
+        canSaveAndNext,
+      };
+
+      if (row.tabKey === RAW_MATERIALS_TAB_KEY && row.stepId != null) {
+        rawMaterialSteps[String(row.stepId)] = slot;
+      } else if (row.stepId == null) {
+        processTabs[row.tabKey] = slot;
+      }
+
+      return { ...row, canSaveAndNext };
+    });
+
+    return {
+      urnNo: trimmedUrn,
+      urnStatus,
+      restrictSaveAndNext: true,
+      visibleRawMaterialSteps: adminState.visibleRawMaterialSteps,
+      reviews,
+      processTabs,
+      rawMaterialSteps,
+      summary: adminState.summary,
+    };
+  }
+
+  async getUrnTabReviews(urnNo: string) {
+    const context = await this.loadUrnReviewContext(urnNo);
+    await this.ensurePendingReviewsForUrn(urnNo);
+
+    const stored = await this.reviewModel
+      .find({ urnNo })
+      .sort({ tabKey: 1, stepId: 1 })
+      .lean()
+      .exec();
+
+    const requiredSlots = buildRequiredReviewSlots(context.visibleRawMaterialSteps);
+    const reviews = requiredSlots.map((slot) => {
+      const stepIdStored = normalizeReviewStepId(slot.tabKey, slot.stepId);
+      const row = stored.find(
+        (r) => r.tabKey === slot.tabKey && r.stepId === stepIdStored,
+      );
+      return this.formatReviewRow(slot.tabKey, stepIdStored, row);
+    });
+
+    const summary = this.buildSummary(reviews, requiredSlots.length);
+
+    return {
+      urnNo,
+      urnStatus: context.urnStatus,
+      categoryRawMaterialForms: context.categoryRawMaterialForms,
+      visibleRawMaterialSteps: context.visibleRawMaterialSteps,
+      requiredTabs: requiredSlots,
+      reviews,
+      summary,
+      canReview: context.urnStatus === ADMIN_REVIEW_URN_STATUS,
+    };
+  }
+
+  async patchUrnTabReview(dto: PatchUrnTabReviewDto, adminUserId: string) {
+    const urnNo = dto.urnNo.trim();
+    const context = await this.loadUrnReviewContext(urnNo);
+
+    if (context.urnStatus !== ADMIN_REVIEW_URN_STATUS) {
+      throw new ForbiddenException(
+        `Tab review is only allowed when urnStatus is ${ADMIN_REVIEW_URN_STATUS} (Admin Review Pending)`,
+      );
+    }
+
+    if (dto.tabKey === RAW_MATERIALS_TAB_KEY) {
+      if (dto.stepId == null) {
+        throw new BadRequestException('stepId is required for raw-materials');
+      }
+      if (!context.visibleRawMaterialSteps.includes(dto.stepId)) {
+        throw new BadRequestException(
+          `Raw materials step ${dto.stepId} is not enabled for this product category`,
+        );
+      }
+    } else if (!isProcessTabKey(dto.tabKey)) {
+      throw new BadRequestException(`Invalid tabKey: ${dto.tabKey}`);
+    } else if (dto.stepId != null && dto.stepId !== 0) {
+      throw new BadRequestException(
+        'stepId must be omitted for process tabs',
+      );
+    }
+
+    if (dto.decision === 'rejected') {
+      const remarks = String(dto.rejectionRemarks ?? '').trim();
+      if (!remarks) {
+        throw new BadRequestException(
+          'rejectionRemarks is required when decision is rejected',
+        );
+      }
+    }
+
+    const stepIdStored = normalizeReviewStepId(dto.tabKey, dto.stepId);
+    const reviewStatus =
+      dto.decision === 'approved'
+        ? URN_TAB_REVIEW_STATUS.APPROVED
+        : URN_TAB_REVIEW_STATUS.REJECTED;
+
+    if (!Types.ObjectId.isValid(adminUserId)) {
+      throw new BadRequestException('Invalid admin user id');
+    }
+
+    const now = new Date();
+    const updated = await this.reviewModel
+      .findOneAndUpdate(
+        { urnNo, tabKey: dto.tabKey, stepId: stepIdStored },
+        {
+          $set: {
+            reviewStatus,
+            reviewedBy: new Types.ObjectId(adminUserId),
+            reviewedAt: now,
+            rejectionRemarks:
+              dto.decision === 'rejected'
+                ? String(dto.rejectionRemarks ?? '').trim()
+                : null,
+          },
+          $setOnInsert: { urnNo, tabKey: dto.tabKey, stepId: stepIdStored },
+        },
+        { upsert: true, new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Failed to save tab review');
+    }
+
+    const full = await this.getUrnTabReviews(urnNo);
+
+    return {
+      success: true,
+      urnNo,
+      tabKey: dto.tabKey,
+      stepId: apiStepIdFromStored(dto.tabKey, stepIdStored),
+      reviewStatus,
+      rejectionRemarks: updated.rejectionRemarks ?? null,
+      reviewedAt: updated.reviewedAt ?? now,
+      review: this.formatReviewRow(dto.tabKey, stepIdStored, updated),
+      summary: full.summary,
+    };
+  }
+
+  private formatReviewRow(
+    tabKey: string,
+    stepIdStored: number,
+    row?: Record<string, unknown> | null,
+  ) {
+    const status =
+      typeof row?.reviewStatus === 'number'
+        ? row.reviewStatus
+        : URN_TAB_REVIEW_STATUS.PENDING;
+
+    return {
+      tabKey,
+      stepId: apiStepIdFromStored(tabKey, stepIdStored),
+      reviewStatus: status,
+      rejectionRemarks: row?.rejectionRemarks ?? null,
+      reviewedBy: row?.reviewedBy ? String(row.reviewedBy) : null,
+      reviewedAt: row?.reviewedAt ?? null,
+    };
+  }
+
+  private buildSummary(
+    reviews: Array<{ reviewStatus: number }>,
+    totalRequired: number,
+  ) {
+    let pending = 0;
+    let approved = 0;
+    let rejected = 0;
+    for (const r of reviews) {
+      if (r.reviewStatus === URN_TAB_REVIEW_STATUS.APPROVED) approved += 1;
+      else if (r.reviewStatus === URN_TAB_REVIEW_STATUS.REJECTED) rejected += 1;
+      else pending += 1;
+    }
+    return {
+      totalRequired,
+      pending,
+      approved,
+      rejected,
+      allReviewed: pending === 0,
+      allApproved: totalRequired > 0 && approved === totalRequired,
+      hasRejection: rejected > 0,
+    };
+  }
+
+  private toVendorObjectId(vendorId: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(vendorId)) {
+      throw new BadRequestException('Invalid vendor id');
+    }
+    return new Types.ObjectId(vendorId);
+  }
+
+  private async loadUrnReviewContext(urnNo: string) {
+    const trimmed = urnNo?.trim();
+    if (!trimmed) {
+      throw new BadRequestException('urnNo is required');
+    }
+
+    const product = await this.productModel
+      .findOne({ urnNo: trimmed })
+      .select('urnNo urnStatus categoryId')
+      .lean()
+      .exec();
+
+    if (!product) {
+      throw new NotFoundException(`No product found for URN: ${trimmed}`);
+    }
+
+    const category = await this.categoryModel
+      .findById(product.categoryId)
+      .select('category_raw_material_forms')
+      .lean()
+      .exec();
+
+    const categoryRawMaterialForms =
+      category?.category_raw_material_forms ?? '';
+    const visibleRawMaterialSteps = parseVisibleRawMaterialSteps(
+      categoryRawMaterialForms,
+    );
+
+    return {
+      urnNo: trimmed,
+      urnStatus: Number(product.urnStatus ?? 0),
+      categoryRawMaterialForms,
+      visibleRawMaterialSteps,
+    };
+  }
+}

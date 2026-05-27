@@ -127,8 +127,9 @@ export class CreatePaymentDto {
   paymentChequeDate?: string;
 
   @ApiProperty({
-    description: 'Products to be certified (JSON string)',
-    example: '["product1", "product2"]',
+    description:
+      'Numeric productId values only — JSON array string (certification payments)',
+    example: '[101,102]',
     required: false,
   })
   @IsOptional()

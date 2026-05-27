@@ -25,6 +25,12 @@ import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { UrnSiteVisitsModule } from '../urn-site-visits/urn-site-visits.module';
 import { Category, CategorySchema } from '../categories/schemas/category.schema';
+import {
+  UrnProcessTabReview,
+  UrnProcessTabReviewSchema,
+} from './schemas/urn-process-tab-review.schema';
+import { UrnTabReviewService } from './urn-tab-review.service';
+import { CertificationLifecycleService } from './certification-lifecycle.service';
 
 @Module({
   imports: [
@@ -32,6 +38,7 @@ import { Category, CategorySchema } from '../categories/schemas/category.schema'
       { name: Product.name, schema: ProductSchema },
       { name: ProductPlant.name, schema: ProductPlantSchema },
       { name: Category.name, schema: CategorySchema },
+      { name: UrnProcessTabReview.name, schema: UrnProcessTabReviewSchema },
     ]),
     PassportModule,
     AuthModule,
@@ -56,12 +63,16 @@ import { Category, CategorySchema } from '../categories/schemas/category.schema'
     ProductSoftDeleteService,
     SequenceHelper,
     PermissionsGuard,
+    UrnTabReviewService,
+    CertificationLifecycleService,
   ],
   exports: [
     ProductRegistrationService,
     EoiNumberService,
     ProductSoftDeleteService,
     SequenceHelper,
+    UrnTabReviewService,
+    CertificationLifecycleService,
   ],
 })
 export class ProductRegistrationModule {}

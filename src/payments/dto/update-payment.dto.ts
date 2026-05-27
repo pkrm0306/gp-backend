@@ -128,8 +128,9 @@ export class UpdatePaymentDto {
   paymentChequeDate?: string;
 
   @ApiProperty({
-    description: 'Products to be certified (JSON string)',
-    example: '["product1","product2"]',
+    description:
+      'Certification only: JSON array string of numeric **productId** values (not product names), e.g. `"[101,102]"`',
+    example: '[101,102]',
     required: false,
   })
   @IsOptional()

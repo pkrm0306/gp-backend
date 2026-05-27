@@ -15,6 +15,7 @@ import {
   UploadedFiles,
   HttpCode,
   HttpStatus,
+  Header,
   BadRequestException,
   applyDecorators,
 } from '@nestjs/common';
@@ -2010,12 +2011,13 @@ export class AdminController {
   }
 
   @Get('notifications')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
   @Permissions(PERMISSIONS.PROFILE_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'List notifications',
+    summary: 'List admin in-app notifications',
     description:
-      'Returns notification list for admin panel with optional time-range filter: all, today, week, 30d, 90d.',
+      'Admin bell feed (`notifications` collection). Optional time-range: all, today, week, 30d, 90d. Use PATCH `.../:id/seen` to mark read (`id` = MongoDB _id).',
   })
   @ApiQuery({
     name: 'range',
@@ -2024,9 +2026,16 @@ export class AdminController {
   })
   @ApiQuery({ name: 'page', required: false, example: 1 })
   @ApiQuery({ name: 'limit', required: false, example: 20 })
+  @ApiQuery({
+    name: 'seen',
+    required: false,
+    type: Boolean,
+    description: 'Optional: true = read only, false = unread only',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Notifications retrieved successfully',
+    description:
+      'Notifications list with pagination and root unreadCount (unread within range filter)',
   })
   async listNotifications(@Query() query: ListNotificationsQueryDto) {
     const result = await this.adminService.listNotifications(query);
@@ -2034,8 +2043,51 @@ export class AdminController {
       message: 'Notifications retrieved successfully',
       data: result.data,
       totalCount: result.totalCount,
+      unreadCount: result.unreadCount,
       currentPage: result.currentPage,
       totalPages: result.totalPages,
+    };
+  }
+
+  @Patch('notifications/seen-all')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @Permissions(PERMISSIONS.PROFILE_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Mark all admin notifications as seen',
+    description:
+      'Sets seen=true on all unread rows in the admin feed. Returns markedCount.',
+  })
+  @ApiResponse({ status: 200, description: 'All notifications marked as seen' })
+  async markAllNotificationsSeen() {
+    const result = await this.adminService.markAllNotificationsSeen();
+    return {
+      message: 'All notifications marked as seen',
+      success: result.success,
+      markedCount: result.markedCount,
+    };
+  }
+
+  @Patch('notifications/:id/seen')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @Permissions(PERMISSIONS.PROFILE_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark an admin notification as seen' })
+  @ApiParam({
+    name: 'id',
+    description: 'Notification MongoDB _id (24-char hex)',
+    example: '674a1b2c3d4e5f6789012345',
+  })
+  @ApiResponse({ status: 200, description: 'Notification marked as seen' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
+  @ApiResponse({ status: 404, description: 'Notification not found' })
+  async markNotificationSeen(@Param('id') id: string) {
+    const result = await this.adminService.markNotificationSeen(id);
+    return {
+      message: 'Notification marked as seen',
+      success: result.success,
+      id: result.id,
+      seen: result.seen,
     };
   }
 

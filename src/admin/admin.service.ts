@@ -48,6 +48,12 @@ import {
   NotificationDocument,
 } from '../common/schemas/notification.schema';
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
+import {
+  buildAdminNotificationWhere,
+  buildAdminNotificationUnreadCountWhere,
+  mapAdminNotificationRow,
+  unreadSeenFilter,
+} from './helpers/admin-notification.util';
 import * as bcrypt from 'bcryptjs';
 import { RbacService } from '../rbac/rbac.service';
 import { RedisService } from '../common/redis/redis.service';
@@ -908,14 +914,6 @@ export class AdminService {
     });
 
     const saved = await doc.save();
-    await this.createNotification({
-      title: 'Event created',
-      message: `Event "${payload.eventName}" was created.`,
-      type: 'success',
-      source: 'admin',
-      referenceType: 'event',
-      referenceId: String((saved as any)._id),
-    });
     return this.formatEventResponse(saved);
   }
 
@@ -1049,15 +1047,6 @@ export class AdminService {
       throw new NotFoundException('Event not found');
     }
 
-    await this.createNotification({
-      title: 'Event updated',
-      message: `Event "${String((updated as any).eventName ?? '')}" was updated.`,
-      type: 'info',
-      source: 'admin',
-      referenceType: 'event',
-      referenceId: String((updated as any)._id),
-    });
-
     return this.formatEventResponse(updated);
   }
 
@@ -1157,15 +1146,6 @@ export class AdminService {
       throw new NotFoundException('Event not found');
     }
 
-    await this.createNotification({
-      title: 'Event deleted',
-      message: `Event (${raw}) was deleted.`,
-      type: 'warning',
-      source: 'admin',
-      referenceType: 'event',
-      referenceId: raw,
-    });
-
     return { id: raw };
   }
 
@@ -1214,15 +1194,6 @@ export class AdminService {
     if (!updated) {
       throw new NotFoundException('Event not found');
     }
-
-    await this.createNotification({
-      title: 'Gallery status updated',
-      message: `Gallery item (${String((updated as any).eventId ?? (updated as any)._id)}) status updated to ${nextStatus === 1 ? 'active' : 'inactive'}.`,
-      type: 'info',
-      source: 'admin',
-      referenceType: 'event',
-      referenceId: String((updated as any)._id),
-    });
 
     return {
       id: String((updated as any)._id),
@@ -1718,39 +1689,12 @@ export class AdminService {
     const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 20;
     const skip = (safePage - 1) * safeLimit;
 
-    const now = new Date();
-    const where: Record<string, unknown> = {};
-    switch (query?.range) {
-      case 'today': {
-        const start = new Date(now);
-        start.setHours(0, 0, 0, 0);
-        where.createdAt = { $gte: start };
-        break;
-      }
-      case 'week': {
-        const start = new Date(now);
-        start.setDate(now.getDate() - 7);
-        where.createdAt = { $gte: start };
-        break;
-      }
-      case '30d': {
-        const start = new Date(now);
-        start.setDate(now.getDate() - 30);
-        where.createdAt = { $gte: start };
-        break;
-      }
-      case '90d': {
-        const start = new Date(now);
-        start.setDate(now.getDate() - 90);
-        where.createdAt = { $gte: start };
-        break;
-      }
-      default:
-        break;
-    }
+    const where = buildAdminNotificationWhere(query);
+    const unreadWhere = buildAdminNotificationUnreadCountWhere(query);
 
-    const [totalCount, rows] = await Promise.all([
+    const [totalCount, unreadCount, rows] = await Promise.all([
       this.notificationModel.countDocuments(where).exec(),
+      this.notificationModel.countDocuments(unreadWhere).exec(),
       this.notificationModel
         .find(where)
         .sort({ createdAt: -1, _id: -1 })
@@ -1761,20 +1705,54 @@ export class AdminService {
     ]);
 
     return {
-      data: (rows ?? []).map((n: any) => ({
-        id: String(n._id),
-        title: String(n.title ?? ''),
-        message: String(n.message ?? ''),
-        type: String(n.type ?? 'info'),
-        source: String(n.source ?? 'system'),
-        referenceType: n.referenceType ?? null,
-        referenceId: n.referenceId ?? null,
-        actorName: n.actorName ?? null,
-        createdAt: n.createdAt ?? null,
-      })),
+      data: (rows ?? []).map((n) =>
+        mapAdminNotificationRow(n as Record<string, unknown>),
+      ),
       totalCount,
+      unreadCount,
       currentPage: safePage,
-      totalPages: Math.max(1, Math.ceil(totalCount / safeLimit)),
+      totalPages: Math.max(1, Math.ceil(totalCount / safeLimit) || 1),
+    };
+  }
+
+  async markNotificationSeen(notificationId: string) {
+    if (!notificationId?.trim()) {
+      throw new BadRequestException('Notification id is required');
+    }
+    if (!Types.ObjectId.isValid(notificationId.trim())) {
+      throw new BadRequestException('Invalid notification id');
+    }
+
+    const now = new Date();
+    const updated = await this.notificationModel
+      .findByIdAndUpdate(
+        notificationId.trim(),
+        { $set: { seen: 1, seenAt: now } },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    return {
+      success: true,
+      id: String(updated._id),
+      seen: 1 as const,
+    };
+  }
+
+  async markAllNotificationsSeen(): Promise<{ success: true; markedCount: number }> {
+    const now = new Date();
+    const result = await this.notificationModel
+      .updateMany(unreadSeenFilter(), { $set: { seen: 1, seenAt: now } })
+      .exec();
+
+    return {
+      success: true,
+      markedCount: result.modifiedCount ?? 0,
     };
   }
 

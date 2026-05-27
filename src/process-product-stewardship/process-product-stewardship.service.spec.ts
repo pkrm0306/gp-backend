@@ -43,6 +43,7 @@ describe('ProcessProductStewardshipService idempotent submit', () => {
         getProcessProductStewardshipId: jest.fn(async () => ++seq),
         getProductDocumentId: jest.fn(async () => ++seq),
       } as any,
+      { notifyAfterDocumentsUploaded: jest.fn() } as any,
     );
     return { service, store };
   }

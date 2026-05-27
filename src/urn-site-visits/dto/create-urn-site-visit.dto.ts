@@ -24,7 +24,11 @@ export class CreateUrnSiteVisitDto {
   @IsNotEmpty()
   urnNo: string;
 
-  @ApiProperty({ example: 'Cool or Cosy' })
+  @ApiProperty({
+    example: 'Plant A',
+    description:
+      'Manufacturing plant name for this URN (must match an active plant on the URN). Use GET /api/admin/urn-site-visits/plant-options?urnNo=… for allowed values.',
+  })
   @IsString()
   @IsNotEmpty()
   @MaxLength(500)

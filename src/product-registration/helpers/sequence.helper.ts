@@ -1207,24 +1207,32 @@ export class SequenceHelper {
 
   /** Per-user in-app notification numeric id (`user_notifications.id`). */
   async getUserNotificationId(): Promise<number> {
+    const sequenceCollection = this.connection.collection('sequences');
+    const sequenceName = 'user_notification_id';
+
     try {
-      const sequenceCollection = this.connection.collection('sequences');
-      const sequenceName = 'user_notification_id';
-      const collection = this.connection.collection('user_notifications');
-      const maxRow = await collection.findOne(
-        {},
-        { sort: { id: -1 }, projection: { id: 1 } },
-      );
-      const maxId = maxRow?.id || 0;
-      await sequenceCollection.updateOne(
-        { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
-        { upsert: true },
-      );
+      const existingSequence = await sequenceCollection.findOne({
+        _id: sequenceName as any,
+      });
+
+      if (!existingSequence) {
+        const notificationCollection =
+          this.connection.collection('user_notifications');
+        const maxRow = await notificationCollection.findOne(
+          {},
+          { sort: { id: -1 }, projection: { id: 1 } },
+        );
+        const maxId = Number(maxRow?.id ?? 0) || 0;
+        await sequenceCollection.insertOne({
+          _id: sequenceName as any,
+          sequenceValue: maxId,
+        });
+      }
+
       return this.getNextSequenceValue(sequenceName);
     } catch (error: any) {
       console.error('User notification ID sequence error:', error);
-      return this.getNextSequenceValue('user_notification_id');
+      return this.getNextSequenceValue(sequenceName);
     }
   }
 }

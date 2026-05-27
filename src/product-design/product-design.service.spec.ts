@@ -30,6 +30,7 @@ describe('ProductDesignService measures idempotency', () => {
       {} as any,
       {} as any,
       { getProductDesignMeasureId: jest.fn(async () => ++seq) } as any,
+      { notifyAfterDocumentsUploaded: jest.fn() } as any,
     );
 
     return { service, pdMeasureModel, store };

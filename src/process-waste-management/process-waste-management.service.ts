@@ -20,6 +20,7 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 
 @Injectable()
 export class ProcessWasteManagementService implements OnModuleInit {
@@ -30,6 +31,7 @@ export class ProcessWasteManagementService implements OnModuleInit {
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
   ) {}
 
   async onModuleInit() {
@@ -172,6 +174,12 @@ export class ProcessWasteManagementService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
+
+      this.documentUploadNotification.notifyAfterDocumentsUploaded(
+        vendorId,
+        wmSupportingDocumentsFilePaths.length,
+        createProcessWasteManagementDto.urnNo,
+      );
 
       return savedProcessWasteManagement;
     } catch (error: any) {

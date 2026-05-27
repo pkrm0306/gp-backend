@@ -10,6 +10,10 @@ import {
   Product,
   ProductSchema,
 } from '../product-registration/schemas/product.schema';
+import {
+  ProductPlant,
+  ProductPlantSchema,
+} from '../product-registration/schemas/product-plant.schema';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { AuthModule } from '../auth/auth.module';
@@ -20,6 +24,7 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
     MongooseModule.forFeature([
       { name: UrnSiteVisit.name, schema: UrnSiteVisitSchema },
       { name: Product.name, schema: ProductSchema },
+      { name: ProductPlant.name, schema: ProductPlantSchema },
     ]),
     ActivityLogModule,
     RbacModule,

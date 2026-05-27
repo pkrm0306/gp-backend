@@ -27,6 +27,9 @@ import { AdminListProductsDto } from './dto/admin-list-products.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { PatchUrnTabReviewDto } from './dto/urn-tab-review.dto';
+import { UrnTabReviewService } from './urn-tab-review.service';
 
 /**
  * Admin list filters EOIs by **product** `productStatus` (EOI lifecycle), not manufacturer/vendor status.
@@ -62,7 +65,45 @@ function resolveAdminListProductsBody(
 export class AdminProductsController {
   constructor(
     private readonly productRegistrationService: ProductRegistrationService,
+    private readonly urnTabReviewService: UrnTabReviewService,
   ) {}
+
+  @Get('urn-tab-review/:urnNo')
+  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @ApiOperation({
+    summary: 'Get URN tab/step admin review state',
+    description:
+      'Returns required process tabs + raw material steps (from category CSV), per-section reviewStatus (0=pending, 1=approved, 2=rejected), and summary. Used when urnStatus=4.',
+  })
+  @ApiParam({ name: 'urnNo', example: 'URN-20260326162423' })
+  @ApiResponse({ status: 200, description: 'Tab review state' })
+  async getUrnTabReview(@Param('urnNo') urnNo: string) {
+    const data = await this.urnTabReviewService.getUrnTabReviews(urnNo.trim());
+    return { message: 'URN tab reviews retrieved', data };
+  }
+
+  @Patch('urn-tab-review')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record admin approve/reject for one process tab or raw material step',
+    description:
+      'Body: urnNo, tabKey, stepId (1–15 for raw-materials only), decision (approved|rejected), rejectionRemarks when rejected. Only when urnStatus=4.',
+  })
+  @ApiBody({ type: PatchUrnTabReviewDto })
+  @ApiResponse({ status: 200, description: 'Review recorded' })
+  @ApiResponse({ status: 403, description: 'URN not in admin review (status !== 4)' })
+  async patchUrnTabReview(
+    @Body() dto: PatchUrnTabReviewDto,
+    @CurrentUser() user: { userId?: string; id?: string },
+  ) {
+    const adminUserId = String(user?.userId ?? user?.id ?? '').trim();
+    if (!adminUserId) {
+      throw new BadRequestException('Admin user id not found in token');
+    }
+    const data = await this.urnTabReviewService.patchUrnTabReview(dto, adminUserId);
+    return { message: 'Tab review updated', ...data };
+  }
 
   @Get('details/:urn')
   @Permissions(PERMISSIONS.PRODUCTS_VIEW)

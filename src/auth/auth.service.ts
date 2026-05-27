@@ -14,6 +14,7 @@ import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
 import { CaptchaService } from '../common/services/captcha.service';
 import { NotificationHelper } from '../notifications/notification.helper';
+import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import {
   NotificationChannel,
   NotificationTemplateCode,
@@ -108,6 +109,7 @@ export class AuthService {
     private vendorUsersService: VendorUsersService,
     private captchaService: CaptchaService,
     private readonly notificationHelper: NotificationHelper,
+    private readonly lifecycleNotification: LifecycleNotificationService,
     private readonly redisService: RedisService,
     private readonly rbacService: RbacService,
     private readonly sessionInvalidation: AuthSessionInvalidationService,
@@ -399,20 +401,16 @@ export class AuthService {
       }
 
       try {
-        await this.notificationHelper.send({
-          type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
-          template: NotificationTemplateCode.USER_CREATED,
+        await this.lifecycleNotification.notifyNewVendorRegistered({
           userId: vendorUser._id.toString(),
           email: normalizedEmail,
-          payload: {
-            name: normalizedContactName || normalizedCompanyName,
-            email: normalizedEmail,
-            password: registerDto.password,
-            otp,
-          },
+          name: normalizedContactName || normalizedCompanyName,
+          companyName: normalizedCompanyName,
+          password: registerDto.password,
+          otp,
         });
       } catch (notifyError: any) {
-        console.warn(
+        this.logger.warn(
           `[registerVendor] Notification send failed for ${normalizedEmail}:`,
           notifyError?.message || notifyError,
         );
@@ -504,6 +502,7 @@ export class AuthService {
 
     let gpInternalId: string | null = null;
     let manufacturerInitial: string | null = null;
+    let manufacturerName = String(user.name ?? '').trim();
     if (manufacturerId) {
       const m = await this.manufacturersService.findById(manufacturerId);
       if (m) {
@@ -511,7 +510,24 @@ export class AuthService {
         const rawIni = String(m.manufacturerInitial ?? '').trim();
         gpInternalId = rawGp ? rawGp : null;
         manufacturerInitial = rawIni ? rawIni : null;
+        manufacturerName =
+          String(m.manufacturerName ?? '').trim() ||
+          String(m.vendor_name ?? '').trim() ||
+          manufacturerName;
       }
+    }
+    try {
+      await this.lifecycleNotification.notifyVendorRegistrationComplete(
+        user._id.toString(),
+        verifyOtpDto.email.trim().toLowerCase(),
+        manufacturerName || verifyOtpDto.email,
+      );
+    } catch (notifyError: any) {
+      this.logger.warn(
+        `[verifyOtp] Registration complete notification failed: ${
+          notifyError?.message || notifyError
+        }`,
+      );
     }
 
     return {

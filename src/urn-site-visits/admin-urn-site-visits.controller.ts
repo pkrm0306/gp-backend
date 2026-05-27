@@ -29,6 +29,7 @@ import { UrnSiteVisitsService } from './urn-site-visits.service';
 import { ListUrnSiteVisitsDto } from './dto/list-urn-site-visits.dto';
 import { CreateUrnSiteVisitDto } from './dto/create-urn-site-visit.dto';
 import { UpdateUrnSiteVisitDto } from './dto/update-urn-site-visit.dto';
+import { UrnSiteVisitPlantOptionsQueryDto } from './dto/urn-site-visit-plant-options-query.dto';
 
 @ApiTags('Admin URN Site Visits')
 @Controller('api/admin/urn-site-visits')
@@ -56,6 +57,27 @@ export class AdminUrnSiteVisitsController {
       total: result.total,
       page: result.page,
       limit: result.limit,
+    };
+  }
+
+  @Get('plant-options')
+  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @ApiOperation({
+    summary: 'Plant name options for site visit form (admin)',
+    description:
+      'Returns distinct manufacturing **plantName** values for the URN (single-select `name` on create/update).',
+  })
+  @ApiQuery({ name: 'urnNo', required: true })
+  @ApiResponse({ status: 200, description: 'Plant options for dropdown' })
+  async plantOptions(@Query() query: UrnSiteVisitPlantOptionsQueryDto) {
+    const options = await this.urnSiteVisitsService.listPlantOptionsForUrn(
+      query.urnNo,
+    );
+    return {
+      success: true,
+      message: 'Plant options retrieved successfully',
+      data: options,
+      options,
     };
   }
 

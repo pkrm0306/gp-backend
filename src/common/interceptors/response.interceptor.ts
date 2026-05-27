@@ -45,6 +45,8 @@ export class ResponseInterceptor implements NestInterceptor {
           totalCount?: number;
           currentPage?: number;
           totalPages?: number;
+          unreadCount?: number;
+          markedCount?: number;
         };
         if (typeof payload?.total === 'number') {
           response.total = payload.total;
@@ -63,6 +65,12 @@ export class ResponseInterceptor implements NestInterceptor {
         }
         if (typeof payload?.totalPages === 'number') {
           response.totalPages = payload.totalPages;
+        }
+        if (typeof payload?.unreadCount === 'number') {
+          response.unreadCount = payload.unreadCount;
+        }
+        if (typeof payload?.markedCount === 'number') {
+          response.markedCount = payload.markedCount;
         }
         const withUrn = data as { urnStatus?: number };
         if (

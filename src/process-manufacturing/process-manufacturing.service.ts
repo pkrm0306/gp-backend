@@ -22,6 +22,7 @@ import {
   uploadFile,
   UploadResult,
 } from '../utils/upload-file.util';
+import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 
 @Injectable()
 export class ProcessManufacturingService implements OnModuleInit {
@@ -32,6 +33,7 @@ export class ProcessManufacturingService implements OnModuleInit {
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
   ) {}
 
   async onModuleInit() {
@@ -227,6 +229,12 @@ export class ProcessManufacturingService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
+
+      this.documentUploadNotification.notifyAfterDocumentsUploaded(
+        vendorId,
+        docsToInsert.length,
+        createProcessManufacturingDto.urnNo,
+      );
 
       return savedProcessManufacturing;
     } catch (error: any) {

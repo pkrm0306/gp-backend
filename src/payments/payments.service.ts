@@ -29,6 +29,12 @@ import {
 } from './payment-proposal.util';
 import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
+import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import { CertificationLifecycleService } from '../product-registration/certification-lifecycle.service';
+import {
+  getProductsToBeCertifiedValidationError,
+  normalizeProductsToBeCertifiedStorage,
+} from '../product-registration/helpers/parse-products-to-be-certified.util';
 
 @Injectable()
 export class PaymentsService {
@@ -41,6 +47,8 @@ export class PaymentsService {
     private sequenceHelper: SequenceHelper,
     private activityLogService: ActivityLogService,
     private readonly zohoDealsService: ZohoDealsService,
+    private readonly lifecycleNotification: LifecycleNotificationService,
+    private readonly certificationLifecycle: CertificationLifecycleService,
   ) {}
 
   private resolveZohoPaymentAmount(payment: PaymentDetailsDocument): number {
@@ -416,6 +424,38 @@ export class PaymentsService {
     return [normalized, `${normalized}/`];
   }
 
+  /** Certification payments must store numeric `productId` values only (JSON array string). */
+  private validateCertificationProductsField(
+    raw: string | null | undefined,
+    options: { required?: boolean } = {},
+  ): void {
+    const trimmed = String(raw ?? '').trim();
+    if (!trimmed) {
+      if (options.required) {
+        const message = getProductsToBeCertifiedValidationError('');
+        if (message) {
+          throw new BadRequestException(message);
+        }
+      }
+      return;
+    }
+    const message = getProductsToBeCertifiedValidationError(trimmed);
+    if (message) {
+      throw new BadRequestException(message);
+    }
+  }
+
+  /** Persist certification selection as JSON numeric productId array, e.g. `"[101,102]"`. */
+  private normalizeCertificationProductsField(
+    raw: string,
+  ): string {
+    try {
+      return normalizeProductsToBeCertifiedStorage(raw);
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
+  }
+
   /**
    * Timeline row when payment_details is created (does not by itself change products.urnStatus).
    */
@@ -594,6 +634,20 @@ export class PaymentsService {
           createPaymentDto.paymentType,
         );
 
+        let productsToBeCertified: string | undefined;
+        if (normalizedPaymentType === 'certification') {
+          if (!String(createPaymentDto.productsToBeCertified ?? '').trim()) {
+            throw new BadRequestException(
+              getProductsToBeCertifiedValidationError(''),
+            );
+          }
+          productsToBeCertified = this.normalizeCertificationProductsField(
+            createPaymentDto.productsToBeCertified!,
+          );
+        } else if (createPaymentDto.productsToBeCertified !== undefined) {
+          productsToBeCertified = createPaymentDto.productsToBeCertified;
+        }
+
         // Create payment data
         const paymentData = {
           paymentId,
@@ -613,7 +667,7 @@ export class PaymentsService {
           paymentChequeDate: createPaymentDto.paymentChequeDate
             ? new Date(createPaymentDto.paymentChequeDate)
             : undefined,
-          productsToBeCertified: createPaymentDto.productsToBeCertified,
+          productsToBeCertified,
           paymentStatus: 0, // Default: 0=Created
           vendorProposalApprovalStatus: 0,
           proposalRejectionRemarks: undefined,
@@ -887,17 +941,48 @@ export class PaymentsService {
       if (tdsFile) {
         updateData.tdsFile = (await uploadFile(tdsFile, 'payments')).fileUrl;
       }
-      if (updatePaymentDto.productsToBeCertified !== undefined) {
-        updateData.productsToBeCertified =
-          updatePaymentDto.productsToBeCertified;
-      }
-
       const paymentStatusUpdate = this.applyPaymentStatusUpdate(
         updateData,
         updatePaymentDto,
         existingPayment,
         actorRole,
       );
+
+      const certificationProductsRequired =
+        paymentType === 'certification' &&
+        (paymentStatusUpdate.adminApprovedPayment ||
+          updatePaymentDto.paymentStatus === 2 ||
+          (this.isVendorPortalRole(actorRole) &&
+            (vendorProofUpdate || updatePaymentDto.paymentStatus === 1)));
+
+      const certificationProductsRaw =
+        updatePaymentDto.productsToBeCertified !== undefined
+          ? updatePaymentDto.productsToBeCertified
+          : certificationProductsRequired
+            ? existingPayment.productsToBeCertified
+            : undefined;
+
+      if (
+        paymentType === 'certification' &&
+        (updatePaymentDto.productsToBeCertified !== undefined ||
+          certificationProductsRequired)
+      ) {
+        this.validateCertificationProductsField(certificationProductsRaw, {
+          required: certificationProductsRequired,
+        });
+        if (
+          updatePaymentDto.productsToBeCertified !== undefined &&
+          String(updatePaymentDto.productsToBeCertified).trim()
+        ) {
+          updateData.productsToBeCertified =
+            this.normalizeCertificationProductsField(
+              updatePaymentDto.productsToBeCertified,
+            );
+        }
+      } else if (updatePaymentDto.productsToBeCertified !== undefined) {
+        updateData.productsToBeCertified =
+          updatePaymentDto.productsToBeCertified;
+      }
 
       const updatedPayment = await this.paymentDetailsModel
         .findOneAndUpdate({ _id: existingPayment._id }, updateData, {
@@ -954,6 +1039,22 @@ export class PaymentsService {
             manufacturerId: anyProduct.manufacturerId.toString(),
           };
         }
+      }
+
+      if (
+        paymentStatusUpdate.adminApprovedPayment &&
+        paymentType === 'certification'
+      ) {
+        const productsRaw =
+          updatedPayment.productsToBeCertified ??
+          existingPayment.productsToBeCertified;
+        await this.certificationLifecycle.applyCertificationApproval({
+          urnNoOptions: urnOptions,
+          vendorId: effectiveVendorObjectId,
+          productsToBeCertifiedRaw: productsRaw,
+          approvedAt: now,
+          session,
+        });
       }
 
       await session.commitTransaction();
@@ -1042,7 +1143,16 @@ export class PaymentsService {
         }
       }
 
-      if (paymentStatusUpdate.adminApprovedPayment) {
+      const previousPaymentStatus = Number(existingPayment.paymentStatus ?? 0);
+      const newPaymentStatus = Number(updatedPayment.paymentStatus ?? 0);
+      const certificationSubmitted =
+        paymentType === 'certification' &&
+        this.isVendorPortalRole(actorRole) &&
+        previousPaymentStatus !== 1 &&
+        newPaymentStatus === 1 &&
+        (vendorProofUpdate || updatePaymentDto.paymentStatus === 1);
+
+      if (certificationSubmitted) {
         const anyProduct = await this.productModel
           .findOne({
             urnNo: { $in: urnOptions },
@@ -1059,15 +1169,76 @@ export class PaymentsService {
             anyProduct.manufacturerId.toString(),
             normalizedUrn,
             {
-              activity: 'Registration payment approved by admin',
+              activity: 'Vendor submitted certification payment',
+              responsibility: 'Vendor',
+              next_activity: 'Approve certificate fee',
+              next_responsibility: 'Admin',
+              activities_id: urnStatus,
+              activity_status: urnStatus,
+            },
+            urnStatus,
+          );
+          this.lifecycleNotification
+            .notifyCertificationPaymentSubmitted({
+              manufacturerId: anyProduct.manufacturerId.toString(),
+              urnNo: normalizedUrn,
+              paymentId: updatedPayment.paymentId,
+              quoteTotal: updatedPayment.quoteTotal,
+            })
+            .catch((err) =>
+              console.warn(
+                '[Payment] Certification submitted notification failed:',
+                (err as Error)?.message,
+              ),
+            );
+        }
+      }
+
+      if (paymentStatusUpdate.adminApprovedPayment) {
+        const anyProduct = await this.productModel
+          .findOne({
+            urnNo: { $in: urnOptions },
+            vendorId: effectiveVendorObjectId,
+          })
+          .select('manufacturerId urnStatus')
+          .lean()
+          .exec();
+        if (anyProduct) {
+          const urnStatus =
+            typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
+          const isCertification = paymentType === 'certification';
+          await this.logTimelineEntry(
+            effectiveVendorId,
+            anyProduct.manufacturerId.toString(),
+            normalizedUrn,
+            {
+              activity: isCertification
+                ? 'Certification payment approved by admin'
+                : 'Registration payment approved by admin',
               responsibility: 'Admin',
-              next_activity: 'Process form in progress',
+              next_activity: isCertification
+                ? 'Approved certificate fee'
+                : 'Process form in progress',
               next_responsibility: 'Vendor',
               activities_id: urnStatus,
               activity_status: urnStatus,
             },
             urnStatus,
           );
+          if (isCertification) {
+            this.lifecycleNotification
+              .notifyCertificationPaymentApproved({
+                manufacturerId: anyProduct.manufacturerId.toString(),
+                urnNo: normalizedUrn,
+                paymentId: updatedPayment.paymentId,
+              })
+              .catch((err) =>
+                console.warn(
+                  '[Payment] Certification approved notification failed:',
+                  (err as Error)?.message,
+                ),
+              );
+          }
         }
       }
 

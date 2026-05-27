@@ -32,6 +32,7 @@ import { ListProductsDto } from './dto/list-products.dto';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
 import { AdminProductsExportDto } from './dto/admin-products-export.dto';
 import { SequenceHelper } from './helpers/sequence.helper';
+import { computeNotifyDates } from './helpers/certification-dates.util';
 import { EoiNumberService } from './services/eoi-number.service';
 import {
   matchActiveProductPlants,
@@ -51,6 +52,8 @@ import {
 import { urnLookupMatchExpr } from './utils/urn-lookup-match.util';
 import { RedisService } from '../common/redis/redis.service';
 import { UrnSiteVisitsService } from '../urn-site-visits/urn-site-visits.service';
+import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import { UrnTabReviewService } from './urn-tab-review.service';
 
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
@@ -95,6 +98,8 @@ export class ProductRegistrationService {
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
     private readonly urnSiteVisitsService: UrnSiteVisitsService,
+    private readonly lifecycleNotification: LifecycleNotificationService,
+    private readonly urnTabReviewService: UrnTabReviewService,
   ) {}
 
   private getProductListCacheTtlSeconds(): number {
@@ -1668,21 +1673,40 @@ export class ProductRegistrationService {
         'validtillDate',
         updateProductDto.validtillDate,
       );
-      this.applyOptionalDateField(
-        updateData,
-        'firstNotifyDate',
-        updateProductDto.firstNotifyDate,
-      );
-      this.applyOptionalDateField(
-        updateData,
-        'secondNotifyDate',
-        updateProductDto.secondNotifyDate,
-      );
-      this.applyOptionalDateField(
-        updateData,
-        'thirdNotifyDate',
-        updateProductDto.thirdNotifyDate,
-      );
+
+      let syncValidityToUrn = false;
+      if (updateProductDto.validtillDate !== undefined) {
+        const newValidTill = updateData.validtillDate as Date | undefined;
+        if (newValidTill) {
+          const previous = existingProduct.validtillDate
+            ? new Date(existingProduct.validtillDate).getTime()
+            : null;
+          const nextTime = newValidTill.getTime();
+          if (previous !== nextTime) {
+            const notify = computeNotifyDates(newValidTill);
+            updateData.firstNotifyDate = notify.firstNotifyDate;
+            updateData.secondNotifyDate = notify.secondNotifyDate;
+            updateData.thirdNotifyDate = notify.thirdNotifyDate;
+            syncValidityToUrn = true;
+          }
+        }
+      } else {
+        this.applyOptionalDateField(
+          updateData,
+          'firstNotifyDate',
+          updateProductDto.firstNotifyDate,
+        );
+        this.applyOptionalDateField(
+          updateData,
+          'secondNotifyDate',
+          updateProductDto.secondNotifyDate,
+        );
+        this.applyOptionalDateField(
+          updateData,
+          'thirdNotifyDate',
+          updateProductDto.thirdNotifyDate,
+        );
+      }
       this.applyOptionalDateField(
         updateData,
         'renewedDate',
@@ -1727,6 +1751,30 @@ export class ProductRegistrationService {
             { session },
           )
           .exec();
+      }
+
+      if (syncValidityToUrn) {
+        const urnNo = String(existingProduct.urnNo ?? '').trim();
+        if (urnNo) {
+          await this.productModel
+            .updateMany(
+              matchActiveProducts({
+                urnNo,
+                productStatus: 2,
+              }),
+              {
+                $set: {
+                  validtillDate: updateData.validtillDate,
+                  firstNotifyDate: updateData.firstNotifyDate,
+                  secondNotifyDate: updateData.secondNotifyDate,
+                  thirdNotifyDate: updateData.thirdNotifyDate,
+                  updatedDate: new Date(),
+                },
+              },
+              { session },
+            )
+            .exec();
+        }
       }
 
       await session.commitTransaction();
@@ -1807,6 +1855,9 @@ export class ProductRegistrationService {
         );
       }
 
+      const previousUrnStatus = Number(existingProduct.urnStatus ?? 0);
+      const nextUrnStatus = updateUrnStatusDto.updateStatusTo;
+
       // Update urnStatus
       const updatedProduct = await this.productModel
         .findOneAndUpdate(
@@ -1835,8 +1886,31 @@ export class ProductRegistrationService {
         vendorObjectId,
         existingProduct.manufacturerId,
         updateUrnStatusDto.urnNo,
-        updateUrnStatusDto.updateStatusTo,
+        nextUrnStatus,
       );
+
+      if (previousUrnStatus !== 4 && nextUrnStatus === 4) {
+        this.urnTabReviewService
+          .ensurePendingReviewsForUrn(updateUrnStatusDto.urnNo.trim())
+          .catch((err) =>
+            this.logger.warn(
+              `[Update URN Status] Tab review init failed: ${(err as Error).message}`,
+            ),
+          );
+        this.lifecycleNotification
+          .notifyUrnSubmittedForReview({
+            manufacturerId: manufacturerId.toString(),
+            urnNo: updateUrnStatusDto.urnNo.trim(),
+            productName: existingProduct.productName,
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `[Update URN Status] Submit-for-review notification failed: ${
+                (err as Error)?.message
+              }`,
+            ),
+          );
+      }
 
       await this.invalidateProductListingsCache();
       return updatedProduct;
@@ -1891,6 +1965,8 @@ export class ProductRegistrationService {
     const now = new Date();
     const vendorId = products[0].vendorId;
     const manufacturerId = products[0].manufacturerId;
+    const previousUrnStatus = Number(products[0].urnStatus ?? 0);
+    const sampleProductName = String(products[0].productName ?? '').trim();
 
     const setDoc: Record<string, unknown> = { updatedDate: now };
     if (dto.updateStatusType === 'urn_status') {
@@ -1924,6 +2000,38 @@ export class ProductRegistrationService {
         urnNo,
         dto.updateStatusTo,
       );
+
+      if (dto.updateStatusTo === 4 && previousUrnStatus !== 4) {
+        this.urnTabReviewService
+          .ensurePendingReviewsForUrn(urnNo)
+          .catch((err) =>
+            this.logger.warn(
+              `[Admin URN Status] Tab review init failed: ${(err as Error).message}`,
+            ),
+          );
+      }
+
+      if (
+        dto.updateStatusTo === 2 &&
+        previousUrnStatus < 2 &&
+        previousUrnStatus !== dto.updateStatusTo
+      ) {
+        this.lifecycleNotification
+          .notifyUrnInitialApproved({
+            manufacturerId: manufacturerId.toString(),
+            urnNo,
+            productName: sampleProductName || urnNo,
+            approvedBy: 'GreenPro Admin',
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `[Admin URN Status] Initial approval notification failed: ${
+                (err as Error)?.message
+              }`,
+            ),
+          );
+      }
+
       await this.invalidateProductListingsCache();
       return { urnNo, urnStatus: dto.updateStatusTo };
     }

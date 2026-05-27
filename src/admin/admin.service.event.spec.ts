@@ -94,7 +94,7 @@ describe('AdminService Event Functionality', () => {
 
     expect(result.eventName).toBe('Green Summit');
     expect(result.eventId).toBe(9);
-    expect(notificationModel.create).toHaveBeenCalledTimes(1);
+    expect(notificationModel.create).not.toHaveBeenCalled();
   });
 
   it('updates event by object id', async () => {
@@ -114,7 +114,7 @@ describe('AdminService Event Functionality', () => {
 
     expect(eventModel.findByIdAndUpdate).toHaveBeenCalled();
     expect(result.eventName).toBe('Updated Event');
-    expect(notificationModel.create).toHaveBeenCalledTimes(1);
+    expect(notificationModel.create).not.toHaveBeenCalled();
   });
 
   it('throws bad request for invalid event id during update', async () => {
@@ -175,7 +175,7 @@ describe('AdminService Event Functionality', () => {
     );
     const id = new Types.ObjectId().toString();
     await expect(service.deleteEvent(id)).resolves.toEqual({ id });
-    expect(notificationModel.create).toHaveBeenCalledTimes(1);
+    expect(notificationModel.create).not.toHaveBeenCalled();
   });
 
   it('toggles event status when omitted', async () => {

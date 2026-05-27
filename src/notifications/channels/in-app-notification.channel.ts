@@ -84,6 +84,10 @@ export class InAppNotificationChannel implements NotificationChannelHandler {
         deleted_at: null,
       });
 
+      this.logger.log(
+        `In-app notification created [${context.template}] user=${userId} id=${doc.id}`,
+      );
+
       return {
         channel: this.channel,
         success: true,

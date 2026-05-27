@@ -23,6 +23,7 @@ import type { InnovationDocumentTag } from './utils/innovation-document-tag.util
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 
 @Injectable()
 export class ProcessInnovationService implements OnModuleInit {
@@ -33,6 +34,7 @@ export class ProcessInnovationService implements OnModuleInit {
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
   ) {}
 
   async onModuleInit() {
@@ -184,6 +186,12 @@ export class ProcessInnovationService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
+
+      this.documentUploadNotification.notifyAfterDocumentsUploaded(
+        vendorId,
+        innovationImplementationDocumentsFilePaths.length,
+        createProcessInnovationDto.urnNo,
+      );
 
       return savedProcessInnovation;
     } catch (error: any) {

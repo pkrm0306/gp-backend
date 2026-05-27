@@ -9,7 +9,10 @@ import {
 } from 'class-validator';
 
 export class UpdateUrnSiteVisitDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Manufacturing plant name for this URN (single select; must match GET plant-options for the URN).',
+  })
   @IsOptional()
   @IsString()
   @IsNotEmpty()

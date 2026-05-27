@@ -256,8 +256,9 @@ export class PaymentsController {
         },
         productsToBeCertified: {
           type: 'string',
-          description: 'Products to be certified (JSON string)',
-          example: '["product1", "product2"]',
+          description:
+            'Numeric productId values only — JSON array string, e.g. "[101,102]"',
+          example: '[101,102]',
         },
         proposal_file: {
           type: 'string',
@@ -479,7 +480,7 @@ export class PaymentsController {
         onlinePaymentId: { type: 'number', example: 0 },
         paymentReferenceNo: { type: 'string', example: 'REF123456' },
         paymentChequeDate: { type: 'string', format: 'date-time', example: '2026-03-06T00:00:00.000Z' },
-        productsToBeCertified: { type: 'string', example: '["product1","product2"]' },
+        productsToBeCertified: { type: 'string', example: '[101,102]' },
         paymentStatus: { type: 'number', enum: [0, 1, 2, 3], example: 0 },
         paymentRejectionRemarks: {
           type: 'string',

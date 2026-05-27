@@ -20,6 +20,7 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 
 @Injectable()
 export class ProcessProductStewardshipService implements OnModuleInit {
@@ -30,6 +31,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
   ) {}
 
   async onModuleInit() {
@@ -303,6 +305,14 @@ export class ProcessProductStewardshipService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
+
+      const uploadedDocumentCount =
+        seaFilePaths.length + qmFilePaths.length + eprFilePaths.length;
+      this.documentUploadNotification.notifyAfterDocumentsUploaded(
+        vendorId,
+        uploadedDocumentCount,
+        createProcessProductStewardshipDto.urnNo,
+      );
 
       for (const fileLink of oldFileLinksToDeleteAfterCommit) {
         const normalizedPath = String(fileLink).replace(/\\/g, '/');

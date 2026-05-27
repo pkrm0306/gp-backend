@@ -26,9 +26,17 @@ export class Notification {
   @Prop({ trim: true })
   actorName?: string;
 
+  /** `0` = unseen, `1` = seen (admin bell feed). */
+  @Prop({ required: true, default: 0 })
+  seen: number;
+
+  @Prop({ type: Date, default: null })
+  seenAt?: Date | null;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export const NotificationSchema = SchemaFactory.createForClass(Notification);
 NotificationSchema.index({ createdAt: -1 });
+NotificationSchema.index({ seen: 1, createdAt: -1 });
