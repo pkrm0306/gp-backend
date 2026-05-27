@@ -39,7 +39,7 @@ And start command like:
 npm run start:prod
 ```
 
-(`start:prod` should run `node dist/main.js`; `prestart:prod` should run `npm run build`.)
+(`start:prod` should run `node dist/src/main.js`; `prestart:prod` should run `npm run build`.)
 
 ## 3) Verify frontend API base URL
 
