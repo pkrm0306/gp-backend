@@ -9,6 +9,7 @@ import { ProductController } from './product.controller';
 import { ProductRegistrationService } from './product-registration.service';
 import { EoiNumberService } from './services/eoi-number.service';
 import { ProductSoftDeleteService } from './services/product-soft-delete.service';
+import { VendorCertificateService } from './services/vendor-certificate.service';
 import { Product, ProductSchema } from './schemas/product.schema';
 import {
   ProductPlant,
@@ -26,6 +27,14 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { UrnSiteVisitsModule } from '../urn-site-visits/urn-site-visits.module';
 import { Category, CategorySchema } from '../categories/schemas/category.schema';
 import {
+  Manufacturer,
+  ManufacturerSchema,
+} from '../manufacturers/schemas/manufacturer.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentSchema,
+} from '../product-design/schemas/all-product-document.schema';
+import {
   UrnProcessTabReview,
   UrnProcessTabReviewSchema,
 } from './schemas/urn-process-tab-review.schema';
@@ -38,6 +47,8 @@ import { CertificationLifecycleService } from './certification-lifecycle.service
       { name: Product.name, schema: ProductSchema },
       { name: ProductPlant.name, schema: ProductPlantSchema },
       { name: Category.name, schema: CategorySchema },
+      { name: Manufacturer.name, schema: ManufacturerSchema },
+      { name: AllProductDocument.name, schema: AllProductDocumentSchema },
       { name: UrnProcessTabReview.name, schema: UrnProcessTabReviewSchema },
     ]),
     PassportModule,
@@ -65,6 +76,7 @@ import { CertificationLifecycleService } from './certification-lifecycle.service
     PermissionsGuard,
     UrnTabReviewService,
     CertificationLifecycleService,
+    VendorCertificateService,
   ],
   exports: [
     ProductRegistrationService,
@@ -73,6 +85,7 @@ import { CertificationLifecycleService } from './certification-lifecycle.service
     SequenceHelper,
     UrnTabReviewService,
     CertificationLifecycleService,
+    VendorCertificateService,
   ],
 })
 export class ProductRegistrationModule {}

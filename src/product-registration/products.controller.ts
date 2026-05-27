@@ -1,4 +1,6 @@
 import {
+  HttpCode,
+  HttpStatus,
   Controller,
   Get,
   Patch,
@@ -6,19 +8,30 @@ import {
   Param,
   UseGuards,
   BadRequestException,
+  UploadedFile,
+  UseInterceptors,
+  Res,
+  StreamableFile,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiBody,
+  ApiConsumes,
 } from '@nestjs/swagger';
 import { ProductRegistrationService } from './product-registration.service';
 import { UrnTabReviewService } from './urn-tab-review.service';
 import { UpdateUrnStatusDto } from './dto/update-urn-status.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { VendorPatchCertifiedProductDto } from './dto/vendor-patch-certified-product.dto';
+import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { VendorCertificateService } from './services/vendor-certificate.service';
 
 @ApiTags('Products')
 @Controller('products')
@@ -28,6 +41,7 @@ export class ProductsController {
   constructor(
     private readonly productRegistrationService: ProductRegistrationService,
     private readonly urnTabReviewService: UrnTabReviewService,
+    private readonly vendorCertificateService: VendorCertificateService,
   ) {}
 
   @Get('renew-list')
@@ -96,6 +110,67 @@ export class ProductsController {
       console.error('Controller error:', error);
       throw error;
     }
+  }
+
+  @Patch('certified/:productId')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('productImage', adminImageMemoryMulterOptions()),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Vendor edit certified product',
+    description:
+      'Vendor-only patch endpoint for certified list edit popup. Allows updating product name, description, and optional image for the logged-in vendor.',
+  })
+  @ApiParam({
+    name: 'productId',
+    description: 'MongoDB product document _id',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        productName: { type: 'string' },
+        productDetails: { type: 'string' },
+        productImage: {
+          type: 'string',
+          format: 'binary',
+          description: 'Optional product image (JPEG, PNG, GIF, WebP)',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Certified product updated' })
+  @ApiResponse({
+    status: 400,
+    description: 'Not certified or no editable fields provided',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found for this vendor',
+  })
+  async vendorPatchCertifiedProduct(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Param('productId') productId: string,
+    @Body() dto: VendorPatchCertifiedProductDto,
+    @UploadedFile() productImage?: Express.Multer.File,
+  ) {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+
+    const data = await this.productRegistrationService.vendorPatchCertifiedProduct(
+      productId.trim(),
+      dto,
+      user.manufacturerId,
+      productImage,
+    );
+    return {
+      success: true,
+      message: 'Certified product updated successfully',
+      data,
+    };
   }
 
   @Get('urn-tab-review/:urn_no')
@@ -421,5 +496,75 @@ export class ProductsController {
       console.error('Controller error:', error);
       throw error;
     }
+  }
+
+  @Get('certificates/eoi/:productId')
+  @ApiOperation({
+    summary: 'Download certified product certificate (single EOI)',
+    description:
+      'Vendor-only. Downloads the GreenPro certificate PDF for one certified product (`productStatus = 2`) owned by the logged-in manufacturer.',
+  })
+  @ApiParam({
+    name: 'productId',
+    description: 'MongoDB product document _id from certified list',
+  })
+  @ApiResponse({ status: 200, description: 'Certificate PDF download' })
+  @ApiResponse({ status: 404, description: 'Certified product not found' })
+  async downloadEoiCertificate(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Param('productId') productId: string,
+  ): Promise<StreamableFile> {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const file = await this.vendorCertificateService.downloadEoiCertificate(
+      user.manufacturerId,
+      productId,
+    );
+    return new StreamableFile(file.buffer, {
+      type: file.contentType,
+      disposition: `attachment; filename="${file.fileName}"`,
+    });
+  }
+
+  @Get('certificates/urn/:urnNo/download')
+  @ApiOperation({
+    summary: 'Download all certificates for a URN (ZIP)',
+    description:
+      'Vendor-only. Bundles all certified EOI certificates under the given URN into a ZIP file.',
+  })
+  @ApiParam({
+    name: 'urnNo',
+    description: 'URN number',
+    example: 'URN-20260527122016',
+  })
+  @ApiResponse({ status: 200, description: 'ZIP download' })
+  @ApiResponse({ status: 404, description: 'No certified certificates found' })
+  async downloadUrnCertificatesZip(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Param('urnNo') urnNo: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const { stream, fileName } =
+      await this.vendorCertificateService.downloadUrnCertificatesZip(
+        user.manufacturerId,
+        urnNo,
+      );
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+    });
+    stream.on('error', () => {
+      if (!res.headersSent) {
+        res.status(500).end();
+        return;
+      }
+      res.end();
+    });
+    stream.pipe(res);
+    await stream.finalize();
   }
 }

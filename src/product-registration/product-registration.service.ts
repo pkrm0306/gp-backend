@@ -30,6 +30,7 @@ import { UpdateUrnStatusDto } from './dto/update-urn-status.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 import { ListProductsDto } from './dto/list-products.dto';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
+import { AdminListProductsFilterOptionsDto } from './dto/admin-list-products-filter-options.dto';
 import { AdminProductsExportDto } from './dto/admin-products-export.dto';
 import { SequenceHelper } from './helpers/sequence.helper';
 import { computeNotifyDates } from './helpers/certification-dates.util';
@@ -54,6 +55,9 @@ import { RedisService } from '../common/redis/redis.service';
 import { UrnSiteVisitsService } from '../urn-site-visits/urn-site-visits.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import { UrnTabReviewService } from './urn-tab-review.service';
+import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-product.dto';
+import { VendorPatchCertifiedProductDto } from './dto/vendor-patch-certified-product.dto';
+import { uploadFile } from '../utils/upload-file.util';
 
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
@@ -154,7 +158,7 @@ export class ProductRegistrationService {
       dateFrom: listProductsDto.dateFrom ?? null,
       dateTo: listProductsDto.dateTo ?? null,
       sort: listProductsDto.sort === 'asc' ? 'asc' : 'desc',
-      v: 3,
+      v: 4,
     };
     return this.redisService.buildKey(
       'products',
@@ -182,8 +186,15 @@ export class ProductRegistrationService {
       search: String(dto.search || '').trim().toLowerCase(),
       product_type: dto.product_type ?? null,
       categoryId: dto.categoryId ?? null,
+      categoryIds: this.resolveAdminListCategoryIds(dto)?.join(',') ?? null,
       manufacturerId: dto.manufacturerId ?? null,
+      manufacturerIds: this.resolveAdminListManufacturerIds(dto)?.join(',') ?? null,
+      manufacturerNames:
+        this.resolveAdminListManufacturerNames(dto)?.join('|') ?? null,
+      countryId: dto.countryId ?? null,
       stateId: this.resolveAdminListPlantStateObjectId(dto) ?? null,
+      stateIds: this.resolveAdminListPlantStateObjectIds(dto)?.join(',') ?? null,
+      stateNames: this.resolveAdminListPlantStateNames(dto)?.join('|') ?? null,
       state_name: String(dto.state_name || '').trim().toLowerCase(),
       stateLegacy: (() => {
         const s = dto.state != null ? String(dto.state).trim() : '';
@@ -191,12 +202,15 @@ export class ProductRegistrationService {
         return s.toLowerCase();
       })(),
       city: String(dto.city || '').trim().toLowerCase(),
+      cities: this.resolveAdminListCities(dto)?.join('|') ?? null,
       from: dto.from ?? dto.fromDate ?? null,
       to: dto.to ?? dto.toDate ?? null,
       validTillYear: dto.validTillYear ?? null,
+      validTillYears:
+        this.resolveAdminListValidTillYears(dto)?.join(',') ?? null,
       sectorIds: this.resolveAdminListSectorIds(dto)?.join(',') ?? null,
       status: resolvedStatus,
-      v: 8,
+      v: 10,
     };
     return this.redisService.buildKey(
       'products',
@@ -269,6 +283,91 @@ export class ProductRegistrationService {
     return undefined;
   }
 
+  private escapeRegexLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private resolveAdminListCategoryIds(dto: AdminListProductsDto): string[] | null {
+    const multi = dto.categoryIds ?? dto.category_ids;
+    if (Array.isArray(multi) && multi.length > 0) {
+      return multi;
+    }
+    if (dto.categoryId) {
+      return [dto.categoryId];
+    }
+    return null;
+  }
+
+  private resolveAdminListManufacturerIds(
+    dto: AdminListProductsDto,
+  ): string[] | null {
+    const multi = dto.manufacturerIds ?? dto.manufacturer_ids;
+    if (Array.isArray(multi) && multi.length > 0) {
+      return multi;
+    }
+    if (dto.manufacturerId) {
+      return [dto.manufacturerId];
+    }
+    return null;
+  }
+
+  private resolveAdminListManufacturerNames(
+    dto: AdminListProductsDto,
+  ): string[] | null {
+    const multi = dto.manufacturerNames ?? dto.manufacturer_names;
+    if (!Array.isArray(multi) || multi.length === 0) {
+      return null;
+    }
+    const names = multi.map((n) => String(n).trim()).filter((n) => n.length > 0);
+    return names.length > 0 ? names : null;
+  }
+
+  private resolveAdminListPlantStateObjectIds(
+    dto: AdminListProductsDto,
+  ): string[] | null {
+    const multi = dto.stateIds ?? dto.state_ids;
+    if (Array.isArray(multi) && multi.length > 0) {
+      return multi;
+    }
+    const single = this.resolveAdminListPlantStateObjectId(dto);
+    return single ? [single] : null;
+  }
+
+  private resolveAdminListPlantStateNames(
+    dto: AdminListProductsDto,
+  ): string[] | null {
+    const multi = dto.stateNames ?? dto.state_names;
+    if (Array.isArray(multi) && multi.length > 0) {
+      const names = multi.map((n) => String(n).trim()).filter((n) => n.length > 0);
+      return names.length > 0 ? names : null;
+    }
+    const single = this.resolveAdminListPlantStateNameSearch(dto);
+    return single ? [single] : null;
+  }
+
+  private resolveAdminListCities(dto: AdminListProductsDto): string[] | null {
+    if (Array.isArray(dto.cities) && dto.cities.length > 0) {
+      const cities = dto.cities.map((c) => String(c).trim()).filter((c) => c.length > 0);
+      return cities.length > 0 ? cities : null;
+    }
+    if (dto.city && dto.city.trim() !== '') {
+      return [dto.city.trim()];
+    }
+    return null;
+  }
+
+  private resolveAdminListValidTillYears(dto: AdminListProductsDto): number[] | null {
+    const multi = dto.validTillYears ?? dto.valid_till_years;
+    if (Array.isArray(multi) && multi.length > 0) {
+      const years = [...new Set(multi.map((y) => Number(y)).filter((y) => Number.isFinite(y)))];
+      return years.length > 0 ? years : null;
+    }
+    if (dto.validTillYear !== undefined) {
+      return [dto.validTillYear];
+    }
+    return null;
+  }
+
   /** Resolves sector filter from list DTO (multi list wins over single id). */
   private resolveAdminListSectorIds(dto: AdminListProductsDto): number[] | null {
     const multi = dto.sectorIds ?? dto.sector_ids;
@@ -339,6 +438,15 @@ export class ProductRegistrationService {
         createdDate: p?.createdDate,
       })),
       statusLabel,
+      categoryId: this.toMongoIdString(e?.categoryId),
+      productImage:
+        e?.productImage != null && String(e.productImage).trim() !== ''
+          ? String(e.productImage).trim()
+          : null,
+      validtillDate: e?.validtillDate ?? null,
+      validTill: e?.validtillDate ?? null,
+      validTillDate: e?.validtillDate ?? null,
+      valid_till_date: e?.validtillDate ?? null,
     };
   }
 
@@ -740,6 +848,8 @@ export class ProductRegistrationService {
         productStatus,
         e?.validtillDate as Date | string | null | undefined,
       ),
+      validtillDate: e?.validtillDate ?? null,
+      validTill: e?.validtillDate ?? null,
       createdDate: e?.createdDate,
       hpUnits: Number(e?.plantCount ?? 0),
       plantCount: Number(e?.plantCount ?? 0),
@@ -762,7 +872,7 @@ export class ProductRegistrationService {
    * Vendor uncertified EOI list — filters on **`products.productStatus`** (EOI list status), not manufacturer/vendor status.
    * When `statuses` is omitted or empty, defaults to **Pending (0) + Submitted (1)** only.
    * Code **4** = expired certified (`productStatus` 2 with `validtillDate` in the past).
-   * Explicit **2** alone (no 4) keeps legacy behaviour: no matching rows (empty `$in`).
+   * Explicit **2** alone (no 4) = active certified only (`validtillDate` null or not yet passed).
    */
   private buildVendorListProductStatusMatch(
     statuses: number[] | null | undefined,
@@ -774,13 +884,21 @@ export class ProductRegistrationService {
     const includeExpired = effective.includes(4);
     const regularStatuses = effective.filter((s) => s !== 4);
 
+    /** Certified (2) without expired (4): active certificates only. */
     if (
       explicit &&
       regularStatuses.length === 1 &&
       regularStatuses[0] === 2 &&
       !includeExpired
     ) {
-      return { productStatus: { $in: [] } };
+      return {
+        productStatus: 2,
+        $or: [
+          { validtillDate: null },
+          { validtillDate: { $exists: false } },
+          { validtillDate: { $gte: now } },
+        ],
+      };
     }
 
     if (includeExpired && regularStatuses.length > 0) {
@@ -993,6 +1111,29 @@ export class ProductRegistrationService {
    */
   private getNextActivityName(urnStatus: number): string {
     return this.getActivityName(this.getNextActivityIdForLog(urnStatus));
+  }
+
+  /**
+   * Vendor panel compatibility: "submit for review" actions should always move URN to 4.
+   * Some clients still send stale updateStatusTo values; normalize here to avoid wrong stage transitions.
+   */
+  private resolveVendorRequestedUrnStatus(
+    updateStatusType: string | undefined,
+    updateStatusTo: number,
+  ): number {
+    const type = String(updateStatusType ?? '')
+      .trim()
+      .toLowerCase();
+    if (
+      type === 'submit_for_review' ||
+      type === 'submit-for-review' ||
+      type === 'process_form_submit' ||
+      type === 'process-form-submit' ||
+      type === 'process_form_submitted'
+    ) {
+      return 4;
+    }
+    return updateStatusTo;
   }
 
   /**
@@ -1825,6 +1966,136 @@ export class ProductRegistrationService {
   }
 
   /**
+   * Admin: edit a certified product (productStatus === 2 only).
+   * Updates name, description, category, valid till, and optional image; reuses updateProduct transaction logic.
+   */
+  async adminPatchCertifiedProduct(
+    productId: string,
+    dto: AdminPatchCertifiedProductDto,
+    imageFile?: Express.Multer.File,
+  ) {
+    const productObjectId = this.toObjectId(productId, 'productId');
+    const existing = await this.productModel
+      .findById(productObjectId)
+      .select('productStatus urnNo eoiNo')
+      .lean()
+      .exec();
+
+    if (!existing) {
+      throw new NotFoundException('Product not found');
+    }
+
+    if (Number(existing.productStatus) !== 2) {
+      throw new BadRequestException(
+        'Only certified products (productStatus 2) can be edited from the admin certified list',
+      );
+    }
+
+    let productImage: string | undefined;
+    if (imageFile) {
+      const uploaded = await uploadFile(imageFile, 'products');
+      productImage = uploaded.fileUrl;
+    }
+
+    const validTillRaw = dto.validtillDate ?? dto.validTillDate;
+    const updateDto: UpdateProductDto = {
+      productName: dto.productName.trim(),
+      productDetails: dto.productDetails,
+      urnNo: String(dto.urnNo).trim(),
+      eoiNo: String(dto.eoiNo).trim(),
+      categoryId: dto.categoryId,
+      validtillDate: validTillRaw,
+      ...(productImage !== undefined ? { productImage } : {}),
+    };
+
+    const updated = await this.updateProduct(productId, updateDto);
+    return updated;
+  }
+
+  async vendorPatchCertifiedProduct(
+    productId: string,
+    dto: VendorPatchCertifiedProductDto,
+    manufacturerId: string,
+    imageFile?: Express.Multer.File,
+  ) {
+    const productObjectId = this.toObjectId(productId, 'productId');
+    const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+
+    const existing = await this.productModel
+      .findOne({
+        _id: productObjectId,
+        vendorId: vendorObjectId,
+      })
+      .select('_id productStatus')
+      .lean()
+      .exec();
+
+    if (!existing) {
+      throw new NotFoundException(
+        'Certified product not found for this vendor',
+      );
+    }
+
+    if (Number(existing.productStatus) !== 2) {
+      throw new BadRequestException(
+        'Only certified products (productStatus 2) can be edited from vendor certified list',
+      );
+    }
+
+    let productImage: string | undefined;
+    if (imageFile) {
+      const uploaded = await uploadFile(imageFile, 'products');
+      productImage = uploaded.fileUrl;
+    }
+
+    const productName = dto.productName?.trim();
+    const productDetails = dto.productDetails;
+    const hasAnyField =
+      productName !== undefined ||
+      productDetails !== undefined ||
+      productImage !== undefined;
+    if (!hasAnyField) {
+      throw new BadRequestException(
+        'At least one field is required: productName, productDetails, or productImage',
+      );
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      updatedDate: new Date(),
+    };
+    if (productName !== undefined) {
+      updatePayload.productName = productName;
+    }
+    if (productDetails !== undefined) {
+      updatePayload.productDetails = productDetails;
+    }
+    if (productImage !== undefined) {
+      updatePayload.productImage = productImage;
+    }
+
+    const updated = await this.productModel
+      .findOneAndUpdate(
+        {
+          _id: productObjectId,
+          vendorId: vendorObjectId,
+          productStatus: 2,
+        },
+        { $set: updatePayload },
+        { new: true },
+      )
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException(
+        'Certified product not found for this vendor',
+      );
+    }
+
+    await this.invalidateProductListingsCache();
+    return updated.toObject();
+  }
+
+  /**
    * Update URN status for a product
    * Updates products table where vendorId and urnNo match, sets urnStatus to updateStatusTo
    * Also logs activity for the status change
@@ -1856,7 +2127,16 @@ export class ProductRegistrationService {
       }
 
       const previousUrnStatus = Number(existingProduct.urnStatus ?? 0);
-      const nextUrnStatus = updateUrnStatusDto.updateStatusTo;
+      const nextUrnStatus = this.resolveVendorRequestedUrnStatus(
+        updateUrnStatusDto.updateStatusType,
+        updateUrnStatusDto.updateStatusTo,
+      );
+
+      if (nextUrnStatus === 1 && previousUrnStatus >= 3) {
+        throw new BadRequestException(
+          'Invalid URN transition: cannot move back to Registration Payment from current stage',
+        );
+      }
 
       // Update urnStatus
       const updatedProduct = await this.productModel
@@ -1867,7 +2147,7 @@ export class ProductRegistrationService {
           },
           {
             $set: {
-              urnStatus: updateUrnStatusDto.updateStatusTo,
+              urnStatus: nextUrnStatus,
               updatedDate: new Date(),
             },
           },
@@ -4311,6 +4591,146 @@ export class ProductRegistrationService {
     }
   }
 
+  /**
+   * Dropdown values for admin certified (or other) product list filters.
+   * Categories: all active categories. Other fields: distinct values from products in scope.
+   */
+  async adminGetProductListFilterOptions(dto: AdminListProductsFilterOptionsDto) {
+    const statuses = (() => {
+      for (const c of [dto.status, dto.productStatus, dto.product_status]) {
+        if (Array.isArray(c) && c.length > 0) {
+          return c;
+        }
+      }
+      return [2];
+    })();
+
+    const categories = await this.categoryModel
+      .find({ category_status: 1 })
+      .select('_id category_name category_name_normalized')
+      .sort({ category_name: 1 })
+      .lean()
+      .exec();
+
+    const categoryOptions = categories.map((c) => ({
+      value: String(c._id),
+      label: String(c.category_name ?? '').trim() || 'Category',
+    }));
+
+    const productMatch: Record<string, unknown> = {
+      ...matchActiveProducts(),
+      productStatus: statuses.length === 1 ? statuses[0] : { $in: statuses },
+    };
+
+    const plantCountryMatch: Record<string, unknown> = {};
+    if (dto.countryId) {
+      plantCountryMatch.countryId = this.toObjectId(dto.countryId, 'countryId');
+    }
+
+    const [manufacturerRows, cityRows, yearRows] = await Promise.all([
+      this.productModel
+        .aggregate([
+          { $match: productMatch },
+          {
+            $lookup: {
+              from: 'manufacturers',
+              localField: 'manufacturerId',
+              foreignField: '_id',
+              as: 'manufacturer',
+            },
+          },
+          { $unwind: '$manufacturer' },
+          {
+            $group: {
+              _id: '$manufacturerId',
+              label: { $first: '$manufacturer.manufacturerName' },
+            },
+          },
+          { $match: { label: { $type: 'string', $ne: '' } } },
+          { $sort: { label: 1 } },
+          {
+            $project: {
+              _id: 0,
+              value: { $toString: '$_id' },
+              label: 1,
+            },
+          },
+        ])
+        .exec(),
+      this.productModel
+        .aggregate([
+          { $match: productMatch },
+          {
+            $lookup: {
+              from: 'product_plants',
+              let: { pid: '$_id' },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: { $eq: ['$productId', '$$pid'] },
+                    ...matchActiveProductPlants(),
+                    ...(Object.keys(plantCountryMatch).length > 0
+                      ? plantCountryMatch
+                      : {}),
+                  },
+                },
+                { $match: { city: { $type: 'string', $ne: '' } } },
+                { $group: { _id: '$city' } },
+              ],
+              as: 'plantCities',
+            },
+          },
+          { $unwind: '$plantCities' },
+          { $group: { _id: '$plantCities._id' } },
+          { $sort: { _id: 1 } },
+          {
+            $project: {
+              _id: 0,
+              value: '$_id',
+              label: '$_id',
+            },
+          },
+        ])
+        .exec(),
+      this.productModel
+        .aggregate([
+          {
+            $match: {
+              ...productMatch,
+              validtillDate: { $exists: true, $ne: null },
+            },
+          },
+          {
+            $project: {
+              year: { $year: '$validtillDate' },
+            },
+          },
+          { $group: { _id: '$year' } },
+          { $sort: { _id: -1 } },
+        ])
+        .exec(),
+    ]);
+
+    const currentYear = new Date().getUTCFullYear();
+    const validTillYearOptions = yearRows
+      .map((row) => Number(row._id))
+      .filter((y) => Number.isFinite(y) && y <= currentYear)
+      .map((y) => ({
+        value: String(y),
+        label: String(y),
+      }));
+
+    return {
+      message: 'Filter options retrieved successfully',
+      data: {
+        categories: categoryOptions,
+        manufacturers: manufacturerRows as Array<{ value: string; label: string }>,
+        cities: cityRows as Array<{ value: string; label: string }>,
+        validTillYears: validTillYearOptions,
+      },
+    };
+  }
+
   async adminListProducts(dto: AdminListProductsDto) {
     const groupBy = dto.groupBy ?? 'manufacturer';
     if (groupBy === 'urn') {
@@ -4365,14 +4785,19 @@ export class ProductRegistrationService {
     if (dto.product_type !== undefined) {
       nativeMatch.productType = dto.product_type;
     }
-    if (dto.categoryId) {
-      nativeMatch.categoryId = this.toObjectId(dto.categoryId, 'categoryId');
+    const categoryIds = this.resolveAdminListCategoryIds(dto);
+    if (categoryIds && categoryIds.length > 0) {
+      nativeMatch.categoryId = {
+        $in: categoryIds.map((id) => this.toObjectId(id, 'categoryId')),
+      };
     }
-    if (dto.manufacturerId) {
-      nativeMatch.manufacturerId = this.toObjectId(
-        dto.manufacturerId,
-        'manufacturerId',
-      );
+    const manufacturerIds = this.resolveAdminListManufacturerIds(dto);
+    if (manufacturerIds && manufacturerIds.length > 0) {
+      nativeMatch.manufacturerId = {
+        $in: manufacturerIds.map((id) =>
+          this.toObjectId(id, 'manufacturerId'),
+        ),
+      };
     }
     const createdFrom = dto.from ?? dto.fromDate;
     const createdTo = dto.to ?? dto.toDate;
@@ -4388,12 +4813,19 @@ export class ProductRegistrationService {
       }
       nativeMatch.createdDate = createdRange;
     }
-    if (dto.validTillYear !== undefined) {
-      const y = dto.validTillYear;
-      nativeMatch.validtillDate = {
-        $gte: new Date(Date.UTC(y, 0, 1, 0, 0, 0, 0)),
-        $lte: new Date(Date.UTC(y, 11, 31, 23, 59, 59, 999)),
-      };
+    const validTillYears = this.resolveAdminListValidTillYears(dto);
+    if (validTillYears && validTillYears.length > 0) {
+      const yearRanges = validTillYears.map((y) => ({
+        validtillDate: {
+          $gte: new Date(Date.UTC(y, 0, 1, 0, 0, 0, 0)),
+          $lte: new Date(Date.UTC(y, 11, 31, 23, 59, 59, 999)),
+        },
+      }));
+      if (yearRanges.length === 1) {
+        nativeMatch.validtillDate = yearRanges[0].validtillDate;
+      } else {
+        nativeMatch.$or = yearRanges;
+      }
     }
 
     const basePipeline: any[] = [];
@@ -4516,26 +4948,71 @@ export class ProductRegistrationService {
       },
     );
 
-    const plantStateObjectId = this.resolveAdminListPlantStateObjectId(dto);
-    const plantStateNameSearch = this.resolveAdminListPlantStateNameSearch(dto);
-    if (plantStateObjectId || plantStateNameSearch || (dto.city && dto.city.trim() !== '')) {
-      const plantMatch: Record<string, unknown> = {};
-      if (plantStateObjectId) {
-        plantMatch.stateId = this.toObjectId(plantStateObjectId, 'stateId');
+    const plantStateObjectIds = this.resolveAdminListPlantStateObjectIds(dto);
+    const plantStateNames = this.resolveAdminListPlantStateNames(dto);
+    const plantCities = this.resolveAdminListCities(dto);
+    const plantElemParts: Record<string, unknown>[] = [];
+
+    if (dto.countryId) {
+      plantElemParts.push({
+        countryId: this.toObjectId(dto.countryId, 'countryId'),
+      });
+    }
+    if (plantStateObjectIds && plantStateObjectIds.length > 0) {
+      plantElemParts.push({
+        stateId: {
+          $in: plantStateObjectIds.map((id) =>
+            this.toObjectId(id, 'stateId'),
+          ),
+        },
+      });
+    }
+    if (plantStateNames && plantStateNames.length > 0) {
+      if (plantStateNames.length === 1) {
+        plantElemParts.push({
+          stateName: new RegExp(this.escapeRegexLiteral(plantStateNames[0]), 'i'),
+        });
+      } else {
+        plantElemParts.push({
+          $or: plantStateNames.map((name) => ({
+            stateName: new RegExp(this.escapeRegexLiteral(name), 'i'),
+          })),
+        });
       }
-      if (plantStateNameSearch && plantStateNameSearch.trim() !== '') {
-        plantMatch.stateName = new RegExp(
-          plantStateNameSearch.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-          'i',
-        );
+    }
+    if (plantCities && plantCities.length > 0) {
+      if (plantCities.length === 1) {
+        plantElemParts.push({
+          city: new RegExp(this.escapeRegexLiteral(plantCities[0]), 'i'),
+        });
+      } else {
+        plantElemParts.push({
+          $or: plantCities.map((city) => ({
+            city: new RegExp(this.escapeRegexLiteral(city), 'i'),
+          })),
+        });
       }
-      if (dto.city && dto.city.trim() !== '') {
-        plantMatch.city = new RegExp(
-          dto.city.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-          'i',
-        );
-      }
-      basePipeline.push({ $match: { plants: { $elemMatch: plantMatch } } });
+    }
+
+    if (plantElemParts.length > 0) {
+      const elemMatch =
+        plantElemParts.length === 1
+          ? plantElemParts[0]
+          : { $and: plantElemParts };
+      basePipeline.push({ $match: { plants: { $elemMatch: elemMatch } } });
+    }
+
+    const manufacturerNames = this.resolveAdminListManufacturerNames(dto);
+    if (manufacturerNames && manufacturerNames.length > 0) {
+      const escaped = manufacturerNames.map(
+        (name) => new RegExp(`^${this.escapeRegexLiteral(name)}$`, 'i'),
+      );
+      basePipeline.push({
+        $match: {
+          'manufacturer.manufacturerName':
+            escaped.length === 1 ? escaped[0] : { $in: escaped },
+        },
+      });
     }
 
     if (dto.search && dto.search.trim() !== '') {
@@ -4658,6 +5135,8 @@ export class ProductRegistrationService {
           productName: 1,
           productDetails: 1,
           validtillDate: 1,
+          categoryId: 1,
+          productImage: 1,
           categoryName: {
             $ifNull: ['$category.categoryName', '$category.category_name'],
           },
@@ -4695,6 +5174,8 @@ export class ProductRegistrationService {
               productStatus: '$productStatus',
               urnStatus: '$urnStatus',
               validtillDate: '$validtillDate',
+              categoryId: '$categoryId',
+              productImage: '$productImage',
               createdDate: '$createdDate',
               categoryName: '$categoryName',
               sector: '$sector',
@@ -4999,6 +5480,8 @@ export class ProductRegistrationService {
                 productStatus: 1,
                 urnStatus: 1,
                 validtillDate: 1,
+                categoryId: 1,
+                productImage: 1,
                 createdDate: 1,
                 categoryName: {
                   $ifNull: [

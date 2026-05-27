@@ -9,8 +9,11 @@ import {
   Patch,
   Post,
   StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -24,12 +27,15 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ProductRegistrationService } from './product-registration.service';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
+import { AdminListProductsFilterOptionsDto } from './dto/admin-list-products-filter-options.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PatchUrnTabReviewDto } from './dto/urn-tab-review.dto';
 import { UrnTabReviewService } from './urn-tab-review.service';
+import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-product.dto';
+import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
 
 /**
  * Admin list filters EOIs by **product** `productStatus` (EOI lifecycle), not manufacturer/vendor status.
@@ -163,6 +169,85 @@ export class AdminProductsController {
     };
   }
 
+  @Patch('certified/:productId')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('productImage', adminImageMemoryMulterOptions()),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Edit certified product (admin)',
+    description:
+      'PATCH only for products with **productStatus = 2** (certified). Updates product name, category, description, valid till date, and optional image. ' +
+      'Body must include matching **urnNo** and **eoiNo**. Changes apply to listings after cache invalidation.',
+  })
+  @ApiParam({
+    name: 'productId',
+    description: 'MongoDB product document _id',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: [
+        'productName',
+        'productDetails',
+        'urnNo',
+        'eoiNo',
+        'categoryId',
+        'validtillDate',
+      ],
+      properties: {
+        productName: { type: 'string' },
+        productDetails: { type: 'string' },
+        urnNo: { type: 'string' },
+        eoiNo: { type: 'string' },
+        categoryId: { type: 'string' },
+        validtillDate: { type: 'string', format: 'date' },
+        validTillDate: { type: 'string', format: 'date' },
+        productImage: {
+          type: 'string',
+          format: 'binary',
+          description: 'Optional product image (JPEG, PNG, GIF, WebP)',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Certified product updated' })
+  @ApiResponse({ status: 400, description: 'Not certified or validation error' })
+  @ApiResponse({ status: 404, description: 'Product not found' })
+  async patchCertifiedProduct(
+    @Param('productId') productId: string,
+    @Body() dto: AdminPatchCertifiedProductDto,
+    @UploadedFile() productImage?: Express.Multer.File,
+  ) {
+    const data = await this.productRegistrationService.adminPatchCertifiedProduct(
+      productId.trim(),
+      dto,
+      productImage,
+    );
+    return {
+      success: true,
+      message: 'Certified product updated successfully',
+      data,
+    };
+  }
+
+  @Post('list/filter-options')
+  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Filter dropdown options for admin product list (certified, etc.)',
+    description:
+      'Returns active categories, manufacturers/distinct values from products matching `status` (default `[2]` certified), valid-till years (past years only), and cities. ' +
+      'Use with country/state APIs: `GET /countries`, `GET /states?countryId=`.',
+  })
+  @ApiBody({ type: AdminListProductsFilterOptionsDto })
+  @ApiResponse({ status: 200, description: 'Filter options' })
+  async listFilterOptions(@Body() dto: AdminListProductsFilterOptionsDto) {
+    return this.productRegistrationService.adminGetProductListFilterOptions(dto);
+  }
+
   @Post('list')
   @Permissions(PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({
@@ -171,7 +256,8 @@ export class AdminProductsController {
       'Default **groupBy: manufacturer** paginates manufacturer groups. Each item includes `manufacturer_id`, `manufacturer_name`, `total_urns`, `total_eois`, and nested `urns[]` with `eois[]`. ' +
       'Search matches manufacturer name, URN, EOI, or product name; when a manufacturer qualifies, nested URNs/EOIs reflect filters (Option A). ' +
       'Legacy **groupBy: urn** returns flat URN groups. `total` counts top-level groups (manufacturers or URNs). ' +
-      '**EOI status (`productStatus`):** filter with `status`, `productStatus`, or `product_status` (array of **0–4**). Omit or send empty → defaults to **[0, 1]** (Pending + Submitted). Extra keys like `urnStatusLabels` / `urn_status_labels` are ignored.',
+      '**EOI status (`productStatus`):** filter with `status`, `productStatus`, or `product_status` (array of **0–4**). Omit or send empty → defaults to **[0, 1]** (Pending + Submitted). ' +
+      '**Multi-select filters:** `categoryIds`, `manufacturerIds`, `manufacturerNames`, `stateIds`, `stateNames`, `validTillYears`, `cities`, plus `countryId` for plant country. Single-value aliases (`categoryId`, `stateId`, etc.) still work.',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Products listed successfully' })

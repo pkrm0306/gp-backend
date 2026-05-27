@@ -12,7 +12,7 @@ import {
   Min,
 } from 'class-validator';
 
-function normalizeNumberArray(value: unknown): number[] | undefined {
+export function normalizeNumberArray(value: unknown): number[] | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
@@ -21,6 +21,24 @@ function normalizeNumberArray(value: unknown): number[] | undefined {
     .map((v) => Number(String(v).trim()))
     .filter((v) => Number.isFinite(v));
   return parsed.length > 0 ? parsed : undefined;
+}
+
+export function normalizeStringArray(value: unknown): string[] | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const source = Array.isArray(value) ? value : String(value).split(',');
+  const parsed = source
+    .map((v) => String(v).trim())
+    .filter((v) => v.length > 0);
+  return parsed.length > 0 ? parsed : undefined;
+}
+
+export function normalizeMongoIdArray(value: unknown): string[] | undefined {
+  const arr = normalizeStringArray(value);
+  if (!arr) return undefined;
+  const valid = arr.filter((id) => /^[a-fA-F0-9]{24}$/.test(id));
+  return valid.length > 0 ? valid : undefined;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -109,6 +127,28 @@ export class AdminListProductsDto {
   categoryId?: string;
 
   @ApiPropertyOptional({
+    description:
+      'Multi-select category filter (Mongo category `_id` values). Takes precedence over `categoryId` when non-empty.',
+    type: [String],
+    example: ['507f1f77bcf86cd799439011'],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  categoryIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `categoryIds`.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  category_ids?: string[];
+
+  @ApiPropertyOptional({
     description: 'Manufacturer ID',
     example: '507f1f77bcf86cd799439012',
   })
@@ -116,6 +156,49 @@ export class AdminListProductsDto {
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsMongoId()
   manufacturerId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Multi-select manufacturer filter by Mongo `_id`. Takes precedence over `manufacturerId` when non-empty.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  manufacturerIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `manufacturerIds`.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  manufacturer_ids?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Multi-select manufacturer filter by exact `manufacturerName` (use labels from filter-options).',
+    type: [String],
+    example: ['ABC Solar Pvt Ltd'],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeStringArray(value))
+  @IsArray()
+  @IsString({ each: true })
+  manufacturerNames?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `manufacturerNames`.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeStringArray(value))
+  @IsArray()
+  @IsString({ each: true })
+  manufacturer_names?: string[];
 
   @ApiPropertyOptional({
     description: 'Created date start (ISO date string). Alias: fromDate',
@@ -159,6 +242,38 @@ export class AdminListProductsDto {
   validTillYear?: number;
 
   @ApiPropertyOptional({
+    description:
+      'Multi-select valid-till year filter. Takes precedence over `validTillYear` when non-empty.',
+    type: [Number],
+    example: [2024, 2025],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  validTillYears?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `validTillYears`.',
+    type: [Number],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  valid_till_years?: number[];
+
+  @ApiPropertyOptional({
+    description:
+      'Plant country Mongo `_id`. Use with `stateIds` / state multiselect (states from `GET /states?countryId=`).',
+    example: '507f1f77bcf86cd799439010',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsMongoId()
+  countryId?: string;
+
+  @ApiPropertyOptional({
     description: 'Plant state ID',
     example: '507f1f77bcf86cd799439013',
   })
@@ -187,10 +302,65 @@ export class AdminListProductsDto {
   @IsString()
   state_name?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Multi-select plant state ids (Mongo). Use with `countryId`. Takes precedence over single `stateId` when non-empty.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  stateIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `stateIds`.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  state_ids?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Multi-select plant state names (exact match on resolved plant `stateName`, case-insensitive).',
+    type: [String],
+    example: ['Karnataka', 'Telangana'],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeStringArray(value))
+  @IsArray()
+  @IsString({ each: true })
+  stateNames?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `stateNames`.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeStringArray(value))
+  @IsArray()
+  @IsString({ each: true })
+  state_names?: string[];
+
   @ApiPropertyOptional({ description: 'Plant city', example: 'Mumbai' })
   @IsOptional()
   @IsString()
   city?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Multi-select plant cities (case-insensitive partial match). Takes precedence over `city` when non-empty.',
+    type: [String],
+    example: ['Bengaluru', 'Mumbai'],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeStringArray(value))
+  @IsArray()
+  @IsString({ each: true })
+  cities?: string[];
 
   @ApiPropertyOptional({
     description:
