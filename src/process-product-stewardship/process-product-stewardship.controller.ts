@@ -21,7 +21,10 @@ import { certificationMultipartMemoryMulterOptions } from '../common/upload/mult
 import { ProcessProductStewardshipService } from './process-product-stewardship.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { CreateProcessProductStewardshipDto } from './dto/create-process-product-stewardship.dto';
+import {
+  CreateProcessProductStewardshipDto,
+  ProductStewardshipProgrammeDetailDto,
+} from './dto/create-process-product-stewardship.dto';
 
 @ApiTags('Process Product Stewardship')
 @Controller('process-product-stewardship')
@@ -51,6 +54,13 @@ export class ProcessProductStewardshipController {
           type: 'string',
           description: 'URN number',
           example: 'URN-20260305124230',
+        },
+        programmeDetails: {
+          type: 'string',
+          description:
+            'JSON string array: [{ programmeDetails, numberOfPrograms }]',
+          example:
+            '[{"programmeDetails":"Training programme for channel partners","numberOfPrograms":"4"}]',
         },
         qualityManagementDetails: {
           type: 'string',
@@ -159,6 +169,7 @@ export class ProcessProductStewardshipController {
     // Parse body to get DTO
     const dto: CreateProcessProductStewardshipDto = {
       urnNo: body.urnNo,
+      programmeDetails: this.parseProgrammeDetails(body.programmeDetails),
       qualityManagementDetails: body.qualityManagementDetails,
       eprImplementedDetails: body.eprImplementedDetails,
       eprGreenPackagingDetails: body.eprGreenPackagingDetails,
@@ -222,5 +233,38 @@ export class ProcessProductStewardshipController {
         eprSupportingDocumentsFiles,
       );
     return { success: true, data };
+  }
+
+  private parseProgrammeDetails(
+    raw: unknown,
+  ): ProductStewardshipProgrammeDetailDto[] | undefined {
+    if (raw === undefined || raw === null || raw === '') {
+      return undefined;
+    }
+    if (Array.isArray(raw)) {
+      return raw.map((row) => ({
+        programmeDetails: String((row as any)?.programmeDetails ?? ''),
+        numberOfPrograms: String((row as any)?.numberOfPrograms ?? ''),
+      }));
+    }
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          return parsed.map((row) => ({
+            programmeDetails: String((row as any)?.programmeDetails ?? ''),
+            numberOfPrograms: String((row as any)?.numberOfPrograms ?? ''),
+          }));
+        }
+      } catch {
+        // keep controller error friendly for malformed multipart JSON field
+      }
+      throw new BadRequestException(
+        'programmeDetails must be a JSON array string',
+      );
+    }
+    throw new BadRequestException(
+      'programmeDetails must be a JSON array string',
+    );
   }
 }

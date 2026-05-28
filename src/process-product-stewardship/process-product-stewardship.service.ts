@@ -11,6 +11,10 @@ import {
   ProcessProductStewardshipDocument,
 } from './schemas/process-product-stewardship.schema';
 import {
+  ProcessPsStakeholderEduAwarness,
+  ProcessPsStakeholderEduAwarnessDocument,
+} from './schemas/process-ps-stakeholder-edu-awarness.schema';
+import {
   AllProductDocument,
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
@@ -21,12 +25,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
+import { ProductStewardshipProgrammeDetailDto } from './dto/create-process-product-stewardship.dto';
 
 @Injectable()
 export class ProcessProductStewardshipService implements OnModuleInit {
   constructor(
     @InjectModel(ProcessProductStewardship.name)
     private processProductStewardshipModel: Model<ProcessProductStewardshipDocument>,
+    @InjectModel(ProcessPsStakeholderEduAwarness.name)
+    private processPsStakeholderEduAwarnessModel: Model<ProcessPsStakeholderEduAwarnessDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectConnection() private connection: Connection,
@@ -41,6 +48,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
     if (!shouldSyncIndexes) return;
     try {
       await this.processProductStewardshipModel.syncIndexes();
+      await this.processPsStakeholderEduAwarnessModel.syncIndexes();
     } catch (error) {
       console.error(
         '[process-product-stewardship] syncIndexes failed (check duplicates):',
@@ -71,6 +79,30 @@ export class ProcessProductStewardshipService implements OnModuleInit {
     fileType: 'sea_supporting' | 'qm_supporting' | 'epr_supporting',
   ): Promise<string> {
     return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  }
+
+  private normalizeProgrammeRows(
+    rows?: ProductStewardshipProgrammeDetailDto[],
+  ): Array<{ seaProgramDetails: string; seaNoOfPrograms: string }> {
+    if (!Array.isArray(rows)) {
+      return [];
+    }
+    const normalized = rows
+      .map((row) => ({
+        seaProgramDetails: String(row?.programmeDetails ?? '').trim(),
+        seaNoOfPrograms: String(row?.numberOfPrograms ?? '').trim(),
+      }))
+      .filter((row) => row.seaProgramDetails !== '' || row.seaNoOfPrograms !== '');
+
+    const seen = new Set<string>();
+    const unique: typeof normalized = [];
+    for (const row of normalized) {
+      const key = `${row.seaProgramDetails.toLowerCase()}__${row.seaNoOfPrograms.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(row);
+    }
+    return unique;
   }
 
   /**
@@ -229,6 +261,47 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             { upsert: true, new: true, session },
           )
           .exec();
+
+      if (createProcessProductStewardshipDto.programmeDetails !== undefined) {
+        const normalizedProgrammeRows = this.normalizeProgrammeRows(
+          createProcessProductStewardshipDto.programmeDetails,
+        );
+
+        await this.processPsStakeholderEduAwarnessModel.updateMany(
+          {
+            urnNo: createProcessProductStewardshipDto.urnNo,
+            vendorId: vendorObjectId,
+            isDeleted: { $ne: true },
+          },
+          {
+            $set: {
+              isDeleted: true,
+              updatedDate: now,
+            },
+          },
+          { session },
+        );
+
+        if (normalizedProgrammeRows.length > 0) {
+          const rowsToInsert = normalizedProgrammeRows.map((row) => ({
+            vendorId: vendorObjectId,
+            urnNo: createProcessProductStewardshipDto.urnNo,
+            processProductStewardshipId: savedProcessProductStewardship._id,
+            seaProgramDetails: row.seaProgramDetails,
+            seaNoOfPrograms: row.seaNoOfPrograms,
+            seaSupportingDocuments,
+            productStewardshipStatus:
+              createProcessProductStewardshipDto.productStewardshipStatus || 0,
+            createdDate: now,
+            updatedDate: now,
+            isDeleted: false,
+          }));
+          await this.processPsStakeholderEduAwarnessModel.insertMany(
+            rowsToInsert,
+            { session },
+          );
+        }
+      }
 
       // Insert uploaded documents into all_product_documents (master table)
       if (seaFilePaths.length > 0) {

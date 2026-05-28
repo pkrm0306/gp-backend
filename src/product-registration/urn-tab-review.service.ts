@@ -259,18 +259,18 @@ export class UrnTabReviewService {
       throw new NotFoundException('Failed to save tab review');
     }
 
-    const full = await this.getUrnTabReviews(urnNo);
+    const requiredSlots = buildRequiredReviewSlots(
+      context.visibleRawMaterialSteps,
+    );
+    const summary = await this.buildSummaryForUrn(urnNo, requiredSlots.length);
 
     return {
-      success: true,
       urnNo,
-      tabKey: dto.tabKey,
-      stepId: apiStepIdFromStored(dto.tabKey, stepIdStored),
-      reviewStatus,
-      rejectionRemarks: updated.rejectionRemarks ?? null,
-      reviewedAt: updated.reviewedAt ?? now,
-      review: this.formatReviewRow(dto.tabKey, stepIdStored, updated),
-      summary: full.summary,
+      updatedReview: this.formatReviewRow(dto.tabKey, stepIdStored, updated),
+      summary,
+      quickActions: this.buildQuickActions(summary),
+      /** Reserved for future timeline hook when patch writes activity rows. */
+      activity: null,
     };
   }
 
@@ -314,6 +314,51 @@ export class UrnTabReviewService {
       allReviewed: pending === 0,
       allApproved: totalRequired > 0 && approved === totalRequired,
       hasRejection: rejected > 0,
+    };
+  }
+
+  /**
+   * Lightweight summary for PATCH responses (avoids heavy `getUrnTabReviews()` refetch path).
+   */
+  private async buildSummaryForUrn(urnNo: string, totalRequired: number) {
+    const counts = await this.reviewModel.aggregate<{ _id: number; count: number }>([
+      { $match: { urnNo } },
+      {
+        $group: {
+          _id: '$reviewStatus',
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const approved =
+      counts.find((c) => c._id === URN_TAB_REVIEW_STATUS.APPROVED)?.count ?? 0;
+    const rejected =
+      counts.find((c) => c._id === URN_TAB_REVIEW_STATUS.REJECTED)?.count ?? 0;
+    const pending = Math.max(totalRequired - approved - rejected, 0);
+
+    return {
+      totalRequired,
+      pending,
+      approved,
+      rejected,
+      allReviewed: pending === 0,
+      allApproved: totalRequired > 0 && approved === totalRequired,
+      hasRejection: rejected > 0,
+    };
+  }
+
+  private buildQuickActions(summary: {
+    allReviewed: boolean;
+    allApproved: boolean;
+    hasRejection: boolean;
+  }) {
+    const enableResend = summary.allReviewed && summary.hasRejection;
+    const enableSubmitFinal = summary.allApproved;
+    return {
+      disableBoth: !summary.allReviewed,
+      enableResend,
+      enableSubmitFinal,
     };
   }
 

@@ -3347,6 +3347,28 @@ export class ProductRegistrationService {
         },
       });
 
+      // Stage 23A: $lookup - Join stakeholder education/awareness programme rows
+      pipeline.push({
+        $lookup: {
+          from: 'process_ps_stakeholder_edu_awarness',
+          let: { urnNo: '$urnNo' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$urnNo', '$$urnNo'] },
+                    { $ne: ['$isDeleted', true] },
+                  ],
+                },
+              },
+            },
+            { $sort: { createdDate: 1 } },
+          ],
+          as: 'process_ps_stakeholder_edu_awarness',
+        },
+      });
+
       // Stage 24: $lookup - Join with process_innovation collection (by urn_no)
       pipeline.push({
         $lookup: {
@@ -3706,6 +3728,7 @@ export class ProductRegistrationService {
             },
           },
           process_product_stewardship_documents: 1,
+          process_ps_stakeholder_edu_awarness: 1,
           process_innovation: {
             $cond: {
               if: { $gt: [{ $size: '$process_innovation' }, 0] },
@@ -4442,6 +4465,19 @@ export class ProductRegistrationService {
                 product.process_product_stewardship.eprSupportingDocuments,
               productStewardshipStatus:
                 product.process_product_stewardship.productStewardshipStatus,
+              programmeDetails: (
+                product.process_ps_stakeholder_edu_awarness || []
+              ).map((row: any) => ({
+                _id: row._id,
+                programmeDetails: row.seaProgramDetails ?? '',
+                numberOfPrograms: row.seaNoOfPrograms ?? '',
+                seaSupportingDocuments: Number(row.seaSupportingDocuments ?? 0),
+                productStewardshipStatus: Number(
+                  row.productStewardshipStatus ?? 0,
+                ),
+                createdDate: row.createdDate,
+                updatedDate: row.updatedDate,
+              })),
               createdDate: product.process_product_stewardship.createdDate,
               updatedDate: product.process_product_stewardship.updatedDate,
             }
@@ -4462,6 +4498,21 @@ export class ProductRegistrationService {
           documentLink: d.documentLink,
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
+        })),
+        process_ps_stakeholder_edu_awarness: (
+          product.process_ps_stakeholder_edu_awarness || []
+        ).map((row: any) => ({
+          _id: row._id,
+          vendorId: row.vendorId,
+          urnNo: row.urnNo,
+          processProductStewardshipId: row.processProductStewardshipId,
+          seaProgramDetails: row.seaProgramDetails,
+          seaNoOfPrograms: row.seaNoOfPrograms,
+          seaSupportingDocuments: row.seaSupportingDocuments,
+          productStewardshipStatus: row.productStewardshipStatus,
+          createdDate: row.createdDate,
+          updatedDate: row.updatedDate,
+          isDeleted: row.isDeleted,
         })),
         process_innovation: product.process_innovation
           ? {

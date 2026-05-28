@@ -8,6 +8,10 @@ import {
   AllProductDocument,
   AllProductDocumentSchema,
 } from '../product-design/schemas/all-product-document.schema';
+import {
+  ProcessPsStakeholderEduAwarness,
+  ProcessPsStakeholderEduAwarnessSchema,
+} from './schemas/process-ps-stakeholder-edu-awarness.schema';
 import { ProcessProductStewardshipService } from './process-product-stewardship.service';
 import { ProcessProductStewardshipController } from './process-product-stewardship.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -20,6 +24,10 @@ import { AuthModule } from '../auth/auth.module';
       {
         name: ProcessProductStewardship.name,
         schema: ProcessProductStewardshipSchema,
+      },
+      {
+        name: ProcessPsStakeholderEduAwarness.name,
+        schema: ProcessPsStakeholderEduAwarnessSchema,
       },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
     ]),

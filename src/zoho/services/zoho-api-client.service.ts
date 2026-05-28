@@ -143,10 +143,15 @@ export class ZohoApiClientService {
     }
 
     if (error instanceof ServiceUnavailableException) {
+      const response = error.getResponse();
+      const message =
+        typeof response === 'string'
+          ? response
+          : (response as { message?: string })?.message || error.message;
       return {
         ok: false,
         statusCode: 503,
-        error: { message: error.message },
+        error: { message },
       };
     }
 

@@ -37,6 +37,7 @@ describe('ProcessProductStewardshipService idempotent submit', () => {
 
     const service = new ProcessProductStewardshipService(
       model as any,
+      { updateMany: jest.fn(), insertMany: jest.fn(), syncIndexes: jest.fn() } as any,
       { find: jest.fn(), updateMany: jest.fn(), create: jest.fn() } as any,
       { startSession: jest.fn().mockResolvedValue(session) } as any,
       {

@@ -129,7 +129,9 @@ export class ZohoTokenService {
           { upsert: true },
         )
         .exec();
-      throw new ServiceUnavailableException('Unable to refresh Zoho token');
+      throw new ServiceUnavailableException(
+        `Unable to refresh Zoho token: ${message}`,
+      );
     }
   }
 

@@ -5,7 +5,29 @@ import {
   IsOptional,
   IsNumber,
   IsIn,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class ProductStewardshipProgrammeDetailDto {
+  @ApiProperty({
+    description: 'Stakeholder education / awareness programme details',
+    example: 'Training programme for dealers and retailers',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  programmeDetails: string;
+
+  @ApiProperty({
+    description: 'Number of programmes',
+    example: '4',
+    required: true,
+  })
+  @IsString()
+  @IsNotEmpty()
+  numberOfPrograms: string;
+}
 
 export class CreateProcessProductStewardshipDto {
   @ApiProperty({
@@ -16,6 +38,23 @@ export class CreateProcessProductStewardshipDto {
   @IsString()
   @IsNotEmpty()
   urnNo: string;
+
+  @ApiProperty({
+    description:
+      'Array of stakeholder education/awareness programmes (from programmeDetails payload)',
+    required: false,
+    type: [ProductStewardshipProgrammeDetailDto],
+    example: [
+      {
+        programmeDetails: 'Training programme for channel partners',
+        numberOfPrograms: '4',
+      },
+    ],
+  })
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ProductStewardshipProgrammeDetailDto)
+  programmeDetails?: ProductStewardshipProgrammeDetailDto[];
 
   @ApiProperty({
     description: 'Quality management details (text)',

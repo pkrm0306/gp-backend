@@ -108,7 +108,11 @@ export class AdminProductsController {
       throw new BadRequestException('Admin user id not found in token');
     }
     const data = await this.urnTabReviewService.patchUrnTabReview(dto, adminUserId);
-    return { message: 'Tab review updated', ...data };
+    return {
+      success: true,
+      message: 'Tab review updated',
+      data,
+    };
   }
 
   @Get('details/:urn')
