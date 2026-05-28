@@ -25,6 +25,7 @@ export type ApplyCertificationApprovalParams = {
 export type ApplyCertificationApprovalResult = {
   certifiedCount: number;
   rejectedCount: number;
+  skippedCount?: number;
 };
 
 @Injectable()
@@ -64,7 +65,7 @@ export class CertificationLifecycleService {
           vendorId: vendorObjectId,
         }),
       )
-      .select('productId _id')
+      .select('productId _id productStatus')
       .session(session ?? null)
       .lean()
       .exec();
@@ -108,31 +109,31 @@ export class CertificationLifecycleService {
 
     const updateOpts = session ? { session } : {};
 
-    await this.productModel.updateMany(
-      baseFilter,
-      {
-        $set: {
-          urnStatus: URN_STATUS_VERIFICATION_COMPLETED,
-          ...validityFields,
-          updatedDate: now,
-        },
-      },
-      updateOpts,
-    );
-
     const selectedList = [...selectedProductIds];
+    const selectedSubmittedList = products
+      .filter(
+        (p) =>
+          selectedProductIds.has(Number(p.productId)) &&
+          Number(p.productStatus ?? 0) === 1,
+      )
+      .map((p) => Number(p.productId))
+      .filter((id) => Number.isFinite(id));
+    const skippedCount = Math.max(selectedList.length - selectedSubmittedList.length, 0);
 
     const certifyResult = await this.productModel.updateMany(
       {
         ...baseFilter,
-        productId: { $in: selectedList },
+        productId: { $in: selectedSubmittedList },
         // Only submitted EOIs move to certified on approval.
         productStatus: 1,
       },
       {
         $set: {
+          urnStatus: URN_STATUS_VERIFICATION_COMPLETED,
+          ...validityFields,
           productStatus: PRODUCT_STATUS_CERTIFIED,
           certifiedDate: dates.certifiedDate,
+          updatedDate: now,
         },
       },
       updateOpts,
@@ -142,10 +143,13 @@ export class CertificationLifecycleService {
       {
         ...baseFilter,
         productId: { $nin: selectedList },
+        productStatus: { $in: [0, 1] },
       },
       {
         $set: {
+          urnStatus: URN_STATUS_VERIFICATION_COMPLETED,
           productStatus: PRODUCT_STATUS_REJECTED,
+          updatedDate: now,
         },
       },
       updateOpts,
@@ -154,6 +158,7 @@ export class CertificationLifecycleService {
     return {
       certifiedCount: certifyResult.modifiedCount,
       rejectedCount: rejectResult.modifiedCount,
+      skippedCount,
     };
   }
 

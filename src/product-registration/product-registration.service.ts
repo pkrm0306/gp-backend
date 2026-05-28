@@ -2286,6 +2286,7 @@ export class ProductRegistrationService {
     const sampleProductName = String(products[0].productName ?? '').trim();
 
     const setDoc: Record<string, unknown> = { updatedDate: now };
+    const updateFilter: Record<string, unknown> = { urnNo };
     if (dto.updateStatusType === 'urn_status') {
       setDoc.urnStatus = dto.updateStatusTo;
       // Resend to vendor (5): keep product active so vendor forms stay editable with prior data.
@@ -2294,13 +2295,18 @@ export class ProductRegistrationService {
       }
     } else {
       setDoc.productStatus = dto.updateStatusTo;
+      // Certification transition safety: only Submitted (1) rows can become Certified (2).
+      // Rejected (3) rows must remain rejected.
+      if (dto.updateStatusTo === 2) {
+        updateFilter.productStatus = 1;
+      }
     }
 
     const session = await this.connection.startSession();
     try {
       session.startTransaction();
       await this.productModel
-        .updateMany({ urnNo }, { $set: setDoc }, { session })
+        .updateMany(updateFilter, { $set: setDoc }, { session })
         .exec();
       await session.commitTransaction();
     } catch (err) {
