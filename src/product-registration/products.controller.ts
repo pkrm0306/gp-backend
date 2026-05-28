@@ -448,6 +448,11 @@ export class ProductsController {
               type: 'number',
               description: 'Updated URN status (0-11)',
             },
+            productStatus: {
+              type: 'number',
+              description:
+                'Updated product status when optional `productStatus` is sent in request body',
+            },
             updatedDate: { type: 'string', format: 'date-time' },
           },
         },
@@ -488,6 +493,7 @@ export class ProductsController {
           eoiNo: data.eoiNo,
           productName: data.productName,
           urnStatus: data.urnStatus,
+          productStatus: data.productStatus,
           updatedDate: data.updatedDate,
         },
         message: 'URN status updated successfully',

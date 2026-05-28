@@ -34,7 +34,9 @@ import { CertificationLifecycleService } from '../product-registration/certifica
 import {
   getProductsToBeCertifiedValidationError,
   normalizeProductsToBeCertifiedStorage,
+  parseProductsToBeCertified,
 } from '../product-registration/helpers/parse-products-to-be-certified.util';
+import { ProductSoftDeleteService } from '../product-registration/services/product-soft-delete.service';
 
 @Injectable()
 export class PaymentsService {
@@ -49,6 +51,7 @@ export class PaymentsService {
     private readonly zohoDealsService: ZohoDealsService,
     private readonly lifecycleNotification: LifecycleNotificationService,
     private readonly certificationLifecycle: CertificationLifecycleService,
+    private readonly productSoftDeleteService: ProductSoftDeleteService,
   ) {}
 
   private resolveZohoPaymentAmount(payment: PaymentDetailsDocument): number {
@@ -648,6 +651,97 @@ export class PaymentsService {
           productsToBeCertified = createPaymentDto.productsToBeCertified;
         }
 
+        let selectedProductIds: number[] = [];
+        let rejectedProductIds: number[] = [];
+        let resequenceApplied = false;
+        let updatedSequenceCount = 0;
+
+        if (normalizedPaymentType === 'certification') {
+          const parsed = parseProductsToBeCertified(productsToBeCertified);
+          selectedProductIds = [...new Set(parsed.productIds)];
+          if (selectedProductIds.length === 0) {
+            throw new BadRequestException(
+              'productsToBeCertified must contain at least one numeric productId',
+            );
+          }
+
+          const urnProducts = await this.productModel
+            .find(
+              matchActiveProducts({
+                urnNo: normalizedUrnNo,
+                vendorId: vendorObjectId,
+              }),
+              {
+                _id: 1,
+                productId: 1,
+                manufacturerId: 1,
+                productStatus: 1,
+              },
+            )
+            .session(session)
+            .exec();
+
+          if (!urnProducts.length) {
+            throw new NotFoundException(
+              `No active products found for URN ${normalizedUrnNo}`,
+            );
+          }
+
+          const urnProductIds = new Set(
+            urnProducts
+              .map((p) => Number(p.productId))
+              .filter((id) => Number.isFinite(id)),
+          );
+          const mismatches = selectedProductIds.filter((id) => !urnProductIds.has(id));
+          if (mismatches.length > 0) {
+            throw new BadRequestException(
+              `productsToBeCertified includes productId(s) not under URN ${normalizedUrnNo}: ${mismatches.join(', ')}`,
+            );
+          }
+
+          const unselected = urnProducts.filter((p) => {
+            const pid = Number(p.productId);
+            if (!Number.isFinite(pid)) return false;
+            return (
+              !selectedProductIds.includes(pid) &&
+              [0, 1, 2].includes(Number(p.productStatus ?? 0))
+            );
+          });
+          rejectedProductIds = unselected
+            .map((p) => Number(p.productId))
+            .filter((id) => Number.isFinite(id));
+
+          if (unselected.length > 0) {
+            await this.productModel
+              .updateMany(
+                {
+                  _id: { $in: unselected.map((p) => p._id) },
+                },
+                {
+                  $set: {
+                    productStatus: 3,
+                    rejectedDetails:
+                      'Auto-rejected: not selected for certification fee',
+                    updatedDate: now,
+                  },
+                },
+                { session },
+              )
+              .exec();
+          }
+
+          const manufacturerId = String(urnProducts[0].manufacturerId ?? '');
+          if (manufacturerId) {
+            updatedSequenceCount =
+              await this.productSoftDeleteService.resequenceForManufacturerInSession(
+                manufacturerId,
+                session,
+                { excludeRejected: true },
+              );
+            resequenceApplied = true;
+          }
+        }
+
         // Create payment data
         const paymentData = {
           paymentId,
@@ -688,8 +782,17 @@ export class PaymentsService {
           normalizedPaymentType,
           Boolean(proposalFilePath),
         );
-
-        return formatPaymentRecord(this.paymentToPlain(savedPayment));
+        const response = formatPaymentRecord(this.paymentToPlain(savedPayment));
+        if (normalizedPaymentType === 'certification') {
+          return {
+            ...response,
+            selectedProductIds,
+            rejectedProductIds,
+            resequenceApplied,
+            updatedSequenceCount,
+          };
+        }
+        return response;
       } catch (error: any) {
         await session.abortTransaction();
         session.endSession();

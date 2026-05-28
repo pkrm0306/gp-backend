@@ -67,10 +67,7 @@ export class ZohoApiClientService {
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        const accessToken =
-          attempt === 1
-            ? await this.tokenService.getValidAccessToken()
-            : await this.tokenService.refreshAccessToken();
+        const accessToken = await this.tokenService.refreshAccessToken();
 
         const response = await axios.request<T>({
           ...config,

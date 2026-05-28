@@ -226,6 +226,10 @@ export class ProductSoftDeleteService {
   private async resequenceActiveEoisForManufacturer(
     manufacturerId: string,
     session: ClientSession,
+    options?: {
+      /** Exclude rejected products (productStatus=3) from resequence set. */
+      excludeRejected?: boolean;
+    },
   ): Promise<number> {
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
@@ -234,7 +238,10 @@ export class ProductSoftDeleteService {
 
     const activeProducts = await this.productModel
       .find(
-        matchActiveProducts({ manufacturerId: manufacturerObjectId }),
+        matchActiveProducts({
+          manufacturerId: manufacturerObjectId,
+          ...(options?.excludeRejected ? { productStatus: { $ne: 3 } } : {}),
+        }),
         { _id: 1, eoiNo: 1, createdDate: 1, productId: 1 },
       )
       .sort({ createdDate: 1, productId: 1 })
@@ -290,6 +297,24 @@ export class ProductSoftDeleteService {
     }
 
     return updatedSequenceCount;
+  }
+
+  /**
+   * Re-sequence helper reused by non-delete flows that already run in a transaction.
+   * Uses the exact same algorithm as delete flow.
+   */
+  async resequenceForManufacturerInSession(
+    manufacturerId: string,
+    session: ClientSession,
+    options?: {
+      excludeRejected?: boolean;
+    },
+  ): Promise<number> {
+    return this.resequenceActiveEoisForManufacturer(
+      manufacturerId,
+      session,
+      options,
+    );
   }
 
   /**

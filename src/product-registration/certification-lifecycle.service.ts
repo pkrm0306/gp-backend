@@ -122,10 +122,12 @@ export class CertificationLifecycleService {
 
     const selectedList = [...selectedProductIds];
 
-    await this.productModel.updateMany(
+    const certifyResult = await this.productModel.updateMany(
       {
         ...baseFilter,
         productId: { $in: selectedList },
+        // Only submitted EOIs move to certified on approval.
+        productStatus: 1,
       },
       {
         $set: {
@@ -150,7 +152,7 @@ export class CertificationLifecycleService {
     );
 
     return {
-      certifiedCount: selectedList.length,
+      certifiedCount: certifyResult.modifiedCount,
       rejectedCount: rejectResult.modifiedCount,
     };
   }

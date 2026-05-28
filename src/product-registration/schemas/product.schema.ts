@@ -97,5 +97,7 @@ ProductSchema.index({ manufacturerId: 1 });
 ProductSchema.index({ categoryId: 1 });
 ProductSchema.index({ createdDate: -1 });
 ProductSchema.index({ validtillDate: 1 });
+ProductSchema.index({ urnNo: 1, is_deleted: 1, productStatus: 1 });
+ProductSchema.index({ urnNo: 1, eoiNo: 1 });
 ProductSchema.index({ manufacturerId: 1, is_deleted: 1, createdDate: 1 });
 ProductSchema.index({ manufacturerId: 1, is_deleted: 1, eoiNo: 1 });

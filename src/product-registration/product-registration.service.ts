@@ -450,16 +450,34 @@ export class ProductRegistrationService {
     };
   }
 
-  private deriveAdminUrnStatus(
-    codes: number[],
-  ): 'Active' | 'Pending' | 'Inactive' {
-    if (codes.includes(3)) {
-      return 'Inactive';
+  /**
+   * URN rollup from child EOI productStatus codes.
+   * Returns numeric status code (0..4):
+   * 0 Pending, 1 Submitted, 2 Certified, 3 Rejected, 4 Expired
+   */
+  private deriveAdminUrnStatus(codes: number[]): 0 | 1 | 2 | 3 | 4 {
+    if (codes.includes(3)) return 3;
+    if (codes.includes(4)) return 4;
+    if (codes.includes(2)) return 2;
+    if (codes.includes(1)) return 1;
+    return 0;
+  }
+
+  private mapUrnRollupStatusLabel(
+    status: 0 | 1 | 2 | 3 | 4,
+  ): 'Pending' | 'Submitted' | 'Certified' | 'Rejected' | 'Expired' {
+    switch (status) {
+      case 1:
+        return 'Submitted';
+      case 2:
+        return 'Certified';
+      case 3:
+        return 'Rejected';
+      case 4:
+        return 'Expired';
+      default:
+        return 'Pending';
     }
-    if (codes.includes(2)) {
-      return 'Active';
-    }
-    return 'Pending';
   }
 
   private formatAdminListUrnGroup(urn: {
@@ -469,7 +487,10 @@ export class ProductRegistrationService {
     statusCodes: number[];
     eoiDocs: Record<string, unknown>[];
   }) {
-    const eoiSummaryStatus = this.deriveAdminUrnStatus(urn.statusCodes ?? []);
+    const eoiSummaryStatusCode = this.deriveAdminUrnStatus(urn.statusCodes ?? []);
+    const eoiSummaryStatusLabel = this.mapUrnRollupStatusLabel(
+      eoiSummaryStatusCode,
+    );
     const eois = (urn.eoiDocs ?? []).map((e) =>
       this.formatAdminListEoiEntry(e ?? {}),
     );
@@ -479,10 +500,16 @@ export class ProductRegistrationService {
       total_eoi: urn.totalEoi,
       totalEoi: urn.totalEoi,
       /** Rollup from child EOI `productStatus` codes — not manufacturer / vendor status. */
-      eoiSummaryStatus,
+      eoiSummaryStatus: eoiSummaryStatusLabel,
+      eoiSummaryStatusCode,
+      eoiSummaryStatusLabel,
       /** @deprecated Same as `eoiSummaryStatus`; name is misleading (not DB `urnStatus`). */
-      urnStatus: eoiSummaryStatus,
-      status: eoiSummaryStatus,
+      urnStatus: eoiSummaryStatusLabel,
+      urnStatusCode: eoiSummaryStatusCode,
+      urnStatusLabel: eoiSummaryStatusLabel,
+      status: eoiSummaryStatusLabel,
+      statusCode: eoiSummaryStatusCode,
+      statusLabel: eoiSummaryStatusLabel,
       created_at: urn.createdDate,
       createdDate: urn.createdDate,
       eois,
@@ -818,17 +845,13 @@ export class ProductRegistrationService {
     }
   }
 
-  /** URN row status from child productStatus codes (aligned with admin uncertified list). */
-  private deriveVendorUrnStatus(
-    codes: number[],
-  ): 'Active' | 'Pending' | 'Inactive' {
-    if (codes.includes(3)) {
-      return 'Inactive';
-    }
-    if (codes.includes(2)) {
-      return 'Active';
-    }
-    return 'Pending';
+  /** Vendor URN row rollup from child productStatus codes (returns numeric 0..4). */
+  private deriveVendorUrnStatus(codes: number[]): 0 | 1 | 2 | 3 | 4 {
+    if (codes.includes(3)) return 3;
+    if (codes.includes(4)) return 4;
+    if (codes.includes(2)) return 2;
+    if (codes.includes(1)) return 1;
+    return 0;
   }
 
   private formatVendorListEoiEntry(e: Record<string, unknown>) {
@@ -2111,11 +2134,12 @@ export class ProductRegistrationService {
       // Resolve from authenticated manufacturer
       const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
 
-      // Find product by authenticated manufacturer(vendor alias) and urnNo
+      // Find one product for validation, timeline context and response shape
       const existingProduct = await this.productModel
         .findOne({
           vendorId: vendorObjectId,
           urnNo: updateUrnStatusDto.urnNo,
+          ...matchActiveProducts(),
         })
         .session(session)
         .exec();
@@ -2138,21 +2162,34 @@ export class ProductRegistrationService {
         );
       }
 
-      // Update urnStatus
-      const updatedProduct = await this.productModel
-        .findOneAndUpdate(
-          {
+      // Update all products under the URN for this authenticated vendor
+      const now = new Date();
+      await this.productModel
+        .updateMany(
+          matchActiveProducts({
             vendorId: vendorObjectId,
             urnNo: updateUrnStatusDto.urnNo,
-          },
+          }),
           {
             $set: {
               urnStatus: nextUrnStatus,
-              updatedDate: new Date(),
+              ...(updateUrnStatusDto.productStatus !== undefined
+                ? { productStatus: updateUrnStatusDto.productStatus }
+                : {}),
+              updatedDate: now,
             },
           },
-          { new: true, session },
+          { session },
         )
+        .exec();
+
+      const updatedProduct = await this.productModel
+        .findOne({
+          vendorId: vendorObjectId,
+          urnNo: updateUrnStatusDto.urnNo,
+          ...matchActiveProducts(),
+        })
+        .session(session)
         .exec();
 
       if (!updatedProduct) {
@@ -2619,19 +2656,25 @@ export class ProductRegistrationService {
       const totalCount = payload.totalCount?.[0]?.count ?? 0;
       const totalPages = limit > 0 ? Math.ceil(totalCount / limit) : 0;
 
-      const grouped = (payload.data ?? []).map((u: Record<string, unknown>) => ({
-        urnNo: u.urnNo,
-        createdDate: u.createdDate,
-        urnStatus: this.deriveVendorUrnStatus(
+      const grouped = (payload.data ?? []).map((u: Record<string, unknown>) => {
+        const urnStatusCode = this.deriveVendorUrnStatus(
           Array.isArray(u.statusCodes) ? (u.statusCodes as number[]) : [],
-        ),
-        totalEoi: Number(u.totalEoi ?? 0),
-        eois: Array.isArray(u.eois)
-          ? (u.eois as Record<string, unknown>[]).map((e) =>
-              this.formatVendorListEoiEntry(e ?? {}),
-            )
-          : [],
-      }));
+        );
+        const urnStatusLabel = this.mapUrnRollupStatusLabel(urnStatusCode);
+        return {
+          urnNo: u.urnNo,
+          createdDate: u.createdDate,
+          urnStatus: urnStatusLabel,
+          urnStatusCode,
+          urnStatusLabel,
+          totalEoi: Number(u.totalEoi ?? 0),
+          eois: Array.isArray(u.eois)
+            ? (u.eois as Record<string, unknown>[]).map((e) =>
+                this.formatVendorListEoiEntry(e ?? {}),
+              )
+            : [],
+        };
+      });
 
       const response = {
         data: grouped,

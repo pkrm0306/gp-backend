@@ -4,8 +4,7 @@ import {
   IsNotEmpty,
   IsNumber,
   IsIn,
-  Min,
-  Max,
+  IsOptional,
 } from 'class-validator';
 
 export class UpdateUrnStatusDto {
@@ -36,4 +35,16 @@ export class UpdateUrnStatusDto {
   @IsNumber()
   @IsIn([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
   updateStatusTo: number;
+
+  @ApiProperty({
+    description:
+      'Optional product status to update along with urnStatus (0=Pending, 1=Submitted, 2=Certified, 3=Rejected, 4=Expired)',
+    example: 1,
+    required: false,
+    enum: [0, 1, 2, 3, 4],
+  })
+  @IsOptional()
+  @IsNumber()
+  @IsIn([0, 1, 2, 3, 4])
+  productStatus?: number;
 }

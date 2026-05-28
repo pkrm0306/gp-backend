@@ -110,11 +110,7 @@ export class ZohoTokenService {
       await this.cacheToken(response.data.access_token, expiresAt);
       return response.data.access_token;
     } catch (error: any) {
-      const message =
-        error?.response?.data?.error_description ||
-        error?.response?.data?.error ||
-        error?.message ||
-        'Zoho token refresh failed';
+      const message = this.extractRefreshErrorMessage(error);
       this.logger.error(`Zoho token refresh failed: ${message}`);
       await this.tokenModel
         .findOneAndUpdate(
@@ -133,6 +129,43 @@ export class ZohoTokenService {
         `Unable to refresh Zoho token: ${message}`,
       );
     }
+  }
+
+  private extractRefreshErrorMessage(error: unknown): string {
+    if (axios.isAxiosError(error)) {
+      const responseData = error.response?.data;
+      if (typeof responseData === 'string' && responseData.trim()) {
+        try {
+          const parsed = JSON.parse(responseData) as Record<string, unknown>;
+          const parsedMessage =
+            (parsed.error_description as string) ||
+            (parsed.error as string) ||
+            (parsed.message as string) ||
+            '';
+          if (parsedMessage) return parsedMessage;
+        } catch {
+          return responseData;
+        }
+      }
+
+      if (responseData && typeof responseData === 'object') {
+        const body = responseData as Record<string, unknown>;
+        const message =
+          (body.error_description as string) ||
+          (body.error as string) ||
+          (body.message as string);
+        if (message) return message;
+      }
+
+      const status = error.response?.status;
+      return `HTTP ${status || 'unknown'} from Zoho accounts token endpoint`;
+    }
+
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return 'Zoho token refresh failed';
   }
 
   private async cacheToken(accessToken: string, expiresAt?: Date | string) {
