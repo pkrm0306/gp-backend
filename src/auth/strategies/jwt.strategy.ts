@@ -49,13 +49,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     const role = payload.role || payload.type;
+    const manufacturerId = payload.manufacturerId || payload.vendorId;
     if (
       role &&
-      ['vendor', 'partner', 'staff'].includes(String(role)) &&
-      (payload.manufacturerId || payload.vendorId)
+      this.authService.isVendorPortalRole(String(role)) &&
+      manufacturerId
     ) {
       await this.authService.assertVendorOrganizationActive(
-        String(payload.manufacturerId || payload.vendorId || ''),
+        String(manufacturerId),
       );
     }
 
@@ -63,7 +64,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Invalid token payload');
     }
     const isPlatformAdmin = role === 'admin';
-    const manufacturerId = payload.manufacturerId || payload.vendorId;
     if (!isPlatformAdmin && !manufacturerId) {
       throw new UnauthorizedException('Invalid token payload');
     }

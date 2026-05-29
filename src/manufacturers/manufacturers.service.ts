@@ -1752,14 +1752,9 @@ export class ManufacturersService {
     }
 
     if (updated) {
-      await this.convertVerifiedManufacturerLeadInZoho(updated).catch(
-        (error: any) => {
-          this.logger.warn(
-            `[verifyManufacturer] Zoho vendor lead conversion failed for ${updated._id}: ${
-              error?.message || error
-            }`,
-          );
-        },
+      await this.tryConvertManufacturerLeadInZoho(
+        updated,
+        'verifyManufacturer',
       );
     }
 
@@ -1781,6 +1776,21 @@ export class ManufacturersService {
       manufacturerId: manufacturer._id.toString(),
       vendorInternalId,
     });
+  }
+
+  private async tryConvertManufacturerLeadInZoho(
+    manufacturer: ManufacturerDocument,
+    source: string,
+  ): Promise<void> {
+    await this.convertVerifiedManufacturerLeadInZoho(manufacturer).catch(
+      (error: any) => {
+        this.logger.warn(
+          `[${source}] Zoho vendor lead conversion failed for ${manufacturer._id}: ${
+            error?.message || error
+          }`,
+        );
+      },
+    );
   }
 
   private assertCoreFieldsPresentForActivation(
@@ -1832,6 +1842,12 @@ export class ManufacturersService {
       if (updated && newVendor === 0) {
         await this.authService.invalidateSessionsForManufacturer(
           manufacturerId.toString(),
+        );
+      }
+      if (updated && newVendor === 1) {
+        await this.tryConvertManufacturerLeadInZoho(
+          updated,
+          'toggleManufacturerStatus',
         );
       }
 
@@ -1887,6 +1903,12 @@ export class ManufacturersService {
       if (updated && vendor_status === 0) {
         await this.authService.invalidateSessionsForManufacturer(
           manufacturerId.toString(),
+        );
+      }
+      if (updated && vendor_status === 1) {
+        await this.tryConvertManufacturerLeadInZoho(
+          updated,
+          'setVendorStatusForVerified',
         );
       }
 

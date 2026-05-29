@@ -73,6 +73,22 @@ interface UpdatePaymentDealOptions {
   paymentMode?: string;
 }
 
+interface SyncDealProductItem {
+  productName: string;
+  productDetail?: string;
+}
+
+interface SyncDealProductsOptions {
+  manufacturerId: string;
+  urnNo: string;
+  products: SyncDealProductItem[];
+}
+
+interface UpdateDealStatusOptions {
+  manufacturerId: string;
+  status: string;
+}
+
 @Injectable()
 export class ZohoDealsService {
   private readonly logger = new Logger(ZohoDealsService.name);
@@ -298,6 +314,214 @@ export class ZohoDealsService {
     return response;
   }
 
+  async syncDealProducts(options: SyncDealProductsOptions): Promise<void> {
+    const manufacturerObjectId = this.toObjectId(options.manufacturerId);
+    if (!manufacturerObjectId) {
+      throw new BadGatewayException('Invalid manufacturer ID for Zoho sync');
+    }
+
+    const productItems = options.products
+      .map((product) => ({
+        Product_Name: String(product.productName || '').trim(),
+        Product_Detail: String(product.productDetail || '').trim(),
+      }))
+      .filter((product) => product.Product_Name);
+
+    if (productItems.length === 0) {
+      await this.syncLogModel.create({
+        operation: 'deal.products.sync',
+        status: 'skipped',
+        portalEntityId: options.manufacturerId,
+        requestPayload: { urnNo: options.urnNo },
+        errorMessage: 'No products available for Zoho deal product sync',
+        attempts: 0,
+      });
+      return;
+    }
+
+    const mapping = await this.dealMappingModel
+      .findOne({
+        $or: [
+          { manufacturerId: manufacturerObjectId },
+          { vendorId: manufacturerObjectId },
+          { portalEntityId: options.manufacturerId },
+        ],
+      })
+      .sort({ updatedAt: -1 })
+      .lean()
+      .exec();
+
+    if (!mapping?.zohoDealId) {
+      await this.syncLogModel.create({
+        operation: 'deal.products.sync',
+        status: 'skipped',
+        portalEntityId: options.manufacturerId,
+        requestPayload: {
+          urnNo: options.urnNo,
+          products: productItems,
+        },
+        errorMessage: 'Zoho Deal ID mapping not found',
+        attempts: 0,
+      });
+      throw new BadGatewayException('Zoho Deal ID mapping not found');
+    }
+
+    const payload = {
+      data: [
+        {
+          Deal_id: mapping.zohoDealId,
+          Products: productItems,
+        },
+      ],
+    };
+
+    try {
+      const response = await axios.post<ZohoVendorFunctionResponse>(
+        this.dealProductFunctionUrl(),
+        payload,
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: this.requestTimeoutMs(),
+        },
+      );
+
+      await this.dealMappingModel
+        .findByIdAndUpdate(mapping._id, {
+          $set: {
+            manufacturerId: manufacturerObjectId,
+            vendorId: mapping.vendorId ?? manufacturerObjectId,
+            lastSyncedAt: new Date(),
+            rawSnapshot: {
+              ...(mapping.rawSnapshot || {}),
+              lastProductSync: {
+                urnNo: options.urnNo,
+                requestPayload: payload,
+                responsePayload: response.data,
+              },
+            },
+          },
+        })
+        .exec();
+
+      await this.syncLogModel.create({
+        operation: 'deal.products.sync',
+        status: 'success',
+        portalEntityId: options.manufacturerId,
+        zohoModule: 'Deals',
+        zohoRecordId: mapping.zohoDealId,
+        requestPayload: payload,
+        responsePayload: response.data as Record<string, unknown>,
+        attempts: 1,
+      });
+    } catch (error: any) {
+      const responsePayload = error?.response?.data;
+      const message =
+        responsePayload?.message ||
+        responsePayload?.code ||
+        error?.message ||
+        'Zoho deal product sync failed';
+      this.logger.error(`Zoho deal product sync failed: ${message}`);
+      await this.syncLogModel.create({
+        operation: 'deal.products.sync',
+        status: 'failed',
+        portalEntityId: options.manufacturerId,
+        zohoModule: 'Deals',
+        zohoRecordId: mapping.zohoDealId,
+        requestPayload: payload,
+        responsePayload: responsePayload as Record<string, unknown>,
+        errorMessage: String(message),
+        attempts: 1,
+      });
+      throw new BadGatewayException('Zoho deal product sync failed');
+    }
+  }
+
+  async updateDealStatus(
+    options: UpdateDealStatusOptions,
+  ): Promise<ZohoApiResponse<ZohoWriteResult>> {
+    const manufacturerObjectId = this.toObjectId(options.manufacturerId);
+    if (!manufacturerObjectId) {
+      throw new BadGatewayException('Invalid manufacturer ID for Zoho sync');
+    }
+
+    const mapping = await this.dealMappingModel
+      .findOne({
+        $or: [
+          { manufacturerId: manufacturerObjectId },
+          { vendorId: manufacturerObjectId },
+          { portalEntityId: options.manufacturerId },
+        ],
+      })
+      .sort({ updatedAt: -1 })
+      .lean()
+      .exec();
+
+    if (!mapping?.zohoDealId) {
+      await this.syncLogModel.create({
+        operation: 'deal.status.update',
+        status: 'skipped',
+        portalEntityId: options.manufacturerId,
+        requestPayload: { status: options.status },
+        errorMessage: 'Zoho Deal ID mapping not found',
+        attempts: 0,
+      });
+      throw new BadGatewayException('Zoho Deal ID mapping not found');
+    }
+
+    const payload = {
+      data: [
+        {
+          id: mapping.zohoDealId,
+          Status: options.status,
+        },
+      ],
+    };
+
+    const response = await this.apiClient.put<ZohoWriteResult>(
+      '/crm/v8/Potentials',
+      payload,
+    );
+
+    if (!response.ok) {
+      await this.logFailure(
+        'deal.status.update',
+        options.manufacturerId,
+        payload,
+        response,
+      );
+      throw new BadGatewayException(
+        response.error?.message || 'Zoho deal status update failed',
+      );
+    }
+
+    await this.dealMappingModel
+      .findByIdAndUpdate(mapping._id, {
+        $set: {
+          manufacturerId: manufacturerObjectId,
+          vendorId: mapping.vendorId ?? manufacturerObjectId,
+          stage: options.status,
+          lastSyncedAt: new Date(),
+          rawSnapshot: {
+            ...(mapping.rawSnapshot || {}),
+            lastStatusUpdate: payload.data[0],
+            lastStatusUpdateResponse: response.data,
+          },
+        },
+      })
+      .exec();
+
+    await this.logSuccess(
+      'deal.status.update',
+      options.manufacturerId,
+      'Potentials',
+      mapping.zohoDealId,
+      payload,
+      response,
+    );
+
+    return response;
+  }
+
   async convertLeadToDeal(
     options: ConvertLeadOptions,
   ): Promise<ZohoApiResponse> {
@@ -480,25 +704,85 @@ export class ZohoDealsService {
   }
 
   private vendorConvertFunctionUrl(): string {
-    const fullUrl = this.configService.get<string>(
-      'ZOHO_VENDOR_CONVERT_FUNCTION_URL',
-    );
-    if (fullUrl) return fullUrl;
+    const fullUrl = String(
+      this.configService.get<string>('ZOHO_VENDOR_CONVERT_FUNCTION_URL') || '',
+    )
+      .split('#')[0]
+      .trim();
+    if (
+      fullUrl &&
+      /\/crm\/v7\/functions\/vendor_contact\/actions\/execute/i.test(fullUrl)
+    ) {
+      return fullUrl;
+    }
+    if (fullUrl) {
+      this.logger.warn(
+        'Ignoring ZOHO_VENDOR_CONVERT_FUNCTION_URL because it is not the required crm/v7 vendor_contact function endpoint',
+      );
+    }
 
-    const zapikey = this.configService.get<string>(
-      'ZOHO_VENDOR_CONVERT_ZAPIKEY',
-    );
+    const zapikey = String(
+      this.configService.get<string>('ZOHO_VENDOR_CONVERT_ZAPIKEY') || '',
+    )
+      .split('#')[0]
+      .trim();
     if (!zapikey) {
       throw new BadGatewayException(
         'ZOHO_VENDOR_CONVERT_ZAPIKEY is not configured',
       );
     }
 
-    const baseUrl =
+    const baseUrl = String(
       this.configService.get<string>('ZOHO_BASE_URL') ||
-      'https://www.zohoapis.in';
+        'https://www.zohoapis.in',
+    )
+      .split('#')[0]
+      .trim()
+      .replace(/\/crm\/v\d+\/?$/i, '');
     const normalizedBase = baseUrl.replace(/\/+$/, '');
     return `${normalizedBase}/crm/v7/functions/vendor_contact/actions/execute?auth_type=apikey&zapikey=${encodeURIComponent(zapikey)}`;
+  }
+
+  private dealProductFunctionUrl(): string {
+    const fullUrl = String(
+      this.configService.get<string>('ZOHO_DEAL_PRODUCT_FUNCTION_URL') || '',
+    )
+      .split('#')[0]
+      .trim();
+    if (
+      fullUrl &&
+      /\/crm\/v7\/functions\/deal_product\/actions\/execute/i.test(fullUrl)
+    ) {
+      return fullUrl;
+    }
+    if (fullUrl) {
+      this.logger.warn(
+        'Ignoring ZOHO_DEAL_PRODUCT_FUNCTION_URL because it is not the required crm/v7 deal_product function endpoint',
+      );
+    }
+
+    const zapikey = String(
+      this.configService.get<string>('ZOHO_DEAL_PRODUCT_ZAPIKEY') ||
+        this.configService.get<string>('ZOHO_VENDOR_CONVERT_ZAPIKEY') ||
+        '',
+    )
+      .split('#')[0]
+      .trim();
+    if (!zapikey) {
+      throw new BadGatewayException(
+        'ZOHO_DEAL_PRODUCT_ZAPIKEY is not configured',
+      );
+    }
+
+    const baseUrl = String(
+      this.configService.get<string>('ZOHO_BASE_URL') ||
+        'https://www.zohoapis.in',
+    )
+      .split('#')[0]
+      .trim()
+      .replace(/\/crm\/v\d+\/?$/i, '');
+    const normalizedBase = baseUrl.replace(/\/+$/, '');
+    return `${normalizedBase}/crm/v7/functions/deal_product/actions/execute?auth_type=apikey&zapikey=${encodeURIComponent(zapikey)}`;
   }
 
   private parseVendorFunctionOutput(

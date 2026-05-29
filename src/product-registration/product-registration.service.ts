@@ -65,6 +65,7 @@ import { VendorProductChangeRequestDto } from './dto/vendor-product-change-reque
 import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
 import { uploadFile } from '../utils/upload-file.util';
+import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import { EmailService } from '../common/services/email.service';
 import {
   VendorProductChangeRequest,
@@ -120,8 +121,43 @@ export class ProductRegistrationService {
     private readonly urnSiteVisitsService: UrnSiteVisitsService,
     private readonly lifecycleNotification: LifecycleNotificationService,
     private readonly urnTabReviewService: UrnTabReviewService,
+    private readonly zohoDealsService: ZohoDealsService,
     private readonly emailService: EmailService,
   ) {}
+
+  private async syncUrnProductsToZohoDeal(
+    urnNo: string,
+    manufacturerId: Types.ObjectId | string,
+  ): Promise<void> {
+    const normalizedUrn = String(urnNo ?? '').trim();
+    if (!normalizedUrn) return;
+
+    const products = await this.productModel
+      .find(matchActiveProducts({ urnNo: normalizedUrn }))
+      .select('productName productDetails')
+      .sort({ createdDate: 1, productId: 1 })
+      .lean()
+      .exec();
+
+    await this.zohoDealsService.syncDealProducts({
+      manufacturerId: manufacturerId.toString(),
+      urnNo: normalizedUrn,
+      products: products.map((product) => ({
+        productName: String(product.productName ?? '').trim(),
+        productDetail: String(product.productDetails ?? '').trim(),
+      })),
+    });
+  }
+
+  private async syncDocumentReviewedStatusToZohoDeal(
+    urnNo: string,
+    manufacturerId: Types.ObjectId | string,
+  ): Promise<void> {
+    await this.zohoDealsService.updateDealStatus({
+      manufacturerId: manufacturerId.toString(),
+      status: 'Document Reviewed',
+    });
+  }
 
   private getProductListCacheTtlSeconds(): number {
     const ttl = parseInt(
@@ -3012,6 +3048,16 @@ export class ProductRegistrationService {
         updateUrnStatusDto.urnNo,
         nextUrnStatus,
       );
+      await this.syncUrnProductsToZohoDeal(
+        updateUrnStatusDto.urnNo,
+        existingProduct.manufacturerId,
+      ).catch((error: any) => {
+        this.logger.warn(
+          `[Update URN Status] Zoho deal product sync failed for ${updateUrnStatusDto.urnNo}: ${
+            error?.message || error
+          }`,
+        );
+      });
 
       if (previousUrnStatus !== 4 && nextUrnStatus === 4) {
         this.urnTabReviewService
@@ -3130,6 +3176,27 @@ export class ProductRegistrationService {
         urnNo,
         dto.updateStatusTo,
       );
+      await this.syncUrnProductsToZohoDeal(urnNo, manufacturerId).catch(
+        (error: any) => {
+          this.logger.warn(
+            `[Admin URN Status] Zoho deal product sync failed for ${urnNo}: ${
+              error?.message || error
+            }`,
+          );
+        },
+      );
+      if (dto.updateStatusTo === 6) {
+        await this.syncDocumentReviewedStatusToZohoDeal(
+          urnNo,
+          manufacturerId,
+        ).catch((error: any) => {
+          this.logger.warn(
+            `[Admin URN Status] Zoho deal status update failed for ${urnNo}: ${
+              error?.message || error
+            }`,
+          );
+        });
+      }
 
       if (dto.updateStatusTo === 4 && previousUrnStatus !== 4) {
         this.urnTabReviewService

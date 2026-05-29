@@ -26,7 +26,10 @@ import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { UrnSiteVisitsModule } from '../urn-site-visits/urn-site-visits.module';
-import { Category, CategorySchema } from '../categories/schemas/category.schema';
+import {
+  Category,
+  CategorySchema,
+} from '../categories/schemas/category.schema';
 import {
   Manufacturer,
   ManufacturerSchema,
@@ -45,6 +48,7 @@ import {
 } from './schemas/vendor-product-change-request.schema';
 import { UrnTabReviewService } from './urn-tab-review.service';
 import { CertificationLifecycleService } from './certification-lifecycle.service';
+import { ZohoModule } from '../zoho/zoho.module';
 import { EmailService } from '../common/services/email.service';
 
 @Module({
@@ -70,6 +74,7 @@ import { EmailService } from '../common/services/email.service';
     ActivityLogModule,
     RbacModule,
     UrnSiteVisitsModule,
+    ZohoModule,
   ],
   controllers: [
     ProductRegistrationController,

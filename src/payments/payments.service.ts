@@ -58,7 +58,7 @@ export class PaymentsService {
     return Number(payment.quoteTotal ?? payment.quoteAmount ?? 0);
   }
 
-  private async syncApprovedPaymentToZohoDeal(
+  private async syncPaymentToZohoDeal(
     payment: PaymentDetailsDocument,
     manufacturerId: string,
   ): Promise<void> {
@@ -1201,15 +1201,6 @@ export class PaymentsService {
             },
             urnStatus,
           );
-          await this.syncApprovedPaymentToZohoDeal(
-            updatedPayment,
-            anyProduct.manufacturerId.toString(),
-          ).catch((error: any) => {
-            console.warn(
-              `[Update Payment] Zoho deal payment update failed for ${normalizedUrn}:`,
-              error?.message || error,
-            );
-          });
         }
       }
 
@@ -1328,6 +1319,15 @@ export class PaymentsService {
             },
             urnStatus,
           );
+          await this.syncPaymentToZohoDeal(
+            updatedPayment,
+            anyProduct.manufacturerId.toString(),
+          ).catch((error: any) => {
+            console.warn(
+              `[Update Payment] Zoho deal payment update failed for ${normalizedUrn}:`,
+              error?.message || error,
+            );
+          });
           if (isCertification) {
             this.lifecycleNotification
               .notifyCertificationPaymentApproved({

@@ -68,20 +68,21 @@ export class ZohoTokenService {
       );
     }
 
-    const accountsUrl =
-      this.configService.get<string>('ZOHO_ACCOUNTS_URL') ||
-      ZOHO_DEFAULT_ACCOUNTS_URL;
+    const tokenUrl = `${this.resolveAccountsBaseUrl()}/oauth/v2/token`;
+    const body = new URLSearchParams({
+      refresh_token: String(refreshToken).trim(),
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+    });
 
     try {
       const response = await axios.post<ZohoTokenResponse>(
-        `${accountsUrl.replace(/\/+$/, '')}/oauth/v2/token`,
-        null,
+        tokenUrl,
+        body.toString(),
         {
-          params: {
-            refresh_token: refreshToken,
-            client_id: clientId,
-            client_secret: clientSecret,
-            grant_type: 'refresh_token',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
           },
           timeout: this.requestTimeoutMs(),
         },
@@ -111,7 +112,7 @@ export class ZohoTokenService {
       return response.data.access_token;
     } catch (error: any) {
       const message = this.extractRefreshErrorMessage(error);
-      this.logger.error(`Zoho token refresh failed: ${message}`);
+      this.logger.error(`Zoho token refresh failed (${tokenUrl}): ${message}`);
       await this.tokenModel
         .findOneAndUpdate(
           { key: 'primary' },
@@ -192,8 +193,31 @@ export class ZohoTokenService {
     );
   }
 
+  /**
+   * OAuth must hit accounts.zoho.* — not www.zohoapis.in (CRM).
+   * Strips inline comments (# ...) often pasted into Render env values.
+   */
+  private resolveAccountsBaseUrl(): string {
+    const raw =
+      this.configService.get<string>('ZOHO_ACCOUNTS_URL') ||
+      ZOHO_DEFAULT_ACCOUNTS_URL;
+    let trimmed = String(raw).split('#')[0].trim().replace(/\/+$/, '');
+    trimmed = trimmed.replace(/\/oauth\/v2\/token\/?$/i, '');
+
+    if (/zohoapis\./i.test(trimmed)) {
+      this.logger.warn(
+        `ZOHO_ACCOUNTS_URL is set to CRM host (${trimmed}); using ${ZOHO_DEFAULT_ACCOUNTS_URL} for OAuth token refresh`,
+      );
+      return ZOHO_DEFAULT_ACCOUNTS_URL;
+    }
+
+    return trimmed || ZOHO_DEFAULT_ACCOUNTS_URL;
+  }
+
   private requiredConfig(key: string): string {
-    const value = this.configService.get<string>(key);
+    const value = String(this.configService.get<string>(key) ?? '')
+      .split('#')[0]
+      .trim();
     if (!value) {
       throw new ServiceUnavailableException(`${key} is not configured`);
     }

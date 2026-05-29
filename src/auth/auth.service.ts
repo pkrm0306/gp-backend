@@ -234,9 +234,16 @@ export class AuthService {
     }
   }
 
+  /** True for vendor-portal accounts only (not admin/staff). */
+  isVendorPortalRole(role: string | undefined): boolean {
+    const r = String(role ?? '').trim().toLowerCase();
+    return r === 'vendor' || r === 'partner';
+  }
+
   /**
-   * Vendor portal users (vendor/partner/staff) require manufacturerStatus=1 and vendor_status=1.
+   * Vendor portal users (vendor/partner) require manufacturerStatus=1 and vendor_status=1.
    * Used on login, refresh, and JWT validation so inactive orgs cannot keep using old tokens.
+   * Admin portal staff share a manufacturerId for RBAC but must not use this gate.
    */
   async assertVendorOrganizationActive(
     manufacturerId: string | undefined,
@@ -900,11 +907,7 @@ export class AuthService {
 
     const mid = payload.manufacturerId || payload.vendorId;
     const roleForOrg = String(payload.type || payload.role || '');
-    if (
-      !isPlatformAdmin &&
-      mid &&
-      ['vendor', 'partner', 'staff'].includes(roleForOrg)
-    ) {
+    if (!isPlatformAdmin && mid && this.isVendorPortalRole(roleForOrg)) {
       await this.assertVendorOrganizationActive(
         typeof mid === 'string' ? mid : String(mid),
       );

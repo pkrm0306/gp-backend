@@ -17,12 +17,48 @@ export function mergeTeamMemberSectorIdsFromFormObject(obj: unknown): number[] {
   const seen = new Set<number>();
   const invalid: string[] = [];
 
-  const pushResolved = (raw: unknown) => {
-    const id = resolveTeamMemberSectorIdFromInput(raw);
-    if (id === null) {
-      if (raw !== '' && raw !== null && raw !== undefined) {
-        invalid.push(String(raw).trim());
+  const pushResolved = (raw: unknown): void => {
+    if (raw === undefined || raw === null || raw === '') {
+      return;
+    }
+
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        pushResolved(item);
       }
+      return;
+    }
+
+    const trimmed = String(raw).trim();
+    if (!trimmed) {
+      return;
+    }
+
+    // Frontend often sends the same multiselect as JSON on `sectors` and again on `sector` / `sector_names`.
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            pushResolved(item);
+          }
+          return;
+        }
+      } catch {
+        invalid.push(trimmed);
+        return;
+      }
+    }
+
+    const unquoted =
+      (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))
+        ? trimmed.slice(1, -1).trim()
+        : trimmed;
+
+    const id = resolveTeamMemberSectorIdFromInput(unquoted);
+    if (id === null) {
+      invalid.push(unquoted);
       return;
     }
     if (!seen.has(id)) {
@@ -32,30 +68,10 @@ export function mergeTeamMemberSectorIdsFromFormObject(obj: unknown): number[] {
   };
 
   const consumeArrayLike = (raw: unknown): void => {
-    if (raw === undefined || raw === null) return;
-    if (Array.isArray(raw)) {
-      for (const x of raw) pushResolved(x);
+    if (raw === undefined || raw === null) {
       return;
     }
-    const s = String(raw).trim();
-    if (!s) return;
-    if (s.startsWith('[')) {
-      try {
-        const arr = JSON.parse(s) as unknown;
-        if (Array.isArray(arr)) {
-          for (const x of arr) pushResolved(x);
-        }
-      } catch {
-        invalid.push(s);
-      }
-      return;
-    }
-    for (const part of s
-      .split(/[\s,;]+/)
-      .map((p) => p.trim())
-      .filter(Boolean)) {
-      pushResolved(part);
-    }
+    pushResolved(raw);
   };
 
   consumeArrayLike(o.sectors);

@@ -67,7 +67,10 @@ export class ZohoApiClientService {
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        const accessToken = await this.tokenService.refreshAccessToken();
+        const accessToken =
+          attempt === 1
+            ? await this.tokenService.getValidAccessToken()
+            : await this.tokenService.refreshAccessToken();
 
         const response = await axios.request<T>({
           ...config,
@@ -114,8 +117,12 @@ export class ZohoApiClientService {
   }
 
   private buildUrl(path: string): string {
-    const baseUrl =
-      this.configService.get<string>('ZOHO_BASE_URL') || ZOHO_DEFAULT_BASE_URL;
+    const baseUrl = String(
+      this.configService.get<string>('ZOHO_BASE_URL') || ZOHO_DEFAULT_BASE_URL,
+    )
+      .split('#')[0]
+      .trim()
+      .replace(/\/crm\/v\d+\/?$/i, '');
     const normalizedBase = baseUrl.replace(/\/+$/, '');
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     return `${normalizedBase}${normalizedPath}`;
