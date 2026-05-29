@@ -10,10 +10,8 @@ import {
   BadRequestException,
   UploadedFile,
   UseInterceptors,
-  Res,
   StreamableFile,
 } from '@nestjs/common';
-import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
@@ -535,42 +533,31 @@ export class ProductsController {
 
   @Get('certificates/urn/:urnNo/download')
   @ApiOperation({
-    summary: 'Download all certificates for a URN (ZIP)',
+    summary: 'Download all certificates for a URN (single PDF)',
     description:
-      'Vendor-only. Bundles all certified EOI certificates under the given URN into a ZIP file.',
+      'Vendor-only. Merges all certified EOI certificates under the given URN into one PDF file (certificates appended page-by-page).',
   })
   @ApiParam({
     name: 'urnNo',
     description: 'URN number',
     example: 'URN-20260527122016',
   })
-  @ApiResponse({ status: 200, description: 'ZIP download' })
+  @ApiResponse({ status: 200, description: 'Merged certificate PDF download' })
   @ApiResponse({ status: 404, description: 'No certified certificates found' })
-  async downloadUrnCertificatesZip(
+  async downloadUrnCertificatesPdf(
     @CurrentUser() user: { manufacturerId?: string },
     @Param('urnNo') urnNo: string,
-    @Res() res: Response,
-  ): Promise<void> {
+  ): Promise<StreamableFile> {
     if (!user?.manufacturerId) {
       throw new BadRequestException('Manufacturer ID not found in token');
     }
-    const { stream, fileName } =
-      await this.vendorCertificateService.downloadUrnCertificatesZip(
-        user.manufacturerId,
-        urnNo,
-      );
-    res.set({
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${fileName}"`,
+    const file = await this.vendorCertificateService.downloadUrnCertificatesPdf(
+      user.manufacturerId,
+      urnNo,
+    );
+    return new StreamableFile(file.buffer, {
+      type: file.contentType,
+      disposition: `attachment; filename="${file.fileName}"`,
     });
-    stream.on('error', () => {
-      if (!res.headersSent) {
-        res.status(500).end();
-        return;
-      }
-      res.end();
-    });
-    stream.pipe(res);
-    await stream.finalize();
   }
 }

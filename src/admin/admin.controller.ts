@@ -83,6 +83,7 @@ import {
   createBannerDiskMulterOptions,
   pickBannerImageFile,
 } from './utils/banner-image-upload.util';
+import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import {
   DashboardActivityQueryDto,
   DashboardMetricsQueryDto,
@@ -484,6 +485,21 @@ export class AdminController {
       images,
       event_image: item?.event_image ?? null,
     };
+  }
+
+  /** Gallery/event images via shared upload helper (local uploads/ or S3 when configured). */
+  private async uploadGalleryImageFiles(
+    files: Express.Multer.File[],
+  ): Promise<string[]> {
+    const urls: string[] = [];
+    for (const file of files) {
+      if (!file?.buffer?.length && !file?.path) {
+        continue;
+      }
+      const uploaded = await uploadFile(file, 'events');
+      urls.push(uploaded.fileUrl);
+    }
+    return urls;
   }
 
   private mapArticleResponse(item: any) {
@@ -1124,32 +1140,7 @@ export class AdminController {
         { name: 'image[]', maxCount: 20 },
         { name: 'images', maxCount: 20 },
       ],
-      {
-        storage: diskStorage({
-          destination: join(process.cwd(), 'uploads', 'events'),
-          filename: (req, file, cb) => {
-            const uniqueSuffix =
-              Date.now() + '-' + Math.round(Math.random() * 1e9);
-            const ext = extname(file.originalname || '');
-            cb(null, `event-${uniqueSuffix}${ext}`);
-          },
-        }),
-        fileFilter: (req, file, cb) => {
-          if (!file?.originalname) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-          ];
-          cb(null, allowedMimes.includes(file.mimetype));
-        },
-        limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminImageMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
@@ -1224,7 +1215,7 @@ export class AdminController {
         'Invalid eventDate (expected ISO date/datetime)',
       );
     }
-    const galleryImages = allImages.map((f) => `/uploads/events/${f.filename}`);
+    const galleryImages = await this.uploadGalleryImageFiles(allImages);
     const galleryType = this.parseGalleryType(
       pick(['galleryType', 'type', 'category']),
       true,
@@ -1254,32 +1245,7 @@ export class AdminController {
         { name: 'eventImage', maxCount: 20 },
         { name: 'event_image', maxCount: 20 },
       ],
-      {
-        storage: diskStorage({
-          destination: join(process.cwd(), 'uploads', 'events'),
-          filename: (req, file, cb) => {
-            const uniqueSuffix =
-              Date.now() + '-' + Math.round(Math.random() * 1e9);
-            const ext = extname(file.originalname || '');
-            cb(null, `event-${uniqueSuffix}${ext}`);
-          },
-        }),
-        fileFilter: (req, file, cb) => {
-          if (!file?.originalname) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-          ];
-          cb(null, allowedMimes.includes(file.mimetype));
-        },
-        limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminImageMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
@@ -1365,8 +1331,10 @@ export class AdminController {
       pick(['galleryType', 'type', 'category']),
       false,
     );
-    const galleryImages = allImages.map((f) => `/uploads/events/${f.filename}`);
-    const data = await this.adminService.updateEvent(id, {
+    const galleryImages = await this.uploadGalleryImageFiles(allImages);
+    const data = await this.adminService.updateEvent(
+      id,
+      {
       ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
       ...(dto.eventDescription !== undefined
         ? { eventDescription: dto.eventDescription }
@@ -1376,7 +1344,9 @@ export class AdminController {
       ...(galleryImages.length
         ? { galleryImages, eventImage: galleryImages[0] }
         : {}),
-    });
+      },
+      'gallery',
+    );
     return {
       message: 'Gallery item updated successfully',
       data: this.mapGalleryResponse(data),
@@ -1386,17 +1356,41 @@ export class AdminController {
   @Get('events/list')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'List events',
+    summary: 'List events (public website)',
     description:
-      'Returns events for the Events table: image, event name, date & time, location, active flag, and id for actions. Newest first.',
+      'Returns paginated events for the public website events page. Default: page=1, limit=10. Only active events (eventStatus=1) are returned.',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    description: 'Page number (1-based). Default 1.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 10,
+    description: 'Items per page. Default 10, max 50.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Events list',
+    description: 'Paginated events list',
     schema: {
       type: 'object',
       properties: {
         message: { type: 'string', example: 'Events retrieved successfully' },
+        pagination: {
+          type: 'object',
+          properties: {
+            page: { type: 'number', example: 1 },
+            limit: { type: 'number', example: 10 },
+            perPage: { type: 'number', example: 10 },
+            total: { type: 'number', example: 25 },
+            totalPages: { type: 'number', example: 3 },
+          },
+        },
         data: {
           type: 'array',
           items: {
@@ -1417,17 +1411,47 @@ export class AdminController {
     },
   })
   @Public()
-  async listEvents() {
-    const data = await this.adminService.listEvents();
-    return { message: 'Events retrieved successfully', data };
+  async listEvents(
+    @Query('page') pageRaw?: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const pageNum = Number.parseInt(String(pageRaw ?? '1'), 10);
+    const limitNum = Number.parseInt(String(limitRaw ?? '10'), 10);
+    const page = Number.isFinite(pageNum) && pageNum > 0 ? pageNum : 1;
+    const limit =
+      Number.isFinite(limitNum) && limitNum > 0
+        ? Math.min(limitNum, 50)
+        : 10;
+    const result = await this.adminService.listEventsPaginated(page, limit, {
+      activeOnly: true,
+    });
+    return {
+      message: 'Events retrieved successfully',
+      pagination: result.pagination,
+      data: result.data,
+    };
   }
 
   @Get('gallery/list')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'List gallery items',
+    summary: 'List gallery items (public website)',
     description:
-      'Returns gallery list with gallery-friendly fields: title, description, date, image, active flag, and id.',
+      'Returns paginated gallery items for the public website. Default: page=1, limit=50. Only active items (eventStatus=1) are returned. No authentication required.',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    description: 'Page number (1-based). Default 1.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    example: 50,
+    description: 'Items per page. Default 50, max 50.',
   })
   @ApiResponse({
     status: 200,
@@ -1436,6 +1460,15 @@ export class AdminController {
       type: 'object',
       properties: {
         message: { type: 'string', example: 'Gallery retrieved successfully' },
+        pagination: {
+          type: 'object',
+          properties: {
+            page: { type: 'number', example: 1 },
+            perPage: { type: 'number', example: 50 },
+            total: { type: 'number', example: 145 },
+            totalPages: { type: 'number', example: 3 },
+          },
+        },
         data: {
           type: 'array',
           items: {
@@ -1462,20 +1495,40 @@ export class AdminController {
     },
   })
   @Public()
-  async listGallery() {
-    const rows = await this.adminService.listEvents();
-    const data = rows.map((r: any) => ({
+  async listGallery(
+    @Query('page') pageRaw?: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const pageNum = Number.parseInt(String(pageRaw ?? '1'), 10);
+    const limitNum = Number.parseInt(String(limitRaw ?? '50'), 10);
+    const page = Number.isFinite(pageNum) && pageNum > 0 ? pageNum : 1;
+    const limit =
+      Number.isFinite(limitNum) && limitNum > 0
+        ? Math.min(limitNum, 50)
+        : 50;
+    const result = await this.adminService.listGalleryPaginated(page, limit, {
+      activeOnly: true,
+    });
+    const data = result.data.map((r: any) => ({
       s_no: r.s_no,
       ...this.mapGalleryResponse(r),
       is_active: r.is_active,
     }));
-    return { message: 'Gallery retrieved successfully', data };
+    return {
+      message: 'Gallery retrieved successfully',
+      pagination: {
+        ...result.pagination,
+        limit: result.pagination.perPage,
+      },
+      data,
+    };
   }
 
   @Get('gallery/:id')
+  @Permissions(PERMISSIONS.EVENTS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Get gallery item by id',
+    summary: 'Get gallery item by id (admin)',
     description:
       'Returns one gallery item for edit/view with fields: title, description, date, image, images.',
   })
@@ -1483,9 +1536,8 @@ export class AdminController {
   @ApiResponse({ status: 200, description: 'Gallery item retrieved successfully' })
   @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Gallery item not found' })
-  @Public()
   async getGalleryById(@Param('id') id: string) {
-    const item: any = await this.adminService.getEventById(id);
+    const item: any = await this.adminService.getEventById(id, 'gallery');
     const data = this.mapGalleryResponse(item);
     return { message: 'Gallery item retrieved successfully', data };
   }
@@ -1515,7 +1567,11 @@ export class AdminController {
     @Body() body: { status?: string },
   ) {
     const status = this.parseEventStatus(body?.status);
-    const data = await this.adminService.setOrToggleEventStatus(id, status);
+    const data = await this.adminService.setOrToggleEventStatus(
+      id,
+      status,
+      'gallery',
+    );
     return { message: 'Gallery status updated successfully', data };
   }
 
@@ -1906,7 +1962,7 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Event not found' })
   @Public()
   async getEventById(@Param('id') id: string) {
-    const data = await this.adminService.getEventById(id);
+    const data = await this.adminService.getEventById(id, 'event');
     return { message: 'Event retrieved successfully', data };
   }
 
@@ -1923,7 +1979,7 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Event not found' })
   async deleteEvent(@Param('id') id: string) {
-    const data = await this.adminService.deleteEvent(id);
+    const data = await this.adminService.deleteEvent(id, 'event');
     return { message: 'Event deleted successfully', data };
   }
 
@@ -1940,7 +1996,7 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Gallery item not found' })
   async deleteGallery(@Param('id') id: string) {
-    const data = await this.adminService.deleteEvent(id);
+    const data = await this.adminService.deleteEvent(id, 'gallery');
     return { message: 'Gallery item deleted successfully', data };
   }
 
@@ -1957,7 +2013,7 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Gallery item not found' })
   async deleteGalleryAlias(@Param('id') id: string) {
-    const data = await this.adminService.deleteEvent(id);
+    const data = await this.adminService.deleteEvent(id, 'gallery');
     return { message: 'Gallery item deleted successfully', data };
   }
 

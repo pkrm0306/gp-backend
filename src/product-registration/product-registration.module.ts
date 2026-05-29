@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { PassportModule } from '@nestjs/passport';
 import { ProductRegistrationController } from './product-registration.controller';
 import { ProductsController } from './products.controller';
+import { VendorRequestsController } from './vendor-requests.controller';
 import { AdminProductsController } from './admin-products.controller';
 import { AdminUrnController } from './admin-urn.controller';
 import { ProductController } from './product.controller';
@@ -38,8 +39,13 @@ import {
   UrnProcessTabReview,
   UrnProcessTabReviewSchema,
 } from './schemas/urn-process-tab-review.schema';
+import {
+  VendorProductChangeRequest,
+  VendorProductChangeRequestSchema,
+} from './schemas/vendor-product-change-request.schema';
 import { UrnTabReviewService } from './urn-tab-review.service';
 import { CertificationLifecycleService } from './certification-lifecycle.service';
+import { EmailService } from '../common/services/email.service';
 
 @Module({
   imports: [
@@ -50,6 +56,10 @@ import { CertificationLifecycleService } from './certification-lifecycle.service
       { name: Manufacturer.name, schema: ManufacturerSchema },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
       { name: UrnProcessTabReview.name, schema: UrnProcessTabReviewSchema },
+      {
+        name: VendorProductChangeRequest.name,
+        schema: VendorProductChangeRequestSchema,
+      },
     ]),
     PassportModule,
     AuthModule,
@@ -64,6 +74,7 @@ import { CertificationLifecycleService } from './certification-lifecycle.service
   controllers: [
     ProductRegistrationController,
     ProductsController,
+    VendorRequestsController,
     AdminProductsController,
     AdminUrnController,
     ProductController,
@@ -77,6 +88,7 @@ import { CertificationLifecycleService } from './certification-lifecycle.service
     UrnTabReviewService,
     CertificationLifecycleService,
     VendorCertificateService,
+    EmailService,
   ],
   exports: [
     ProductRegistrationService,

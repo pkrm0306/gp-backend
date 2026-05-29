@@ -26,8 +26,17 @@ export class CountriesService {
     return Number.isFinite(ttl) && ttl > 0 ? ttl : 300;
   }
 
+  /** Full country list for website filter tree — always from DB (no Redis cache). */
+  async findAllForFilterOptions() {
+    return this.countryModel
+      .find()
+      .sort({ name: 1, countryName: 1, country_name: 1 })
+      .lean()
+      .exec();
+  }
+
   async findAll() {
-    const cacheKey = this.redisService.buildKey('countries', 'list', 'all');
+    const cacheKey = this.redisService.buildKey('countries', 'list', 'all:v2');
     try {
       const cached = await this.redisService.get<CountryDocument[]>(cacheKey);
       if (Array.isArray(cached)) return cached;
@@ -37,7 +46,11 @@ export class CountriesService {
       );
     }
 
-    const rows = await this.countryModel.find().sort({ countryName: 1 }).lean().exec();
+    const rows = await this.countryModel
+      .find()
+      .sort({ name: 1, countryName: 1, country_name: 1 })
+      .lean()
+      .exec();
     this.redisService
       .set(cacheKey, rows, this.getCountriesListCacheTtlSeconds())
       .catch((error) => {

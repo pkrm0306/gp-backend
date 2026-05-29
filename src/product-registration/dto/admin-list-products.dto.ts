@@ -41,7 +41,7 @@ export function normalizeMongoIdArray(value: unknown): string[] | undefined {
   return valid.length > 0 ? valid : undefined;
 }
 
-function normalizeOptionalString(value: unknown): string | undefined {
+export function normalizeOptionalString(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }

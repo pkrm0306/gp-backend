@@ -22,6 +22,10 @@ import {
   CategoryDocument,
 } from '../categories/schemas/category.schema';
 import {
+  Manufacturer,
+  ManufacturerDocument,
+} from '../manufacturers/schemas/manufacturer.schema';
+import {
   RegisterProductDto,
   BulkRegisterProductDto,
 } from './dto/register-product.dto';
@@ -57,7 +61,15 @@ import { LifecycleNotificationService } from '../notifications/lifecycle-notific
 import { UrnTabReviewService } from './urn-tab-review.service';
 import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-product.dto';
 import { VendorPatchCertifiedProductDto } from './dto/vendor-patch-certified-product.dto';
+import { VendorProductChangeRequestDto } from './dto/vendor-product-change-request.dto';
+import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
+import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
 import { uploadFile } from '../utils/upload-file.util';
+import { EmailService } from '../common/services/email.service';
+import {
+  VendorProductChangeRequest,
+  VendorProductChangeRequestDocument,
+} from './schemas/vendor-product-change-request.schema';
 
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
@@ -92,6 +104,10 @@ export class ProductRegistrationService {
     private productPlantModel: Model<ProductPlantDocument>,
     @InjectModel(Category.name)
     private categoryModel: Model<CategoryDocument>,
+    @InjectModel(Manufacturer.name)
+    private manufacturerModel: Model<ManufacturerDocument>,
+    @InjectModel(VendorProductChangeRequest.name)
+    private vendorProductChangeRequestModel: Model<VendorProductChangeRequestDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private eoiNumberService: EoiNumberService,
@@ -104,6 +120,7 @@ export class ProductRegistrationService {
     private readonly urnSiteVisitsService: UrnSiteVisitsService,
     private readonly lifecycleNotification: LifecycleNotificationService,
     private readonly urnTabReviewService: UrnTabReviewService,
+    private readonly emailService: EmailService,
   ) {}
 
   private getProductListCacheTtlSeconds(): number {
@@ -2035,6 +2052,488 @@ export class ProductRegistrationService {
     return updated;
   }
 
+  async adminUpdateCertifiedProductPassport(
+    productId: string,
+    dto: AdminUpdateCertifiedProductPassportDto,
+  ) {
+    const productObjectId = this.toObjectId(productId, 'productId');
+    const passport = String(dto.passport ?? '');
+    const nonWhitespaceLength = passport.replace(/\s+/g, '').length;
+
+    if (nonWhitespaceLength === 0) {
+      throw new BadRequestException(
+        'Passport content is required (whitespace-only content is not allowed)',
+      );
+    }
+
+    const updated = await this.productModel
+      .findOneAndUpdate(
+        matchActiveProducts({
+          _id: productObjectId,
+          productStatus: 2,
+        }),
+        {
+          $set: {
+            productPassport: passport,
+            updatedDate: new Date(),
+          },
+        },
+        { new: true },
+      )
+      .select(
+        '_id urnNo eoiNo productName productStatus productPassport updatedDate',
+      )
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException(
+        'Certified product not found. Passport is allowed only for certified products',
+      );
+    }
+
+    await this.invalidateProductListingsCache();
+
+    return {
+      _id: this.toMongoIdString(updated._id),
+      urnNo: String(updated.urnNo ?? ''),
+      eoiNo: String(updated.eoiNo ?? ''),
+      productName: String(updated.productName ?? ''),
+      productStatus: Number(updated.productStatus ?? 0),
+      passport: String(updated.productPassport ?? ''),
+      nonWhitespaceLength,
+      updatedDate: updated.updatedDate ?? null,
+    };
+  }
+
+  async getPublicCertifiedProductPassport(productId: string) {
+    const productObjectId = this.toObjectId(productId, 'productId');
+    const row = await this.productModel
+      .findOne(
+        matchActiveProducts({
+          _id: productObjectId,
+          productStatus: 2,
+        }),
+      )
+      .select(
+        '_id urnNo eoiNo productName productImage validtillDate productPassport productStatus',
+      )
+      .lean()
+      .exec();
+
+    if (!row) {
+      throw new NotFoundException('Certified product not found');
+    }
+
+    return {
+      _id: this.toMongoIdString(row._id),
+      urnNo: String(row.urnNo ?? ''),
+      eoiNo: String(row.eoiNo ?? ''),
+      productName: String(row.productName ?? ''),
+      productImage: row.productImage ? String(row.productImage) : null,
+      validtillDate: row.validtillDate ?? null,
+      passport: String(row.productPassport ?? ''),
+      productStatus: Number(row.productStatus ?? 0),
+    };
+  }
+
+  /**
+   * Map a state row to its parent country Mongo _id (supports legacy country_id / country_code / country_name).
+   */
+  private resolveCountryMongoIdForState(
+    state: Record<string, unknown>,
+    countryMongoIds: Set<string>,
+    countryByNumericId: Map<number, string>,
+    countryByCode: Map<string, string>,
+    countryByName: Map<string, string>,
+  ): string | null {
+    const objectIdRaw = state.countryId;
+    if (objectIdRaw) {
+      const key = String(objectIdRaw);
+      if (countryMongoIds.has(key)) {
+        return key;
+      }
+    }
+
+    const numericCountryId = Number(state.country_id);
+    if (Number.isFinite(numericCountryId) && countryByNumericId.has(numericCountryId)) {
+      return countryByNumericId.get(numericCountryId) ?? null;
+    }
+
+    const code = String(state.country_code ?? '')
+      .trim()
+      .toUpperCase();
+    if (code && countryByCode.has(code)) {
+      return countryByCode.get(code) ?? null;
+    }
+
+    const countryName = String(state.country_name ?? '')
+      .trim()
+      .toLowerCase();
+    if (countryName && countryByName.has(countryName)) {
+      return countryByName.get(countryName) ?? null;
+    }
+
+    return null;
+  }
+
+  /**
+   * Public website filter panel: active categories + country/state tree (from DB).
+   */
+  async getPublicCertifiedWebsiteFilterOptions() {
+    const categories = await this.categoryModel
+      .find({ category_status: 1 })
+      .select('_id category_name')
+      .sort({ category_name: 1 })
+      .lean()
+      .exec();
+
+    const categoryOptions = categories.map((c) => ({
+      id: String(c._id),
+      label: String((c as { category_name?: string }).category_name ?? '').trim() ||
+        'Category',
+    }));
+
+    const [countries, states] = await Promise.all([
+      this.countriesService.findAllForFilterOptions(),
+      this.statesService.findAllForFilterOptions(),
+    ]);
+
+    const countryMongoIds = new Set<string>();
+    const countryByNumericId = new Map<number, string>();
+    const countryByCode = new Map<string, string>();
+    const countryByName = new Map<string, string>();
+
+    for (const country of countries ?? []) {
+      const c = country as {
+        _id?: Types.ObjectId;
+        id?: number;
+        countryName?: string;
+        country_name?: string;
+        name?: string;
+        countryCode?: string;
+        country_code?: string;
+        iso2?: string;
+        iso3?: string;
+      };
+      const mongoId = String(c._id);
+      countryMongoIds.add(mongoId);
+
+      if (c.id != null && Number.isFinite(Number(c.id))) {
+        countryByNumericId.set(Number(c.id), mongoId);
+      }
+
+      const codes = [c.countryCode, c.country_code, c.iso2, c.iso3]
+        .map((v) => String(v ?? '').trim().toUpperCase())
+        .filter(Boolean);
+      for (const code of codes) {
+        countryByCode.set(code, mongoId);
+      }
+
+      const names = [c.countryName, c.country_name, c.name]
+        .map((v) => String(v ?? '').trim().toLowerCase())
+        .filter(Boolean);
+      for (const name of names) {
+        countryByName.set(name, mongoId);
+      }
+    }
+
+    const statesByCountry = new Map<string, Array<{ id: string; label: string }>>();
+    for (const countryId of countryMongoIds) {
+      statesByCountry.set(countryId, []);
+    }
+
+    let statesLinked = 0;
+    let statesUnmapped = 0;
+
+    for (const state of states ?? []) {
+      const s = state as Record<string, unknown>;
+      const stateLabel = String(
+        s.stateName ?? s.state_name ?? s.name ?? '',
+      ).trim();
+      if (!stateLabel) {
+        statesUnmapped++;
+        continue;
+      }
+
+      const countryKey = this.resolveCountryMongoIdForState(
+        s,
+        countryMongoIds,
+        countryByNumericId,
+        countryByCode,
+        countryByName,
+      );
+      if (!countryKey) {
+        statesUnmapped++;
+        continue;
+      }
+
+      statesLinked++;
+      const bucket = statesByCountry.get(countryKey) ?? [];
+      bucket.push({ id: String(s._id), label: stateLabel });
+      statesByCountry.set(countryKey, bucket);
+    }
+
+    for (const [, list] of statesByCountry) {
+      list.sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    const countryStateTree = (countries ?? [])
+      .map((country) => {
+        const c = country as {
+          _id?: Types.ObjectId;
+          countryName?: string;
+          country_name?: string;
+          name?: string;
+        };
+        const id = String(c._id);
+        const label = String(
+          c.countryName ?? c.country_name ?? c.name ?? '',
+        ).trim();
+        return {
+          id,
+          label,
+          type: 'country' as const,
+          children: (statesByCountry.get(id) ?? []).map((state) => ({
+            id: state.id,
+            label: state.label,
+            type: 'state' as const,
+            parentId: id,
+          })),
+        };
+      })
+      .filter((c) => c.label.length > 0)
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    const countriesWithStates = countryStateTree.filter(
+      (c) => c.children.length > 0,
+    ).length;
+
+    return {
+      categories: categoryOptions,
+      countryStateTree,
+      totals: {
+        countries: countryStateTree.length,
+        countriesWithStates,
+        statesInDatabase: (states ?? []).length,
+        statesLinked,
+        statesUnmapped,
+      },
+    };
+  }
+
+  /**
+   * Typeahead for public certified product search bar (min 2 chars).
+   */
+  async searchPublicCertifiedProducts(q: string, limit = 15) {
+    const term = String(q ?? '').trim();
+    if (term.length < 2) {
+      return [];
+    }
+
+    const rx = new RegExp(this.escapeRegexLiteral(term), 'i');
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 30) : 15;
+
+    const rows = await this.productModel
+      .aggregate([
+        {
+          $match: {
+            ...matchActiveProducts(),
+            productStatus: 2,
+            $or: [
+              { productName: rx },
+              { eoiNo: rx },
+              { urnNo: rx },
+            ],
+          },
+        },
+        {
+          $lookup: {
+            from: 'manufacturers',
+            localField: 'manufacturerId',
+            foreignField: '_id',
+            as: 'manufacturer',
+          },
+        },
+        {
+          $unwind: {
+            path: '$manufacturer',
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $match: {
+            $or: [
+              { productName: rx },
+              { eoiNo: rx },
+              { urnNo: rx },
+              { 'manufacturer.manufacturerName': rx },
+            ],
+          },
+        },
+        { $sort: { productName: 1 } },
+        { $limit: safeLimit },
+        {
+          $project: {
+            _id: 0,
+            id: { $toString: '$_id' },
+            productId: 1,
+            productName: 1,
+            eoiNo: 1,
+            urnNo: 1,
+            productImage: 1,
+          },
+        },
+      ])
+      .exec();
+
+    return rows ?? [];
+  }
+
+  /**
+   * Certified product ids that have at least one active plant in the given country/states.
+   * Returns null when no location filter is set; [] when filter is set but nothing matches.
+   */
+  private async findCertifiedProductIdsByPlantLocation(
+    dto: AdminListProductsDto,
+  ): Promise<Types.ObjectId[] | null> {
+    const countryId = String(dto.countryId ?? '').trim();
+    const stateIds = this.resolveAdminListPlantStateObjectIds(dto);
+    const hasCountry = countryId.length > 0;
+    const hasStates = Boolean(stateIds && stateIds.length > 0);
+    if (!hasCountry && !hasStates) {
+      return null;
+    }
+
+    const plantMatch: Record<string, unknown> = {
+      ...matchActiveProductPlants(),
+    };
+    if (hasStates) {
+      plantMatch.stateId = {
+        $in: stateIds!.map((id) => this.toObjectId(id, 'stateId')),
+      };
+    }
+    if (hasCountry) {
+      plantMatch.countryId = this.toObjectId(countryId, 'countryId');
+    }
+
+    const productIds = await this.productPlantModel
+      .distinct('productId', plantMatch)
+      .exec();
+    if (!productIds.length) {
+      return [];
+    }
+
+    const certified = await this.productModel
+      .find({
+        _id: { $in: productIds },
+        productStatus: 2,
+        ...matchActiveProducts(),
+      })
+      .select('_id')
+      .lean()
+      .exec();
+
+    return certified.map((row) => row._id as Types.ObjectId);
+  }
+
+  /**
+   * Flat certified product cards for public website grid (not URN/manufacturer groups).
+   */
+  async listPublicCertifiedProductsFlat(
+    dto: AdminListProductsDto,
+    productId?: string,
+  ) {
+    const listDto: AdminListProductsDto = {
+      ...dto,
+      status: [2],
+    };
+    const { page, limit, skip, sortOrder, rowBase, urnSortField } =
+      this.buildAdminListRowBase(listDto);
+
+    const locationProductIds =
+      await this.findCertifiedProductIdsByPlantLocation(listDto);
+    if (locationProductIds !== null && locationProductIds.length === 0) {
+      return {
+        data: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+      };
+    }
+
+    let pipeline: any[] = [...rowBase];
+    if (locationProductIds && locationProductIds.length > 0) {
+      pipeline = [
+        { $match: { _id: { $in: locationProductIds } } },
+        ...pipeline,
+      ];
+    }
+    const trimmedProductId = String(productId ?? '').trim();
+    if (trimmedProductId) {
+      pipeline = [
+        {
+          $match: {
+            _id: this.toObjectId(trimmedProductId, 'productId'),
+          },
+        },
+        ...pipeline,
+      ];
+    }
+
+    const sortField = urnSortField;
+    const dataPipeline: any[] = [
+      ...pipeline,
+      { $sort: { [sortField]: sortOrder } },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $project: {
+          _id: 0,
+          id: { $toString: '$_id' },
+          productId: 1,
+          eoiNo: 1,
+          urnNo: 1,
+          productName: 1,
+          productDetails: 1,
+          productImage: 1,
+          validtillDate: 1,
+          categoryId: { $toString: '$categoryId' },
+          categoryName: {
+            $ifNull: ['$category.categoryName', '$category.category_name'],
+          },
+          manufacturerName: '$manufacturer.manufacturerName',
+          sectorName: '$_adminSectorDoc.name',
+          plants: 1,
+        },
+      },
+    ];
+
+    const facetResult = await this.productModel
+      .aggregate([
+        {
+          $facet: {
+            data: dataPipeline,
+            total: [...pipeline, { $count: 'count' }],
+          },
+        },
+      ])
+      .exec();
+
+    const payload = facetResult[0] ?? { data: [], total: [] };
+    const total = payload.total?.[0]?.count ?? 0;
+    const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+
+    return {
+      data: payload.data ?? [],
+      total,
+      page,
+      limit,
+      totalPages,
+    };
+  }
+
   async vendorPatchCertifiedProduct(
     productId: string,
     dto: VendorPatchCertifiedProductDto,
@@ -2116,6 +2615,314 @@ export class ProductRegistrationService {
 
     await this.invalidateProductListingsCache();
     return updated.toObject();
+  }
+
+  async vendorSubmitProductChangeRequest(
+    manufacturerId: string,
+    dto: VendorProductChangeRequestDto,
+  ) {
+    const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+    const productObjectId = this.toObjectId(dto.productId, 'productId');
+
+    const product = await this.productModel
+      .findOne(
+        matchActiveProducts({
+          _id: productObjectId,
+          vendorId: vendorObjectId,
+          productStatus: 2,
+        }),
+      )
+      .select('_id urnNo eoiNo productName vendorId manufacturerId productStatus')
+      .lean()
+      .exec();
+
+    if (!product) {
+      throw new NotFoundException(
+        'Certified product not found for this vendor',
+      );
+    }
+
+    const currentName = String(dto.currentName ?? '').trim();
+    const requestedName = String(dto.requestedName ?? '').trim();
+    const reason = String(dto.reason ?? '').trim();
+    if (!currentName || !requestedName || !reason) {
+      throw new BadRequestException(
+        'currentName, requestedName and reason are required',
+      );
+    }
+    if (requestedName === currentName) {
+      throw new BadRequestException(
+        'Requested name must be different from current name',
+      );
+    }
+
+    const normalizedStoredName = String(product.productName ?? '').trim();
+    if (normalizedStoredName && normalizedStoredName !== currentName) {
+      throw new BadRequestException(
+        'Current name does not match latest product name. Refresh and try again.',
+      );
+    }
+
+    const existingPending = await this.vendorProductChangeRequestModel
+      .findOne({
+        vendorId: vendorObjectId,
+        productId: productObjectId,
+        status: 'pending',
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (existingPending) {
+      throw new BadRequestException(
+        'A pending request already exists for this product.',
+      );
+    }
+
+    const now = new Date();
+    const created = await this.vendorProductChangeRequestModel.create({
+      productId: productObjectId,
+      vendorId: vendorObjectId,
+      manufacturerId: vendorObjectId,
+      urnNo: String(dto.urnNo ?? product.urnNo ?? '').trim() || product.urnNo,
+      eoiNo: String(dto.eoiNo ?? product.eoiNo ?? '').trim() || product.eoiNo,
+      currentName,
+      requestedName,
+      reason,
+      status: 'pending',
+      createdDate: now,
+      updatedDate: now,
+    });
+
+    return this.mapProductChangeRequest(created.toObject());
+  }
+
+  async vendorListProductChangeRequests(manufacturerId: string) {
+    const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+    const rows = await this.vendorProductChangeRequestModel
+      .find({ vendorId: vendorObjectId })
+      .sort({ createdDate: -1 })
+      .lean()
+      .exec();
+    return rows.map((row) => this.mapProductChangeRequest(row));
+  }
+
+  async adminListProductChangeRequests(status?: string) {
+    const match: Record<string, unknown> = {};
+    const normalizedStatus = String(status ?? '')
+      .trim()
+      .toLowerCase();
+    if (
+      normalizedStatus === 'pending' ||
+      normalizedStatus === 'approved' ||
+      normalizedStatus === 'rejected'
+    ) {
+      match.status = normalizedStatus;
+    }
+
+    const rows = await this.vendorProductChangeRequestModel
+      .find(match)
+      .sort({ createdDate: -1 })
+      .lean()
+      .exec();
+
+    return rows.map((row) => this.mapProductChangeRequest(row));
+  }
+
+  async adminUpdateProductChangeRequestStatus(
+    requestId: string,
+    dto: AdminUpdateProductChangeRequestDto,
+    adminUserId: string,
+  ) {
+    const requestObjectId = this.toObjectId(requestId, 'requestId');
+    const reviewerObjectId = this.toObjectId(adminUserId, 'adminUserId');
+    const now = new Date();
+
+    const existing = await this.vendorProductChangeRequestModel
+      .findById(requestObjectId)
+      .lean()
+      .exec();
+    if (!existing) {
+      throw new NotFoundException('Request not found');
+    }
+
+    const nextStatus = dto.status;
+    const remarksRaw = dto.adminRemarks?.trim();
+    if (nextStatus === 'rejected' && !remarksRaw) {
+      throw new BadRequestException(
+        'adminRemarks is required when rejecting a request',
+      );
+    }
+
+    const updated = await this.vendorProductChangeRequestModel
+      .findByIdAndUpdate(
+        requestObjectId,
+        {
+          $set: {
+            status: nextStatus,
+            adminRemarks: nextStatus === 'rejected' ? remarksRaw ?? null : null,
+            reviewedBy: reviewerObjectId,
+            reviewedAt: now,
+            updatedDate: now,
+          },
+        },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Request not found');
+    }
+
+    const manufacturer = await this.manufacturerModel
+      .findById(updated.manufacturerId)
+      .select('manufacturerName vendor_email')
+      .lean()
+      .exec();
+
+    const vendorEmail = String(manufacturer?.vendor_email ?? '').trim();
+    const manufacturerName = String(
+      manufacturer?.manufacturerName ?? 'Vendor',
+    ).trim();
+
+    if (nextStatus === 'approved') {
+      await this.productModel
+        .findOneAndUpdate(
+          matchActiveProducts({
+            _id: updated.productId,
+            productStatus: 2,
+          }),
+          {
+            $set: {
+              productName: updated.requestedName,
+              updatedDate: now,
+            },
+          },
+          { new: false },
+        )
+        .exec();
+      await this.invalidateProductListingsCache();
+
+      this.sendProductChangeDecisionEmail({
+        email: vendorEmail,
+        manufacturerName,
+        urnNo: String(updated.urnNo ?? ''),
+        eoiNo: String(updated.eoiNo ?? ''),
+        currentName: String(updated.currentName ?? ''),
+        requestedName: String(updated.requestedName ?? ''),
+        decision: 'approved',
+      });
+    } else if (nextStatus === 'rejected') {
+      this.sendProductChangeDecisionEmail({
+        email: vendorEmail,
+        manufacturerName,
+        urnNo: String(updated.urnNo ?? ''),
+        eoiNo: String(updated.eoiNo ?? ''),
+        currentName: String(updated.currentName ?? ''),
+        requestedName: String(updated.requestedName ?? ''),
+        decision: 'rejected',
+        remarks: remarksRaw ?? '',
+      });
+    }
+
+    return this.mapProductChangeRequest(updated);
+  }
+
+  private sendProductChangeDecisionEmail(params: {
+    email: string;
+    manufacturerName: string;
+    urnNo: string;
+    eoiNo: string;
+    currentName: string;
+    requestedName: string;
+    decision: 'approved' | 'rejected';
+    remarks?: string;
+  }): void {
+    const to = String(params.email ?? '').trim();
+    if (!to) {
+      return;
+    }
+
+    const decisionLabel =
+      params.decision === 'approved' ? 'Approved' : 'Rejected';
+    const subject = `GreenPro — Product Name Change Request ${decisionLabel}`;
+
+    const remarksBlock =
+      params.decision === 'rejected'
+        ? `<p><strong>Admin Remarks:</strong> ${this.escapeHtml(
+            params.remarks || '',
+          )}</p>`
+        : '';
+
+    const nameResultBlock =
+      params.decision === 'approved'
+        ? `<p><strong>Updated Product Name:</strong> ${this.escapeHtml(
+            params.requestedName,
+          )}</p>`
+        : `<p><strong>Product Name (unchanged):</strong> ${this.escapeHtml(
+            params.currentName,
+          )}</p>`;
+
+    const html = `
+      <p>Dear ${this.escapeHtml(params.manufacturerName || 'Vendor')},</p>
+      <p>Your product name change request has been <strong>${decisionLabel}</strong>.</p>
+      <p><strong>URN:</strong> ${this.escapeHtml(params.urnNo)}</p>
+      <p><strong>EOI No:</strong> ${this.escapeHtml(params.eoiNo)}</p>
+      <p><strong>Current Name:</strong> ${this.escapeHtml(params.currentName)}</p>
+      <p><strong>Requested Name:</strong> ${this.escapeHtml(params.requestedName)}</p>
+      ${nameResultBlock}
+      ${remarksBlock}
+      <p>Regards,<br/>GreenPro Admin</p>
+    `;
+
+    const text = [
+      `Dear ${params.manufacturerName || 'Vendor'},`,
+      `Your product name change request has been ${decisionLabel}.`,
+      `URN: ${params.urnNo}`,
+      `EOI No: ${params.eoiNo}`,
+      `Current Name: ${params.currentName}`,
+      `Requested Name: ${params.requestedName}`,
+      params.decision === 'approved'
+        ? `Updated Product Name: ${params.requestedName}`
+        : `Product Name (unchanged): ${params.currentName}`,
+      params.decision === 'rejected' ? `Admin Remarks: ${params.remarks || ''}` : '',
+      'Regards, GreenPro Admin',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendEmail(to, subject, html, text),
+    );
+  }
+
+  private escapeHtml(input: string): string {
+    return String(input ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  private mapProductChangeRequest(row: any) {
+    return {
+      _id: row?._id,
+      productId: row?.productId,
+      vendorId: row?.vendorId,
+      manufacturerId: row?.manufacturerId,
+      urnNo: row?.urnNo,
+      eoiNo: row?.eoiNo,
+      currentName: row?.currentName,
+      requestedName: row?.requestedName,
+      reason: row?.reason,
+      status: row?.status,
+      adminRemarks: row?.adminRemarks ?? null,
+      reviewedBy: row?.reviewedBy ?? null,
+      reviewedAt: row?.reviewedAt ?? null,
+      createdDate: row?.createdDate,
+      updatedDate: row?.updatedDate,
+    };
   }
 
   /**

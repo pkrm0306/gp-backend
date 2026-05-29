@@ -861,6 +861,38 @@ export class AdminService {
     };
   }
 
+  private eventKindMatch(kind: 'event' | 'gallery'): Record<string, unknown> {
+    if (kind === 'gallery') {
+      return {
+        galleryType: { $exists: true, $nin: [null, ''] },
+      };
+    }
+    return {
+      $or: [
+        { galleryType: { $exists: false } },
+        { galleryType: null },
+        { galleryType: '' },
+      ],
+    };
+  }
+
+  private parseEventIdentifier(identifier: string): {
+    where: Record<string, unknown>;
+  } {
+    const raw = String(identifier ?? '').trim();
+    if (!raw) throw new BadRequestException('Event id is required');
+    if (Types.ObjectId.isValid(raw)) {
+      return { where: { _id: new Types.ObjectId(raw) } };
+    }
+    const asNumber = Number.parseInt(raw, 10);
+    if (!Number.isFinite(asNumber) || asNumber <= 0) {
+      throw new BadRequestException(
+        'Invalid event id (expected Mongo _id or numeric eventId)',
+      );
+    }
+    return { where: { eventId: asNumber } };
+  }
+
   async createEvent(payload: {
     eventName: string;
     eventDate: Date;
@@ -937,9 +969,9 @@ export class AdminService {
       brochureLink?: string;
       eventStatus?: number;
     },
+    kind: 'event' | 'gallery' = 'event',
   ) {
-    const raw = String(identifier ?? '').trim();
-    if (!raw) throw new BadRequestException('Event id is required');
+    const { where } = this.parseEventIdentifier(identifier);
 
     const $set: Record<string, unknown> = { updatedDate: new Date() };
     if (
@@ -1024,24 +1056,17 @@ export class AdminService {
       $set.eventStatus = payload.eventStatus;
     }
 
-    let updated: any = null;
-    if (Types.ObjectId.isValid(raw)) {
-      updated = await this.eventModel
-        .findByIdAndUpdate(new Types.ObjectId(raw), { $set }, { new: true })
-        .lean()
-        .exec();
-    } else {
-      const asNumber = Number.parseInt(raw, 10);
-      if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException(
-          'Invalid event id (expected Mongo _id or numeric eventId)',
-        );
-      }
-      updated = await this.eventModel
-        .findOneAndUpdate({ eventId: asNumber }, { $set }, { new: true })
-        .lean()
-        .exec();
-    }
+    const updated = await this.eventModel
+      .findOneAndUpdate(
+        {
+          ...where,
+          ...this.eventKindMatch(kind),
+        },
+        { $set },
+        { new: true },
+      )
+      .lean()
+      .exec();
 
     if (!updated) {
       throw new NotFoundException('Event not found');
@@ -1050,9 +1075,9 @@ export class AdminService {
     return this.formatEventResponse(updated);
   }
 
-  async listEvents() {
+  async listEvents(kind: 'event' | 'gallery' = 'event') {
     const rows = await this.eventModel
-      .find({})
+      .find(this.eventKindMatch(kind))
       .sort({ createdDate: -1, _id: -1 })
       .select(
         'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
@@ -1060,61 +1085,142 @@ export class AdminService {
       .lean()
       .exec();
 
-    return (rows ?? []).map((e: any, idx: number) => {
-      const datePart =
-        e?.eventDate instanceof Date
-          ? e.eventDate.toISOString().slice(0, 10)
-          : e?.eventDate
-            ? new Date(e.eventDate).toISOString().slice(0, 10)
-            : '';
-      const timePart = String(e?.eventStartTime ?? '').trim();
-
-      return {
-        s_no: idx + 1,
-        id: String(e._id),
-        eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
-        image: e.eventImage ?? null,
-        galleryImages: Array.isArray(e.galleryImages)
-          ? e.galleryImages
-          : e.eventImage
-            ? [e.eventImage]
-            : [],
-        event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
-        eventName: String(e.eventName ?? ''),
-        eventDescription: String(e.eventDescription ?? ''),
-        galleryType: e.galleryType ?? '',
-        date: datePart,
-        dateTime: [datePart, timePart].filter(Boolean).join(' '),
-        location: String(e.eventLocation ?? ''),
-        is_active: Number(e.eventStatus) === 1,
-        registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
-        brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
-      };
-    });
+    return (rows ?? []).map((e: any, idx: number) =>
+      this.mapEventListRow(e, idx + 1),
+    );
   }
 
-  async getEventById(identifier: string) {
-    const raw = String(identifier ?? '').trim();
-    if (!raw) throw new BadRequestException('Event id is required');
-
-    let event: any = null;
-    if (Types.ObjectId.isValid(raw)) {
-      event = await this.eventModel
-        .findById(new Types.ObjectId(raw))
-        .lean()
-        .exec();
-    } else {
-      const asNumber = Number.parseInt(raw, 10);
-      if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException(
-          'Invalid event id (expected Mongo _id or numeric eventId)',
-        );
-      }
-      event = await this.eventModel
-        .findOne({ eventId: asNumber })
-        .lean()
-        .exec();
+  async listEventsPaginated(
+    page = 1,
+    perPage = 10,
+    options?: { activeOnly?: boolean },
+  ) {
+    const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+    const safePerPage =
+      Number.isFinite(perPage) && perPage > 0 ? Math.floor(perPage) : 10;
+    const where: Record<string, unknown> = {
+      ...this.eventKindMatch('event'),
+    };
+    if (options?.activeOnly) {
+      where.eventStatus = 1;
     }
+
+    const [total, rows] = await Promise.all([
+      this.eventModel.countDocuments(where).exec(),
+      this.eventModel
+        .find(where)
+        .sort({ eventDate: -1, createdDate: -1, _id: -1 })
+        .skip((safePage - 1) * safePerPage)
+        .limit(safePerPage)
+        .select(
+          'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+        )
+        .lean()
+        .exec(),
+    ]);
+
+    const totalPages = total > 0 ? Math.ceil(total / safePerPage) : 0;
+    const data = (rows ?? []).map((e: any, idx: number) =>
+      this.mapEventListRow(e, (safePage - 1) * safePerPage + idx + 1),
+    );
+
+    return {
+      data,
+      pagination: {
+        page: safePage,
+        limit: safePerPage,
+        perPage: safePerPage,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  private mapEventListRow(e: any, serialNo: number) {
+    const datePart =
+      e?.eventDate instanceof Date
+        ? e.eventDate.toISOString().slice(0, 10)
+        : e?.eventDate
+          ? new Date(e.eventDate).toISOString().slice(0, 10)
+          : '';
+    const timePart = String(e?.eventStartTime ?? '').trim();
+    return {
+      s_no: serialNo,
+      id: String(e._id),
+      eventId: typeof e.eventId === 'number' ? e.eventId : undefined,
+      image: e.eventImage ?? null,
+      galleryImages: Array.isArray(e.galleryImages)
+        ? e.galleryImages
+        : e.eventImage
+          ? [e.eventImage]
+          : [],
+      event_image: e.event_image ?? this.resolveEventImagePath(e.eventImage),
+      eventName: String(e.eventName ?? ''),
+      eventDescription: String(e.eventDescription ?? ''),
+      galleryType: e.galleryType ?? '',
+      date: datePart,
+      dateTime: [datePart, timePart].filter(Boolean).join(' '),
+      location: String(e.eventLocation ?? ''),
+      is_active: Number(e.eventStatus) === 1,
+      registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
+      brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
+    };
+  }
+
+  async listGalleryPaginated(
+    page = 1,
+    perPage = 50,
+    options?: { activeOnly?: boolean },
+  ) {
+    const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+    const safePerPage =
+      Number.isFinite(perPage) && perPage > 0 ? Math.floor(perPage) : 50;
+    const where: Record<string, unknown> = {
+      ...this.eventKindMatch('gallery'),
+    };
+    if (options?.activeOnly) {
+      where.eventStatus = 1;
+    }
+
+    const [total, rows] = await Promise.all([
+      this.eventModel.countDocuments(where).exec(),
+      this.eventModel
+        .find(where)
+        .sort({ createdDate: -1, _id: -1 })
+        .skip((safePage - 1) * safePerPage)
+        .limit(safePerPage)
+        .select(
+          'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+        )
+        .lean()
+        .exec(),
+    ]);
+
+    const totalPages = total > 0 ? Math.ceil(total / safePerPage) : 0;
+    const data = (rows ?? []).map((e: any, idx: number) =>
+      this.mapEventListRow(e, (safePage - 1) * safePerPage + idx + 1),
+    );
+
+    return {
+      data,
+      pagination: {
+        page: safePage,
+        perPage: safePerPage,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  async getEventById(identifier: string, kind: 'event' | 'gallery' = 'event') {
+    const { where } = this.parseEventIdentifier(identifier);
+    const event = await this.eventModel
+      .findOne({
+        ...where,
+        ...this.eventKindMatch(kind),
+      })
+      .lean()
+      .exec();
 
     if (!event) {
       throw new NotFoundException('Event not found');
@@ -1123,55 +1229,39 @@ export class AdminService {
     return this.formatEventResponse(event);
   }
 
-  async deleteEvent(identifier: string) {
-    const raw = String(identifier ?? '').trim();
-    if (!raw) throw new BadRequestException('Event id is required');
-
-    let res: { deletedCount?: number } | null = null;
-    if (Types.ObjectId.isValid(raw)) {
-      res = await this.eventModel
-        .deleteOne({ _id: new Types.ObjectId(raw) })
-        .exec();
-    } else {
-      const asNumber = Number.parseInt(raw, 10);
-      if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException(
-          'Invalid event id (expected Mongo _id or numeric eventId)',
-        );
-      }
-      res = await this.eventModel.deleteOne({ eventId: asNumber }).exec();
-    }
+  async deleteEvent(identifier: string, kind: 'event' | 'gallery' = 'event') {
+    const { where } = this.parseEventIdentifier(identifier);
+    const res = await this.eventModel
+      .deleteOne({
+        ...where,
+        ...this.eventKindMatch(kind),
+      })
+      .exec();
 
     if (!res || res.deletedCount === 0) {
       throw new NotFoundException('Event not found');
     }
 
-    return { id: raw };
+    return { id: String(identifier ?? '').trim() };
   }
 
-  async setOrToggleEventStatus(identifier: string, status?: number) {
-    const raw = String(identifier ?? '').trim();
-    if (!raw) throw new BadRequestException('Event id is required');
-
-    const where: Record<string, unknown> = {};
-    if (Types.ObjectId.isValid(raw)) {
-      where._id = new Types.ObjectId(raw);
-    } else {
-      const asNumber = Number.parseInt(raw, 10);
-      if (!Number.isFinite(asNumber) || asNumber <= 0) {
-        throw new BadRequestException(
-          'Invalid event id (expected Mongo _id or numeric eventId)',
-        );
-      }
-      where.eventId = asNumber;
-    }
+  async setOrToggleEventStatus(
+    identifier: string,
+    status?: number,
+    kind: 'event' | 'gallery' = 'event',
+  ) {
+    const { where } = this.parseEventIdentifier(identifier);
+    const scopedWhere = {
+      ...where,
+      ...this.eventKindMatch(kind),
+    };
 
     let nextStatus: number;
     if (status === 0 || status === 1) {
       nextStatus = status;
     } else {
       const current = await this.eventModel
-        .findOne(where)
+        .findOne(scopedWhere)
         .select('eventStatus')
         .lean()
         .exec();
@@ -1184,7 +1274,7 @@ export class AdminService {
 
     const updated = await this.eventModel
       .findOneAndUpdate(
-        where,
+        scopedWhere,
         { $set: { eventStatus: nextStatus, updatedDate: new Date() } },
         { new: true },
       )
@@ -1345,18 +1435,9 @@ export class AdminService {
     return updated;
   }
 
-  async listArticles() {
-    const rows = await this.articleModel
-      .find({})
-      .sort({ createdAt: -1, _id: -1 })
-      .select(
-        'title description date image article_image url externalUrl pdf article_pdf status',
-      )
-      .lean()
-      .exec();
-
-    return (rows ?? []).map((a: any, idx: number) => ({
-      s_no: idx + 1,
+  private mapArticleListRow(a: any, serialNo: number) {
+    return {
+      s_no: serialNo,
       id: String(a._id),
       title: String(a.title ?? ''),
       description: String(a.description ?? ''),
@@ -1377,7 +1458,64 @@ export class AdminService {
         a.article_pdf ?? this.resolveArticlePdfPath(a.pdf),
       ),
       is_active: Number(a.status) === 1,
-    }));
+    };
+  }
+
+  async listArticles() {
+    const rows = await this.articleModel
+      .find({})
+      .sort({ createdAt: -1, _id: -1 })
+      .select(
+        'title description date image article_image url externalUrl pdf article_pdf status',
+      )
+      .lean()
+      .exec();
+
+    return (rows ?? []).map((a, idx) => this.mapArticleListRow(a, idx + 1));
+  }
+
+  async listArticlesPaginated(
+    page = 1,
+    perPage = 12,
+    options?: { activeOnly?: boolean },
+  ) {
+    const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+    const safePerPage =
+      Number.isFinite(perPage) && perPage > 0 ? Math.floor(perPage) : 12;
+    const where: Record<string, unknown> = {};
+    if (options?.activeOnly) {
+      where.status = 1;
+    }
+
+    const [total, rows] = await Promise.all([
+      this.articleModel.countDocuments(where).exec(),
+      this.articleModel
+        .find(where)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((safePage - 1) * safePerPage)
+        .limit(safePerPage)
+        .select(
+          'title description date image article_image url externalUrl pdf article_pdf status',
+        )
+        .lean()
+        .exec(),
+    ]);
+
+    const totalPages = total > 0 ? Math.ceil(total / safePerPage) : 0;
+    const data = (rows ?? []).map((a, idx) =>
+      this.mapArticleListRow(a, (safePage - 1) * safePerPage + idx + 1),
+    );
+
+    return {
+      data,
+      pagination: {
+        page: safePage,
+        limit: safePerPage,
+        perPage: safePerPage,
+        total,
+        totalPages,
+      },
+    };
   }
 
   async getArticleById(id: string) {

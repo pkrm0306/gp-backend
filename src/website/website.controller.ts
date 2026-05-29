@@ -20,9 +20,14 @@ import { CategoriesService } from '../categories/categories.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { ListCategoriesQueryDto } from '../categories/dto/list-categories-query.dto';
 import { PublicCertifiedProductsListDto } from './dto/public-certified-products-list.dto';
+import { PublicWebsiteCertifiedProductsListDto } from './dto/public-website-certified-products-list.dto';
+import { PublicCertifiedProductSearchQueryDto } from './dto/public-certified-product-search-query.dto';
 import { PublicCategoryManufacturersDto } from './dto/public-category-manufacturers.dto';
 import { PublicManufacturerCategoriesDto } from './dto/public-manufacturer-categories.dto';
 import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
+import { PublicListEventsQueryDto } from './dto/public-list-events-query.dto';
+import { PublicListArticlesQueryDto } from './dto/public-list-articles-query.dto';
+import { PublicListGalleryQueryDto } from './dto/public-list-gallery-query.dto';
 
 @ApiTags('Website')
 @Controller('website')
@@ -64,6 +69,21 @@ export class WebsiteController {
     };
   }
 
+  @Get('public/stats')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public website impact stats',
+    description:
+      'Returns cached counters for website hero/impact section: companies, product categories, and ecolabelled products.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Website stats retrieved successfully',
+  })
+  async getPublicWebsiteStats() {
+    return this.websiteService.getPublicWebsiteStats();
+  }
+
   @Get(['public/banners', 'banner/list', 'banners/list'])
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -83,37 +103,151 @@ export class WebsiteController {
   @Get('public/articles/list')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Public articles list',
+    summary: 'Public articles list (paginated)',
     description:
-      'Returns active articles for website/blog cards (newest first).',
+      'Returns active articles for website/blog cards (newest first). Default pagination: page=1, limit=12 (max 50).',
   })
   @ApiResponse({ status: 200, description: 'Articles retrieved successfully' })
-  async listPublicArticles(@Req() req: Request) {
+  async listPublicArticles(
+    @Req() req: Request,
+    @Query() query: PublicListArticlesQueryDto,
+  ) {
     const origin = `${req.protocol}://${req.get('host')}`;
-    return this.websiteService.getPublicArticlesNormalized(origin);
+    return this.websiteService.getPublicArticlesNormalized(query, origin);
   }
 
   // Alias route for clients using `/website/public/articles`
   @Get('public/articles')
   @HttpCode(HttpStatus.OK)
-  async listPublicArticlesAlias(@Req() req: Request) {
-    return this.listPublicArticles(req);
+  async listPublicArticlesAlias(
+    @Req() req: Request,
+    @Query() query: PublicListArticlesQueryDto,
+  ) {
+    return this.listPublicArticles(req, query);
+  }
+
+  @Get('public/events/list')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public events list (paginated)',
+    description:
+      'Returns active events for the public website events page. Default pagination: page=1, limit=10 (max 50). Sorted by event date (newest first).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated events list',
+  })
+  async listPublicEvents(
+    @Req() req: Request,
+    @Query() query: PublicListEventsQueryDto,
+  ) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.websiteService.getPublicEventsPaginated(query, origin);
+  }
+
+  @Get('public/gallery/list')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public gallery list (paginated)',
+    description:
+      'Returns active gallery items for the public website. Default: page=1, limit=50 (max 50). No authentication required.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated gallery list',
+  })
+  async listPublicGallery(
+    @Req() req: Request,
+    @Query() query: PublicListGalleryQueryDto,
+  ) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.websiteService.getPublicGalleryPaginated(query, origin);
+  }
+
+  @Get('public/products/certified/filter-options')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public certified products filter options',
+    description:
+      'Returns category multi-select options and country → state tree for the public website filter panel. No auth required.',
+  })
+  @ApiResponse({ status: 200, description: 'Filter options' })
+  async getPublicCertifiedProductsFilterOptions() {
+    return this.websiteService.getPublicCertifiedProductsFilterOptions();
+  }
+
+  @Get('public/products/certified/search')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public certified product search (typeahead)',
+    description:
+      'Active search suggestions (min 2 characters). Use returned `id` as `productId` in the list API when user selects a row.',
+  })
+  @ApiResponse({ status: 200, description: 'Search suggestions' })
+  async searchPublicCertifiedProducts(
+    @Req() req: Request,
+    @Query() query: PublicCertifiedProductSearchQueryDto,
+  ) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.websiteService.searchPublicCertifiedProducts(
+      query.q,
+      query.limit ?? 15,
+      origin,
+    );
   }
 
   @Post('public/products/certified/list')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Public certified products listing',
+    summary: 'Public certified products listing (website grid)',
     description:
-      'Public API for certified products only. Accepts the same filters as POST /api/admin/products/list, with status forced to [2].',
+      'Flat product cards for the public website. Requires at least one filter: `search` (min 2 chars), `categoryIds`, `countryId`, `stateIds`, or `productId` from search. Certified only (status 2).',
+  })
+  @ApiBody({ type: PublicWebsiteCertifiedProductsListDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Certified products retrieved successfully',
+  })
+  async listPublicCertifiedProducts(
+    @Req() req: Request,
+    @Body() dto: PublicWebsiteCertifiedProductsListDto,
+  ) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.websiteService.listPublicCertifiedProductsForWebsite(dto, origin);
+  }
+
+  @Post('public/products/certified/list/legacy')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public certified products listing (legacy URN groups)',
+    description:
+      'Legacy shape grouped by URN. Prefer POST /website/public/products/certified/list for the website grid.',
   })
   @ApiBody({ type: PublicCertifiedProductsListDto })
   @ApiResponse({
     status: 200,
     description: 'Certified products retrieved successfully',
   })
-  async listPublicCertifiedProducts(@Body() dto: PublicCertifiedProductsListDto) {
+  async listPublicCertifiedProductsLegacy(
+    @Body() dto: PublicCertifiedProductsListDto,
+  ) {
     return this.websiteService.getPublicCertifiedProducts(dto);
+  }
+
+  @Get('public/products/certified/:productId/passport')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public certified product passport',
+    description:
+      'Public API for product detail page. Returns passport content for a certified product only.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Certified product passport retrieved successfully',
+  })
+  @ApiResponse({ status: 404, description: 'Certified product not found' })
+  async getPublicCertifiedProductPassport(@Param('productId') productId: string) {
+    return this.websiteService.getPublicCertifiedProductPassport(productId);
   }
 
   @Post('public/manufacturers/by-category')

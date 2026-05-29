@@ -35,6 +35,9 @@ export class Product {
   @Prop()
   productDetails?: string;
 
+  @Prop()
+  productPassport?: string;
+
   @Prop({ default: 0 })
   productType: number;
 

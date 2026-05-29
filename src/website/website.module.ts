@@ -12,6 +12,18 @@ import {
 } from './schemas/contact-message.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
 import {
+  Product,
+  ProductSchema,
+} from '../product-registration/schemas/product.schema';
+import {
+  Manufacturer,
+  ManufacturerSchema,
+} from '../manufacturers/schemas/manufacturer.schema';
+import {
+  Category,
+  CategorySchema,
+} from '../categories/schemas/category.schema';
+import {
   VendorUser,
   VendorUserSchema,
 } from '../vendor-users/schemas/vendor-user.schema';
@@ -31,6 +43,9 @@ import {
       { name: NewsletterSubscriber.name, schema: NewsletterSubscriberSchema },
       { name: ContactMessage.name, schema: ContactMessageSchema },
       { name: Event.name, schema: EventSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: Manufacturer.name, schema: ManufacturerSchema },
+      { name: Category.name, schema: CategorySchema },
       { name: VendorUser.name, schema: VendorUserSchema },
       { name: Notification.name, schema: NotificationSchema },
     ]),

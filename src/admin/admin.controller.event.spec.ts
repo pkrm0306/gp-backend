@@ -8,7 +8,7 @@ describe('AdminController Event Endpoints', () => {
   const adminServiceMock = {
     createEvent: jest.fn(),
     updateEvent: jest.fn(),
-    listEvents: jest.fn(),
+    listEventsPaginated: jest.fn(),
     getEventById: jest.fn(),
     setOrToggleEventStatus: jest.fn(),
     deleteEvent: jest.fn(),
@@ -54,11 +54,17 @@ describe('AdminController Event Endpoints', () => {
   });
 
   it('lists events successfully', async () => {
-    adminServiceMock.listEvents.mockResolvedValue([{ id: 'e1' }] as any);
+    adminServiceMock.listEventsPaginated.mockResolvedValue({
+      data: [{ id: 'e1' }],
+      pagination: { page: 1, limit: 10, perPage: 10, total: 1, totalPages: 1 },
+    } as any);
     const res = await controller.listEvents();
-    expect(adminServiceMock.listEvents).toHaveBeenCalledTimes(1);
+    expect(adminServiceMock.listEventsPaginated).toHaveBeenCalledWith(1, 10, {
+      activeOnly: true,
+    });
     expect(res.message).toBe('Events retrieved successfully');
     expect(Array.isArray(res.data)).toBe(true);
+    expect(res.pagination).toBeDefined();
   });
 
   it('gets event by id successfully', async () => {

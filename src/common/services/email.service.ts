@@ -7,6 +7,68 @@ import SMTPTransport from 'nodemailer/lib/smtp-transport';
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter;
+
+  private hasHtmlTags(content: string): boolean {
+    return /<[a-z][\s\S]*>/i.test(content);
+  }
+
+  private stripHtml(content: string): string {
+    return String(content ?? '')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private extractBodyContent(html: string): string {
+    const raw = String(html ?? '').trim();
+    if (!raw) return '';
+    const bodyMatch = raw.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    return bodyMatch?.[1]?.trim() || raw;
+  }
+
+  private normalizeContentForTemplate(content: string): string {
+    const raw = String(content ?? '').trim();
+    if (!raw) {
+      return '<p>No additional details provided.</p>';
+    }
+    if (this.hasHtmlTags(raw)) {
+      return this.extractBodyContent(raw);
+    }
+    const escaped = this.escapeHtml(raw).replace(/\r?\n/g, '<br/>');
+    return `<p>${escaped}</p>`;
+  }
+
+  private wrapWithGreenProTemplate(subject: string, content: string): string {
+    const title = this.escapeHtml(subject || 'GreenPro Notification');
+    const normalizedContent = this.normalizeContentForTemplate(content);
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${title}</title>
+      </head>
+      <body style="margin:0; padding:20px; background:#f3f4f6; font-family: Arial, sans-serif; color:#1f2937;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:700px; margin:0 auto; background:#ffffff; border-radius:8px; overflow:hidden; border:1px solid #e5e7eb;">
+          <tr>
+            <td style="background:#16a34a; color:#ffffff; text-align:center; padding:22px 16px;">
+              <h1 style="margin:0; font-size:42px; line-height:1.2; font-weight:700;">Welcome to GreenPro!</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 32px; font-size:18px; line-height:1.7; color:#111827;">
+              ${normalizedContent}
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+  }
+
   private escapeHtml(input: string): string {
     return String(input ?? '')
       .replace(/&/g, '&amp;')
@@ -80,8 +142,8 @@ export class EmailService {
           'noreply@greenpro.com',
         to,
         subject,
-        html: htmlBody,
-        text: textBody || htmlBody.replace(/<[^>]*>/g, ''),
+        html: this.wrapWithGreenProTemplate(subject, htmlBody),
+        text: textBody || this.stripHtml(htmlBody),
       };
 
       const info = await this.transporter.sendMail(mailOptions);

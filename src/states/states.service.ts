@@ -28,11 +28,20 @@ export class StatesService {
     return Number.isFinite(ttl) && ttl > 0 ? ttl : 300;
   }
 
+  /** Full state list for website filter tree — always from DB (no Redis cache). */
+  async findAllForFilterOptions() {
+    return this.stateModel
+      .find()
+      .sort({ name: 1, stateName: 1, state_name: 1 })
+      .lean()
+      .exec();
+  }
+
   async findAll(countryId?: string) {
     const cacheKey = this.redisService.buildKey(
       'states',
       'list',
-      countryId ? `country:${countryId}` : 'all',
+      countryId ? `country:${countryId}` : 'all:v2',
     );
     try {
       const cached = await this.redisService.get<StateDocument[]>(cacheKey);
@@ -63,10 +72,18 @@ export class StatesService {
         $or.push({ country_id: (country as any).id });
       }
 
-      // Method 3: Check country_code
-      const countryCode = (country as any).country_code || country.countryCode;
+      // Method 3: Check country_code / iso2 / iso3 (legacy world DB uses iso2 on states)
+      const countryCode =
+        (country as { country_code?: string; countryCode?: string; iso2?: string; iso3?: string })
+          .country_code ||
+        country.countryCode ||
+        (country as { iso2?: string }).iso2;
       if (countryCode) {
         $or.push({ country_code: countryCode });
+      }
+      const iso3 = (country as { iso3?: string }).iso3;
+      if (iso3) {
+        $or.push({ country_code: iso3 });
       }
 
       // If we have any conditions, use them
@@ -78,7 +95,11 @@ export class StatesService {
       }
     }
 
-    const rows = await this.stateModel.find(query).sort({ stateName: 1 }).lean().exec();
+    const rows = await this.stateModel
+      .find(query)
+      .sort({ name: 1, stateName: 1, state_name: 1 })
+      .lean()
+      .exec();
     this.redisService
       .set(cacheKey, rows, this.getStatesListCacheTtlSeconds())
       .catch((error) => {

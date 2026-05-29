@@ -4,8 +4,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import archiver from 'archiver';
-import PDFDocument from 'pdfkit';
+import {
+  PDFDocument as PDFLibDocument,
+  PDFPage,
+  PDFFont,
+  StandardFonts,
+  rgb,
+} from 'pdf-lib';
 import { Model, Types } from 'mongoose';
 import { Product, ProductDocument } from '../schemas/product.schema';
 import {
@@ -24,6 +29,8 @@ import { matchActiveProducts } from '../constants/active-product.filter';
 import { readUploadedFileBuffer } from '../../utils/upload-file-read.util';
 
 const CERTIFIED_PRODUCT_STATUS = 2;
+const PAGE_W = 787;
+const PAGE_H = 590;
 
 export type CertificateDownloadFile = {
   buffer: Buffer;
@@ -71,10 +78,10 @@ export class VendorCertificateService {
     };
   }
 
-  async downloadUrnCertificatesZip(
+  async downloadUrnCertificatesPdf(
     vendorId: string,
     urnNo: string,
-  ): Promise<{ stream: archiver.Archiver; fileName: string }> {
+  ): Promise<CertificateDownloadFile> {
     const trimmedUrn = String(urnNo ?? '').trim();
     if (!trimmedUrn) {
       throw new BadRequestException('URN number is required');
@@ -102,30 +109,34 @@ export class VendorCertificateService {
       products.map((product) => this.hydrateProduct(product)),
     );
 
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    let added = 0;
+    const mergedPdf = await PDFLibDocument.create();
+    let addedPages = 0;
 
     for (const product of hydrated) {
       try {
         const buffer = await this.resolveCertificateBuffer(product);
-        archive.append(buffer, {
-          name: this.buildCertificateFileName(product.eoiNo),
-        });
-        added += 1;
+        const src = await PDFLibDocument.load(buffer);
+        const pages = await mergedPdf.copyPages(src, src.getPageIndices());
+        for (const p of pages) {
+          mergedPdf.addPage(p);
+        }
+        addedPages += pages.length;
       } catch {
-        /* skip missing certificate rows in zip */
+        /* skip invalid PDF certificate rows */
       }
     }
 
-    if (added === 0) {
+    if (addedPages === 0) {
       throw new NotFoundException(
         'No certificate files are available for this URN',
       );
     }
 
+    const mergedBuffer = Buffer.from(await mergedPdf.save());
     return {
-      stream: archive,
-      fileName: `Certificates_${trimmedUrn}.zip`,
+      buffer: mergedBuffer,
+      fileName: `Certificates_${trimmedUrn}.pdf`,
+      contentType: 'application/pdf',
     };
   }
 
@@ -166,14 +177,12 @@ export class VendorCertificateService {
         ? this.categoryModel
             .findById(product.categoryId)
             .select('categoryName category_name')
-            .lean()
             .exec()
         : null,
       product.manufacturerId
         ? this.manufacturerModel
             .findById(product.manufacturerId)
             .select('manufacturerName')
-            .lean()
             .exec()
         : null,
     ]);
@@ -189,7 +198,7 @@ export class VendorCertificateService {
   ): Promise<Buffer> {
     const fromDocument = await this.readCertificateFromDocuments(product);
     if (fromDocument) {
-      return fromDocument;
+      return this.ensurePdfBuffer(product, fromDocument);
     }
 
     if (product.assessmentReportUrl) {
@@ -197,17 +206,27 @@ export class VendorCertificateService {
         product.assessmentReportUrl,
       );
       if (fromAssessment?.length) {
-        return fromAssessment;
+        return this.ensurePdfBuffer(product, fromAssessment);
       }
     }
 
     for (const relativePath of this.buildCertificatePathCandidates(product)) {
       const buffer = await readUploadedFileBuffer(relativePath);
       if (buffer?.length) {
-        return buffer;
+        return this.ensurePdfBuffer(product, buffer);
       }
     }
 
+    return this.generateCertificatePdf(product);
+  }
+
+  private ensurePdfBuffer(
+    product: ProductWithRelations,
+    buffer: Buffer,
+  ): Buffer | Promise<Buffer> {
+    if (buffer.length >= 5 && buffer.subarray(0, 5).toString() === '%PDF-') {
+      return buffer;
+    }
     return this.generateCertificatePdf(product);
   }
 
@@ -267,46 +286,171 @@ export class VendorCertificateService {
     ];
   }
 
-  private generateCertificatePdf(product: ProductWithRelations): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ size: 'A4', margin: 48 });
-      const chunks: Buffer[] = [];
-      doc.on('data', (chunk) => chunks.push(chunk as Buffer));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
+  private generateCertificatePdf(
+    product: ProductWithRelations,
+  ): Promise<Buffer> {
+    return this.generateCertificatePdfWithTemplateLayout(product);
+  }
 
-      const categoryName =
-        product.category?.categoryName ??
-        product.category?.category_name ??
-        '—';
-      const manufacturerName = product.manufacturer?.manufacturerName ?? '—';
+  private async generateCertificatePdfWithTemplateLayout(
+    product: ProductWithRelations,
+  ): Promise<Buffer> {
+    const pdfDoc = await PDFLibDocument.create();
+    const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
 
-      doc
-        .fontSize(22)
-        .fillColor('#1f6b45')
-        .text('GreenPro Ecolabel Certificate', { align: 'center' });
-      doc.moveDown(1.5);
-      doc.fontSize(12).fillColor('#111111');
-      doc.text(`Product Name: ${product.productName ?? '—'}`);
-      doc.text(`EOI Number: ${product.eoiNo ?? '—'}`);
-      doc.text(`URN Number: ${product.urnNo ?? '—'}`);
-      doc.text(`Category: ${categoryName}`);
-      doc.text(`Manufacturer: ${manufacturerName}`);
-      doc.text(
-        `Certified Date: ${this.formatDate(product.certifiedDate) ?? '—'}`,
-      );
-      doc.text(
-        `Valid Till: ${this.formatDate(product.validtillDate) ?? '—'}`,
-      );
-      doc.moveDown(1.5);
-      doc
-        .fontSize(10)
-        .fillColor('#444444')
-        .text(
-          'This certificate confirms that the above product has been certified under the GreenPro Ecolabel programme.',
-          { align: 'justify' },
-        );
-      doc.end();
+    const regular = await pdfDoc.embedStandardFont(StandardFonts.Helvetica);
+    const bold = await pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+    const italic = await pdfDoc.embedStandardFont(StandardFonts.HelveticaOblique);
+    const boldItalic = await pdfDoc.embedStandardFont(
+      StandardFonts.HelveticaBoldOblique,
+    );
+
+    // Fixed typography + baselines (kept aligned with provided template math).
+    const PRODUCT_SZ = 18;
+    const EOI_SZ = 15;
+    const P_SZ = 12;
+    const Y_PRODUCT = 341.4;
+    const Y_EOI = 311.8;
+    const Y_MANU1 = 283.6;
+    const Y_MANU2 = 261.7;
+    const Y_VALID = 239.7;
+
+    const productName = this.safeLatinText(product.productName || 'N/A');
+    const eoiNo = this.safeLatinText(product.eoiNo || 'N/A');
+    const manufacturerName = this.safeLatinText(
+      (
+        product.manufacturer as { manufacturerName?: string } | null
+      )?.manufacturerName || 'N/A',
+    );
+    const location = this.safeLatinText(this.deriveLocation(product));
+    const validDate = this.safeLatinText(
+      this.formatValidityMonthYear(product.validtillDate) || 'N/A',
+    );
+
+    this.centerInBox(page, productName, bold, PRODUCT_SZ, 0, PAGE_W, Y_PRODUCT);
+    this.centerInBox(page, `(${eoiNo})`, regular, EOI_SZ, 0, PAGE_W, Y_EOI);
+
+    const hasLocation = location.trim().length > 0;
+    this.centerSegments(
+      page,
+      [
+        { text: 'Manufactured by ', font: italic, size: P_SZ },
+        { text: manufacturerName, font: boldItalic, size: P_SZ },
+        ...(hasLocation
+          ? [
+              { text: ' at ', font: italic, size: P_SZ },
+              { text: location, font: boldItalic, size: P_SZ },
+            ]
+          : []),
+        { text: ' meets the requirements of', font: italic, size: P_SZ },
+      ],
+      0,
+      PAGE_W,
+      Y_MANU1,
+    );
+
+    this.centerSegments(
+      page,
+      [
+        {
+          text: 'GreenPro Ecolabel and qualifies as Green Product.',
+          font: italic,
+          size: P_SZ,
+        },
+      ],
+      0,
+      PAGE_W,
+      Y_MANU2,
+    );
+
+    this.centerSegments(
+      page,
+      [
+        { text: 'This certification is valid till ', font: italic, size: P_SZ },
+        { text: validDate, font: boldItalic, size: P_SZ },
+      ],
+      0,
+      PAGE_W,
+      Y_VALID,
+    );
+
+    const bytes = await pdfDoc.save();
+    return Buffer.from(bytes);
+  }
+
+  private centerInBox(
+    page: PDFPage,
+    text: string,
+    font: PDFFont,
+    size: number,
+    boxLeft: number,
+    boxWidth: number,
+    yFromTop: number,
+  ): void {
+    const width = font.widthOfTextAtSize(text, size);
+    const x = boxLeft + Math.max(0, (boxWidth - width) / 2);
+    page.drawText(text, {
+      x,
+      y: this.topToBottomY(yFromTop, size),
+      size,
+      font,
+      color: rgb(0, 0, 0),
+    });
+  }
+
+  private centerSegments(
+    page: PDFPage,
+    segments: Array<{ text: string; font: PDFFont; size: number }>,
+    boxLeft: number,
+    boxWidth: number,
+    yFromTop: number,
+  ): void {
+    const totalWidth = segments.reduce(
+      (sum, s) => sum + s.font.widthOfTextAtSize(s.text, s.size),
+      0,
+    );
+    let x = boxLeft + Math.max(0, (boxWidth - totalWidth) / 2);
+    for (const s of segments) {
+      page.drawText(s.text, {
+        x,
+        y: this.topToBottomY(yFromTop, s.size),
+        size: s.size,
+        font: s.font,
+        color: rgb(0, 0, 0),
+      });
+      x += s.font.widthOfTextAtSize(s.text, s.size);
+    }
+  }
+
+  private topToBottomY(yFromTop: number, fontSize: number): number {
+    return PAGE_H - yFromTop - fontSize;
+  }
+
+  private safeLatinText(value: string): string {
+    return String(value ?? '').replace(/[^\x00-\xFF]/g, '?');
+  }
+
+  private deriveLocation(product: ProductWithRelations): string {
+    const city = (product as unknown as { city?: string })?.city;
+    const state = (product as unknown as { stateName?: string })?.stateName;
+    const c = String(city ?? '').trim();
+    const s = String(state ?? '').trim();
+    if (c && s) return `${c}, ${s}`;
+    return c || s || '';
+  }
+
+  private formatValidityMonthYear(value?: Date | string | null): string | null {
+    if (!value) {
+      return null;
+    }
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) {
+      return null;
+    }
+    return d.toLocaleString('en-US', {
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
     });
   }
 

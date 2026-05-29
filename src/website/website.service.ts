@@ -32,14 +32,32 @@ import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacture
 import { AdminService } from '../admin/admin.service';
 import { ProductRegistrationService } from '../product-registration/product-registration.service';
 import { PublicCertifiedProductsListDto } from './dto/public-certified-products-list.dto';
+import { PublicWebsiteCertifiedProductsListDto } from './dto/public-website-certified-products-list.dto';
+import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
 import { PublicCategoryManufacturersDto } from './dto/public-category-manufacturers.dto';
 import { PublicManufacturerCategoriesDto } from './dto/public-manufacturer-categories.dto';
+import { PublicListEventsQueryDto } from './dto/public-list-events-query.dto';
+import { PublicListArticlesQueryDto } from './dto/public-list-articles-query.dto';
+import { PublicListGalleryQueryDto } from './dto/public-list-gallery-query.dto';
 import { EmailService } from '../common/services/email.service';
 import {
   Notification,
   NotificationDocument,
 } from '../common/schemas/notification.schema';
 import { RedisService } from '../common/redis/redis.service';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
+import {
+  Manufacturer,
+  ManufacturerDocument,
+} from '../manufacturers/schemas/manufacturer.schema';
+import {
+  Category,
+  CategoryDocument,
+} from '../categories/schemas/category.schema';
+import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
 
 function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
   const prefs: string[] = [];
@@ -90,6 +108,12 @@ export class WebsiteService {
     private vendorUserModel: Model<VendorUserDocument>,
     @InjectModel(Notification.name)
     private notificationModel: Model<NotificationDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
+    @InjectModel(Manufacturer.name)
+    private manufacturerModel: Model<ManufacturerDocument>,
+    @InjectModel(Category.name)
+    private categoryModel: Model<CategoryDocument>,
     private manufacturersService: ManufacturersService,
     private readonly adminService: AdminService,
     private readonly productRegistrationService: ProductRegistrationService,
@@ -238,20 +262,175 @@ export class WebsiteService {
     return payload;
   }
 
-  /** Public active articles with absolute asset URLs (Redis). */
-  async getPublicArticlesNormalized(origin: string) {
+  /** Public paginated gallery for website (active only, default 50 per page). */
+  async getPublicGalleryPaginated(
+    query: PublicListGalleryQueryDto,
+    origin: string,
+  ) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
     const cacheKey = this.redisService.buildKey(
       'website',
       'public',
-      'articles',
+      'gallery',
+      String(page),
+      String(limit),
       this.shortHash(origin),
     );
     try {
       const cached = await this.redisService.get<{
         message: string;
         data: unknown[];
+        pagination: Record<string, number>;
       }>(cacheKey);
-      if (cached?.data && Array.isArray(cached.data)) {
+      if (cached?.data && Array.isArray(cached.data) && cached.pagination) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Website gallery cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = String(raw ?? '').trim();
+      if (!v) return v;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v;
+    };
+
+    const result = await this.adminService.listGalleryPaginated(page, limit, {
+      activeOnly: true,
+    });
+
+    const data = (result.data ?? []).map((row: Record<string, unknown>) => {
+      const images = Array.isArray(row.galleryImages)
+        ? row.galleryImages
+        : row.image
+          ? [row.image]
+          : [];
+      const normalizedImages = images.map((img) => normalizeImageUrl(img));
+      return {
+        s_no: row.s_no,
+        id: row.id,
+        eventId: row.eventId,
+        title: row.eventName ?? '',
+        galleryType: row.galleryType ?? '',
+        description: row.eventDescription ?? '',
+        date: row.date ?? '',
+        dateTime: row.dateTime ?? '',
+        image: normalizedImages[0] ?? null,
+        images: normalizedImages,
+        event_image: normalizeImageUrl(row.event_image),
+        is_active: row.is_active ?? true,
+      };
+    });
+
+    const payload = {
+      message: 'Gallery retrieved successfully',
+      pagination: {
+        ...result.pagination,
+        limit: result.pagination.perPage,
+      },
+      data,
+    };
+    this.redisService
+      .set(cacheKey, payload, this.getWebsitePublicListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Website gallery cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return payload;
+  }
+
+  /** Public paginated events for website (active only, default 10 per page). */
+  async getPublicEventsPaginated(
+    query: PublicListEventsQueryDto,
+    origin: string,
+  ) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const cacheKey = this.redisService.buildKey(
+      'website',
+      'public',
+      'events',
+      String(page),
+      String(limit),
+      this.shortHash(origin),
+    );
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: unknown[];
+        pagination: Record<string, number>;
+      }>(cacheKey);
+      if (cached?.data && Array.isArray(cached.data) && cached.pagination) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Website events cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = String(raw ?? '').trim();
+      if (!v) return v;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v;
+    };
+
+    const result = await this.adminService.listEventsPaginated(page, limit, {
+      activeOnly: true,
+    });
+    const data = (result.data ?? []).map((row: Record<string, unknown>) => ({
+      ...row,
+      image: normalizeImageUrl(row.image),
+      event_image: normalizeImageUrl(row.event_image),
+    }));
+
+    const payload = {
+      message: 'Events retrieved successfully',
+      pagination: result.pagination,
+      data,
+    };
+    this.redisService
+      .set(cacheKey, payload, this.getWebsitePublicListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Website events cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return payload;
+  }
+
+  /** Public active articles with absolute asset URLs (paginated, Redis). */
+  async getPublicArticlesNormalized(
+    query: PublicListArticlesQueryDto,
+    origin: string,
+  ) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 12;
+    const cacheKey = this.redisService.buildKey(
+      'website',
+      'public',
+      'articles',
+      String(page),
+      String(limit),
+      this.shortHash(origin),
+    );
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: unknown[];
+        pagination: Record<string, number>;
+      }>(cacheKey);
+      if (cached?.data && Array.isArray(cached.data) && cached.pagination) {
         return cached;
       }
     } catch (error) {
@@ -269,25 +448,24 @@ export class WebsiteService {
       return v;
     };
 
-    const rows = await this.adminService.listArticles();
-    const data = (rows ?? [])
-      .filter((a: { is_active?: boolean }) => Boolean(a?.is_active))
-      .map((a: Record<string, unknown>, idx: number) => ({
-        s_no: idx + 1,
-        id: a.id,
-        title: a.title,
-        description: a.externalUrl ? '' : a.description,
-        date: a.date,
-        image: normalizeImageUrl(a.image),
-        article_image: normalizeImageUrl(a.article_image),
-        url: a.externalUrl ? a.url : '',
-        externalUrl: a.externalUrl === true,
-        pdf: normalizeImageUrl(a.pdf),
-        article_pdf: normalizeImageUrl(a.article_pdf),
-        is_active: true,
-      }));
+    const result = await this.adminService.listArticlesPaginated(page, limit, {
+      activeOnly: true,
+    });
+    const data = (result.data ?? []).map((a: Record<string, unknown>) => ({
+      ...a,
+      description: a.externalUrl ? '' : a.description,
+      image: normalizeImageUrl(a.image),
+      article_image: normalizeImageUrl(a.article_image),
+      pdf: normalizeImageUrl(a.pdf),
+      article_pdf: normalizeImageUrl(a.article_pdf),
+      is_active: true,
+    }));
 
-    const payload = { message: 'Articles retrieved successfully', data };
+    const payload = {
+      message: 'Articles retrieved successfully',
+      pagination: result.pagination,
+      data,
+    };
     this.redisService
       .set(cacheKey, payload, this.getWebsitePublicListCacheTtlSeconds())
       .catch((error) => {
@@ -295,6 +473,206 @@ export class WebsiteService {
           `Website articles cache write failed: ${(error as Error)?.message || 'unknown error'}`,
         );
       });
+    return payload;
+  }
+
+  /** Filter options for public certified products page (categories + country/state tree). */
+  async getPublicCertifiedProductsFilterOptions() {
+    const cacheKey = this.redisService.buildKey(
+      'website',
+      'public',
+      'certified-products',
+      'filter-options',
+      'v4',
+    );
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: unknown;
+      }>(cacheKey);
+      if (cached?.data) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Website certified filter-options cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const data =
+      await this.productRegistrationService.getPublicCertifiedWebsiteFilterOptions();
+    const payload = {
+      message: 'Filter options retrieved successfully',
+      data,
+    };
+    this.redisService
+      .set(cacheKey, payload, this.getWebsitePublicListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Website certified filter-options cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+    return payload;
+  }
+
+  /** Typeahead suggestions for certified product search bar. */
+  async searchPublicCertifiedProducts(
+    q: string,
+    limit: number,
+    origin: string,
+  ) {
+    const rows = await this.productRegistrationService.searchPublicCertifiedProducts(
+      q,
+      limit,
+    );
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = String(raw ?? '').trim();
+      if (!v) return null;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v;
+    };
+
+    return {
+      message: 'Product suggestions retrieved successfully',
+      data: rows.map((row: Record<string, unknown>) => ({
+        ...row,
+        productImage: normalizeImageUrl(row.productImage),
+      })),
+    };
+  }
+
+  private hasPublicCertifiedProductsListFilter(
+    dto: PublicWebsiteCertifiedProductsListDto,
+  ): boolean {
+    const search = String(dto.search ?? '').trim();
+    if (search.length >= 2) {
+      return true;
+    }
+    if (dto.productId) {
+      return true;
+    }
+    const categoryIds = dto.categoryIds ?? dto.category_ids;
+    if (categoryIds && categoryIds.length > 0) {
+      return true;
+    }
+    if (dto.countryId ?? dto.country_id) {
+      return true;
+    }
+    const stateIds = dto.stateIds ?? dto.state_ids;
+    if (stateIds && stateIds.length > 0) {
+      return true;
+    }
+    return false;
+  }
+
+  private toAdminListDtoFromPublicWebsite(
+    dto: PublicWebsiteCertifiedProductsListDto,
+  ): AdminListProductsDto {
+    return {
+      categoryIds: dto.categoryIds ?? dto.category_ids,
+      countryId: dto.countryId ?? dto.country_id,
+      stateIds: dto.stateIds ?? dto.state_ids,
+      search: dto.search,
+      page: dto.page ?? 1,
+      limit: dto.limit ?? 12,
+      sortBy: 'createdDate',
+      sortOrder: 'desc',
+    };
+  }
+
+  /**
+   * Public certified product cards (flat list).
+   * Returns empty until user applies search, category, location, or picks a product.
+   */
+  async listPublicCertifiedProductsForWebsite(
+    dto: PublicWebsiteCertifiedProductsListDto,
+    origin: string,
+  ) {
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 12;
+
+    if (!this.hasPublicCertifiedProductsListFilter(dto)) {
+      return {
+        message:
+          'Apply a search (min 2 characters), category, country/state, or select a product to view results',
+        data: [],
+        total: 0,
+        page,
+        limit,
+        totalPages: 0,
+      };
+    }
+
+    const cacheKey = this.redisService.buildKey(
+      'website',
+      'public',
+      'certified-products',
+      'flat',
+      'v3',
+      this.shortHash(this.stableJsonStringify({ ...(dto as object), origin })),
+    );
+    try {
+      const cached = await this.redisService.get<Record<string, unknown>>(cacheKey);
+      if (cached && Array.isArray((cached as { data?: unknown[] }).data)) {
+        return {
+          ...cached,
+          message: 'Certified products retrieved successfully',
+        };
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Website certified products flat cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const adminDto = this.toAdminListDtoFromPublicWebsite(dto);
+    const result =
+      await this.productRegistrationService.listPublicCertifiedProductsFlat(
+        adminDto,
+        dto.productId,
+      );
+
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = String(raw ?? '').trim();
+      if (!v) return null;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v;
+    };
+
+    const data = (result.data ?? []).map((row: Record<string, unknown>) => ({
+      ...row,
+      productImage: normalizeImageUrl(row.productImage),
+    }));
+
+    const hasLocationFilter = Boolean(
+      dto.countryId ?? dto.country_id ?? (dto.stateIds ?? dto.state_ids)?.length,
+    );
+    const message =
+      result.total === 0 && hasLocationFilter
+        ? 'No certified products found for the selected location'
+        : 'Certified products retrieved successfully';
+
+    const payload = {
+      message,
+      data,
+      total: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: result.totalPages,
+    };
+
+    this.redisService
+      .set(cacheKey, payload, this.getWebsitePublicListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Website certified products flat cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+
     return payload;
   }
 
@@ -333,6 +711,90 @@ export class WebsiteService {
         );
       });
     return { ...result, message: 'Certified products retrieved successfully' };
+  }
+
+  async getPublicCertifiedProductPassport(productId: string) {
+    const normalizedProductId = String(productId ?? '').trim();
+    if (!normalizedProductId) {
+      throw new BadRequestException('productId is required');
+    }
+
+    const data =
+      await this.productRegistrationService.getPublicCertifiedProductPassport(
+        normalizedProductId,
+      );
+
+    return {
+      message: 'Certified product passport retrieved successfully',
+      data,
+    };
+  }
+
+  async getPublicWebsiteStats() {
+    const cacheKey = this.redisService.buildKey('website', 'public', 'stats', 'v1');
+    try {
+      const cached = await this.redisService.get<{
+        message: string;
+        data: {
+          companies: number;
+          productCategories: number;
+          ecolabelledProducts: number;
+        };
+      }>(cacheKey);
+      if (
+        cached &&
+        typeof cached === 'object' &&
+        cached.data &&
+        Number.isFinite(Number(cached.data.companies)) &&
+        Number.isFinite(Number(cached.data.productCategories)) &&
+        Number.isFinite(Number(cached.data.ecolabelledProducts))
+      ) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Website stats cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const [companies, productCategories, ecolabelledProducts] = await Promise.all([
+      this.manufacturerModel
+        .countDocuments({
+          manufacturerStatus: { $ne: 2 },
+        })
+        .exec(),
+      this.categoryModel
+        .countDocuments({
+          category_status: 1,
+        })
+        .exec(),
+      this.productModel
+        .countDocuments(
+          matchActiveProducts({
+            productStatus: 2,
+          }),
+        )
+        .exec(),
+    ]);
+
+    const payload = {
+      message: 'Website stats retrieved successfully',
+      data: {
+        companies,
+        productCategories,
+        ecolabelledProducts,
+      },
+    };
+
+    this.redisService
+      .set(cacheKey, payload, this.getWebsitePublicListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Website stats cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+
+    return payload;
   }
 
   async getManufacturersByCategoryPublic(dto: PublicCategoryManufacturersDto) {

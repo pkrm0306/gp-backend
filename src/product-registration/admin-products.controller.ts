@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   StreamableFile,
   UploadedFile,
   UseGuards,
@@ -35,6 +36,8 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PatchUrnTabReviewDto } from './dto/urn-tab-review.dto';
 import { UrnTabReviewService } from './urn-tab-review.service';
 import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-product.dto';
+import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
+import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
 import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
 
 /**
@@ -233,6 +236,100 @@ export class AdminProductsController {
     return {
       success: true,
       message: 'Certified product updated successfully',
+      data,
+    };
+  }
+
+  @Patch('certified/:productId/passport')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Save passport for certified product (admin)',
+    description:
+      'Stores passport content for certified products only (productStatus = 2). Maximum 5000 characters excluding whitespace.',
+  })
+  @ApiParam({
+    name: 'productId',
+    description: 'MongoDB product document _id',
+  })
+  @ApiBody({ type: AdminUpdateCertifiedProductPassportDto })
+  @ApiResponse({ status: 200, description: 'Certified product passport saved' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Validation error (including whitespace-only or >5000 characters excluding whitespace)',
+  })
+  @ApiResponse({ status: 404, description: 'Certified product not found' })
+  async patchCertifiedProductPassport(
+    @Param('productId') productId: string,
+    @Body() dto: AdminUpdateCertifiedProductPassportDto,
+  ) {
+    const data =
+      await this.productRegistrationService.adminUpdateCertifiedProductPassport(
+        productId.trim(),
+        dto,
+      );
+    return {
+      success: true,
+      message: 'Certified product passport saved successfully',
+      data,
+    };
+  }
+
+  @Get('requests')
+  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @ApiOperation({
+    summary: 'List vendor product name change requests',
+    description:
+      'Used by admin request tab. Optional query `status` = pending | approved | rejected.',
+  })
+  @ApiResponse({ status: 200, description: 'Requests fetched successfully' })
+  async listProductChangeRequests(
+    @Query('status') status?: string,
+  ) {
+    const data =
+      await this.productRegistrationService.adminListProductChangeRequests(
+        status,
+      );
+    return {
+      success: true,
+      message: 'Product change requests fetched successfully',
+      data,
+    };
+  }
+
+  @Patch('requests/:requestId/status')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Review vendor product name change request',
+    description:
+      'Admin can mark request as pending/approved/rejected. On approve, product name is updated for that certified product.',
+  })
+  @ApiParam({
+    name: 'requestId',
+    description: 'Vendor product change request _id',
+  })
+  @ApiBody({ type: AdminUpdateProductChangeRequestDto })
+  @ApiResponse({ status: 200, description: 'Request status updated' })
+  async updateProductChangeRequestStatus(
+    @Param('requestId') requestId: string,
+    @Body() dto: AdminUpdateProductChangeRequestDto,
+    @CurrentUser() user: { userId?: string; id?: string },
+  ) {
+    const adminUserId = String(user?.userId ?? user?.id ?? '').trim();
+    if (!adminUserId) {
+      throw new BadRequestException('Admin user id not found in token');
+    }
+    const data =
+      await this.productRegistrationService.adminUpdateProductChangeRequestStatus(
+        requestId,
+        dto,
+        adminUserId,
+      );
+    return {
+      success: true,
+      message: 'Product change request updated successfully',
       data,
     };
   }
