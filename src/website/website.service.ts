@@ -31,8 +31,6 @@ import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { AdminService } from '../admin/admin.service';
 import { ProductRegistrationService } from '../product-registration/product-registration.service';
-import { PublicCertifiedProductsListDto } from './dto/public-certified-products-list.dto';
-import { PublicWebsiteCertifiedProductsListDto } from './dto/public-website-certified-products-list.dto';
 import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
 import { PublicCategoryManufacturersDto } from './dto/public-category-manufacturers.dto';
 import { PublicManufacturerCategoriesDto } from './dto/public-manufacturer-categories.dto';
@@ -544,7 +542,7 @@ export class WebsiteService {
   }
 
   private hasPublicCertifiedProductsListFilter(
-    dto: PublicWebsiteCertifiedProductsListDto,
+    dto: AdminListProductsDto,
   ): boolean {
     const search = String(dto.search ?? '').trim();
     if (search.length >= 2) {
@@ -557,28 +555,72 @@ export class WebsiteService {
     if (categoryIds && categoryIds.length > 0) {
       return true;
     }
-    if (dto.countryId ?? dto.country_id) {
+    if (dto.categoryId) {
+      return true;
+    }
+    if (dto.manufacturerId || dto.manufacturerIds?.length || dto.manufacturer_ids?.length) {
+      return true;
+    }
+    if (dto.manufacturerNames?.length || dto.manufacturer_names?.length) {
+      return true;
+    }
+    if (dto.countryId) {
       return true;
     }
     const stateIds = dto.stateIds ?? dto.state_ids;
     if (stateIds && stateIds.length > 0) {
       return true;
     }
+    if (dto.stateId || dto.state_name) {
+      return true;
+    }
+    if (dto.city) {
+      return true;
+    }
+    if (
+      dto.fromDate ||
+      dto.toDate ||
+      dto.from ||
+      dto.to ||
+      dto.validTillYear !== undefined ||
+      dto.validTillYears?.length ||
+      dto.valid_till_years?.length
+    ) {
+      return true;
+    }
     return false;
   }
 
   private toAdminListDtoFromPublicWebsite(
-    dto: PublicWebsiteCertifiedProductsListDto,
+    dto: AdminListProductsDto,
   ): AdminListProductsDto {
+    const categoryIds =
+      dto.categoryIds ??
+      dto.category_ids ??
+      (dto.categoryId ? [dto.categoryId] : undefined);
+
+    const manufacturerIds =
+      dto.manufacturerIds ??
+      dto.manufacturer_ids ??
+      (dto.manufacturerId ? [dto.manufacturerId] : undefined);
+
+    const stateIds =
+      dto.stateIds ??
+      dto.state_ids ??
+      (dto.stateId ? [dto.stateId] : undefined);
+
     return {
-      categoryIds: dto.categoryIds ?? dto.category_ids,
-      countryId: dto.countryId ?? dto.country_id,
-      stateIds: dto.stateIds ?? dto.state_ids,
-      search: dto.search,
+      ...dto,
+      categoryIds,
+      manufacturerIds,
+      stateIds,
+      countryId: dto.countryId,
+      fromDate: dto.fromDate ?? dto.from,
+      toDate: dto.toDate ?? dto.to,
       page: dto.page ?? 1,
       limit: dto.limit ?? 12,
-      sortBy: 'createdDate',
-      sortOrder: 'desc',
+      sortBy: dto.sortBy ?? 'createdDate',
+      sortOrder: dto.sortOrder ?? 'desc',
     };
   }
 
@@ -587,7 +629,7 @@ export class WebsiteService {
    * Returns empty until user applies search, category, location, or picks a product.
    */
   async listPublicCertifiedProductsForWebsite(
-    dto: PublicWebsiteCertifiedProductsListDto,
+    dto: AdminListProductsDto,
     origin: string,
   ) {
     const page = dto.page ?? 1;
@@ -649,7 +691,7 @@ export class WebsiteService {
     }));
 
     const hasLocationFilter = Boolean(
-      dto.countryId ?? dto.country_id ?? (dto.stateIds ?? dto.state_ids)?.length,
+      dto.countryId ?? (dto.stateIds ?? dto.state_ids)?.length,
     );
     const message =
       result.total === 0 && hasLocationFilter
@@ -677,7 +719,7 @@ export class WebsiteService {
   }
 
   /** Public certified products (Redis; key from request body). */
-  async getPublicCertifiedProducts(dto: PublicCertifiedProductsListDto) {
+  async getPublicCertifiedProducts(dto: AdminListProductsDto) {
     const cacheKey = this.redisService.buildKey(
       'website',
       'public',

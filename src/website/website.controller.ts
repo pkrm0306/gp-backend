@@ -19,8 +19,7 @@ import { ContactSubmitDto } from './dto/contact-submit.dto';
 import { CategoriesService } from '../categories/categories.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { ListCategoriesQueryDto } from '../categories/dto/list-categories-query.dto';
-import { PublicCertifiedProductsListDto } from './dto/public-certified-products-list.dto';
-import { PublicWebsiteCertifiedProductsListDto } from './dto/public-website-certified-products-list.dto';
+import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
 import { PublicCertifiedProductSearchQueryDto } from './dto/public-certified-product-search-query.dto';
 import { PublicCategoryManufacturersDto } from './dto/public-category-manufacturers.dto';
 import { PublicManufacturerCategoriesDto } from './dto/public-manufacturer-categories.dto';
@@ -203,14 +202,14 @@ export class WebsiteController {
     description:
       'Flat product cards for the public website. Requires at least one filter: `search` (min 2 chars), `categoryIds`, `countryId`, `stateIds`, or `productId` from search. Certified only (status 2).',
   })
-  @ApiBody({ type: PublicWebsiteCertifiedProductsListDto })
+  @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({
     status: 200,
     description: 'Certified products retrieved successfully',
   })
   async listPublicCertifiedProducts(
     @Req() req: Request,
-    @Body() dto: PublicWebsiteCertifiedProductsListDto,
+    @Body() dto: AdminListProductsDto,
   ) {
     const origin = `${req.protocol}://${req.get('host')}`;
     return this.websiteService.listPublicCertifiedProductsForWebsite(dto, origin);
@@ -223,13 +222,13 @@ export class WebsiteController {
     description:
       'Legacy shape grouped by URN. Prefer POST /website/public/products/certified/list for the website grid.',
   })
-  @ApiBody({ type: PublicCertifiedProductsListDto })
+  @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({
     status: 200,
     description: 'Certified products retrieved successfully',
   })
   async listPublicCertifiedProductsLegacy(
-    @Body() dto: PublicCertifiedProductsListDto,
+    @Body() dto: AdminListProductsDto,
   ) {
     return this.websiteService.getPublicCertifiedProducts(dto);
   }

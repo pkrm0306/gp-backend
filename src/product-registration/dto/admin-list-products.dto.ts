@@ -480,4 +480,14 @@ export class AdminListProductsDto {
   @IsOptional()
   @IsIn(['asc', 'desc'])
   order?: 'asc' | 'desc';
+
+  @ApiPropertyOptional({
+    description:
+      'Public website only: when user picks a product from search suggestions, pass its MongoDB _id.',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsMongoId()
+  productId?: string;
 }
