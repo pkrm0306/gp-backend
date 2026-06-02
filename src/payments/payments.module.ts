@@ -14,6 +14,10 @@ import {
   Product,
   ProductSchema,
 } from '../product-registration/schemas/product.schema';
+import {
+  Manufacturer,
+  ManufacturerSchema,
+} from '../manufacturers/schemas/manufacturer.schema';
 import { ZohoModule } from '../zoho/zoho.module';
 
 @Module({
@@ -21,6 +25,7 @@ import { ZohoModule } from '../zoho/zoho.module';
     MongooseModule.forFeature([
       { name: PaymentDetails.name, schema: PaymentDetailsSchema },
       { name: Product.name, schema: ProductSchema },
+      { name: Manufacturer.name, schema: ManufacturerSchema },
     ]),
     ProductRegistrationModule, // For SequenceHelper
     ActivityLogModule,

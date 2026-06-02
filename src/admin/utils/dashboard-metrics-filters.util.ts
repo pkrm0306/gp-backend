@@ -216,6 +216,34 @@ export function resolveDashboardDateRange(
   const y = query.year ?? now.getFullYear();
 
   switch (query.period) {
+    case 'last_week': {
+      const day = now.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      const thisWeekStart = new Date(now);
+      thisWeekStart.setDate(now.getDate() - diff);
+      const from = new Date(thisWeekStart);
+      from.setDate(from.getDate() - 7);
+      const to = new Date(thisWeekStart);
+      to.setMilliseconds(-1);
+      return { from: startOfDay(from), to };
+    }
+    case 'last_month': {
+      const monthIndex = now.getMonth() - 1;
+      const year =
+        monthIndex < 0 ? now.getFullYear() - 1 : now.getFullYear();
+      const m = monthIndex < 0 ? 11 : monthIndex;
+      return {
+        from: new Date(year, m, 1, 0, 0, 0, 0),
+        to: new Date(year, m + 1, 0, 23, 59, 59, 999),
+      };
+    }
+    case 'last_year': {
+      const year = now.getFullYear() - 1;
+      return {
+        from: new Date(year, 0, 1, 0, 0, 0, 0),
+        to: new Date(year, 11, 31, 23, 59, 59, 999),
+      };
+    }
     case 'this_week': {
       const day = now.getDay();
       const diff = day === 0 ? 6 : day - 1;
@@ -249,6 +277,58 @@ export function resolveDashboardDateRange(
   }
 }
 
+/** Calendar period immediately before `current` (same duration). */
+export function resolvePreviousDashboardDateRange(
+  current: DashboardDateRange,
+): DashboardDateRange {
+  const durationMs = current.to.getTime() - current.from.getTime();
+  const to = new Date(current.from.getTime() - 1);
+  const from = new Date(to.getTime() - durationMs);
+  return { from, to };
+}
+
+export function resolveRevenueDashboardGranularity(
+  period?: DashboardMetricsQueryDto['period'],
+  explicit?: DashboardGranularity,
+): DashboardGranularity {
+  if (explicit) return explicit;
+  switch (period) {
+    case 'this_week':
+    case 'last_week':
+      return 'weekly';
+    case 'this_month':
+    case 'last_month':
+      return 'weekly';
+    case 'this_quarter':
+      return 'quarterly';
+    default:
+      return 'monthly';
+  }
+}
+
+export function revenuePeriodDisplayLabel(
+  period?: DashboardMetricsQueryDto['period'] | null,
+): string {
+  switch (period) {
+    case 'this_week':
+      return 'This Week';
+    case 'last_week':
+      return 'Last Week';
+    case 'this_month':
+      return 'This Month';
+    case 'last_month':
+      return 'Last Month';
+    case 'this_quarter':
+      return 'This Quarter';
+    case 'this_year':
+      return 'This Year';
+    case 'last_year':
+      return 'Last Year';
+    default:
+      return 'All Time';
+  }
+}
+
 /** Human-readable summary of applied filters (for API + frontend). */
 export function buildAppliedDashboardFilters(
   query: DashboardMetricsQueryDto,
@@ -272,8 +352,10 @@ export function buildAppliedDashboardFilters(
     manufacturersScope:
       'snapshot (current platform totals; not limited by product date range)',
     productsScope: resolved.dateRange
-      ? 'filtered by product createdDate within dateRange'
-      : 'all time',
+      ? 'time-series charts only: createdDate within dateRange'
+      : 'all time for trend charts',
+    countsScope:
+      'current active products (non-deleted); not limited by period/year filters',
   };
 }
 
@@ -291,18 +373,18 @@ export function buildManufacturerSnapshotMatch(
   return match;
 }
 
-export function buildProductBaseMatch(
+/**
+ * Current platform product counts (matches admin product list).
+ * Uses active (non-deleted) products only. Does **not** filter by registration date.
+ */
+export function buildProductSnapshotMatch(
   filters: ResolvedDashboardFilters,
   now: Date,
 ): Record<string, unknown> {
-  const match: Record<string, unknown> = {};
+  const match: Record<string, unknown> = {
+    $or: [{ is_deleted: { $ne: true } }, { is_deleted: { $exists: false } }],
+  };
 
-  if (filters.dateRange) {
-    match.createdDate = {
-      $gte: filters.dateRange.from,
-      $lte: filters.dateRange.to,
-    };
-  }
   if (filters.categoryObjectId) {
     match.categoryId = filters.categoryObjectId;
   }
@@ -316,6 +398,29 @@ export function buildProductBaseMatch(
   }
 
   return match;
+}
+
+/** Time-series charts: snapshot filters + optional createdDate window. */
+export function buildProductTrendMatch(
+  filters: ResolvedDashboardFilters,
+  now: Date,
+): Record<string, unknown> {
+  const match = buildProductSnapshotMatch(filters, now);
+  if (filters.dateRange) {
+    match.createdDate = {
+      $gte: filters.dateRange.from,
+      $lte: filters.dateRange.to,
+    };
+  }
+  return match;
+}
+
+/** @deprecated Prefer buildProductSnapshotMatch or buildProductTrendMatch */
+export function buildProductBaseMatch(
+  filters: ResolvedDashboardFilters,
+  now: Date,
+): Record<string, unknown> {
+  return buildProductTrendMatch(filters, now);
 }
 
 /**
@@ -410,12 +515,54 @@ export function formatBucketLabel(
 
 export function emptyDashboardCharts(): {
   categoryDistribution: [];
+  categoryCertified: [];
+  productStatusBreakdown: {
+    totals: {
+      certified: 0;
+      uncertified: 0;
+      expired: 0;
+      renewed: 0;
+      rejected: 0;
+      total: 0;
+    };
+    chart: [];
+  };
+  certifiedVsUncertified: {
+    totals: {
+      totalProducts: 0;
+      certifiedProducts: 0;
+      uncertifiedProducts: 0;
+    };
+    chart: [];
+  };
+  urnPipeline: [];
   monthlyCertified: [];
   monthlySubmissions: [];
   onlineOffline: [];
 } {
   return {
     categoryDistribution: [],
+    categoryCertified: [],
+    productStatusBreakdown: {
+      totals: {
+        certified: 0,
+        uncertified: 0,
+        expired: 0,
+        renewed: 0,
+        rejected: 0,
+        total: 0,
+      },
+      chart: [],
+    },
+    certifiedVsUncertified: {
+      totals: {
+        totalProducts: 0,
+        certifiedProducts: 0,
+        uncertifiedProducts: 0,
+      },
+      chart: [],
+    },
+    urnPipeline: [],
     monthlyCertified: [],
     monthlySubmissions: [],
     onlineOffline: [],

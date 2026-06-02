@@ -16,7 +16,7 @@ describe('AdminController Banner Endpoints', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new AdminController(adminServiceMock, {} as any);
+    controller = new AdminController(adminServiceMock, {} as any, {} as any);
   });
 
   it('lists banners for vendor id from token', async () => {
@@ -28,29 +28,26 @@ describe('AdminController Banner Endpoints', () => {
     expect(res.data).toHaveLength(1);
   });
 
-  it('creates banner with body + uploaded image', async () => {
+  it('creates banner with body + image URL', async () => {
     adminServiceMock.createBanner.mockResolvedValue({ id: 'b1', title: 'Banner 1' } as any);
-
-    const file = {
-      originalname: 'banner.jpg',
-      mimetype: 'image/jpeg',
-      filename: 'banner-x.jpg',
-      path: '/tmp/banner-x.jpg',
-      size: 10,
-      buffer: Buffer.from('x'),
-      stream: null as any,
-      destination: '/tmp',
-      fieldname: 'image',
-      encoding: '7bit',
-    } as Express.Multer.File;
 
     const res = await controller.createBanner(
       { vendorId: 'v1' },
-      { title: 'Banner 1', description: 'Desc', sequenceNumber: 1, status: 'active' },
-      file as any,
+      {
+        title: 'Banner 1',
+        description: 'Desc',
+        sequenceNumber: 1,
+        status: 'active',
+        imageUrl: 'https://example.com/banner.jpg',
+      },
+      undefined,
     );
 
-    expect(adminServiceMock.createBanner).toHaveBeenCalled();
+    expect(adminServiceMock.createBanner).toHaveBeenCalledWith(
+      'v1',
+      expect.objectContaining({ imageUrl: 'https://example.com/banner.jpg' }),
+      'manual_url',
+    );
     expect(res.message).toBe('Banner created successfully');
   });
 

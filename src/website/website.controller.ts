@@ -27,6 +27,8 @@ import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
 import { PublicListEventsQueryDto } from './dto/public-list-events-query.dto';
 import { PublicListArticlesQueryDto } from './dto/public-list-articles-query.dto';
 import { PublicListGalleryQueryDto } from './dto/public-list-gallery-query.dto';
+import { PublicListSummitsQueryDto } from '../summits/dto/public-list-summits-query.dto';
+import { SummitsService } from '../summits/summits.service';
 
 @ApiTags('Website')
 @Controller('website')
@@ -34,6 +36,7 @@ export class WebsiteController {
   constructor(
     private readonly websiteService: WebsiteService,
     private readonly categoriesService: CategoriesService,
+    private readonly summitsService: SummitsService,
   ) {}
 
   @Get('public/manufacturers')
@@ -123,6 +126,22 @@ export class WebsiteController {
     @Query() query: PublicListArticlesQueryDto,
   ) {
     return this.listPublicArticles(req, query);
+  }
+
+  @Get('public/summits/list')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public summits list (active only)',
+    description:
+      'Alias of `GET /website/summits/list`. Returns only active summits for the public website. No authentication.',
+  })
+  @ApiResponse({ status: 200, description: 'Paginated summits list' })
+  async listPublicSummits(
+    @Req() req: Request,
+    @Query() query: PublicListSummitsQueryDto,
+  ) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.summitsService.buildPublicListResponse(query, origin);
   }
 
   @Get('public/events/list')

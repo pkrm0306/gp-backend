@@ -47,6 +47,7 @@ import { StandardsModule } from './standards/standards.module';
 import { TeamMembersModule } from './team-members/team-members.module';
 import { LoggingMiddleware } from './common/middleware/logging.middleware';
 import { WebsiteModule } from './website/website.module';
+import { SummitsModule } from './summits/summits.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { DocumentsModule } from './documents/documents.module';
 import { RedisModule } from './common/redis/redis.module';
@@ -114,6 +115,7 @@ import { RawMaterialsSharedModule } from './common/raw-materials/raw-materials-s
     ProcessCommentsModule,
     UrnSiteVisitsModule,
     WebsiteModule,
+    SummitsModule,
     DashboardModule,
     SectorsModule,
     StandardsModule,

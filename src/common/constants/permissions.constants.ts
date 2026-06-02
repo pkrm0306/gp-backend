@@ -46,6 +46,11 @@ export const PERMISSIONS = {
   EVENTS_UPDATE: 'events:update',
   EVENTS_DELETE: 'events:delete',
 
+  SUMMITS_VIEW: 'summits:view',
+  SUMMITS_ADD: 'summits:add',
+  SUMMITS_UPDATE: 'summits:update',
+  SUMMITS_DELETE: 'summits:delete',
+
   INQUIRIES_VIEW: 'inquiries:view',
   INQUIRIES_REPLY: 'inquiries:reply',
   INQUIRIES_DELETE: 'inquiries:delete',

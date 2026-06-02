@@ -19,14 +19,64 @@ function trimOptional(value: unknown): string | undefined {
   return v === '' ? undefined : v;
 }
 
+/** Maps UI labels and short aliases to canonical period values. */
+export function normalizeDashboardPeriod(
+  value: unknown,
+): string | undefined {
+  const raw = trimOptional(value);
+  if (!raw) return undefined;
+  const key = raw.toLowerCase().replace(/\s+/g, '_');
+  const aliases: Record<string, string> = {
+    week: 'this_week',
+    thisweek: 'this_week',
+    month: 'this_month',
+    thismonth: 'this_month',
+    quarter: 'this_quarter',
+    year: 'this_year',
+    thisyear: 'this_year',
+    lastweek: 'last_week',
+    lastmonth: 'last_month',
+    lastyear: 'last_year',
+    last_month: 'last_month',
+    last_week: 'last_week',
+    last_year: 'last_year',
+  };
+  return aliases[key] ?? key;
+}
+
 export class DashboardMetricsQueryDto {
   @ApiPropertyOptional({
-    enum: ['this_week', 'this_month', 'this_quarter', 'this_year'],
+    enum: [
+      'this_week',
+      'this_month',
+      'this_quarter',
+      'this_year',
+      'last_week',
+      'last_month',
+      'last_year',
+    ],
+    description:
+      'Time window. Aliases: week, month, year, last_month (also accepts "Last Month").',
   })
   @IsOptional()
-  @Transform(({ value }) => trimOptional(value))
-  @IsIn(['this_week', 'this_month', 'this_quarter', 'this_year'])
-  period?: 'this_week' | 'this_month' | 'this_quarter' | 'this_year';
+  @Transform(({ value }) => normalizeDashboardPeriod(value))
+  @IsIn([
+    'this_week',
+    'this_month',
+    'this_quarter',
+    'this_year',
+    'last_week',
+    'last_month',
+    'last_year',
+  ])
+  period?:
+    | 'this_week'
+    | 'this_month'
+    | 'this_quarter'
+    | 'this_year'
+    | 'last_week'
+    | 'last_month'
+    | 'last_year';
 
   @ApiPropertyOptional({
     example: 2026,

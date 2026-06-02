@@ -25,6 +25,7 @@ function ensureUploadDirectories() {
     join(base, 'banners'),
     join(base, 'manufacturers'),
     join(base, 'events'),
+    join(base, 'summits'),
     join(base, 'team-members'),
   ];
   for (const dir of dirs) {

@@ -73,10 +73,11 @@ import type { DashboardMetricsQueryDto } from './dto/dashboard-metrics-query.dto
 import {
   buildAppliedDashboardFilters,
   buildManufacturerSnapshotMatch,
-  buildProductBaseMatch,
+  buildProductSnapshotMatch,
   bucketDateExpression,
   formatBucketLabel,
   resolveDashboardDateRange,
+  resolveRevenueDashboardGranularity,
   stateNameMatchesRegion,
   type DashboardGranularity,
   type ResolvedDashboardFilters,
@@ -105,6 +106,13 @@ import {
   filterDashboardMetricsByPermissions,
   type AdminDashboardMetricsResponse,
 } from './admin-dashboard-permissions.util';
+import type { AdminDashboardRevenueAnalytics } from './admin-dashboard-revenue.types';
+import { AdminDashboardStatsService } from './dashboard/admin-dashboard-stats.service';
+import { AdminRevenueDashboardService } from './dashboard/admin-revenue-dashboard.service';
+import {
+  PaymentDetails,
+  PaymentDetailsDocument,
+} from '../payments/schemas/payment-details.schema';
 import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
 import { AuthService } from '../auth/auth.service';
 import { buildPhoneLookupVariants } from '../common/utils/phone-lookup.util';
@@ -208,6 +216,8 @@ export class AdminService {
     private stateModel: Model<StateDocument>,
     @InjectModel(ActivityLog.name)
     private activityLogModel: Model<ActivityLogDocument>,
+    @InjectModel(PaymentDetails.name)
+    private paymentDetailsModel: Model<PaymentDetailsDocument>,
     private readonly emailService: EmailService,
     private readonly rbacService: RbacService,
     private readonly redisService: RedisService,
@@ -218,13 +228,18 @@ export class AdminService {
     private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
     @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
+    private readonly dashboardStatsService: AdminDashboardStatsService,
+    private readonly revenueDashboardService: AdminRevenueDashboardService,
   ) {}
 
   async resolveDashboardMetricsFilters(
     query: DashboardMetricsQueryDto,
   ): Promise<ResolvedDashboardFilters> {
     const dateRange = resolveDashboardDateRange(query);
-    const granularity = query.granularity ?? 'monthly';
+    const granularity = resolveRevenueDashboardGranularity(
+      query.period,
+      query.granularity,
+    );
     let categoryObjectId: Types.ObjectId | undefined;
     if (query.categoryId) {
       categoryObjectId = await this.resolveDashboardCategoryId(query.categoryId);
@@ -258,9 +273,12 @@ export class AdminService {
     return {
       periods: [
         { value: 'this_week', label: 'This Week' },
+        { value: 'last_week', label: 'Last Week' },
         { value: 'this_month', label: 'This Month' },
+        { value: 'last_month', label: 'Last Month' },
         { value: 'this_quarter', label: 'This Quarter' },
         { value: 'this_year', label: 'This Year' },
+        { value: 'last_year', label: 'Last Year' },
       ],
       years: [
         { value: null, label: 'All Years' },
@@ -371,144 +389,9 @@ export class AdminService {
   }
 
   private async buildDashboardCharts(
-    productMatch: Record<string, unknown>,
-    granularity: DashboardGranularity,
-    now: Date,
+    filters: ResolvedDashboardFilters,
   ): Promise<AdminDashboardCharts> {
-    const bucketId = bucketDateExpression(granularity, 'createdDate');
-    const certifiedCond = {
-      $and: [
-        { $eq: ['$productStatus', 2] },
-        {
-          $or: [
-            { $eq: [{ $ifNull: ['$validtillDate', null] }, null] },
-            { $gte: ['$validtillDate', now] },
-          ],
-        },
-      ],
-    };
-
-    const baseStages: any[] = [];
-    if (Object.keys(productMatch).length > 0) {
-      baseStages.push({ $match: productMatch });
-    }
-
-    const [
-      categoryRows,
-      submissionRows,
-      certifiedRows,
-      onlineOfflineRows,
-    ] = await Promise.all([
-      this.productModel
-        .aggregate<{
-          name: string;
-          products: number;
-        }>([
-          ...baseStages,
-          { $group: { _id: '$categoryId', products: { $sum: 1 } } },
-          {
-            $lookup: {
-              from: 'categories',
-              localField: '_id',
-              foreignField: '_id',
-              as: 'cat',
-            },
-          },
-          {
-            $project: {
-              name: {
-                $ifNull: [
-                  { $arrayElemAt: ['$cat.category_name', 0] },
-                  'Unknown',
-                ],
-              },
-              products: 1,
-            },
-          },
-          { $sort: { products: -1 } },
-          { $limit: 20 },
-        ])
-        .exec(),
-      this.productModel
-        .aggregate<{
-          _id: { year?: number; month?: number; quarter?: number; week?: number };
-          count: number;
-        }>([
-          ...baseStages,
-          { $group: { _id: bucketId, count: { $sum: 1 } } },
-        ])
-        .exec(),
-      this.productModel
-        .aggregate<{
-          _id: { year?: number; month?: number; quarter?: number; week?: number };
-          certified: number;
-          uncertified: number;
-        }>([
-          ...baseStages,
-          {
-            $group: {
-              _id: bucketId,
-              certified: { $sum: { $cond: [certifiedCond, 1, 0] } },
-              uncertified: {
-                $sum: {
-                  $cond: [{ $in: ['$productStatus', [0, 1]] }, 1, 0],
-                },
-              },
-            },
-          },
-        ])
-        .exec(),
-      this.productModel
-        .aggregate<{
-          _id: { year?: number; month?: number; quarter?: number; week?: number };
-          online: number;
-          offline: number;
-        }>([
-          ...baseStages,
-          {
-            $group: {
-              _id: bucketId,
-              online: {
-                $sum: { $cond: [{ $eq: ['$productType', 0] }, 1, 0] },
-              },
-              offline: {
-                $sum: { $cond: [{ $eq: ['$productType', 1] }, 1, 0] },
-              },
-            },
-          },
-        ])
-        .exec(),
-    ]);
-
-    type ChartBucketRow = {
-      _id: { year?: number; month?: number; quarter?: number; week?: number };
-    };
-    const sortBuckets = <T extends ChartBucketRow>(rows: T[]): T[] =>
-      [...rows].sort((a, b) =>
-        this.compareChartBuckets(a._id, b._id, granularity),
-      );
-
-    return {
-      categoryDistribution: categoryRows.map((r) => ({
-        name: r.name,
-        products: r.products,
-        sales: 0,
-      })),
-      monthlySubmissions: sortBuckets(submissionRows).map((r) => ({
-        month: formatBucketLabel(granularity, r._id),
-        count: r.count,
-      })),
-      monthlyCertified: sortBuckets(certifiedRows).map((r) => ({
-        month: formatBucketLabel(granularity, r._id),
-        certified: r.certified,
-        uncertified: r.uncertified,
-      })),
-      onlineOffline: sortBuckets(onlineOfflineRows).map((r) => ({
-        month: formatBucketLabel(granularity, r._id),
-        online: r.online,
-        offline: r.offline,
-      })),
-    };
+    return this.dashboardStatsService.getCharts(filters);
   }
 
   async getDashboardRecentProducts(page = 1, limit = 10) {
@@ -3506,7 +3389,7 @@ export class AdminService {
   ): Promise<AdminDashboardMetrics> {
     const now = new Date();
     const manufacturerMatch = buildManufacturerSnapshotMatch(filters);
-    const productMatch = buildProductBaseMatch(filters, now);
+    const productMatch = buildProductSnapshotMatch(filters, now);
 
     const manufacturerPipeline: any[] = [];
     if (Object.keys(manufacturerMatch).length > 0) {
@@ -3578,11 +3461,7 @@ export class AdminService {
           expired: { count: number }[];
         }>(productPipeline)
         .exec(),
-      this.buildDashboardCharts(
-        productMatch,
-        filters.granularity,
-        now,
-      ),
+      this.buildDashboardCharts(filters),
     ]);
 
     const mfgPayload = manufacturerFacet[0] ?? {
@@ -3707,6 +3586,231 @@ export class AdminService {
       input.userId,
     );
     return filterDashboardMetricsByPermissions(full, grants, appliedFilters);
+  }
+
+  async getCertifiedVsUncertifiedProductsForUser(input: {
+    role?: string;
+    type?: string;
+    manufacturerId: string;
+    userId: string;
+    filters: ResolvedDashboardFilters;
+    query: DashboardMetricsQueryDto;
+  }) {
+    const metrics = await this.getDashboardMetricsForUser(input);
+    const chartBlock = metrics.charts?.certifiedVsUncertified;
+    if (chartBlock) {
+      return {
+        appliedFilters: metrics.appliedFilters,
+        totals: chartBlock.totals,
+        chart: chartBlock.chart,
+      };
+    }
+    const totalProducts = metrics.productSubmissions?.total ?? 0;
+    const certifiedProducts =
+      metrics.certificationProgress?.summary?.certifiedProducts ?? 0;
+    const uncertifiedProducts = Math.max(0, totalProducts - certifiedProducts);
+
+    return {
+      totals: {
+        totalProducts,
+        certifiedProducts,
+        uncertifiedProducts,
+      },
+      chart: [
+        { key: 'certified', label: 'Certified', count: certifiedProducts },
+        { key: 'uncertified', label: 'Uncertified', count: uncertifiedProducts },
+      ],
+    };
+  }
+
+  async getVerifiedVsUnverifiedManufacturersForUser(input: {
+    role?: string;
+    type?: string;
+    manufacturerId: string;
+    userId: string;
+    filters: ResolvedDashboardFilters;
+    query: DashboardMetricsQueryDto;
+  }) {
+    const metrics = await this.getDashboardMetricsForUser(input);
+    const manufacturers = metrics.manufacturers ?? {
+      verified: 0,
+      unverified: 0,
+      inactivePending: 0,
+      verifiedActive: 0,
+      verifiedInactive: 0,
+    };
+    const verified = manufacturers.verified ?? 0;
+    const unverified =
+      (manufacturers.unverified ?? 0) + (manufacturers.inactivePending ?? 0);
+
+    return {
+      totals: {
+        totalManufacturers: metrics.totalManufacturers ?? 0,
+        verifiedManufacturers: verified,
+        unverifiedManufacturers: unverified,
+        verifiedActive: manufacturers.verifiedActive ?? 0,
+        verifiedInactive: manufacturers.verifiedInactive ?? 0,
+      },
+      chart: [
+        { key: 'verified', label: 'Verified', count: verified },
+        { key: 'unverified', label: 'Unverified', count: unverified },
+      ],
+    };
+  }
+
+  async getExpiredProductsImpactForUser(input: {
+    role?: string;
+    type?: string;
+    manufacturerId: string;
+    userId: string;
+    filters: ResolvedDashboardFilters;
+    query: DashboardMetricsQueryDto;
+  }) {
+    const metrics = await this.getDashboardMetricsForUser(input);
+    const byProductStatus = metrics.certificationProgress?.byProductStatus;
+    const expiredProducts = byProductStatus?.expired ?? 0;
+    const activeCertifiedProducts = byProductStatus?.certified ?? 0;
+    const certifiedProductsTotal = activeCertifiedProducts + expiredProducts;
+    const expiredImpactPercent =
+      certifiedProductsTotal > 0
+        ? Number(((expiredProducts / certifiedProductsTotal) * 100).toFixed(2))
+        : 0;
+
+    return {
+      totals: {
+        expiredProducts,
+        activeCertifiedProducts,
+        certifiedProductsTotal,
+        expiredImpactPercent,
+      },
+      chart: [
+        { key: 'activeCertified', label: 'Active Certified', count: activeCertifiedProducts },
+        { key: 'expired', label: 'Expired', count: expiredProducts },
+      ],
+    };
+  }
+
+  async getRejectedProductsAnalyticsForUser(input: {
+    role?: string;
+    type?: string;
+    manufacturerId: string;
+    userId: string;
+    filters: ResolvedDashboardFilters;
+    query: DashboardMetricsQueryDto;
+  }) {
+    const metrics = await this.getDashboardMetricsForUser(input);
+    const totalProducts = metrics.productSubmissions?.total ?? 0;
+    const rejectedProducts =
+      metrics.certificationProgress?.byProductStatus?.rejected ?? 0;
+    const nonRejectedProducts = Math.max(0, totalProducts - rejectedProducts);
+    const rejectionRatePercent =
+      totalProducts > 0
+        ? Number(((rejectedProducts / totalProducts) * 100).toFixed(2))
+        : 0;
+
+    return {
+      totals: {
+        totalProducts,
+        rejectedProducts,
+        nonRejectedProducts,
+        rejectionRatePercent,
+      },
+      chart: [
+        { key: 'rejected', label: 'Rejected', count: rejectedProducts },
+        { key: 'nonRejected', label: 'Non-Rejected', count: nonRejectedProducts },
+      ],
+    };
+  }
+
+  private revenueFiltersNeedProductScope(
+    filters: ResolvedDashboardFilters,
+  ): boolean {
+    return !!(
+      filters.categoryObjectId ||
+      filters.manufacturerIdsForRegion?.length ||
+      filters.productStatusFilter
+    );
+  }
+
+  private async resolveRevenueScopeUrns(
+    filters: ResolvedDashboardFilters,
+    now: Date,
+  ): Promise<string[]> {
+    const productMatch = buildProductSnapshotMatch(filters, now);
+    const pipeline: any[] = [];
+    if (Object.keys(productMatch).length > 0) {
+      pipeline.push({ $match: productMatch });
+    }
+    pipeline.push({ $group: { _id: '$urnNo' } });
+    const rows = await this.productModel
+      .aggregate<{ _id: string }>(pipeline)
+      .exec();
+    return rows
+      .map((r) => String(r._id ?? '').trim())
+      .filter((urn) => urn.length > 0);
+  }
+
+  /**
+   * Revenue from paid/approved payments (`paymentStatus` 1–2), summed on `quoteTotal`.
+   * Date filters use cheque date, else created/updated date.
+   */
+  async getRevenueAnalytics(
+    filters: ResolvedDashboardFilters,
+    query: DashboardMetricsQueryDto,
+  ): Promise<AdminDashboardRevenueAnalytics> {
+    const scopedByProducts = this.revenueFiltersNeedProductScope(filters);
+    const scopeUrns = scopedByProducts
+      ? await this.resolveRevenueScopeUrns(filters, new Date())
+      : undefined;
+    const appliedFilters = this.buildAppliedFiltersPayload(query, filters);
+    return this.revenueDashboardService.getRevenueAnalytics(
+      filters,
+      query,
+      appliedFilters,
+      scopeUrns,
+      scopedByProducts,
+    );
+  }
+
+  async getProductStatusBreakdownForUser(input: {
+    filters: ResolvedDashboardFilters;
+    query: DashboardMetricsQueryDto;
+  }) {
+    const widgets = await this.dashboardStatsService.getProductWidgetStats(
+      input.filters,
+    );
+    return {
+      appliedFilters: this.buildAppliedFiltersPayload(input.query, input.filters),
+      ...widgets.statusBreakdown,
+      statusCounts: widgets.statusCounts,
+    };
+  }
+
+  async getUrnPipelineForUser(input: {
+    filters: ResolvedDashboardFilters;
+    query: DashboardMetricsQueryDto;
+  }) {
+    const widgets = await this.dashboardStatsService.getProductWidgetStats(
+      input.filters,
+    );
+    return {
+      appliedFilters: this.buildAppliedFiltersPayload(input.query, input.filters),
+      steps: widgets.urnPipeline,
+      totals: {
+        inPipeline: widgets.urnPipeline
+          .filter((s) => s.key !== 'certified')
+          .reduce((sum, s) => sum + s.count, 0),
+        certified:
+          widgets.urnPipeline.find((s) => s.key === 'certified')?.count ?? 0,
+      },
+    };
+  }
+
+  async getRevenueAnalyticsForUser(input: {
+    filters: ResolvedDashboardFilters;
+    query: DashboardMetricsQueryDto;
+  }): Promise<AdminDashboardRevenueAnalytics> {
+    return this.getRevenueAnalytics(input.filters, input.query);
   }
 
   async updateVendorStatus(id: string) {

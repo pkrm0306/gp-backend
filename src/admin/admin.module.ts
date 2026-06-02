@@ -1,6 +1,9 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdminController } from './admin.controller';
+import { AdminDashboardController } from './dashboard/admin-dashboard.controller';
+import { AdminDashboardStatsService } from './dashboard/admin-dashboard-stats.service';
+import { AdminRevenueDashboardService } from './dashboard/admin-revenue-dashboard.service';
 import { AdminService } from './admin.service';
 import {
   Manufacturer,
@@ -51,7 +54,12 @@ import {
   ActivityLogSchema,
 } from '../activity-log/schemas/activity-log.schema';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
+import { PaymentsModule } from '../payments/payments.module';
 import { AuthModule } from '../auth/auth.module';
+import {
+  PaymentDetails,
+  PaymentDetailsSchema,
+} from '../payments/schemas/payment-details.schema';
 
 @Module({
   imports: [
@@ -61,6 +69,7 @@ import { AuthModule } from '../auth/auth.module';
     CategoriesModule,
     SectorsModule,
     ProductRegistrationModule,
+    PaymentsModule,
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       { name: ProductPlant.name, schema: ProductPlantSchema },
@@ -77,10 +86,17 @@ import { AuthModule } from '../auth/auth.module';
       { name: Event.name, schema: EventSchema },
       { name: EventIdCounter.name, schema: EventIdCounterSchema },
       { name: Article.name, schema: ArticleSchema },
+      { name: PaymentDetails.name, schema: PaymentDetailsSchema },
     ]),
   ],
-  controllers: [AdminController],
-  providers: [AdminService, EmailService, PermissionsGuard],
+  controllers: [AdminController, AdminDashboardController],
+  providers: [
+    AdminService,
+    AdminDashboardStatsService,
+    AdminRevenueDashboardService,
+    EmailService,
+    PermissionsGuard,
+  ],
   exports: [AdminService],
 })
 export class AdminModule {}

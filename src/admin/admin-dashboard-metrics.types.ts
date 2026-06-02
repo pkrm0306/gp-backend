@@ -1,5 +1,47 @@
 import type { DashboardVisibleSections } from '../common/constants/permissions.constants';
 
+export interface DashboardChartCountSlice {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface DashboardProductStatusBreakdown {
+  totals: {
+    certified: number;
+    uncertified: number;
+    expired: number;
+    renewed: number;
+    rejected: number;
+    total: number;
+  };
+  chart: DashboardChartCountSlice[];
+}
+
+export interface DashboardCertifiedVsUncertifiedChart {
+  totals: {
+    totalProducts: number;
+    certifiedProducts: number;
+    uncertifiedProducts: number;
+  };
+  chart: DashboardChartCountSlice[];
+}
+
+export interface DashboardUrnPipelineStep {
+  key: string;
+  label: string;
+  order: number;
+  count: number;
+}
+
+export interface DashboardCategoryCertifiedItem {
+  name: string;
+  /** Certified & not expired product count in this category */
+  certifiedProducts: number;
+  /** @deprecated use certifiedProducts — kept for older clients */
+  products: number;
+}
+
 export interface DashboardCategoryDistributionItem {
   name: string;
   products: number;
@@ -24,7 +66,16 @@ export interface DashboardOnlineOfflineItem {
 }
 
 export interface AdminDashboardCharts {
+  /** Certified products per category (for category bar chart) */
   categoryDistribution: DashboardCategoryDistributionItem[];
+  /** Alias with explicit field names */
+  categoryCertified: DashboardCategoryCertifiedItem[];
+  /** Certified / uncertified / expired / renewed counts */
+  productStatusBreakdown: DashboardProductStatusBreakdown;
+  /** Certified vs uncertified share (pie / donut) */
+  certifiedVsUncertified: DashboardCertifiedVsUncertifiedChart;
+  /** Uncertified + in-progress URNs grouped by admin pipeline step */
+  urnPipeline: DashboardUrnPipelineStep[];
   monthlyCertified: DashboardMonthlyCertifiedItem[];
   monthlySubmissions: DashboardMonthlyCountItem[];
   onlineOffline: DashboardOnlineOfflineItem[];
@@ -74,6 +125,7 @@ export interface AppliedDashboardFilters {
   dateRange: { from: string; to: string } | null;
   manufacturersScope: string;
   productsScope: string;
+  countsScope?: string;
 }
 
 export type AdminDashboardMetricsResponse = AdminDashboardMetrics & {

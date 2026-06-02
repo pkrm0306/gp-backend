@@ -16,7 +16,7 @@ describe('AdminController Event Endpoints', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new AdminController(adminServiceMock, {} as any);
+    controller = new AdminController(adminServiceMock, {} as any, {} as any);
   });
 
   it('creates event successfully with required fields', async () => {
@@ -70,7 +70,7 @@ describe('AdminController Event Endpoints', () => {
   it('gets event by id successfully', async () => {
     adminServiceMock.getEventById.mockResolvedValue({ id: 'e1' } as any);
     const res = await controller.getEventById('e1');
-    expect(adminServiceMock.getEventById).toHaveBeenCalledWith('e1');
+    expect(adminServiceMock.getEventById).toHaveBeenCalledWith('e1', 'event');
     expect(res.message).toBe('Event retrieved successfully');
   });
 
@@ -82,14 +82,14 @@ describe('AdminController Event Endpoints', () => {
     } as any);
 
     const res = await controller.updateGalleryStatus('e1', { status: 'active' });
-    expect(adminServiceMock.setOrToggleEventStatus).toHaveBeenCalledWith('e1', 1);
+    expect(adminServiceMock.setOrToggleEventStatus).toHaveBeenCalledWith('e1', 1, 'gallery');
     expect(res.message).toBe('Gallery status updated successfully');
   });
 
   it('deletes event successfully', async () => {
     adminServiceMock.deleteEvent.mockResolvedValue({ id: 'e1' } as any);
     const res = await controller.deleteEvent('e1');
-    expect(adminServiceMock.deleteEvent).toHaveBeenCalledWith('e1');
+    expect(adminServiceMock.deleteEvent).toHaveBeenCalledWith('e1', 'event');
     expect(res.message).toBe('Event deleted successfully');
   });
 });

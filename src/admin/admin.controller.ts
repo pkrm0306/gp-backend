@@ -89,6 +89,8 @@ import {
   DashboardMetricsQueryDto,
   DashboardRecentProductsQueryDto,
 } from './dto/dashboard-metrics-query.dto';
+import { PaymentsService } from '../payments/payments.service';
+import { AdminListPaymentsDto } from '../payments/dto/admin-list-payments.dto';
 
 const bannerImageMultipartFields = [
   { name: 'image', maxCount: 1 },
@@ -245,7 +247,33 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly manufacturersService: ManufacturersService,
+    private readonly paymentsService: PaymentsService,
   ) {}
+
+  @Get('payments/list')
+  @AnyPermissions(PERMISSIONS.PAYMENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Admin payment history (all vendors)',
+    description:
+      'Lists payment_details across the platform (registration, certification, renew). ' +
+      'Same URN-based rules as the vendor GET /payments. Optional `manufacturerId` to scope one vendor. ' +
+      'Omit `status` to include all statuses. Search matches URN, reference no., or manufacturer name/email.',
+  })
+  @ApiResponse({ status: 200, description: 'Payment history retrieved' })
+  async listAdminPayments(@Query() query: AdminListPaymentsDto) {
+    const result = await this.paymentsService.getAdminPayments(query);
+    return {
+      message: 'Payment history retrieved successfully',
+      data: result.data,
+      pagination: result.pagination,
+      meta: result.meta,
+      totalCount: result.pagination.totalCount,
+      page: result.pagination.page,
+      limit: result.pagination.limit,
+      totalPages: result.pagination.totalPages,
+    };
+  }
 
   @Get('dashboard/metrics')
   @AnyPermissions(
@@ -258,10 +286,11 @@ export class AdminController {
   @ApiOperation({
     summary: 'Admin dashboard metrics',
     description:
-      'Returns dashboard KPIs, optional **charts** time-series, and **visibleSections** for RBAC. ' +
-      'Query filters: `period`, `year`, `month`, `quarter`, `productStatus` (pending|active|completed|overdue), ' +
-      '`categoryId` (ObjectId or slug), `region` (north|south|east|west via plant states), `granularity` (monthly|weekly|quarterly). ' +
-      'Platform admins (`type: admin`) always receive full metrics.',
+      'Returns dashboard KPIs, **charts** (product status breakdown, certified vs uncertified, URN pipeline, ' +
+      'category certified counts, time-series), and **visibleSections** for RBAC. ' +
+      'Query filters: `period`, `year`, `month`, `quarter`, `productStatus`, `categoryId`, `region`, `granularity`. ' +
+      'See `data.charts.productStatusBreakdown`, `certifiedVsUncertified`, `urnPipeline`, `categoryCertified`. ' +
+      'Revenue widgets use GET /admin/dashboard/revenue-analytics.',
   })
   @ApiResponse({ status: 200, description: 'Dashboard metrics retrieved' })
   async getDashboardMetrics(
@@ -285,6 +314,228 @@ export class AdminController {
     });
     return {
       message: 'Admin dashboard metrics retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('dashboard/certified-vs-uncertified-products')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Certified vs uncertified product metrics',
+    description:
+      'Returns card totals + chart payload for certified and uncertified products on the admin dashboard.',
+  })
+  @ApiResponse({ status: 200, description: 'Certified vs uncertified metrics retrieved' })
+  async getCertifiedVsUncertifiedProducts(
+    @CurrentUser()
+    user: {
+      role: string;
+      type?: string;
+      manufacturerId: string;
+      userId: string;
+    },
+    @Query() query: DashboardMetricsQueryDto,
+  ) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.adminService.getCertifiedVsUncertifiedProductsForUser({
+      role: user.role,
+      type: user.type,
+      manufacturerId: user.manufacturerId,
+      userId: user.userId,
+      filters,
+      query,
+    });
+    return {
+      message: 'Certified vs uncertified product metrics retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('dashboard/verified-vs-unverified-manufacturers')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verified vs unverified manufacturer metrics',
+    description:
+      'Returns card totals + chart payload for verified and unverified manufacturers on the admin dashboard.',
+  })
+  @ApiResponse({ status: 200, description: 'Verified vs unverified manufacturer metrics retrieved' })
+  async getVerifiedVsUnverifiedManufacturers(
+    @CurrentUser()
+    user: {
+      role: string;
+      type?: string;
+      manufacturerId: string;
+      userId: string;
+    },
+    @Query() query: DashboardMetricsQueryDto,
+  ) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data =
+      await this.adminService.getVerifiedVsUnverifiedManufacturersForUser({
+        role: user.role,
+        type: user.type,
+        manufacturerId: user.manufacturerId,
+        userId: user.userId,
+        filters,
+        query,
+      });
+    return {
+      message: 'Verified vs unverified manufacturer metrics retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('dashboard/expired-products-impact')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Expired products impact tracking',
+    description:
+      'Returns expired certification impact totals (counts + percent) and chart payload for admin dashboard.',
+  })
+  @ApiResponse({ status: 200, description: 'Expired products impact metrics retrieved' })
+  async getExpiredProductsImpact(
+    @CurrentUser()
+    user: {
+      role: string;
+      type?: string;
+      manufacturerId: string;
+      userId: string;
+    },
+    @Query() query: DashboardMetricsQueryDto,
+  ) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.adminService.getExpiredProductsImpactForUser({
+      role: user.role,
+      type: user.type,
+      manufacturerId: user.manufacturerId,
+      userId: user.userId,
+      filters,
+      query,
+    });
+    return {
+      message: 'Expired products impact metrics retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('dashboard/product-status-breakdown')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Product status breakdown for admin dashboard',
+    description:
+      'Returns certified, uncertified, expired, and renewed product counts plus chart payload. ' +
+      'Same data as `GET /admin/dashboard/metrics` → `data.charts.productStatusBreakdown`.',
+  })
+  async getProductStatusBreakdown(@Query() query: DashboardMetricsQueryDto) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.adminService.getProductStatusBreakdownForUser({
+      filters,
+      query,
+    });
+    return {
+      message: 'Product status breakdown retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('dashboard/urn-pipeline')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'URN certification pipeline counts',
+    description:
+      'Returns product counts per admin pipeline step (EOI → Certified). ' +
+      'Same data as `GET /admin/dashboard/metrics` → `data.charts.urnPipeline`.',
+  })
+  async getUrnPipeline(@Query() query: DashboardMetricsQueryDto) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.adminService.getUrnPipelineForUser({ filters, query });
+    return {
+      message: 'URN pipeline analytics retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('dashboard/revenue-analytics')
+  @AnyPermissions(PERMISSIONS.DASHBOARD_VIEW, PERMISSIONS.PAYMENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Revenue analytics for admin dashboard',
+    description:
+      'Returns donut (`distribution`: total centre + fee %/amount) and weekly line chart (`weeklyComparison`). ' +
+      'Source: `payment_details` with `paymentStatus` 1–2, summed on `quoteTotal`. ' +
+      'Filters: `period=last_month|this_month|this_week|this_year` (or alias `last_month`, `month`, `week`, `year`). ' +
+      'Prefer GET /admin/dashboard/revenue for the same payload.',
+  })
+  @ApiResponse({ status: 200, description: 'Revenue analytics retrieved' })
+  async getRevenueAnalytics(@Query() query: DashboardMetricsQueryDto) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.adminService.getRevenueAnalyticsForUser({
+      filters,
+      query,
+    });
+    return {
+      message: 'Revenue analytics retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('dashboard/rejected-products-analytics')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Rejected products analytics',
+    description:
+      'Returns rejected-product totals, rejection rate, and chart payload for admin dashboard.',
+  })
+  @ApiResponse({ status: 200, description: 'Rejected products analytics retrieved' })
+  async getRejectedProductsAnalytics(
+    @CurrentUser()
+    user: {
+      role: string;
+      type?: string;
+      manufacturerId: string;
+      userId: string;
+    },
+    @Query() query: DashboardMetricsQueryDto,
+  ) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.adminService.getRejectedProductsAnalyticsForUser({
+      role: user.role,
+      type: user.type,
+      manufacturerId: user.manufacturerId,
+      userId: user.userId,
+      filters,
+      query,
+    });
+    return {
+      message: 'Rejected products analytics retrieved successfully',
       data,
     };
   }

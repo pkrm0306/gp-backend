@@ -1,6 +1,23 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsInt, Min, IsString, IsIn } from 'class-validator';
-import { Type } from 'class-transformer';
+import {
+  IsOptional,
+  IsInt,
+  Min,
+  Max,
+  IsString,
+  IsIn,
+  Matches,
+} from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+
+function parseOptionalPaymentStatus(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const s = String(raw).trim().toLowerCase();
+  if (s === 'all' || s === 'any') return undefined;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 0 && n <= 3) return Math.floor(n);
+  return undefined;
+}
 
 export class ListPaymentsDto {
   @ApiProperty({
@@ -16,8 +33,8 @@ export class ListPaymentsDto {
   page?: number = 1;
 
   @ApiProperty({
-    description: 'Number of items per page (default: 10)',
-    example: 10,
+    description: 'Number of items per page (default: 50, max: 200)',
+    example: 50,
     required: false,
     minimum: 1,
   })
@@ -25,7 +42,8 @@ export class ListPaymentsDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  limit?: number = 10;
+  @Max(200)
+  limit?: number = 50;
 
   @ApiProperty({
     description:
@@ -45,7 +63,7 @@ export class ListPaymentsDto {
     enum: [0, 1, 2, 3],
   })
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => parseOptionalPaymentStatus(value))
   @IsInt()
   @IsIn([0, 1, 2, 3])
   status?: number;
@@ -62,13 +80,21 @@ export class ListPaymentsDto {
   paymentType?: string;
 
   @ApiProperty({
-    description: 'Sort order (default: desc)',
-    example: 'desc',
+    description:
+      'Sort: `asc` | `desc` (by created date), or `field:asc` | `field:desc` (e.g. `createdAt:desc`). ' +
+      'Fields: createdAt, updatedAt, paymentId, quoteTotal, urnNo, paymentReferenceNo, paymentStatus, paymentType.',
+    example: 'createdAt:desc',
     required: false,
-    enum: ['asc', 'desc'],
   })
   @IsOptional()
   @IsString()
-  @IsIn(['asc', 'desc'])
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    return String(value).trim();
+  })
+  @Matches(/^(asc|desc|[\w]+:(asc|desc))$/i, {
+    message:
+      'sort must be asc, desc, or field:asc|field:desc (e.g. createdAt:desc)',
+  })
   sort?: string = 'desc';
 }

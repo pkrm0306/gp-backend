@@ -44,7 +44,7 @@ export class PaymentsController {
   @ApiOperation({
     summary: 'Get payments for logged-in vendor',
     description:
-      'Returns a paginated list of payments for the authenticated vendor with optional search, filtering by status and payment type, and sorting.',
+      'Returns a paginated list of **all** payments for the authenticated vendor across **every URN** (registration, certification, renew). Includes rows linked by organization id or any URN on the vendor’s products. Omit `status` to include all payment statuses. Do not pass `search` unless filtering.',
   })
   @ApiQuery({
     name: 'page',
@@ -89,9 +89,9 @@ export class PaymentsController {
     name: 'sort',
     required: false,
     type: String,
-    description: 'Sort order by created_date (default: desc)',
-    example: 'desc',
-    enum: ['asc', 'desc'],
+    description:
+      'Sort: asc | desc, or field:asc | field:desc (e.g. createdAt:desc). Default: createdAt:desc.',
+    example: 'createdAt:desc',
   })
   @ApiResponse({
     status: 200,
@@ -160,9 +160,14 @@ export class PaymentsController {
       );
 
       return {
-        status: 'success',
         message: 'Payments retrieved successfully',
-        ...result,
+        data: result.data,
+        pagination: result.pagination,
+        meta: result.meta,
+        totalCount: result.pagination.totalCount,
+        page: result.pagination.page,
+        limit: result.pagination.limit,
+        totalPages: result.pagination.totalPages,
       };
     } catch (error: any) {
       console.error('Controller error:', error);

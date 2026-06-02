@@ -13,12 +13,17 @@ import {
 } from './schemas/payment-details.schema';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ListPaymentsDto } from './dto/list-payments.dto';
+import { AdminListPaymentsDto } from './dto/admin-list-payments.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
 import {
   Product,
   ProductDocument,
 } from '../product-registration/schemas/product.schema';
+import {
+  Manufacturer,
+  ManufacturerDocument,
+} from '../manufacturers/schemas/manufacturer.schema';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { uploadFile } from '../utils/upload-file.util';
 import { VendorProposalApprovalDto } from './dto/vendor-proposal-approval.dto';
@@ -37,6 +42,10 @@ import {
   parseProductsToBeCertified,
 } from '../product-registration/helpers/parse-products-to-be-certified.util';
 import { ProductSoftDeleteService } from '../product-registration/services/product-soft-delete.service';
+import {
+  buildPaymentListMongoSort,
+  parsePaymentListSort,
+} from './utils/parse-payment-list-sort.util';
 
 @Injectable()
 export class PaymentsService {
@@ -45,6 +54,8 @@ export class PaymentsService {
     private paymentDetailsModel: Model<PaymentDetailsDocument>,
     @InjectModel(Product.name)
     private productModel: Model<ProductDocument>,
+    @InjectModel(Manufacturer.name)
+    private manufacturerModel: Model<ManufacturerDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private activityLogService: ActivityLogService,
@@ -251,11 +262,15 @@ export class PaymentsService {
     session?: ClientSession,
   ): Promise<PaymentDetailsDocument | null> {
     const urnOptions = this.urnCandidates(urnNo);
+    const vendorIdString = vendorObjectId.toString();
     const query = this.paymentDetailsModel
       .findOne({
         urnNo: { $in: urnOptions },
-        vendorId: vendorObjectId,
         paymentType,
+        $or: [
+          { vendorId: vendorObjectId },
+          { $expr: { $eq: [{ $toString: '$vendorId' }, vendorIdString] } },
+        ],
       })
       .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 });
     if (session) {
@@ -425,6 +440,124 @@ export class PaymentsService {
     const normalized = this.normalizeUrnNo(urnNo);
     if (!normalized) return [];
     return [normalized, `${normalized}/`];
+  }
+
+  /** Expand distinct product URNs to include legacy trailing-slash variants. */
+  private expandUrnListForQuery(urnNos: string[]): string[] {
+    const set = new Set<string>();
+    for (const raw of urnNos) {
+      for (const candidate of this.urnCandidates(String(raw ?? ''))) {
+        if (candidate) set.add(candidate);
+      }
+    }
+    return [...set];
+  }
+
+  /**
+   * All organization ids linked to this vendor login (closure over products).
+   * Connects manufacturerId / vendorId pairs used inconsistently across URNs.
+   */
+  private async resolveVendorOrganizationIds(
+    vendorId: string,
+  ): Promise<Types.ObjectId[]> {
+    const primary = this.toObjectId(vendorId, 'vendorId');
+    const idSet = new Set<string>([primary.toString()]);
+
+    for (let round = 0; round < 8; round += 1) {
+      const oids = [...idSet].map((id) => new Types.ObjectId(id));
+      const products = await this.productModel
+        .find({
+          $or: [
+            { vendorId: { $in: oids } },
+            { manufacturerId: { $in: oids } },
+          ],
+        })
+        .select('vendorId manufacturerId')
+        .lean()
+        .exec();
+
+      let expanded = false;
+      for (const product of products) {
+        for (const raw of [product.vendorId, product.manufacturerId]) {
+          if (raw == null) continue;
+          const s = String(raw).trim();
+          if (Types.ObjectId.isValid(s) && !idSet.has(s)) {
+            idSet.add(s);
+            expanded = true;
+          }
+        }
+      }
+      if (!expanded) {
+        break;
+      }
+    }
+
+    return [...idSet].map((id) => new Types.ObjectId(id));
+  }
+
+  /** Every URN that belongs to the vendor org (all registrations, not a single URN). */
+  private async resolveAllVendorUrns(
+    organizationIds: Types.ObjectId[],
+  ): Promise<string[]> {
+    if (organizationIds.length === 0) {
+      return [];
+    }
+
+    const orgFilter = {
+      $or: [
+        { vendorId: { $in: organizationIds } },
+        { manufacturerId: { $in: organizationIds } },
+      ],
+    };
+
+    const orgIdStrings = organizationIds.map((id) => id.toString());
+
+    const [productUrns, paymentUrns] = await Promise.all([
+      this.productModel.distinct('urnNo', orgFilter).exec(),
+      this.paymentDetailsModel
+        .distinct('urnNo', {
+          $or: [
+            { vendorId: { $in: organizationIds } },
+            {
+              $expr: {
+                $in: [{ $toString: '$vendorId' }, orgIdStrings],
+              },
+            },
+          ],
+        })
+        .exec(),
+    ]);
+
+    return this.expandUrnListForQuery(
+      [...(productUrns ?? []), ...(paymentUrns ?? [])].map((u) =>
+        String(u ?? ''),
+      ),
+    );
+  }
+
+  /**
+   * Vendor payment list: all rows on any owned URN (registration + certification + renew).
+   * URN is authoritative — payment.vendorId may differ from the JWT manufacturerId.
+   */
+  private buildVendorPaymentsListMatch(
+    organizationIds: Types.ObjectId[],
+    urnNos: string[],
+  ): Record<string, unknown> {
+    if (urnNos.length > 0) {
+      return { urnNo: { $in: urnNos } };
+    }
+
+    const orgIdStrings = organizationIds.map((id) => id.toString());
+    return {
+      $or: [
+        { vendorId: { $in: organizationIds } },
+        {
+          $expr: {
+            $in: [{ $toString: '$vendorId' }, orgIdStrings],
+          },
+        },
+      ],
+    };
   }
 
   /** Certification payments must store numeric `productId` values only (JSON array string). */
@@ -898,11 +1031,31 @@ export class PaymentsService {
       }
       const urnOptions = this.urnCandidates(normalizedUrn);
 
+      const paymentTypeHint =
+        updatePaymentDto.paymentType !== undefined
+          ? this.normalizePaymentType(updatePaymentDto.paymentType)
+          : undefined;
+
+      const paymentQuery: Record<string, unknown> = {
+        urnNo: { $in: urnOptions },
+      };
+      if (paymentTypeHint) {
+        paymentQuery.paymentType = paymentTypeHint;
+      }
+
       let existingPayment = await this.paymentDetailsModel
-        .findOne({ urnNo: { $in: urnOptions } })
+        .findOne(paymentQuery)
         .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
         .session(session)
         .exec();
+
+      if (!existingPayment && paymentTypeHint) {
+        existingPayment = await this.paymentDetailsModel
+          .findOne({ urnNo: { $in: urnOptions } })
+          .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
+          .session(session)
+          .exec();
+      }
 
       if (!existingPayment) {
         throw new NotFoundException('Payment not found');
@@ -1565,122 +1718,226 @@ export class PaymentsService {
     });
   }
 
+  private buildPaymentListQueryClauses(
+    listPaymentsDto: ListPaymentsDto,
+    baseMatch: Record<string, unknown>,
+    options?: { skipSearchClause?: boolean },
+  ): Record<string, unknown> {
+    const { search, status, paymentType } = listPaymentsDto;
+    const andClauses: Record<string, unknown>[] = [baseMatch];
+
+    if (status !== undefined && status !== null) {
+      andClauses.push({ paymentStatus: status });
+    }
+    if (paymentType) {
+      andClauses.push({ paymentType });
+    }
+    if (
+      !options?.skipSearchClause &&
+      search &&
+      search.trim() !== ''
+    ) {
+      const searchRegex = new RegExp(
+        search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'i',
+      );
+      andClauses.push({
+        $or: [{ urnNo: searchRegex }, { paymentReferenceNo: searchRegex }],
+      });
+    }
+
+    return andClauses.length === 1 ? andClauses[0] : { $and: andClauses };
+  }
+
+  private async enrichPaymentsWithManufacturer(
+    payments: Record<string, unknown>[],
+  ): Promise<Record<string, unknown>[]> {
+    const vendorIds = [
+      ...new Set(
+        payments
+          .map((p) => String(p.vendorId ?? '').trim())
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ].map((id) => new Types.ObjectId(id));
+
+    if (vendorIds.length === 0) {
+      return payments.map((p) => ({
+        ...p,
+        manufacturerId: p.vendorId != null ? String(p.vendorId) : null,
+        manufacturerName: null,
+        vendorName: null,
+        vendorEmail: null,
+      }));
+    }
+
+    const manufacturers = await this.manufacturerModel
+      .find({ _id: { $in: vendorIds } })
+      .select('manufacturerName vendor_name vendor_email')
+      .lean()
+      .exec();
+
+    const byId = new Map(
+      manufacturers.map((m) => [String(m._id), m]),
+    );
+
+    return payments.map((p) => {
+      const mfg = byId.get(String(p.vendorId ?? ''));
+      return {
+        ...p,
+        manufacturerId: p.vendorId != null ? String(p.vendorId) : null,
+        manufacturerName:
+          (mfg?.manufacturerName as string | undefined) ??
+          (mfg?.vendor_name as string | undefined) ??
+          null,
+        vendorName: (mfg?.vendor_name as string | undefined) ?? null,
+        vendorEmail: (mfg?.vendor_email as string | undefined) ?? null,
+      };
+    });
+  }
+
+  private async queryPaymentsPaginated(
+    listPaymentsDto: ListPaymentsDto,
+    baseMatch: Record<string, unknown>,
+    options?: { skipSearchClause?: boolean },
+  ) {
+    const { page = 1, limit = 50, sort = 'desc' } = listPaymentsDto;
+    const skip = (page - 1) * limit;
+    const mongoSort = buildPaymentListMongoSort(parsePaymentListSort(sort));
+    const query = this.buildPaymentListQueryClauses(
+      listPaymentsDto,
+      baseMatch,
+      options,
+    );
+
+    const [totalCount, rows] = await Promise.all([
+      this.paymentDetailsModel.countDocuments(query).exec(),
+      this.paymentDetailsModel
+        .find(query)
+        .sort(mongoSort)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+    ]);
+
+    const data = formatPaymentRecords(rows as Record<string, unknown>[]);
+    const enriched = await this.enrichPaymentsWithManufacturer(data);
+
+    return {
+      data: enriched,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+    };
+  }
+
+  /**
+   * Admin payment history — all vendors, or one manufacturer when `manufacturerId` is set.
+   * Uses the same URN-based rules as the vendor portal list.
+   */
+  async getAdminPayments(listPaymentsDto: AdminListPaymentsDto) {
+    try {
+      const manufacturerId = listPaymentsDto.manufacturerId?.trim();
+
+      if (manufacturerId) {
+        const scoped = await this.getPayments(listPaymentsDto, manufacturerId);
+        const data = await this.enrichPaymentsWithManufacturer(
+          scoped.data as Record<string, unknown>[],
+        );
+        return {
+          data,
+          pagination: scoped.pagination,
+          meta: {
+            ...scoped.meta,
+            scope: 'manufacturer',
+            manufacturerId,
+          },
+        };
+      }
+
+      const { search } = listPaymentsDto;
+      let baseMatch: Record<string, unknown> = {};
+
+      if (search && search.trim() !== '') {
+        const searchRegex = new RegExp(
+          search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i',
+        );
+        const matchingManufacturers = await this.manufacturerModel
+          .find({
+            $or: [
+              { manufacturerName: searchRegex },
+              { vendor_name: searchRegex },
+              { vendor_email: searchRegex },
+            ],
+          })
+          .select('_id')
+          .lean()
+          .exec();
+
+        const manufacturerIds = matchingManufacturers.map((m) => m._id);
+
+        baseMatch = {
+          $or: [
+            { urnNo: searchRegex },
+            { paymentReferenceNo: searchRegex },
+            ...(manufacturerIds.length > 0
+              ? [{ vendorId: { $in: manufacturerIds } }]
+              : []),
+          ],
+        };
+      }
+
+      const result = await this.queryPaymentsPaginated(
+        listPaymentsDto,
+        baseMatch,
+        search?.trim() ? { skipSearchClause: true } : undefined,
+      );
+
+      return {
+        ...result,
+        meta: {
+          scope: 'platform',
+          manufacturerId: null,
+        },
+      };
+    } catch (error: any) {
+      console.error('[Get Admin Payments] Error:', error);
+      throw new InternalServerErrorException(
+        error.message ||
+          'Failed to get admin payment history. Please check the logs for details.',
+      );
+    }
+  }
+
   /**
    * Get payments for a vendor with pagination, search, filtering, and sorting
    * Filtered by vendorId from authenticated user
    */
   async getPayments(listPaymentsDto: ListPaymentsDto, vendorId: string) {
     try {
-      const {
-        page = 1,
-        limit = 10,
-        search,
-        status,
-        paymentType,
-        sort = 'desc',
-      } = listPaymentsDto;
+      const organizationIds = await this.resolveVendorOrganizationIds(vendorId);
+      const urnNos = await this.resolveAllVendorUrns(organizationIds);
 
-      const skip = (page - 1) * limit;
-      const sortOrder = sort === 'asc' ? 1 : -1;
+      const baseMatch = this.buildVendorPaymentsListMatch(
+        organizationIds,
+        urnNos,
+      );
 
-      // Convert vendorId to ObjectId
-      const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-
-      // Build initial match conditions
-      const initialMatchConditions: any = {
-        vendorId: vendorObjectId, // Always filter by vendorId
-      };
-
-      // Status filter
-      if (status !== undefined && status !== null) {
-        initialMatchConditions.paymentStatus = status;
-      }
-
-      // Payment type filter
-      if (paymentType) {
-        initialMatchConditions.paymentType = paymentType;
-      }
-
-      // Aggregation pipeline
-      const pipeline: any[] = [];
-
-      // Stage 1: Initial $match for vendorId, status, and paymentType
-      if (Object.keys(initialMatchConditions).length > 0) {
-        pipeline.push({ $match: initialMatchConditions });
-      }
-
-      // Stage 2: $match for global search (searches in urnNo and paymentReferenceNo)
-      if (search && search.trim() !== '') {
-        const searchRegex = new RegExp(
-          search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-          'i',
-        );
-        pipeline.push({
-          $match: {
-            $or: [{ urnNo: searchRegex }, { paymentReferenceNo: searchRegex }],
-          },
-        });
-      }
-
-      // Stage 3: $project formatted result
-      pipeline.push({
-        $project: {
-          _id: 1,
-          paymentId: 1,
-          urnNo: 1,
-          quoteAmount: 1,
-          quoteGstAmount: 1,
-          quoteTdsAmount: 1,
-          quoteTotal: 1,
-          proposalFile: 1,
-          adminGstNo: 1,
-          vendorGstNo: 1,
-          paymentType: 1,
-          paymentMode: 1,
-          onlinePaymentId: 1,
-          paymentReferenceNo: 1,
-          paymentChequeDate: 1,
-          chequeOrDdFile: 1,
-          tdsFile: 1,
-          productsToBeCertified: 1,
-          paymentStatus: 1,
-          vendorProposalApprovalStatus: 1,
-          proposalRejectionRemarks: 1,
-          paymentRejectionRemarks: 1,
-          previousProposalFile: 1,
-          createdDate: 1,
-          updatedDate: 1,
-        },
-      });
-
-      // Stage 4: Sort by createdDate
-      pipeline.push({
-        $sort: { createdDate: sortOrder },
-      });
-
-      // Stage 5: Use $facet for pagination and total count
-      pipeline.push({
-        $facet: {
-          data: [{ $skip: skip }, { $limit: limit }],
-          totalCount: [{ $count: 'count' }],
-        },
-      });
-
-      // Execute aggregation
-      const result = await this.paymentDetailsModel.aggregate(pipeline).exec();
-
-      // Extract data and total count
-      const data = formatPaymentRecords(result[0]?.data || []);
-      const totalCount = result[0]?.totalCount[0]?.count || 0;
-      const totalPages = Math.ceil(totalCount / limit);
+      const result = await this.queryPaymentsPaginated(
+        listPaymentsDto,
+        baseMatch,
+      );
 
       return {
-        data,
-        pagination: {
-          page,
-          limit,
-          totalCount,
-          totalPages,
+        ...result,
+        meta: {
+          organizationIds: organizationIds.map((id) => id.toString()),
+          urnCount: urnNos.length,
+          scope: 'vendor',
         },
       };
     } catch (error: any) {
