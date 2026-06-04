@@ -421,78 +421,40 @@ export class RenewalOrchestrationService {
 
 
 
-    const products = await this.productModel
-
-      .find({ urnNo: trimmedUrn, ...matchRenewEligibleProducts() })
-
-      .select('eoiNo productName')
-
-      .session(session)
-
-      .lean()
-
-      .exec();
-
-
-
-    for (const product of products) {
-
-      const existingPerf = await this.renewPerformanceModel
-
-        .findOne({ urnNo: trimmedUrn, eoiNo: product.eoiNo })
-
-        .session(session)
-
-        .exec();
-
-      if (existingPerf) {
-
-        continue;
-
-      }
-
-      const processRenewProductPerformanceId =
-
-        await this.sequenceHelper.getProcessRenewProductPerformanceId();
-
-      await this.renewPerformanceModel.create(
-
-        [
-
-          {
-
-            processRenewProductPerformanceId,
-
-            urnNo: trimmedUrn,
-
-            vendorId: ownership.vendorId,
-
-            manufacturerId: ownership.manufacturerId,
-
-            eoiNo: product.eoiNo,
-
-            productName: product.productName,
-
-            testReportFiles: 0,
-
-            renewalType: 0,
-
-            productPerformanceStatus: 0,
-
-            createdDate: now,
-
-            updatedDate: now,
-
-          },
-
-        ],
-
-        { session },
-
+    if (!cycleId) {
+      throw new BadRequestException(
+        'renewalCycleId is required to seed renew process headers (including product performance)',
       );
-
     }
 
+    await seedHeaderIfMissing(
+      () =>
+        this.renewPerformanceModel
+          .findOne(headerFilter)
+          .session(session)
+          .exec(),
+      async () => {
+        const processRenewProductPerformanceId =
+          await this.sequenceHelper.getProcessRenewProductPerformanceId();
+        await this.renewPerformanceModel.create(
+          [
+            {
+              processRenewProductPerformanceId,
+              urnNo: trimmedUrn,
+              renewalCycleId: cycleId,
+              vendorId: ownership.vendorId,
+              manufacturerId: ownership.manufacturerId,
+              testReportFiles: 0,
+              renewalType: 0,
+              productPerformanceStatus: 0,
+              createdDate: now,
+              updatedDate: now,
+            },
+          ],
+          { session },
+        );
+      },
+    );
   }
 
 
@@ -567,18 +529,17 @@ export class RenewalOrchestrationService {
         session: input.session,
       });
     } else if (input.paymentId && !cycle.paymentId) {
-
       cycle.paymentId = input.paymentId;
-
       cycle.updatedAt = now;
-
       cycle.updatedBy = userObjectId;
-
       await cycle.save({ session: input.session });
-
     }
 
-
+    if (!cycle?._id) {
+      throw new BadRequestException(
+        'renewalCycleId is required for renew payment approval',
+      );
+    }
 
     await this.seedAllRenewHeaders(context, input.session, cycle);
 

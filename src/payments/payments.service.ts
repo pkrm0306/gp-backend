@@ -1215,6 +1215,12 @@ export class PaymentsService {
 
       const now = new Date();
       const updateData: any = { updatedDate: now };
+      if (renewCycleIdHint && paymentType === 'renew') {
+        updateData.renewalCycleId = toRenewObjectId(
+          renewCycleIdHint,
+          'renewalCycleId',
+        );
+      }
       let trackedProposalPath: string | undefined;
       let trackedProposalAction: 'added' | 'replaced' = 'added';
       let trackedChequePath: string | undefined;
