@@ -80,7 +80,10 @@ function resolveAction(method: string, pathNorm: string): string {
   if (m === 'POST' && pathNorm.endsWith('/payments')) {
     return AUDIT_ACTION.PAYMENT_CREATED;
   }
-  if (m === 'PATCH' && /^\/payments\/[^/]+$/i.test(pathNorm)) {
+  if (
+    m === 'PATCH' &&
+    /^\/payments\/[^/]+(?:\/vendor-proposal-approval)?$/i.test(pathNorm)
+  ) {
     return AUDIT_ACTION.PAYMENT_UPDATED;
   }
   if (
@@ -110,7 +113,7 @@ function inferResource(
   pathNorm: string,
   req: Request,
 ): { type?: string; id?: string; urn_no?: string } | undefined {
-  const pay = pathNorm.match(/^\/payments\/([^/]+)$/);
+  const pay = pathNorm.match(/^\/payments\/([^/]+)(?:\/|$)/);
   if (pay) {
     const urn = decodeURIComponent(pay[1]);
     return { type: 'Payment', id: urn, urn_no: urn };
