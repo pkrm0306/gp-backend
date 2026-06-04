@@ -94,17 +94,51 @@ describe('AuditLogService', () => {
       {
         action: AUDIT_ACTION.PRODUCT_URN_STATUS_UPDATED,
         outcome: 'success',
-        new_values: { updateStatusTo: 11, urnStatus: 7, paymentStatus: 1 },
+        new_values: {
+          updateStatusTo: 11,
+          urnStatus: 7,
+          paymentStatus: 0,
+        },
+      },
+      {
+        action: AUDIT_ACTION.PAYMENT_UPDATED,
+        outcome: 'success',
+        new_values: {
+          paymentStatus: 1,
+        },
+      },
+      {
+        action: AUDIT_ACTION.PAYMENT_UPDATED,
+        outcome: 'success',
+        new_values: {
+          paymentStatus: 2,
+        },
+      },
+      {
+        action: AUDIT_ACTION.PAYMENT_UPDATED,
+        outcome: 'success',
+        new_values: {
+          paymentStatus: 3,
+        },
       },
     ]);
-    execMock.mockResolvedValueOnce(1);
+    execMock.mockResolvedValueOnce(4);
 
     const result = await service.list({});
 
     expect(result.items[0].new_values).toEqual({
       updateStatusTo: 'Certification Fee Approved',
       urnStatus: 'Certificate Payment Pending',
+      paymentStatus: 'Payment Pending',
+    });
+    expect(result.items[1].new_values).toEqual({
       paymentStatus: 'Paid',
+    });
+    expect(result.items[2].new_values).toEqual({
+      paymentStatus: 'Payment Approve',
+    });
+    expect(result.items[3].new_values).toEqual({
+      paymentStatus: 'Payment Rejected',
     });
   });
 });

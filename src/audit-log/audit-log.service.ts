@@ -77,7 +77,7 @@ const LOOKUP_FIELD_MODEL: Record<string, LookupModelName> = {
 const URN_STATUS_LABELS: Record<number, string> = {
   0: 'Proposal Pending',
   1: 'Registration Payment Pending',
-  2: 'Registration Payment Approved',
+  2: 'Approve Registration Payment Pending',
   3: 'Process Form In Progress',
   4: 'Check Process Forms',
   5: 'Vendor Response Pending',
@@ -95,8 +95,10 @@ const URN_STATUS_LABELS: Record<number, string> = {
 };
 
 const PAYMENT_STATUS_LABELS: Record<number, string> = {
-  0: 'Un paid',
+  0: 'Payment Pending',
   1: 'Paid',
+  2: 'Payment Approve',
+  3: 'Payment Rejected',
 };
 
 @Injectable()
@@ -364,7 +366,7 @@ export class AuditLogService {
         }
         continue;
       }
-      if (normalizedKey === 'paymentstatus') {
+      if (normalizedKey === 'paymentstatus' || normalizedKey === 'paymentStatus') {
         const label = this.paymentStatusLabel(value);
         if (label) {
           out[key] = label;
