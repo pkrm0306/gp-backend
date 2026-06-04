@@ -53,20 +53,25 @@ export function buildRenewPaymentFindFilter(
   vendorId?: Types.ObjectId | string,
 ): Record<string, unknown> {
   const cycleId = toRenewObjectId(String(cycle._id), 'renewalCycleId');
+  const cycleNo = Number(cycle.cycleNo ?? 1);
   const orClause: Record<string, unknown>[] = [{ renewalCycleId: cycleId }];
-  if (cycle.paymentId != null) {
-    orClause.push({
-      renewalCycleId: { $in: [null] },
-      paymentId: cycle.paymentId,
-    });
-    orClause.push({
-      renewalCycleId: { $exists: false },
-      paymentId: cycle.paymentId,
-    });
-  }
-  if (Number(cycle.cycleNo) === 1 && cycle.paymentId == null) {
-    orClause.push({ renewalCycleId: { $exists: false } });
-    orClause.push({ renewalCycleId: null });
+
+  /** Legacy cycle-1 rows only — never match untagged payments on cycle 2+. */
+  if (cycleNo === 1) {
+    if (cycle.paymentId != null) {
+      orClause.push({
+        renewalCycleId: { $in: [null] },
+        paymentId: cycle.paymentId,
+      });
+      orClause.push({
+        renewalCycleId: { $exists: false },
+        paymentId: cycle.paymentId,
+      });
+    }
+    if (cycle.paymentId == null) {
+      orClause.push({ renewalCycleId: { $exists: false } });
+      orClause.push({ renewalCycleId: null });
+    }
   }
 
   const filter: Record<string, unknown> = {

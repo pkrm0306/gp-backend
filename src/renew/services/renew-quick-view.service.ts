@@ -41,8 +41,13 @@ import {
 } from '../utils/renew-details-format.util';
 import {
   buildRenewPaymentsPayload,
+  buildRenewProcessHeaderFilter,
   findRenewPaymentsForCycle,
 } from '../helpers/renew-cycle-scope.util';
+import {
+  ProcessRenewManufacturing,
+  ProcessRenewManufacturingDocument,
+} from '../schemas/process-renew-manufacturing.schema';
 
 @Injectable()
 export class RenewQuickViewService {
@@ -61,6 +66,8 @@ export class RenewQuickViewService {
     private readonly renewalCycleModel: Model<RenewalCycleDocument>,
     @InjectModel(ProcessRenewMpManufacturingUnit.name)
     private readonly renewMpUnitModel: Model<ProcessRenewMpManufacturingUnitDocument>,
+    @InjectModel(ProcessRenewManufacturing.name)
+    private readonly renewManufacturingModel: Model<ProcessRenewManufacturingDocument>,
     @InjectModel(DocStream.name)
     private readonly docStreamModel: Model<DocStreamDocument>,
   ) {}
@@ -196,13 +203,25 @@ export class RenewQuickViewService {
         .map((stream) => [String(stream.liveRef.id), stream]),
     );
 
-    const mpUnits = await this.renewMpUnitModel
-      .find({ urnNo: trimmedUrn })
-      .select(
-        'processRenewMpManufacturingUnitId unitName processMpManufacturingUnitStatus',
-      )
-      .lean()
-      .exec();
+    const strictCycle = Number(activeCycle?.cycleNo ?? 1) > 1;
+    const mpHeaderFilter = buildRenewProcessHeaderFilter(trimmedUrn, cycleDoc);
+    const manufacturingHeader = cycleDoc
+      ? await this.renewManufacturingModel
+          .findOne(mpHeaderFilter)
+          .select('_id')
+          .lean()
+          .exec()
+      : null;
+    const mpUnits =
+      strictCycle && !manufacturingHeader
+        ? []
+        : await this.renewMpUnitModel
+            .find({ urnNo: trimmedUrn })
+            .select(
+              'processRenewMpManufacturingUnitId unitName processMpManufacturingUnitStatus',
+            )
+            .lean()
+            .exec();
 
     const { manufacturer, plants } =
       await this.productRegistrationService.getManufacturerAndPlantsForUrn(

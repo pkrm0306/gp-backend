@@ -195,8 +195,6 @@ export class RenewDetailsService {
       stewardship,
       stakeholders,
       comments,
-      mpUnits,
-      wmUnits,
       allDocuments,
     ] = await Promise.all([
       this.renewManufacturingModel.findOne(headerFilter).lean().exec(),
@@ -230,8 +228,6 @@ export class RenewDetailsService {
           }
           return this.renewCommentsModel.findOne({ urnNo }).lean().exec();
         }),
-      this.renewMpUnitModel.find({ urnNo }).lean().exec(),
-      this.renewWmUnitModel.find({ urnNo }).lean().exec(),
       this.renewDocumentModel
         .find(
           buildRenewDocumentsQueryFilter(
@@ -244,6 +240,15 @@ export class RenewDetailsService {
         .lean()
         .exec(),
     ]);
+
+    const mpUnits =
+      strictDocs && !manufacturing
+        ? []
+        : await this.renewMpUnitModel.find({ urnNo }).lean().exec();
+    const wmUnits =
+      strictDocs && !waste
+        ? []
+        : await this.renewWmUnitModel.find({ urnNo }).lean().exec();
 
     const documentRows = allDocuments as Array<Record<string, unknown>>;
     const manufacturingSection = buildManufacturingSection(
