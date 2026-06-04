@@ -62,4 +62,12 @@ export class PatchUrnTabReviewDto {
   @IsString()
   @IsNotEmpty()
   rejectionRemarks?: string;
+
+  @ApiPropertyOptional({
+    description: 'Active renewal cycle id (required for renewal URNs)',
+    example: '6a1edd713ec5008b997aca94',
+  })
+  @IsOptional()
+  @IsString()
+  renewalCycleId?: string;
 }

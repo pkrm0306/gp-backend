@@ -10,6 +10,7 @@ import { StatesModule } from './states/states.module';
 import { CategoriesModule } from './categories/categories.module';
 import { CountriesModule } from './countries/countries.module';
 import { ProductRegistrationModule } from './product-registration/product-registration.module';
+import { UrnMergeModule } from './product-registration/urn-merge/urn-merge.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
 import { ProductDesignModule } from './product-design/product-design.module';
@@ -55,6 +56,8 @@ import { GlobalPhoneUniquenessModule } from './common/services/global-phone-uniq
 import { ZohoModule } from './zoho/zoho.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { RawMaterialsSharedModule } from './common/raw-materials/raw-materials-shared.module';
+import { RenewalModule } from './renew/renewal.module';
+import { CronModule } from './cron/cron.module';
 
 @Module({
   imports: [
@@ -83,6 +86,7 @@ import { RawMaterialsSharedModule } from './common/raw-materials/raw-materials-s
     CategoriesModule,
     CountriesModule,
     ProductRegistrationModule,
+    UrnMergeModule,
     PaymentsModule,
     ActivityLogModule,
     ProductDesignModule,
@@ -122,6 +126,8 @@ import { RawMaterialsSharedModule } from './common/raw-materials/raw-materials-s
     TeamMembersModule,
     DocumentsModule,
     ZohoModule,
+    RenewalModule,
+    CronModule,
   ],
 })
 export class AppModule implements NestModule {

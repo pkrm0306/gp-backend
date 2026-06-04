@@ -64,6 +64,7 @@ import { VendorPatchCertifiedProductDto } from './dto/vendor-patch-certified-pro
 import { VendorProductChangeRequestDto } from './dto/vendor-product-change-request.dto';
 import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
+import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
 import { uploadFile } from '../utils/upload-file.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import { EmailService } from '../common/services/email.service';
@@ -71,6 +72,19 @@ import {
   VendorProductChangeRequest,
   VendorProductChangeRequestDocument,
 } from './schemas/vendor-product-change-request.schema';
+import { PRODUCT_STATUS_CERTIFIED } from '../renew/constants/product-status.constants';
+import { RENEWAL_URN_STATUS } from '../renew/constants/renewal-urn-status.constants';
+import {
+  getRenewalUrnStatusLabel,
+  isRenewalUrnStatus,
+} from '../renew/constants/renewal-urn-status.constants';
+
+export type GetProductDetailsByUrnOptions = {
+  /** Only certified EOIs (renewal flows). Excludes rejected and other statuses. */
+  renewEligibleOnly?: boolean;
+  /** Join states + countries on each product_plants row. */
+  enrichPlantsWithGeo?: boolean;
+};
 
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
@@ -569,6 +583,79 @@ export class ProductRegistrationService {
     };
   }
 
+  private formatRenewAdminListUrnGroup(urn: {
+    urnNo: string;
+    createdDate: Date;
+    totalEoi: number;
+    urn_status: number;
+    eoiDocs: Record<string, unknown>[];
+  }) {
+    const workflowStatus = Number(urn.urn_status ?? 0);
+    const urnStatusLabel = isRenewalUrnStatus(workflowStatus)
+      ? getRenewalUrnStatusLabel(workflowStatus)
+      : `URN status ${workflowStatus}`;
+    const eois = (urn.eoiDocs ?? []).map((e) =>
+      this.formatAdminListEoiEntry(e ?? {}),
+    );
+    return {
+      urn_number: urn.urnNo,
+      urnNo: urn.urnNo,
+      total_eoi: urn.totalEoi,
+      totalEoi: urn.totalEoi,
+      urnStatus: workflowStatus,
+      urn_status: workflowStatus,
+      urnStatusCode: workflowStatus,
+      urnStatusLabel,
+      status: urnStatusLabel,
+      statusCode: workflowStatus,
+      statusLabel: urnStatusLabel,
+      created_at: urn.createdDate,
+      createdDate: urn.createdDate,
+      eois,
+    };
+  }
+
+  private formatRenewAdminListManufacturerGroup(m: {
+    manufacturer_id: Types.ObjectId | string;
+    manufacturerName?: string;
+    manufacturer_name?: string;
+    vendor_email?: string;
+    vendor_phone?: string;
+    total_urns: number;
+    total_eois: number;
+    urns: Array<{
+      urnNo: string;
+      createdDate: Date;
+      totalEoi: number;
+      urn_status: number;
+      eoiDocs: Record<string, unknown>[];
+    }>;
+  }) {
+    const manufacturerName = String(
+      m.manufacturerName ?? m.manufacturer_name ?? '',
+    ).trim() || 'Unknown Manufacturer';
+    const email = String(m.vendor_email ?? '').trim();
+    const phone = String(m.vendor_phone ?? '').trim();
+    const urns = (m.urns ?? [])
+      .map((u) => this.formatRenewAdminListUrnGroup(u))
+      .sort(
+        (a, b) =>
+          new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime(),
+      );
+    return {
+      manufacturer_id: String(m.manufacturer_id),
+      manufacturerName,
+      manufacturer_name: manufacturerName,
+      vendor_email: email,
+      vendor_phone: phone,
+      email,
+      phone,
+      total_urns: m.total_urns ?? 0,
+      total_eois: m.total_eois ?? 0,
+      urns,
+    };
+  }
+
   private formatAdminListManufacturerGroup(m: {
     manufacturer_id: Types.ObjectId | string;
     manufacturerName?: string;
@@ -634,6 +721,264 @@ export class ProductRegistrationService {
    * Manufacturer + vendor org profile for URN product details (admin / vendor).
    * Vendor contact fields live on the manufacturers collection.
    */
+  private formatCategoryForUrnDetails(
+    category: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> | null {
+    if (!category) {
+      return null;
+    }
+    const name =
+      category.categoryName ?? category.category_name ?? null;
+    return {
+      _id: category._id,
+      categoryId: category._id,
+      categoryName: name,
+      category_name: name,
+      sector: category.sector ?? null,
+    };
+  }
+
+  private formatProductDetailsPlants(
+    plants: Array<Record<string, unknown>> | undefined,
+  ): Array<Record<string, unknown>> {
+    return (plants ?? []).map((p) => {
+      const stateDoc = Array.isArray(p.state)
+        ? (p.state[0] as Record<string, unknown> | undefined)
+        : (p.state as Record<string, unknown> | undefined);
+      const countryDoc = Array.isArray(p.country)
+        ? (p.country[0] as Record<string, unknown> | undefined)
+        : (p.country as Record<string, unknown> | undefined);
+      return {
+        _id: p._id,
+        productPlantId: p.productPlantId,
+        productId: p.productId,
+        vendorId: p.vendorId,
+        categoryId: p.categoryId,
+        manufacturerId: p.manufacturerId,
+        urnNo: p.urnNo,
+        eoiNo: p.eoiNo,
+        plantName: p.plantName,
+        plantLocation: p.plantLocation,
+        countryId: p.countryId,
+        stateId: p.stateId,
+        city: p.city,
+        plantStatus: p.plantStatus,
+        stateName:
+          stateDoc?.stateName ??
+          stateDoc?.name ??
+          p.stateName ??
+          null,
+        countryName:
+          countryDoc?.countryName ??
+          countryDoc?.name ??
+          p.countryName ??
+          null,
+        createdDate: p.createdDate,
+      };
+    });
+  }
+
+  private buildProductPlantsLookupStage(options: {
+    enrichPlantsWithGeo: boolean;
+    /** When true, also match plants by urnNo (renew details fallback). */
+    matchPlantsByUrn?: boolean;
+  }): Record<string, unknown> {
+    const { enrichPlantsWithGeo, matchPlantsByUrn = false } = options;
+    const productMatchExpr = matchPlantsByUrn
+      ? {
+          $or: [
+            { $eq: ['$productId', '$$productId'] },
+            { $eq: ['$urnNo', '$$urnNo'] },
+          ],
+        }
+      : { $eq: ['$productId', '$$productId'] };
+
+    const plantMatchStages: Record<string, unknown>[] = [
+      {
+        $match: {
+          $expr: {
+            $and: [productMatchExpr, { $ne: ['$is_deleted', true] }],
+          },
+        },
+      },
+      { $sort: { createdDate: 1 } },
+    ];
+
+    if (enrichPlantsWithGeo) {
+      plantMatchStages.push(
+        {
+          $lookup: {
+            from: 'states',
+            localField: 'stateId',
+            foreignField: '_id',
+            as: 'state',
+          },
+        },
+        {
+          $lookup: {
+            from: 'countries',
+            localField: 'countryId',
+            foreignField: '_id',
+            as: 'country',
+          },
+        },
+      );
+    }
+
+    return {
+      $lookup: {
+        from: 'product_plants',
+        let: { productId: '$_id', urnNo: '$urnNo' },
+        pipeline: plantMatchStages,
+        as: 'plants',
+      },
+    };
+  }
+
+  /** Active product_plants for a URN with states/countries (admin renew / quick view). */
+  async listProductPlantsWithGeoForUrn(
+    urnNo: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const trimmed = urnNo.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const rows = await this.productPlantModel
+      .aggregate([
+        { $match: matchActiveProductPlants({ urnNo: trimmed }) },
+        {
+          $lookup: {
+            from: 'states',
+            localField: 'stateId',
+            foreignField: '_id',
+            as: 'state',
+          },
+        },
+        {
+          $lookup: {
+            from: 'countries',
+            localField: 'countryId',
+            foreignField: '_id',
+            as: 'country',
+          },
+        },
+        { $sort: { createdDate: 1 } },
+      ])
+      .exec();
+
+    return this.formatProductDetailsPlants(
+      rows as Array<Record<string, unknown>>,
+    );
+  }
+
+  /**
+   * Manufacturer + plants for a URN (used when aggregation rows are missing joins).
+   */
+  async getManufacturerAndPlantsForUrn(urnNo: string): Promise<{
+    manufacturer: Record<string, unknown> | null;
+    manufacturing_details: Record<string, unknown> | null;
+    plants: Array<Record<string, unknown>>;
+  }> {
+    const trimmed = urnNo.trim();
+    const plants = await this.listProductPlantsWithGeoForUrn(trimmed);
+
+    const product = await this.productModel
+      .findOne(matchActiveProducts({ urnNo: trimmed }))
+      .select('manufacturerId')
+      .lean()
+      .exec();
+
+    const manufacturerId = product?.manufacturerId;
+    let manufacturer: Record<string, unknown> | null = null;
+    if (manufacturerId) {
+      const doc = await this.manufacturerModel.findById(manufacturerId).lean().exec();
+      manufacturer = this.formatProductDetailsManufacturer(
+        doc as Record<string, unknown> | null,
+      );
+    }
+
+    return {
+      manufacturer,
+      manufacturing_details: manufacturer,
+      plants,
+    };
+  }
+
+  /**
+   * Ensures renew/cert URN detail rows include joined manufacturer and product_plants.
+   */
+  async enrichUrnDetailRowsWithManufacturerAndPlants(
+    urnNo: string,
+    rows: Array<Record<string, unknown>>,
+  ): Promise<Array<Record<string, unknown>>> {
+    if (!rows.length) {
+      return rows;
+    }
+
+    const trimmedUrn = urnNo.trim();
+    const urnPlants = trimmedUrn
+      ? await this.listProductPlantsWithGeoForUrn(trimmedUrn)
+      : [];
+
+    let sharedManufacturer: Record<string, unknown> | null = null;
+    for (const row of rows) {
+      const formatted = this.formatProductDetailsManufacturer(
+        row.manufacturer as Record<string, unknown> | null | undefined,
+      );
+      if (formatted?.manufacturerName) {
+        sharedManufacturer = formatted;
+        break;
+      }
+    }
+
+    if (!sharedManufacturer) {
+      const urnBundle = await this.getManufacturerAndPlantsForUrn(trimmedUrn);
+      sharedManufacturer = urnBundle.manufacturer;
+    }
+
+    return rows.map((row) => {
+      const pd = row.product_details as Record<string, unknown> | undefined;
+      const productOid = pd?._id ?? row._id;
+      const eoiNo = pd?.eoiNo ?? row.eoiNo;
+      const existingPlants = row.plants as Array<Record<string, unknown>> | undefined;
+
+      let plants =
+        Array.isArray(existingPlants) && existingPlants.length > 0
+          ? existingPlants
+          : urnPlants.filter((plant) => {
+              if (productOid && String(plant.productId) === String(productOid)) {
+                return true;
+              }
+              if (eoiNo && String(plant.eoiNo) === String(eoiNo)) {
+                return true;
+              }
+              return false;
+            });
+
+      if (plants.length === 0 && rows.length === 1) {
+        plants = urnPlants;
+      }
+
+      const rowManufacturer = this.formatProductDetailsManufacturer(
+        row.manufacturer as Record<string, unknown> | null | undefined,
+      );
+      const manufacturer =
+        rowManufacturer?.manufacturerName != null &&
+        String(rowManufacturer.manufacturerName).trim() !== ''
+          ? rowManufacturer
+          : sharedManufacturer;
+
+      return {
+        ...row,
+        manufacturer: manufacturer ?? null,
+        manufacturing_details: manufacturer ?? row.manufacturing_details ?? null,
+        plants,
+        plant_details: plants,
+      };
+    });
+  }
+
   private formatProductDetailsManufacturer(
     manufacturer: Record<string, unknown> | null | undefined,
   ) {
@@ -3118,10 +3463,27 @@ export class ProductRegistrationService {
     if (!products.length) {
       throw new NotFoundException(`No product found for URN: ${urnNo}`);
     }
+
     if (dto.updateStatusType === 'urn_status') {
-      if (dto.updateStatusTo < 0 || dto.updateStatusTo > 11) {
+      const sampleUrnStatus = Number(products[0].urnStatus ?? 0);
+      const targetsRenewBand =
+        dto.updateStatusTo >= RENEWAL_URN_STATUS.PAYMENT_PENDING &&
+        dto.updateStatusTo <= RENEWAL_URN_STATUS.FINAL_VERIFICATION_PENDING;
+      const inRenewBand =
+        sampleUrnStatus >= RENEWAL_URN_STATUS.PAYMENT_PENDING &&
+        sampleUrnStatus <= RENEWAL_URN_STATUS.FINAL_VERIFICATION_PENDING;
+      if (targetsRenewBand || inRenewBand) {
         throw new BadRequestException(
-          'updateStatusTo must be between 0 and 11 for urn_status',
+          'Renewal URN statuses (12–17) must use PATCH /renew/urn-status with renewalCycleId. ' +
+            'Do not use PATCH /api/admin/products/urn-status for renewal completion.',
+        );
+      }
+    }
+
+    if (dto.updateStatusType === 'urn_status') {
+      if (dto.updateStatusTo < 0 || dto.updateStatusTo > 17) {
+        throw new BadRequestException(
+          'updateStatusTo must be between 0 and 17 for urn_status',
         );
       }
     } else if (dto.updateStatusType === 'product_status') {
@@ -3234,6 +3596,73 @@ export class ProductRegistrationService {
     }
     await this.invalidateProductListingsCache();
     return { urnNo, productStatus: dto.updateStatusTo };
+  }
+
+  async adminUpdateRenewValidity(dto: AdminRenewValidityDto): Promise<{
+    urnNo: string;
+    updatedCount: number;
+    validTillDate: string;
+    productIds?: string[];
+    preview?: boolean;
+  }> {
+    const urnNo = String(dto.urnNo ?? '').trim();
+    if (!urnNo) {
+      throw new BadRequestException('urnNo is required');
+    }
+
+    const parsed = new Date(dto.validTillDate);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(
+        'validTillDate must be a valid date (YYYY-MM-DD or ISO)',
+      );
+    }
+
+    // Normalize to YYYY-MM-DD for response and UTC start-of-day for persistence.
+    const normalizedDate = parsed.toISOString().slice(0, 10);
+    const validTillDate = new Date(`${normalizedDate}T00:00:00.000Z`);
+
+    const products = await this.productModel
+      .find(matchActiveProducts({ urnNo }))
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (!products.length) {
+      throw new NotFoundException(`No product found for URN: ${urnNo}`);
+    }
+
+    const productIds = products.map((p) => String(p._id));
+    const preview = Boolean(dto.preview);
+
+    if (preview) {
+      return {
+        urnNo,
+        updatedCount: productIds.length,
+        validTillDate: normalizedDate,
+        productIds,
+        preview: true,
+      };
+    }
+
+    const updateResult = await this.productModel
+      .updateMany(
+        matchActiveProducts({ urnNo }),
+        {
+          $set: {
+            validtillDate: validTillDate,
+            updatedDate: new Date(),
+          },
+        },
+      )
+      .exec();
+
+    await this.invalidateProductListingsCache();
+
+    return {
+      urnNo,
+      updatedCount: Number(updateResult.modifiedCount ?? 0),
+      validTillDate: normalizedDate,
+    };
   }
 
   /**
@@ -3586,16 +4015,201 @@ export class ProductRegistrationService {
   }
 
   /**
+   * Admin renew products list — manufacturer-grouped with names (certified EOIs only).
+   */
+  async adminListRenewProducts(): Promise<{
+    data: Array<Record<string, unknown>>;
+    total: number;
+  }> {
+    const currentDate = new Date();
+    const thresholdDate = new Date(currentDate);
+    thresholdDate.setDate(thresholdDate.getDate() + 60);
+
+    const renewMatch = {
+      productStatus: PRODUCT_STATUS_CERTIFIED,
+      ...matchActiveProducts(),
+      $or: [
+        {
+          validtillDate: {
+            $exists: true,
+            $ne: null,
+            $lt: thresholdDate,
+          },
+        },
+        { urnStatus: { $gte: 12, $lte: 17 } },
+      ],
+    };
+
+    const pipeline: any[] = [
+      { $match: renewMatch },
+      {
+        $lookup: {
+          from: 'manufacturers',
+          localField: 'manufacturerId',
+          foreignField: '_id',
+          as: 'manufacturer',
+        },
+      },
+      {
+        $unwind: {
+          path: '$manufacturer',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $lookup: {
+          from: 'categories',
+          localField: 'categoryId',
+          foreignField: '_id',
+          as: 'category',
+        },
+      },
+      {
+        $unwind: {
+          path: '$category',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $lookup: {
+          from: 'sectors',
+          let: { sid: '$category.sector' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [{ $ne: ['$$sid', null] }, { $eq: ['$id', '$$sid'] }],
+                },
+              },
+            },
+            { $limit: 1 },
+            { $project: { _id: 0, name: 1 } },
+          ],
+          as: '_adminSectorDoc',
+        },
+      },
+      {
+        $unwind: {
+          path: '$_adminSectorDoc',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $project: {
+          manufacturerId: 1,
+          urnNo: 1,
+          createdDate: 1,
+          productStatus: 1,
+          urnStatus: 1,
+          _id: 1,
+          productId: 1,
+          eoiNo: 1,
+          productName: 1,
+          productDetails: 1,
+          validtillDate: 1,
+          categoryId: 1,
+          productImage: 1,
+          categoryName: {
+            $ifNull: ['$category.categoryName', '$category.category_name'],
+          },
+          sector: '$category.sector',
+          sectorName: '$_adminSectorDoc.name',
+          manufacturerName: {
+            $ifNull: [
+              '$manufacturer.manufacturerName',
+              {
+                $ifNull: [
+                  '$manufacturer.companyName',
+                  '$manufacturer.vendor_name',
+                ],
+              },
+            ],
+          },
+          vendor_email: {
+            $ifNull: ['$manufacturer.vendor_email', ''],
+          },
+          vendor_phone: {
+            $ifNull: ['$manufacturer.vendor_phone', ''],
+          },
+          plants: { $literal: [] },
+        },
+      },
+      {
+        $group: {
+          _id: { manufacturerId: '$manufacturerId', urnNo: '$urnNo' },
+          manufacturer_id: { $first: '$manufacturerId' },
+          manufacturerName: { $first: '$manufacturerName' },
+          vendor_email: { $first: '$vendor_email' },
+          vendor_phone: { $first: '$vendor_phone' },
+          urnNo: { $first: '$urnNo' },
+          createdDate: { $min: '$createdDate' },
+          urn_status: { $first: '$urnStatus' },
+          totalEoi: { $sum: 1 },
+          eoiDocs: {
+            $push: {
+              _id: '$_id',
+              productId: '$productId',
+              eoiNo: '$eoiNo',
+              urnNo: '$urnNo',
+              productName: '$productName',
+              productDetails: '$productDetails',
+              productStatus: '$productStatus',
+              urnStatus: '$urnStatus',
+              validtillDate: '$validtillDate',
+              categoryId: '$categoryId',
+              productImage: '$productImage',
+              createdDate: '$createdDate',
+              categoryName: '$categoryName',
+              sector: '$sector',
+              sectorName: '$sectorName',
+              manufacturerName: '$manufacturerName',
+              plants: '$plants',
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: '$_id.manufacturerId',
+          manufacturer_id: { $first: '$manufacturer_id' },
+          manufacturerName: { $first: '$manufacturerName' },
+          vendor_email: { $first: '$vendor_email' },
+          vendor_phone: { $first: '$vendor_phone' },
+          total_urns: { $sum: 1 },
+          total_eois: { $sum: '$totalEoi' },
+          sortKey: { $max: '$createdDate' },
+          urns: {
+            $push: {
+              urnNo: '$urnNo',
+              createdDate: '$createdDate',
+              totalEoi: '$totalEoi',
+              urn_status: '$urn_status',
+              eoiDocs: '$eoiDocs',
+            },
+          },
+        },
+      },
+      { $sort: { sortKey: 1 } },
+    ];
+
+    const rows = await this.productModel.aggregate(pipeline).exec();
+    const data = rows.map((m) => this.formatRenewAdminListManufacturerGroup(m));
+    return { data, total: data.length };
+  }
+
+  /**
    * List products eligible for renewal
    * Conditions:
    * - product_status = 2 (Certified)
-   * - vendor_id = logged-in vendor
+   * - manufacturer_id = logged-in manufacturer
    * - validtill_date < (current_date + 60 days)
    */
   async getRenewList(manufacturerId: string) {
     try {
-      // Resolve vendor alias using authenticated manufacturerId
-      const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+      const manufacturerObjectId = this.toObjectId(
+        manufacturerId,
+        'manufacturerId',
+      );
 
       // Calculate date threshold: current date + 60 days
       const currentDate = new Date();
@@ -3605,11 +4219,11 @@ export class ProductRegistrationService {
       // Aggregation pipeline
       const pipeline: any[] = [];
 
-      // Stage 1: $match - Filter by vendorId, productStatus = 2, and validtillDate < threshold
+      // Stage 1: $match - Filter by manufacturerId, productStatus = 2, and validtillDate < threshold
       pipeline.push({
         $match: {
-          vendorId: vendorObjectId,
-          productStatus: 2, // Certified
+          manufacturerId: manufacturerObjectId,
+          productStatus: 2, // Certified only — rejected (3) and other statuses excluded
           validtillDate: {
             $exists: true,
             $ne: null,
@@ -3691,23 +4305,44 @@ export class ProductRegistrationService {
   }
 
   /**
+   * Certified EOIs only — categories + product_plants (with geo) for renew URN details.
+   */
+  async getRenewProductDetailsByUrn(urnNo: string) {
+    return this.getProductDetailsByUrn(urnNo, {
+      renewEligibleOnly: true,
+      enrichPlantsWithGeo: true,
+    });
+  }
+
+  /**
    * Get complete product details by URN number
    * Includes related data from categories, manufacturers, vendors, product_plants, and payment_details
    */
-  async getProductDetailsByUrn(urnNo: string) {
+  async getProductDetailsByUrn(
+    urnNo: string,
+    options?: GetProductDetailsByUrnOptions,
+  ) {
     try {
       if (!urnNo || urnNo.trim() === '') {
         throw new BadRequestException('URN number is required');
       }
 
+      const renewEligibleOnly = options?.renewEligibleOnly === true;
+      const enrichPlantsWithGeo = options?.enrichPlantsWithGeo === true;
+
       // Aggregation pipeline
       const pipeline: any[] = [];
 
-      // Stage 1: $match - Filter by urnNo (active products only)
+      // Stage 1: $match - Filter by urnNo (active products; optional certified-only for renew)
       pipeline.push({
         $match: {
           urnNo: urnNo.trim(),
-          ...matchActiveProducts(),
+          ...(renewEligibleOnly
+            ? {
+                ...matchActiveProducts(),
+                productStatus: PRODUCT_STATUS_CERTIFIED,
+              }
+            : matchActiveProducts()),
         },
       });
 
@@ -3765,24 +4400,13 @@ export class ProductRegistrationService {
         },
       });
 
-      // Stage 5: $lookup - Join with active product_plants only
-      pipeline.push({
-        $lookup: {
-          from: 'product_plants',
-          let: { productId: '$_id' },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $eq: ['$productId', '$$productId'],
-                },
-                ...matchActiveProductPlants(),
-              },
-            },
-          ],
-          as: 'plants',
-        },
-      });
+      // Stage 5: $lookup - Join product_plants (optional states/countries for renew details)
+      pipeline.push(
+        this.buildProductPlantsLookupStage({
+          enrichPlantsWithGeo,
+          matchPlantsByUrn: enrichPlantsWithGeo,
+        }),
+      );
 
       // Stage 6: $lookup - Join with payment_details collection (by urn_no)
       pipeline.push({
@@ -4692,6 +5316,7 @@ export class ProductRegistrationService {
           productName: product.productName,
           productImage: product.productImage,
           plantCount: product.plantCount,
+          categoryId: product.categoryId ?? product.category?._id ?? null,
           productDetails: product.productDetails,
           productType: product.productType,
           productStatus: product.productStatus,
@@ -4708,7 +5333,9 @@ export class ProductRegistrationService {
           createdDate: product.createdDate,
           updatedDate: product.updatedDate,
         },
-        category: product.category || null,
+        category: this.formatCategoryForUrnDetails(
+          product.category as Record<string, unknown> | null,
+        ),
         manufacturer: manufacturerDetails,
         /** Admin UI section label — same payload as manufacturer (includes vendor_details). */
         manufacturing_details: manufacturerDetails,
@@ -4716,7 +5343,9 @@ export class ProductRegistrationService {
           product.manufacturer as Record<string, unknown> | null,
           product.vendor as Record<string, unknown> | null,
         ),
-        plants: product.plants || [],
+        plants: this.formatProductDetailsPlants(
+          product.plants as Array<Record<string, unknown>> | undefined,
+        ),
         payments: formatPaymentRecords(
           (product.payments as Record<string, unknown>[]) || [],
         ),

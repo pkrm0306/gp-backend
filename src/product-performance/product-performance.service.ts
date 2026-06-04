@@ -36,6 +36,11 @@ import {
   ProductDocument,
 } from '../product-registration/schemas/product.schema';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import {
+  trackProductDocumentBatch,
+  trackProductDocumentDeleteBatch,
+} from '../documents/helpers/product-document-version.integration';
 
 export type SavedTestReportRow = {
   _id?: Types.ObjectId;
@@ -60,6 +65,7 @@ export class ProductPerformanceService implements OnModuleInit {
     private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   async assertVendorCanEditUrn(vendorId: string, urnNo: string): Promise<void> {
@@ -312,6 +318,7 @@ export class ProductPerformanceService implements OnModuleInit {
 
     const retainIds: Types.ObjectId[] = [];
     const deleteIds: Types.ObjectId[] = [];
+    const docsToDelete: typeof existingDocs = [];
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
     for (const doc of existingDocs) {
@@ -321,6 +328,7 @@ export class ProductPerformanceService implements OnModuleInit {
         retainIds.push(doc._id as Types.ObjectId);
       } else {
         deleteIds.push(doc._id as Types.ObjectId);
+        docsToDelete.push(doc);
         if (doc.documentLink) {
           oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
         }
@@ -340,6 +348,14 @@ export class ProductPerformanceService implements OnModuleInit {
         },
         { session },
       );
+      await trackProductDocumentDeleteBatch({
+        versioning: this.documentVersioningService,
+        urnNo,
+        sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
+        userId: vendorObjectId,
+        docs: docsToDelete,
+        session,
+      });
     }
 
     if (retainIds.length) {
@@ -374,7 +390,19 @@ export class ProductPerformanceService implements OnModuleInit {
           updatedDate: now,
         });
       }
-      await this.allProductDocumentModel.insertMany(docsToInsert, { session });
+      const insertedDocs = await this.allProductDocumentModel.insertMany(
+        docsToInsert,
+        { session },
+      );
+      await trackProductDocumentBatch({
+        versioning: this.documentVersioningService,
+        urnNo,
+        sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
+        userId: vendorObjectId,
+        docs: insertedDocs,
+        action: 'added',
+        session,
+      });
     }
 
     const totalDocumentCount = await this.allProductDocumentModel

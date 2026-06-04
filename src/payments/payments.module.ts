@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
@@ -19,6 +19,11 @@ import {
   ManufacturerSchema,
 } from '../manufacturers/schemas/manufacturer.schema';
 import { ZohoModule } from '../zoho/zoho.module';
+import { RenewalModule } from '../renew/renewal.module';
+import {
+  RenewalCycle,
+  RenewalCycleSchema,
+} from '../renew/schemas/renewal-cycle.schema';
 
 @Module({
   imports: [
@@ -26,12 +31,14 @@ import { ZohoModule } from '../zoho/zoho.module';
       { name: PaymentDetails.name, schema: PaymentDetailsSchema },
       { name: Product.name, schema: ProductSchema },
       { name: Manufacturer.name, schema: ManufacturerSchema },
+      { name: RenewalCycle.name, schema: RenewalCycleSchema },
     ]),
     ProductRegistrationModule, // For SequenceHelper
     ActivityLogModule,
     PassportModule,
     AuthModule,
     ZohoModule,
+    forwardRef(() => RenewalModule),
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],

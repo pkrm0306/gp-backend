@@ -165,6 +165,16 @@ export class UpdatePaymentDto {
 
   @ApiProperty({
     description:
+      'Renewal cycle id — required when updating renew payments so the correct cycle row is targeted',
+    example: '6a1edd713ec5008b997aca94',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  renewalCycleId?: string;
+
+  @ApiProperty({
+    description:
       'Admin remarks when rejecting vendor payment proof (required when paymentStatus is 3)',
     example: 'Cheque image is unclear. Please upload a readable copy.',
     required: false,

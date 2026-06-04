@@ -28,6 +28,11 @@ import {
   uploadFile,
 } from '../utils/upload-file.util';
 import * as path from 'path';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import {
+  trackProductDocumentDeleteBatch,
+  trackUploadedProductDocument,
+} from '../documents/helpers/product-document-version.integration';
 
 export type HazardousProductRowInput = {
   productsName?: string;
@@ -44,6 +49,7 @@ export class RawMaterialsHazardousProductsService {
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   private toObjectId(
@@ -217,6 +223,7 @@ export class RawMaterialsHazardousProductsService {
 
     const retainIds: Types.ObjectId[] = [];
     const deleteIds: Types.ObjectId[] = [];
+    const docsToDelete: typeof existingDocs = [];
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
     for (const doc of existingDocs) {
@@ -226,6 +233,7 @@ export class RawMaterialsHazardousProductsService {
         retainIds.push(doc._id as Types.ObjectId);
       } else {
         deleteIds.push(doc._id as Types.ObjectId);
+        docsToDelete.push(doc);
         if (doc.documentLink) {
           oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
         }
@@ -245,6 +253,14 @@ export class RawMaterialsHazardousProductsService {
         },
         { session },
       );
+      await trackProductDocumentDeleteBatch({
+        versioning: this.documentVersioningService,
+        urnNo,
+        sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+        userId: vendorObjectId,
+        docs: docsToDelete,
+        session,
+      });
     }
 
     const formPrimaryId = firstProductRowId ?? 0;
@@ -286,6 +302,20 @@ export class RawMaterialsHazardousProductsService {
         { session },
       );
       documents.push(this.mapDocument(inserted[0]));
+      await trackUploadedProductDocument(this.documentVersioningService, {
+        urnNo,
+        sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+        subsectionKey: 'products_test_report',
+        userId: vendorObjectId,
+        documentId: inserted[0]._id,
+        productDocumentId,
+        filePath: uploaded.fileUrl,
+        originalName: file.originalname,
+        storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
+        file,
+        action: 'added',
+        session,
+      });
     }
 
     return { documents, oldFileLinksToDeleteAfterCommit };
@@ -457,6 +487,19 @@ export class RawMaterialsHazardousProductsService {
       createdDate: now,
       updatedDate: now,
     });
+    await trackUploadedProductDocument(this.documentVersioningService, {
+      urnNo,
+      sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+      subsectionKey: 'products_test_report',
+      userId: vendorObjectId,
+      documentId: doc._id,
+      productDocumentId,
+      filePath: uploaded.fileUrl,
+      originalName: file.originalname,
+      storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
+      file,
+      action: 'added',
+    });
     return {
       documentOnly: true,
       documents: [this.mapDocument(doc)],
@@ -522,7 +565,7 @@ export class RawMaterialsHazardousProductsService {
       if (productsTestReportFile && storedRelativePath) {
         const productDocumentId =
           await this.sequenceHelper.getProductDocumentId();
-        await this.allProductDocumentModel.create({
+        const createdDoc = await this.allProductDocumentModel.create({
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo,
@@ -535,6 +578,19 @@ export class RawMaterialsHazardousProductsService {
           documentLink: storedRelativePath,
           createdDate: now,
           updatedDate: now,
+        });
+        await trackUploadedProductDocument(this.documentVersioningService, {
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+          subsectionKey: 'products_test_report',
+          userId: vendorObjectId,
+          documentId: createdDoc._id,
+          productDocumentId,
+          filePath: storedRelativePath,
+          originalName: productsTestReportFile.originalname,
+          storedName: path.basename(storedRelativePath),
+          file: productsTestReportFile,
+          action: 'added',
         });
       }
 

@@ -20,6 +20,11 @@ import {
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import {
+  trackProductDocumentDeleteBatch,
+  trackUploadedProductDocument,
+} from '../documents/helpers/product-document-version.integration';
 
 @Injectable()
 export class RawMaterialsEliminationOfProhibitedFlameService {
@@ -29,6 +34,7 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   private toObjectId(
@@ -86,6 +92,12 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
       }
 
       if (prohibitedFlameFile) {
+        const existingDocs = await this.allProductDocumentModel.find({
+          vendorId: vendorObjectId,
+          urnNo,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
+          isDeleted: { $ne: true },
+        });
         await this.allProductDocumentModel.updateMany(
           {
             vendorId: vendorObjectId,
@@ -102,12 +114,22 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
             },
           },
         );
+        if (existingDocs.length) {
+          await trackProductDocumentDeleteBatch({
+            versioning: this.documentVersioningService,
+            urnNo,
+            sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
+            userId: vendorObjectId,
+            docs: existingDocs,
+            slotKeyMode: 'subsection',
+          });
+        }
         const storedRelativePath = await this.saveFileToUrnFolder(
           prohibitedFlameFile,
           urnNo,
         );
         const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        await this.allProductDocumentModel.create({
+        const createdDoc = await this.allProductDocumentModel.create({
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo,
@@ -120,6 +142,20 @@ export class RawMaterialsEliminationOfProhibitedFlameService {
           documentLink: storedRelativePath,
           createdDate: now,
           updatedDate: now,
+        });
+        await trackUploadedProductDocument(this.documentVersioningService, {
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
+          subsectionKey: 'supporting_documents',
+          userId: vendorObjectId,
+          documentId: createdDoc._id,
+          productDocumentId,
+          filePath: storedRelativePath,
+          originalName: prohibitedFlameFile.originalname,
+          storedName: path.basename(storedRelativePath),
+          file: prohibitedFlameFile,
+          action: 'replaced',
+          slotKeyMode: 'subsection',
         });
       }
 

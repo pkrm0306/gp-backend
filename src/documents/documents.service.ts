@@ -13,12 +13,18 @@ import {
 import { normalizeDocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { DeleteDocumentQueryDto } from './dto/delete-document-query.dto';
 import { deleteUploadedFileByDocumentLink } from '../utils/upload-file.util';
+import { DocumentVersioningService } from './document-versioning.service';
+import {
+  buildAllProductDocumentTrackInput,
+  slotKeyFromProductDocumentId,
+} from './helpers/document-version.helper';
 
 @Injectable()
 export class DocumentsService {
   constructor(
     @InjectModel(AllProductDocument.name)
     private readonly allProductDocumentModel: Model<AllProductDocumentDocument>,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   private toObjectId(id: string | Types.ObjectId, fieldName: string): Types.ObjectId {
@@ -94,6 +100,19 @@ export class DocumentsService {
           updatedDate: now,
         },
       },
+    );
+
+    await this.documentVersioningService.trackDocumentVersionChangeSafe(
+      buildAllProductDocumentTrackInput({
+        urnNo: document.urnNo,
+        sectionKey: document.documentForm,
+        subsectionKey: document.documentFormSubsection ?? null,
+        slotKey: slotKeyFromProductDocumentId(document.productDocumentId),
+        action: 'deleted',
+        documentId: document._id as Types.ObjectId,
+        productDocumentId: document.productDocumentId,
+        userId: vendorObjectId,
+      }),
     );
 
     return {

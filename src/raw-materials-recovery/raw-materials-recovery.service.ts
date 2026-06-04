@@ -20,6 +20,8 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { trackUploadedProductDocument } from '../documents/helpers/product-document-version.integration';
 import {
   assertUnitYearFieldsPositive,
   filterMeaningfulRows,
@@ -58,6 +60,7 @@ export class RawMaterialsRecoveryService {
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   private toObjectId(
@@ -207,6 +210,19 @@ export class RawMaterialsRecoveryService {
           updatedDate: now,
         });
         documents.push(this.mapProductDocument(masterDoc));
+        await trackUploadedProductDocument(this.documentVersioningService, {
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
+          subsectionKey: 'supporting_documents',
+          userId: vendorObjectId,
+          documentId: masterDoc._id,
+          productDocumentId,
+          filePath: storedRelativePath,
+          originalName: recoveryFile.originalname,
+          storedName: path.basename(storedRelativePath),
+          file: recoveryFile,
+          action: 'added',
+        });
       }
 
       return {

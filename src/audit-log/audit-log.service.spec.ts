@@ -16,6 +16,16 @@ import { VendorUser } from '../vendor-users/schemas/vendor-user.schema';
 describe('AuditLogService', () => {
   let service: AuditLogService;
   const createMock = jest.fn().mockResolvedValue({ _id: 'x' });
+  const execMock = jest.fn().mockResolvedValue([]);
+  const countDocumentsMock = jest.fn().mockReturnValue({ exec: execMock });
+  const auditFindExecMock = jest.fn();
+  const auditFindMock = jest.fn().mockReturnValue({
+    sort: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockReturnThis(),
+    exec: auditFindExecMock,
+  });
   const lookupModelMock = {
     find: jest.fn().mockReturnValue({
       lean: jest.fn().mockReturnValue({
@@ -26,12 +36,21 @@ describe('AuditLogService', () => {
 
   beforeEach(async () => {
     createMock.mockClear();
+    execMock.mockClear();
+    countDocumentsMock.mockClear();
+    auditFindMock.mockClear();
+    auditFindExecMock.mockReset();
+    auditFindExecMock.mockResolvedValue([]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuditLogService,
         {
           provide: getModelToken(AuditLog.name),
-          useValue: { create: createMock },
+          useValue: {
+            create: createMock,
+            find: auditFindMock,
+            countDocuments: countDocumentsMock,
+          },
         },
         { provide: getModelToken(Category.name), useValue: lookupModelMock },
         { provide: getModelToken(Sector.name), useValue: lookupModelMock },
@@ -68,5 +87,22 @@ describe('AuditLogService', () => {
         outcome: 'failure',
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it('maps updateStatusTo to a display label in list new_values', async () => {
+    auditFindExecMock.mockResolvedValueOnce([
+      {
+        action: AUDIT_ACTION.PRODUCT_URN_STATUS_UPDATED,
+        outcome: 'success',
+        new_values: { updateStatusTo: 11 },
+      },
+    ]);
+    execMock.mockResolvedValueOnce(1);
+
+    const result = await service.list({});
+
+    expect(result.items[0].new_values).toEqual({
+      updateStatusTo: 'Certification Fee Approved',
+    });
   });
 });

@@ -25,6 +25,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import {
+  trackProductDocumentBatch,
+  trackProductDocumentDeleteBatch,
+} from '../documents/helpers/product-document-version.integration';
 import { ProductStewardshipProgrammeDetailDto } from './dto/create-process-product-stewardship.dto';
 
 @Injectable()
@@ -39,6 +44,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   async onModuleInit() {
@@ -227,6 +233,14 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             },
             { session },
           );
+          await trackProductDocumentDeleteBatch({
+            versioning: this.documentVersioningService,
+            urnNo: createProcessProductStewardshipDto.urnNo,
+            sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+            userId: vendorObjectId,
+            docs: existingDocs,
+            session,
+          });
         }
       }
 
@@ -325,7 +339,19 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             updatedDate: now,
           });
         }
-        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
+        const insertedSeaDocs = await this.allProductDocumentModel.insertMany(
+          docsToInsert,
+          { session },
+        );
+        await trackProductDocumentBatch({
+          versioning: this.documentVersioningService,
+          urnNo: createProcessProductStewardshipDto.urnNo,
+          sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+          userId: vendorObjectId,
+          docs: insertedSeaDocs,
+          action: 'added',
+          session,
+        });
       }
 
       if (qmFilePaths.length > 0) {
@@ -349,7 +375,19 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             updatedDate: now,
           });
         }
-        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
+        const insertedQmDocs = await this.allProductDocumentModel.insertMany(
+          docsToInsert,
+          { session },
+        );
+        await trackProductDocumentBatch({
+          versioning: this.documentVersioningService,
+          urnNo: createProcessProductStewardshipDto.urnNo,
+          sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+          userId: vendorObjectId,
+          docs: insertedQmDocs,
+          action: 'added',
+          session,
+        });
       }
 
       if (eprFilePaths.length > 0) {
@@ -373,7 +411,19 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             updatedDate: now,
           });
         }
-        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
+        const insertedEprDocs = await this.allProductDocumentModel.insertMany(
+          docsToInsert,
+          { session },
+        );
+        await trackProductDocumentBatch({
+          versioning: this.documentVersioningService,
+          urnNo: createProcessProductStewardshipDto.urnNo,
+          sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+          userId: vendorObjectId,
+          docs: insertedEprDocs,
+          action: 'added',
+          session,
+        });
       }
 
       await session.commitTransaction();

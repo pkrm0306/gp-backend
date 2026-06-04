@@ -4,9 +4,19 @@ import {
   Get,
   Body,
   Param,
+  Query,
   UseGuards,
   BadRequestException,
 } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import {
+  Product,
+  ProductDocument,
+} from '../product-registration/schemas/product.schema';
+import { isRenewalUrnStatus } from '../renew/constants/renewal-urn-status.constants';
+import { ProcessRenewCommentsService } from '../renew/process-renew-comments/process-renew-comments.service';
+import { matchRenewEligibleProducts } from '../renew/helpers/renew-eligible-product.util';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -27,7 +37,19 @@ import { CreateProcessCommentsDto } from './dto/create-process-comments.dto';
 export class ProcessCommentsController {
   constructor(
     private readonly processCommentsService: ProcessCommentsService,
+    private readonly processRenewCommentsService: ProcessRenewCommentsService,
+    @InjectModel(Product.name)
+    private readonly productModel: Model<ProductDocument>,
   ) {}
+
+  private async isRenewUrn(urnNo: string): Promise<boolean> {
+    const product = await this.productModel
+      .findOne({ urnNo: urnNo.trim(), ...matchRenewEligibleProducts() })
+      .select('urnStatus')
+      .lean()
+      .exec();
+    return product != null && isRenewalUrnStatus(Number(product.urnStatus ?? 0));
+  }
 
   @Post()
   @ApiOperation({
@@ -91,6 +113,25 @@ export class ProcessCommentsController {
     @CurrentUser() user: any,
     @Body() createProcessCommentsDto: CreateProcessCommentsDto,
   ) {
+    const urnNo = createProcessCommentsDto.urnNo.trim();
+    const renew =
+      Boolean(createProcessCommentsDto.renewalCycleId?.trim()) ||
+      (await this.isRenewUrn(urnNo));
+
+    if (renew) {
+      if (!createProcessCommentsDto.renewalCycleId?.trim()) {
+        throw new BadRequestException(
+          'renewalCycleId is required for renewal process comments',
+        );
+      }
+      const data = user?.vendorId
+        ? await this.processRenewCommentsService.upsert(createProcessCommentsDto)
+        : await this.processRenewCommentsService.adminUpsert(
+            createProcessCommentsDto,
+          );
+      return { success: true, data };
+    }
+
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
@@ -169,7 +210,22 @@ export class ProcessCommentsController {
     status: 401,
     description: 'Unauthorized - Invalid or missing token',
   })
-  async getByUrn(@CurrentUser() user: any, @Param('urn_no') urnNo: string) {
+  async getByUrn(
+    @CurrentUser() user: any,
+    @Param('urn_no') urnNo: string,
+    @Query('renewalCycleId') renewalCycleId?: string,
+  ) {
+    const renew =
+      Boolean(renewalCycleId?.trim()) || (await this.isRenewUrn(urnNo));
+
+    if (renew) {
+      const data = await this.processRenewCommentsService.getByUrnAndCycle(
+        urnNo,
+        renewalCycleId?.trim(),
+      );
+      return { success: true, data };
+    }
+
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }

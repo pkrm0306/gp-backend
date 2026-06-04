@@ -19,8 +19,11 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 
 function ensureUploadDirectories() {
   const base = join(process.cwd(), 'uploads');
+  const emailTemplates = join(process.cwd(), 'email_templates');
   const dirs = [
     base,
+    emailTemplates,
+    join(emailTemplates, 'cronJob'),
     join(base, 'categories'),
     join(base, 'banners'),
     join(base, 'manufacturers'),
@@ -42,9 +45,14 @@ function ensureUploadDirectories() {
  */
 function mountUploadStaticOnExpress(server: express.Application) {
   const uploadsRoot = join(process.cwd(), 'uploads');
+  const emailTemplatesRoot = join(process.cwd(), 'email_templates');
   server.use(
     '/uploads',
     express.static(uploadsRoot, { index: false, fallthrough: true }),
+  );
+  server.use(
+    '/email_templates',
+    express.static(emailTemplatesRoot, { index: false, fallthrough: true }),
   );
   /** Legacy: DB has `/uploads/<file>` while the file lives in `uploads/categories/`. */
   server.use('/uploads', (req: Request, res: Response, next: NextFunction) => {

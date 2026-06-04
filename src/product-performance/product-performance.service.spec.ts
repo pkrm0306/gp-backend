@@ -11,6 +11,7 @@ describe('ProductPerformanceService test report rows', () => {
       {} as any,
       {} as any,
       { getProductPerformanceId: jest.fn(), getProductDocumentId: jest.fn() } as any,
+      {} as any,
     );
   }
 

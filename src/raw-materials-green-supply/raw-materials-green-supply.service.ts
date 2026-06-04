@@ -20,6 +20,8 @@ import {
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { trackUploadedProductDocument } from '../documents/helpers/product-document-version.integration';
 
 @Injectable()
 export class RawMaterialsGreenSupplyService {
@@ -29,6 +31,7 @@ export class RawMaterialsGreenSupplyService {
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   private toObjectId(
@@ -92,7 +95,7 @@ export class RawMaterialsGreenSupplyService {
           urnNo,
         );
         const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        await this.allProductDocumentModel.create({
+        const createdDoc = await this.allProductDocumentModel.create({
           productDocumentId,
           vendorId: vendorObjectId,
           urnNo,
@@ -105,6 +108,19 @@ export class RawMaterialsGreenSupplyService {
           documentLink: storedRelativePath,
           createdDate: now,
           updatedDate: now,
+        });
+        await trackUploadedProductDocument(this.documentVersioningService, {
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY,
+          subsectionKey: 'supporting_documents',
+          userId: vendorObjectId,
+          documentId: createdDoc._id,
+          productDocumentId,
+          filePath: storedRelativePath,
+          originalName: greenSupplyFile.originalname,
+          storedName: path.basename(storedRelativePath),
+          file: greenSupplyFile,
+          action: 'added',
         });
       }
 

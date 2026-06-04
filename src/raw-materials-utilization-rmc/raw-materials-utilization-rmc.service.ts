@@ -27,6 +27,11 @@ import {
   RAW_MATERIALS_AT_LEAST_ONE_MESSAGE,
 } from '../common/raw-materials/raw-materials-upload.util';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import {
+  trackProductDocumentDeleteBatch,
+  trackUploadedProductDocument,
+} from '../documents/helpers/product-document-version.integration';
 
 type Step15Files = {
   file1?: Express.Multer.File;
@@ -43,6 +48,7 @@ export class RawMaterialsUtilizationRmcService {
     @InjectModel(Product.name)
     private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
@@ -415,6 +421,14 @@ export class RawMaterialsUtilizationRmcService {
       'step_15_2_supporting_document',
       'supporting_documents',
     ];
+    const existingDocs = await this.allProductDocumentModel.find({
+      urnNo,
+      vendorId: vendorObjectId,
+      documentForm:
+        DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+      documentFormSubsection: { $in: step15DocumentSubsections },
+      isDeleted: { $ne: true },
+    });
     await this.allProductDocumentModel.updateMany(
       {
         urnNo,
@@ -433,6 +447,20 @@ export class RawMaterialsUtilizationRmcService {
         },
       },
     );
+    if (existingDocs.length) {
+      await trackProductDocumentDeleteBatch({
+        versioning: this.documentVersioningService,
+        urnNo,
+        sectionKey: DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+        userId: vendorObjectId,
+        docs: existingDocs,
+        slotKeyMode: 'subsection',
+      });
+    }
+
+    const existingBySubsection = new Map(
+      existingDocs.map((doc) => [String(doc.documentFormSubsection ?? ''), doc]),
+    );
 
     const createDoc = async (
       file: Express.Multer.File,
@@ -445,7 +473,7 @@ export class RawMaterialsUtilizationRmcService {
         fileType,
       );
       const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-      await this.allProductDocumentModel.create({
+      const createdDoc = await this.allProductDocumentModel.create({
         productDocumentId,
         vendorId: vendorObjectId,
         urnNo,
@@ -459,6 +487,22 @@ export class RawMaterialsUtilizationRmcService {
         documentLink: storedRelativePath,
         createdDate: now,
         updatedDate: now,
+      });
+      await trackUploadedProductDocument(this.documentVersioningService, {
+        urnNo,
+        sectionKey: DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+        subsectionKey: documentFormSubsection,
+        userId: vendorObjectId,
+        documentId: createdDoc._id,
+        productDocumentId,
+        filePath: storedRelativePath,
+        originalName: file.originalname,
+        storedName: fileNameHint?.trim() || path.basename(storedRelativePath),
+        file,
+        action: existingBySubsection.has(documentFormSubsection)
+          ? 'replaced'
+          : 'added',
+        slotKeyMode: 'subsection',
       });
     };
 

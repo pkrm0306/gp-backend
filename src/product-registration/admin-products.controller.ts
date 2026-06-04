@@ -39,6 +39,8 @@ import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-produ
 import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
 import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
+import { RenewAdminTestValidityService } from '../renew/services/renew-admin-test-validity.service';
 
 /**
  * Admin list filters EOIs by **product** `productStatus` (EOI lifecycle), not manufacturer/vendor status.
@@ -75,6 +77,7 @@ export class AdminProductsController {
   constructor(
     private readonly productRegistrationService: ProductRegistrationService,
     private readonly urnTabReviewService: UrnTabReviewService,
+    private readonly renewAdminTestValidityService: RenewAdminTestValidityService,
   ) {}
 
   @Get('urn-tab-review/:urnNo')
@@ -86,8 +89,14 @@ export class AdminProductsController {
   })
   @ApiParam({ name: 'urnNo', example: 'URN-20260326162423' })
   @ApiResponse({ status: 200, description: 'Tab review state' })
-  async getUrnTabReview(@Param('urnNo') urnNo: string) {
-    const data = await this.urnTabReviewService.getUrnTabReviews(urnNo.trim());
+  async getUrnTabReview(
+    @Param('urnNo') urnNo: string,
+    @Query('renewalCycleId') renewalCycleId?: string,
+  ) {
+    const data = await this.urnTabReviewService.getUrnTabReviews(
+      urnNo.trim(),
+      renewalCycleId?.trim(),
+    );
     return { message: 'URN tab reviews retrieved', data };
   }
 
@@ -142,9 +151,26 @@ export class AdminProductsController {
     const data = await this.productRegistrationService.getProductDetailsByUrn(urn.trim());
     const siteVisits =
       (data[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
+    const first = (data[0] ?? {}) as Record<string, any>;
+    const vendorId =
+      first?.vendorId ??
+      first?.vendor?._id ??
+      first?.manufacturer?.vendorId ??
+      null;
+    const manufacturerId = first?.manufacturerId ?? first?.manufacturer?._id ?? null;
     return {
       success: true,
+      message: 'Product details fetched successfully',
       data,
+      product_details_list: data,
+      urnContext: {
+        urnNo: first?.urnNo ?? urn.trim(),
+        urnStatus: first?.urnStatus ?? null,
+        product_renew_status: first?.productRenewStatus ?? null,
+        productRenewStatus: first?.productRenewStatus ?? null,
+        vendorId,
+        manufacturerId,
+      },
       siteVisits,
       site_visits: siteVisits,
     };
@@ -157,7 +183,7 @@ export class AdminProductsController {
     summary: 'Update URN status (platform admin)',
     description:
       'Resolves all products by **urnNo** only. Body: **urnNo**, **updateStatusType** (`urn_status` or `product_status`), and **updateStatusTo**. ' +
-      '`urn_status` accepts 0–11. `product_status` accepts 0–3. ' +
+      '`urn_status` accepts 0–17 (includes renewal statuses 12–17). `product_status` accepts 0–3. ' +
       'Requires a valid Bearer token (any authenticated user).',
   })
   @ApiBody({ type: AdminUpdateUrnStatusDto })
@@ -172,6 +198,53 @@ export class AdminProductsController {
       await this.productRegistrationService.adminUpdateUrnStatus(dto);
     return {
       message: 'URN status updated',
+      data,
+    };
+  }
+
+  @Patch('renew-validity')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update valid-till date by URN (admin utility)',
+    description:
+      'Updates only `validtillDate` for all products under the provided URN. ' +
+      'Does not require productName/productDetails/categoryId/eoiNo.',
+  })
+  @ApiBody({ type: AdminRenewValidityDto })
+  @ApiResponse({ status: 200, description: 'Validity date updated' })
+  @ApiResponse({ status: 400, description: 'Invalid URN/date input' })
+  @ApiResponse({ status: 404, description: 'Unknown URN' })
+  async adminRenewValidity(
+    @CurrentUser() user: Record<string, unknown>,
+    @Body() dto: AdminRenewValidityDto,
+    @Query('preview') preview?: string,
+  ) {
+    const resolvedPreview =
+      dto.preview !== undefined ? dto.preview : String(preview) === 'true';
+
+    if (dto.startNewRenewalCycle === true && !resolvedPreview) {
+      const userId = String(user?.userId ?? user?.sub ?? user?._id ?? '').trim();
+      if (!userId) {
+        throw new BadRequestException('User ID not found in token');
+      }
+      return this.renewAdminTestValidityService.applyTestValidity(
+        {
+          urnNo: dto.urnNo,
+          validTillDate: dto.validTillDate,
+          startNewRenewalCycle: true,
+        },
+        userId,
+      );
+    }
+
+    const data = await this.productRegistrationService.adminUpdateRenewValidity({
+      ...dto,
+      preview: resolvedPreview,
+    });
+    return {
+      success: true,
+      message: 'Validity date updated',
       data,
     };
   }

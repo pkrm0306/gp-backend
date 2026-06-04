@@ -308,10 +308,10 @@ export class PaymentsController {
     @UploadedFile() proposalFile?: Express.Multer.File,
   ) {
     try {
-      const actorId = user?.manufacturerId || user?.vendorId;
+      const actorId = user?.manufacturerId || user?.vendorId || user?.userId || user?.id;
       if (!actorId) {
         throw new BadRequestException(
-          'Vendor organization ID not found in token',
+          'Actor ID not found in token',
         );
       }
 
@@ -332,6 +332,7 @@ export class PaymentsController {
         paymentReferenceNo: body.paymentReferenceNo,
         paymentChequeDate: body.paymentChequeDate,
         productsToBeCertified: body.productsToBeCertified,
+        renewalCycleId: body.renewalCycleId,
       };
 
       // Validate mandatory fields
@@ -569,6 +570,7 @@ export class PaymentsController {
               ? String(body.payment_rejection_remarks)
               : undefined,
         urnStatus: body.urnStatus !== undefined ? parseInt(body.urnStatus, 10) : undefined,
+        renewalCycleId: body.renewalCycleId,
       };
 
       const chequeOrDdFile = files?.cheque_or_dd_file?.[0];

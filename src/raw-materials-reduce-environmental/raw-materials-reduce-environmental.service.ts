@@ -20,6 +20,11 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as path from 'path';
 import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
 import { filterMeaningfulRows } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import {
+  trackProductDocumentDeleteBatch,
+  trackUploadedProductDocument,
+} from '../documents/helpers/product-document-version.integration';
 
 const QUARRYING_UNIT_KEYS = [
   'location',
@@ -52,6 +57,7 @@ export class RawMaterialsReduceEnvironmentalService {
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   private toObjectId(
@@ -92,6 +98,7 @@ export class RawMaterialsReduceEnvironmentalService {
 
     const keepRefs = existingDocumentIds !== undefined ? existingDocumentIds : null;
     const oldLinks: string[] = [];
+    const docsToDelete: typeof existingDocs = [];
 
     if (keepRefs !== null) {
       for (const doc of existingDocs) {
@@ -99,6 +106,7 @@ export class RawMaterialsReduceEnvironmentalService {
           keepRefs.includes(String(doc.productDocumentId)) ||
           keepRefs.includes(String(doc._id));
         if (!keep) {
+          docsToDelete.push(doc);
           if (doc.documentLink) oldLinks.push(doc.documentLink);
           doc.isDeleted = true;
           doc.deletedAt = now;
@@ -106,6 +114,15 @@ export class RawMaterialsReduceEnvironmentalService {
           doc.updatedDate = now;
           await doc.save();
         }
+      }
+      if (docsToDelete.length) {
+        await trackProductDocumentDeleteBatch({
+          versioning: this.documentVersioningService,
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+          userId: vendorObjectId,
+          docs: docsToDelete,
+        });
       }
     }
 
@@ -129,6 +146,19 @@ export class RawMaterialsReduceEnvironmentalService {
         updatedDate: now,
       });
       documents.push(d);
+      await trackUploadedProductDocument(this.documentVersioningService, {
+        urnNo,
+        sectionKey: DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+        subsectionKey: 'supporting_documents',
+        userId: vendorObjectId,
+        documentId: d._id,
+        productDocumentId,
+        filePath: uploaded.fileUrl,
+        originalName: file.originalname,
+        storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
+        file,
+        action: 'added',
+      });
     }
 
     for (const link of oldLinks) {

@@ -4,6 +4,9 @@ import {
   NotFoundException,
   ForbiddenException,
   InternalServerErrorException,
+  Inject,
+  forwardRef,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types, ClientSession } from 'mongoose';
@@ -46,6 +49,20 @@ import {
   buildPaymentListMongoSort,
   parsePaymentListSort,
 } from './utils/parse-payment-list-sort.util';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { trackPaymentFileChange } from '../documents/helpers/product-document-version.integration';
+import { RenewalOrchestrationService } from '../renew/services/renewal-orchestration.service';
+import { RENEWAL_URN_STATUS } from '../renew/constants/renewal-urn-status.constants';
+import { buildProductFilterForUrnStatusUpdate } from '../renew/helpers/renew-eligible-product.util';
+import {
+  RenewalCycle,
+  RenewalCycleDocument,
+} from '../renew/schemas/renewal-cycle.schema';
+import {
+  assertRenewCycleAcceptsPayment,
+  buildRenewPaymentFindFilter,
+} from '../renew/helpers/renew-cycle-scope.util';
+import { toRenewObjectId } from '../renew/helpers/renew-common.util';
 
 @Injectable()
 export class PaymentsService {
@@ -56,6 +73,8 @@ export class PaymentsService {
     private productModel: Model<ProductDocument>,
     @InjectModel(Manufacturer.name)
     private manufacturerModel: Model<ManufacturerDocument>,
+    @InjectModel(RenewalCycle.name)
+    private readonly renewalCycleModel: Model<RenewalCycleDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private activityLogService: ActivityLogService,
@@ -63,6 +82,10 @@ export class PaymentsService {
     private readonly lifecycleNotification: LifecycleNotificationService,
     private readonly certificationLifecycle: CertificationLifecycleService,
     private readonly productSoftDeleteService: ProductSoftDeleteService,
+    private readonly documentVersioningService: DocumentVersioningService,
+    @Inject(forwardRef(() => RenewalOrchestrationService))
+    @Optional()
+    private readonly renewalOrchestration?: RenewalOrchestrationService,
   ) {}
 
   private resolveZohoPaymentAmount(payment: PaymentDetailsDocument): number {
@@ -770,6 +793,34 @@ export class PaymentsService {
           createPaymentDto.paymentType,
         );
 
+        let renewalCycleObjectId: Types.ObjectId | undefined;
+        if (normalizedPaymentType === 'renew') {
+          const cycleIdRaw = String(createPaymentDto.renewalCycleId ?? '').trim();
+          if (!cycleIdRaw) {
+            throw new BadRequestException(
+              'renewalCycleId is required when paymentType is renew',
+            );
+          }
+          const cycle = await assertRenewCycleAcceptsPayment(
+            this.renewalCycleModel,
+            normalizedUrnNo,
+            cycleIdRaw,
+          );
+          renewalCycleObjectId = toRenewObjectId(
+            String(cycle._id),
+            'renewalCycleId',
+          );
+          const existingForCycle = await this.paymentDetailsModel
+            .findOne(buildRenewPaymentFindFilter(normalizedUrnNo, cycle))
+            .session(session)
+            .exec();
+          if (existingForCycle) {
+            throw new BadRequestException(
+              `A renew payment already exists for renewal cycle ${cycle.cycleNo}`,
+            );
+          }
+        }
+
         let productsToBeCertified: string | undefined;
         if (normalizedPaymentType === 'certification') {
           if (!String(createPaymentDto.productsToBeCertified ?? '').trim()) {
@@ -888,6 +939,9 @@ export class PaymentsService {
           adminGstNo: createPaymentDto.adminGstNo,
           vendorGstNo: createPaymentDto.vendorGstNo,
           paymentType: normalizedPaymentType,
+          ...(renewalCycleObjectId
+            ? { renewalCycleId: renewalCycleObjectId }
+            : {}),
           paymentMode: createPaymentDto.paymentMode,
           onlinePaymentId: createPaymentDto.onlinePaymentId || 0,
           paymentReferenceNo: createPaymentDto.paymentReferenceNo,
@@ -904,6 +958,33 @@ export class PaymentsService {
 
         const payment = new this.paymentDetailsModel(paymentData);
         const savedPayment = await payment.save({ session });
+
+        if (normalizedPaymentType === 'renew' && renewalCycleObjectId) {
+          await this.renewalCycleModel.updateOne(
+            { _id: renewalCycleObjectId },
+            {
+              $set: {
+                paymentId: savedPayment.paymentId,
+                updatedAt: now,
+              },
+            },
+            { session },
+          );
+        }
+
+        if (proposalFilePath) {
+          await trackPaymentFileChange(this.documentVersioningService, {
+            urnNo: normalizedUrnNo,
+            paymentId: savedPayment._id,
+            field: 'proposalFile',
+            userId: vendorObjectId,
+            filePath: proposalFilePath,
+            file: proposalFile,
+            action: 'added',
+            paymentType: normalizedPaymentType,
+            session,
+          });
+        }
 
         await session.commitTransaction();
         session.endSession();
@@ -1043,8 +1124,35 @@ export class PaymentsService {
         paymentQuery.paymentType = paymentTypeHint;
       }
 
-      let existingPayment = await this.paymentDetailsModel
-        .findOne(paymentQuery)
+      const paymentTypeHint =
+        updatePaymentDto.paymentType !== undefined
+          ? this.normalizePaymentType(updatePaymentDto.paymentType)
+          : undefined;
+      const renewCycleIdHint = String(updatePaymentDto.renewalCycleId ?? '').trim();
+
+      let existingPayment: PaymentDetailsDocument | null = null;
+      if (paymentTypeHint === 'renew' || renewCycleIdHint) {
+        if (!renewCycleIdHint) {
+          throw new BadRequestException(
+            'renewalCycleId is required when updating renew payments',
+          );
+        }
+        const cycle = await this.renewalCycleModel
+          .findById(renewCycleIdHint)
+          .session(session)
+          .exec();
+        if (!cycle || cycle.urnNo !== normalizedUrn) {
+          throw new BadRequestException(
+            'renewalCycleId does not match this URN',
+          );
+        }
+        existingPayment = await this.paymentDetailsModel
+          .findOne(buildRenewPaymentFindFilter(normalizedUrn, cycle))
+          .session(session)
+          .exec();
+      } else {
+        existingPayment = await this.paymentDetailsModel
+          .findOne(paymentQuery)
         .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
         .session(session)
         .exec();
@@ -1052,9 +1160,18 @@ export class PaymentsService {
       if (!existingPayment && paymentTypeHint) {
         existingPayment = await this.paymentDetailsModel
           .findOne({ urnNo: { $in: urnOptions } })
-          .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
-          .session(session)
-          .exec();
+            .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
+            .session(session)
+            .exec();
+        if (
+          existingPayment?.paymentType === 'renew' &&
+          !renewCycleIdHint
+        ) {
+          throw new BadRequestException(
+            'renewalCycleId is required when updating renew payments',
+          );
+        }
+      }
       }
 
       if (!existingPayment) {
@@ -1102,6 +1219,12 @@ export class PaymentsService {
 
       const now = new Date();
       const updateData: any = { updatedDate: now };
+      let trackedProposalPath: string | undefined;
+      let trackedProposalAction: 'added' | 'replaced' = 'added';
+      let trackedChequePath: string | undefined;
+      let trackedChequeAction: 'added' | 'replaced' = 'added';
+      let trackedTdsPath: string | undefined;
+      let trackedTdsAction: 'added' | 'replaced' = 'added';
 
       if (proposalFile) {
         if (!this.isAdminPortalRole(actorRole)) {
@@ -1137,6 +1260,8 @@ export class PaymentsService {
         }
 
         updateData.proposalFile = newProposalPath;
+        trackedProposalPath = newProposalPath;
+        trackedProposalAction = previousProposal ? 'replaced' : 'added';
       } else if (
         currentApproval === 2 &&
         this.isAdminQuoteFieldsUpdate(updatePaymentDto)
@@ -1190,12 +1315,18 @@ export class PaymentsService {
           : undefined;
       }
       if (chequeOrDdFile) {
+        const previousCheque = existingPayment.chequeOrDdFile;
         updateData.chequeOrDdFile = (
           await uploadFile(chequeOrDdFile, 'payments')
         ).fileUrl;
+        trackedChequePath = updateData.chequeOrDdFile;
+        trackedChequeAction = previousCheque ? 'replaced' : 'added';
       }
       if (tdsFile) {
+        const previousTds = existingPayment.tdsFile;
         updateData.tdsFile = (await uploadFile(tdsFile, 'payments')).fileUrl;
+        trackedTdsPath = updateData.tdsFile;
+        trackedTdsAction = previousTds ? 'replaced' : 'added';
       }
       const paymentStatusUpdate = this.applyPaymentStatusUpdate(
         updateData,
@@ -1251,6 +1382,47 @@ export class PaymentsService {
         throw new NotFoundException('Payment not found after update');
       }
 
+      const resolvedPaymentType = updatedPayment.paymentType ?? paymentType;
+      if (trackedProposalPath) {
+        await trackPaymentFileChange(this.documentVersioningService, {
+          urnNo: normalizedUrn,
+          paymentId: updatedPayment._id,
+          field: 'proposalFile',
+          userId: effectiveVendorObjectId,
+          filePath: trackedProposalPath,
+          file: proposalFile,
+          action: trackedProposalAction,
+          paymentType: resolvedPaymentType,
+          session,
+        });
+      }
+      if (trackedChequePath) {
+        await trackPaymentFileChange(this.documentVersioningService, {
+          urnNo: normalizedUrn,
+          paymentId: updatedPayment._id,
+          field: 'chequeOrDdFile',
+          userId: effectiveVendorObjectId,
+          filePath: trackedChequePath,
+          file: chequeOrDdFile,
+          action: trackedChequeAction,
+          paymentType: resolvedPaymentType,
+          session,
+        });
+      }
+      if (trackedTdsPath) {
+        await trackPaymentFileChange(this.documentVersioningService, {
+          urnNo: normalizedUrn,
+          paymentId: updatedPayment._id,
+          field: 'tdsFile',
+          userId: effectiveVendorObjectId,
+          filePath: trackedTdsPath,
+          file: tdsFile,
+          action: trackedTdsAction,
+          paymentType: resolvedPaymentType,
+          session,
+        });
+      }
+
       let deferredUrnLog: {
         urnNo: string;
         newUrnStatus: number;
@@ -1266,23 +1438,24 @@ export class PaymentsService {
           );
         }
 
-        // Find any one product to get manufacturerId for activity log
+        const urnStatusProductFilter = buildProductFilterForUrnStatusUpdate(
+          { urnNo: { $in: urnOptions }, vendorId: effectiveVendorObjectId },
+          resolvedPaymentType,
+          updatePaymentDto.urnStatus,
+        );
+
         const anyProduct = await this.productModel
-          .findOne({
-            urnNo: { $in: urnOptions },
-            vendorId: effectiveVendorObjectId,
-          })
+          .findOne(urnStatusProductFilter)
           .session(session)
           .exec();
 
         if (!anyProduct) {
-          // Keep payment update successful even when product rows are missing for this URN.
           console.warn(
-            `[Update Payment] No product found for URN ${urnNoToUse}; skipped products.urnStatus update.`,
+            `[Update Payment] No eligible product found for URN ${urnNoToUse}; skipped products.urnStatus update.`,
           );
         } else {
           await this.productModel.updateMany(
-            { urnNo: { $in: urnOptions }, vendorId: effectiveVendorObjectId },
+            urnStatusProductFilter,
             {
               $set: { urnStatus: updatePaymentDto.urnStatus, updatedDate: now },
             },
@@ -1311,6 +1484,24 @@ export class PaymentsService {
           approvedAt: now,
           session,
         });
+      }
+
+      if (
+        paymentStatusUpdate.adminApprovedPayment &&
+        paymentType === 'renew' &&
+        this.renewalOrchestration
+      ) {
+        await this.renewalOrchestration.onRenewPaymentApproved({
+          urnNo: normalizedUrn,
+          paymentId: updatedPayment.paymentId,
+          renewalCycleId: updatedPayment.renewalCycleId
+            ? String(updatedPayment.renewalCycleId)
+            : updatePaymentDto.renewalCycleId,
+          vendorId: effectiveVendorObjectId,
+          userId: effectiveVendorObjectId,
+          session,
+        });
+        // urnStatus + productRenewStatus: certified EOIs only — set in onRenewPaymentApproved
       }
 
       await session.commitTransaction();

@@ -74,6 +74,26 @@ const LOOKUP_FIELD_MODEL: Record<string, LookupModelName> = {
   deleted_by: 'user',
 };
 
+const URN_STATUS_LABELS: Record<number, string> = {
+  0: 'Proposal Pending',
+  1: 'Registration Payment Pending',
+  2: 'Approve Registration Payment Pending',
+  3: 'Process Form In Progress',
+  4: 'Check Process Forms',
+  5: 'Vendor Response Pending',
+  6: 'Final Verification Pending',
+  7: 'Certificate Payment Pending',
+  8: 'Approve Certificate Fee',
+  9: 'Payment Rejected',
+  11: 'Certification Fee Approved',
+  12:  'Renewal Payment Pending',
+  13:  'Renewal Payment Verification Pending',
+  14:  'Renewal Payment Approved',
+  15:  'Renewal Forms Review Pending',
+  16:  'Renewal Vendor Response Pending',
+  17:  'Renewal Final Verification Pending',
+};
+
 @Injectable()
 export class AuditLogService {
   private readonly logger = new Logger('AuditLog');
@@ -331,6 +351,13 @@ export class AuditLogService {
     }
     const out: Record<string, unknown> = { ...values };
     for (const [key, value] of Object.entries(values)) {
+      if (this.normalizeLookupKey(key) === 'updatestatusto') {
+        const label = this.urnStatusLabel(value);
+        if (label) {
+          out[key] = label;
+        }
+        continue;
+      }
       const modelName = LOOKUP_FIELD_MODEL[this.normalizeLookupKey(key)];
       if (!modelName || !this.canLookupValue(value)) {
         continue;
@@ -341,6 +368,19 @@ export class AuditLogService {
       }
     }
     return out;
+  }
+
+  private urnStatusLabel(value: unknown): string | undefined {
+    const status =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.trim() !== ''
+          ? Number(value)
+          : NaN;
+    if (!Number.isInteger(status)) {
+      return undefined;
+    }
+    return URN_STATUS_LABELS[status];
   }
 
   private normalizeLookupKey(key: string): string {

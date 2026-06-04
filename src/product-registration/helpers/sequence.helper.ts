@@ -1235,4 +1235,133 @@ export class SequenceHelper {
       return this.getNextSequenceValue(sequenceName);
     }
   }
+
+  private async syncMaxAndNext(
+    sequenceName: string,
+    collectionName: string,
+    idField: string,
+  ): Promise<number> {
+    try {
+      const sequenceCollection = this.connection.collection('sequences');
+      const dataCollection = this.connection.collection(collectionName);
+      const maxRow = await dataCollection.findOne(
+        {},
+        { sort: { [idField]: -1 }, projection: { [idField]: 1 } },
+      );
+      const maxId = maxRow?.[idField] || 0;
+
+      await sequenceCollection.updateOne(
+        { _id: sequenceName as any },
+        { $setOnInsert: { sequenceValue: 0 } },
+        { upsert: true },
+      );
+      if (maxId > 0) {
+        await sequenceCollection.updateOne(
+          { _id: sequenceName as any },
+          { $max: { sequenceValue: maxId } },
+        );
+      }
+
+      return this.getNextSequenceValue(sequenceName);
+    } catch (error: any) {
+      console.error(`Sequence error for ${sequenceName}:`, error);
+      return this.getNextSequenceValue(sequenceName);
+    }
+  }
+
+  async getRenewProductDocumentId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'renew_product_document_id',
+      'all_renew_product_documents',
+      'productDocumentId',
+    );
+  }
+
+  async getProcessRenewManufacturingId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_manufacturing_id',
+      'process_renew_manufacturing',
+      'processRenewManufacturingId',
+    );
+  }
+
+  async getProcessRenewProductPerformanceId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_product_performance_id',
+      'process_renew_product_performance',
+      'processRenewProductPerformanceId',
+    );
+  }
+
+  async getProcessRenewProductPerformanceTestReportId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_pp_test_report_id',
+      'process_renew_pp_test_reports',
+      'processRenewProductPerformanceTestReportId',
+    );
+  }
+
+  async getProcessRenewWasteManagementId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_waste_management_id',
+      'process_renew_waste_management',
+      'processRenewWasteManagementId',
+    );
+  }
+
+  async getProcessRenewInnovationId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_innovation_id',
+      'process_renew_innovation',
+      'processRenewInnovationId',
+    );
+  }
+
+  async getProcessRenewProductStewardshipId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_product_stewardship_id',
+      'process_renew_product_stewardship',
+      'processRenewProductStewardshipId',
+    );
+  }
+
+  async getProcessRenewCommentsId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_comments_id',
+      'process_renew_comments',
+      'processRenewCommentsId',
+    );
+  }
+
+  async getProcessRenewMpManufacturingUnitId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_mp_manufacturing_unit_id',
+      'process_renew_mp_manufacturing_units',
+      'processRenewMpManufacturingUnitId',
+    );
+  }
+
+  async getProcessRenewMpEnergyConsumptionId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_mp_energy_consumption_id',
+      'process_renew_mp_energy_consumption',
+      'processRenewMpEnergyConsumptionId',
+    );
+  }
+
+  async getProcessRenewWmManufacturingUnitId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_wm_manufacturing_unit_id',
+      'process_renew_wm_manufacturing_units',
+      'processRenewWmManufacturingUnitId',
+    );
+  }
+
+  async getProcessRenewPsStakeholderEduAwarnessId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_renew_ps_stakeholder_edu_awarness_id',
+      'process_renew_ps_stakeholder_edu_awarness',
+      'processRenewPsStakeholderEduAwarnessId',
+    );
+  }
 }

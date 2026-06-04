@@ -42,6 +42,10 @@ export class PaymentDetails {
   })
   paymentType: string;
 
+  /** Required for `paymentType: renew` — scopes fee to one renewal cycle. */
+  @Prop({ type: Types.ObjectId, ref: 'RenewalCycle' })
+  renewalCycleId?: Types.ObjectId;
+
   @Prop({
     enum: ['online', 'cheque_or_dd', 'neft_or_rtgs'],
   })
@@ -92,3 +96,12 @@ export class PaymentDetails {
 
 export const PaymentDetailsSchema =
   SchemaFactory.createForClass(PaymentDetails);
+
+PaymentDetailsSchema.index(
+  { urnNo: 1, paymentType: 1, renewalCycleId: 1 },
+  {
+    unique: true,
+    sparse: true,
+    name: 'uniq_renew_payment_per_cycle',
+  },
+);

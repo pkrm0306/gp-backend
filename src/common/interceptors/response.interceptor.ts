@@ -31,15 +31,22 @@ export class ResponseInterceptor implements NestInterceptor {
         if (data == null || typeof data !== 'object') {
           return data;
         }
+        const payload = data as Record<string, unknown>;
         const response: Record<string, unknown> = {
           success: true,
-          message: (data as { message?: string })?.message || 'Success',
-          data:
-            (data as { data?: unknown })?.data !== undefined
-              ? (data as { data: unknown }).data
-              : data,
+          message: (payload.message as string) || 'Success',
+          data: payload.data !== undefined ? payload.data : data,
         };
-        const payload = data as {
+        /** Preserve top-level fields (e.g. renewContext) when controller also returns `data`. */
+        for (const [key, value] of Object.entries(payload)) {
+          if (key === 'message' || key === 'success' || key === 'data') {
+            continue;
+          }
+          if (value !== undefined) {
+            response[key] = value;
+          }
+        }
+        const metrics = data as {
           total?: number;
           page?: number;
           limit?: number;

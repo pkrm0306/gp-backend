@@ -135,4 +135,12 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsString()
   productsToBeCertified?: string;
+
+  @ApiPropertyOptional({
+    description: 'Active renewal cycle id (required when paymentType is renew)',
+    example: '6a1edd713ec5008b997aca94',
+  })
+  @IsOptional()
+  @IsString()
+  renewalCycleId?: string;
 }

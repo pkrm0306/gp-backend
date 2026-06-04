@@ -22,14 +22,14 @@ export class AdminPatchUrnStatusBodyDto {
 
   @ApiProperty({
     description:
-      'Target value. `urn_status`: 0–11. `product_status`: 0–3.',
+      'Target value. `urn_status`: 0–17 (includes renewal 12–17). `product_status`: 0–3.',
     example: 6,
     minimum: 0,
-    maximum: 11,
+    maximum: 17,
   })
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(11)
+  @Max(17)
   updateStatusTo: number;
 }

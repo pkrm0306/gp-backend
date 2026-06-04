@@ -12,6 +12,14 @@ export class CreateProcessCommentsDto {
   urnNo: string;
 
   @ApiProperty({
+    description: 'Renewal cycle id (required for renewal admin/vendor comments)',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  renewalCycleId?: string;
+
+  @ApiProperty({
     description: 'Product design comment',
     example: 'Please provide more details on eco-design strategies',
     required: false,

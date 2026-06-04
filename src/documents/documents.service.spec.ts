@@ -4,6 +4,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { DocumentsService } from './documents.service';
 import { AllProductDocument } from '../product-design/schemas/all-product-document.schema';
+import { DocumentVersioningService } from './document-versioning.service';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 
 describe('DocumentsService', () => {
@@ -37,6 +38,12 @@ describe('DocumentsService', () => {
           useValue: {
             findOne: findOneMock,
             updateOne: updateOneMock,
+          },
+        },
+        {
+          provide: DocumentVersioningService,
+          useValue: {
+            trackDocumentVersionChangeSafe: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

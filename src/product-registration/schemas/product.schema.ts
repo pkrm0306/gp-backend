@@ -23,6 +23,10 @@ export class Product {
   @Prop({ required: true })
   urnNo: string;
 
+  /** Set when this EOI was moved from another URN via admin merge. */
+  @Prop()
+  mergedFromUrnNo?: string;
+
   @Prop({ required: true })
   productName: string;
 
@@ -46,6 +50,10 @@ export class Product {
 
   @Prop({ default: 0 })
   productRenewStatus: number;
+
+  /** 1-based renewal cycle number (matches `renewal_cycles.cycleNo` for this URN). */
+  @Prop()
+  renewCycleNo?: number;
 
   @Prop()
   renewedDate?: Date;
@@ -89,6 +97,12 @@ export class Product {
 
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   deleted_by?: Types.ObjectId | null;
+
+  @Prop({ type: Date, default: null })
+  discontinuedAt?: Date | null;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  discontinuedBy?: Types.ObjectId | null;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);

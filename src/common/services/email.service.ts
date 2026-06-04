@@ -125,6 +125,7 @@ export class EmailService {
     subject: string,
     htmlBody: string,
     textBody?: string,
+    options?: { rawHtml?: boolean },
   ): Promise<void> {
     try {
       const disabledRaw =
@@ -142,7 +143,9 @@ export class EmailService {
           'noreply@greenpro.com',
         to,
         subject,
-        html: this.wrapWithGreenProTemplate(subject, htmlBody),
+        html: options?.rawHtml
+          ? htmlBody
+          : this.wrapWithGreenProTemplate(subject, htmlBody),
         text: textBody || this.stripHtml(htmlBody),
       };
 

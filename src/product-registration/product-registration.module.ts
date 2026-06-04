@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { RenewalModule } from '../renew/renewal.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PassportModule } from '@nestjs/passport';
 import { ProductRegistrationController } from './product-registration.controller';
@@ -75,6 +76,7 @@ import { EmailService } from '../common/services/email.service';
     RbacModule,
     UrnSiteVisitsModule,
     ZohoModule,
+    forwardRef(() => RenewalModule),
   ],
   controllers: [
     ProductRegistrationController,

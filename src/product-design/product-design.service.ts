@@ -29,6 +29,11 @@ import {
 } from './product-design-upload.util';
 import { normalizeMeasureBenefitRow } from '../common/form-partial-field.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import {
+  trackProductDocumentBatch,
+  trackProductDocumentDeleteBatch,
+} from '../documents/helpers/product-document-version.integration';
 
 @Injectable()
 export class ProductDesignService implements OnModuleInit {
@@ -42,6 +47,7 @@ export class ProductDesignService implements OnModuleInit {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   async onModuleInit() {
@@ -355,6 +361,7 @@ export class ProductDesignService implements OnModuleInit {
 
     const retainIds: Types.ObjectId[] = [];
     const deleteIds: Types.ObjectId[] = [];
+    const docsToDelete: typeof existingDocs = [];
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
     for (const doc of existingDocs) {
@@ -376,6 +383,7 @@ export class ProductDesignService implements OnModuleInit {
         retainIds.push(doc._id as Types.ObjectId);
       } else {
         deleteIds.push(doc._id as Types.ObjectId);
+        docsToDelete.push(doc);
         if (doc.documentLink) {
           oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
         }
@@ -395,6 +403,14 @@ export class ProductDesignService implements OnModuleInit {
         },
         { session },
       );
+      await trackProductDocumentDeleteBatch({
+        versioning: this.documentVersioningService,
+        urnNo,
+        sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
+        userId: vendorObjectId,
+        docs: docsToDelete,
+        session,
+      });
     }
 
     if (retainIds.length) {
@@ -454,7 +470,19 @@ export class ProductDesignService implements OnModuleInit {
           updatedDate: now,
         });
       }
-      await this.allProductDocumentModel.insertMany(docsToInsert, { session });
+      const insertedDocs = await this.allProductDocumentModel.insertMany(
+        docsToInsert,
+        { session },
+      );
+      await trackProductDocumentBatch({
+        versioning: this.documentVersioningService,
+        urnNo,
+        sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
+        userId: vendorObjectId,
+        docs: insertedDocs,
+        action: 'added',
+        session,
+      });
     }
 
     const baseDocFilter = {

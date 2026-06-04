@@ -21,6 +21,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { filterMeaningfulRows } from '../common/raw-materials/raw-materials-upload.util';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { trackUploadedProductDocument } from '../documents/helpers/product-document-version.integration';
 
 const ADDITIVES_UNIT_KEYS = [
   'unitName',
@@ -67,6 +69,7 @@ export class RawMaterialsAdditivesService {
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     private sequenceHelper: SequenceHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   private toObjectId(
@@ -231,6 +234,19 @@ export class RawMaterialsAdditivesService {
           updatedDate: now,
         });
         documents.push(this.mapProductDocument(masterDoc));
+        await trackUploadedProductDocument(this.documentVersioningService, {
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
+          subsectionKey: 'supporting_documents',
+          userId: vendorObjectId,
+          documentId: masterDoc._id,
+          productDocumentId,
+          filePath: storedRelativePath,
+          originalName: additivesFile.originalname,
+          storedName: path.basename(storedRelativePath),
+          file: additivesFile,
+          action: 'added',
+        });
       }
 
       return {

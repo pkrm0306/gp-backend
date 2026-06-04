@@ -24,6 +24,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { trackProductDocumentBatch } from '../documents/helpers/product-document-version.integration';
 
 @Injectable()
 export class ProcessInnovationService implements OnModuleInit {
@@ -35,6 +37,7 @@ export class ProcessInnovationService implements OnModuleInit {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   async onModuleInit() {
@@ -181,7 +184,19 @@ export class ProcessInnovationService implements OnModuleInit {
             updatedDate: now,
           });
         }
-        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
+        const insertedDocs = await this.allProductDocumentModel.insertMany(
+          docsToInsert,
+          { session },
+        );
+        await trackProductDocumentBatch({
+          versioning: this.documentVersioningService,
+          urnNo: createProcessInnovationDto.urnNo,
+          sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
+          userId: vendorObjectId,
+          docs: insertedDocs,
+          action: 'added',
+          session,
+        });
       }
 
       await session.commitTransaction();

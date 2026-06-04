@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -30,7 +32,8 @@ import {
   normalizeReviewStepId,
   parseVisibleRawMaterialSteps,
 } from './helpers/urn-tab-review.util';
-
+import { isRenewalUrnStatus } from '../renew/constants/renewal-urn-status.constants';
+import { RenewUrnTabReviewService } from '../renew/services/renew-urn-tab-review.service';
 @Injectable()
 export class UrnTabReviewService {
   constructor(
@@ -40,6 +43,8 @@ export class UrnTabReviewService {
     private readonly categoryModel: Model<CategoryDocument>,
     @InjectModel(UrnProcessTabReview.name)
     private readonly reviewModel: Model<UrnProcessTabReviewDocument>,
+    @Inject(forwardRef(() => RenewUrnTabReviewService))
+    private readonly renewUrnTabReviewService: RenewUrnTabReviewService,
   ) {}
 
   async ensurePendingReviewsForUrn(urnNo: string): Promise<void> {
@@ -100,6 +105,14 @@ export class UrnTabReviewService {
     }
 
     const urnStatus = Number(product.urnStatus ?? 0);
+
+    if (isRenewalUrnStatus(urnStatus)) {
+      return this.renewUrnTabReviewService.getVendorRenewTabReviewGuidance(
+        trimmedUrn,
+        vendorId,
+      );
+    }
+
     const restrictSaveAndNext = urnStatus === VENDOR_RESUBMIT_URN_STATUS;
 
     if (!restrictSaveAndNext) {
@@ -147,7 +160,10 @@ export class UrnTabReviewService {
       urnNo: trimmedUrn,
       urnStatus,
       restrictSaveAndNext: true,
-      visibleRawMaterialSteps: adminState.visibleRawMaterialSteps,
+      visibleRawMaterialSteps:
+        'visibleRawMaterialSteps' in adminState
+          ? adminState.visibleRawMaterialSteps
+          : [],
       reviews,
       processTabs,
       rawMaterialSteps,
@@ -155,8 +171,11 @@ export class UrnTabReviewService {
     };
   }
 
-  async getUrnTabReviews(urnNo: string) {
+  async getUrnTabReviews(urnNo: string, renewalCycleId?: string) {
     const context = await this.loadUrnReviewContext(urnNo);
+    if (isRenewalUrnStatus(context.urnStatus)) {
+      return this.renewUrnTabReviewService.getUrnTabReviews(urnNo, renewalCycleId);
+    }
     await this.ensurePendingReviewsForUrn(urnNo);
 
     const stored = await this.reviewModel
@@ -191,6 +210,10 @@ export class UrnTabReviewService {
   async patchUrnTabReview(dto: PatchUrnTabReviewDto, adminUserId: string) {
     const urnNo = dto.urnNo.trim();
     const context = await this.loadUrnReviewContext(urnNo);
+
+    if (isRenewalUrnStatus(context.urnStatus)) {
+      return this.renewUrnTabReviewService.patchUrnTabReview(dto, adminUserId);
+    }
 
     if (context.urnStatus !== ADMIN_REVIEW_URN_STATUS) {
       throw new ForbiddenException(
