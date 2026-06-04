@@ -86,12 +86,19 @@ const URN_STATUS_LABELS: Record<number, string> = {
   8: 'Approve Certificate Fee',
   9: 'Payment Rejected',
   11: 'Certification Fee Approved',
-  12:  'Renewal Payment Pending',
-  13:  'Renewal Payment Verification Pending',
-  14:  'Renewal Payment Approved',
-  15:  'Renewal Forms Review Pending',
-  16:  'Renewal Vendor Response Pending',
-  17:  'Renewal Final Verification Pending',
+  12: 'Renewal Payment Pending',
+  13: 'Renewal Payment Verification Pending',
+  14: 'Renewal Payment Approved',
+  15: 'Renewal Forms Review Pending',
+  16: 'Renewal Vendor Response Pending',
+  17: 'Renewal Final Verification Pending',
+};
+
+const PAYMENT_STATUS_LABELS: Record<number, string> = {
+  0: 'Payment Pending',
+  1: 'Paid',
+  2: 'Payment Approve',
+  3: 'Payment Rejected',
 };
 
 @Injectable()
@@ -358,7 +365,14 @@ export class AuditLogService {
         }
         continue;
       }
-      const modelName = LOOKUP_FIELD_MODEL[this.normalizeLookupKey(key)];
+      if (normalizedKey === 'paymentstatus' || normalizedKey === 'paymentStatus') {
+        const label = this.paymentStatusLabel(value);
+        if (label) {
+          out[key] = label;
+        }
+        continue;
+      }
+      const modelName = LOOKUP_FIELD_MODEL[normalizedKey];
       if (!modelName || !this.canLookupValue(value)) {
         continue;
       }
