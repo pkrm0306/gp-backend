@@ -3,6 +3,7 @@ import {
   dedupeRenewDocuments,
   mergeRenewDocumentSources,
   resolveRenewPerformanceTestReportRows,
+  spreadProductPerformanceToDetailRows,
 } from './renew-details-format.util';
 
 describe('renew-details-format.util documents', () => {
@@ -47,5 +48,28 @@ describe('renew-details-format.util performance read', () => {
       (section.product_performance as { testReports: unknown[] }).testReports,
     ).toHaveLength(1);
     expect(section.product_performance_test_reports).toHaveLength(1);
+  });
+
+  it('spreadProductPerformanceToDetailRows filters testReports by EOI', () => {
+    const performance = {
+      urnNo: 'URN-1',
+      renewalType: 1,
+      productPerformanceStatus: 0,
+      testReportFiles: 2,
+      testReports: [
+        { productName: 'A', testReportFileName: '', eoiNo: 'EOI-A' },
+        { productName: 'B', testReportFileName: '', eoiNo: 'EOI-B' },
+      ],
+    };
+    const rows: Array<Record<string, unknown>> = [
+      { product_details: { eoiNo: 'EOI-A', productName: 'Prod A' } },
+      { product_details: { eoiNo: 'EOI-B', productName: 'Prod B' } },
+    ];
+    spreadProductPerformanceToDetailRows(rows, performance);
+    const row0Perf = rows[0].product_performance as {
+      testReports: Array<{ eoiNo: string }>;
+    };
+    expect(row0Perf.testReports).toHaveLength(1);
+    expect(row0Perf.testReports[0].eoiNo).toBe('EOI-A');
   });
 });

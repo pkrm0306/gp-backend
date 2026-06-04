@@ -58,7 +58,10 @@ import {
   resolveRowTestReports,
   toPublicRenewTestReports,
 } from './renew-product-performance-payload.util';
-import { buildPerformanceSection } from '../utils/renew-details-format.util';
+import {
+  buildPerformanceSection,
+  formatRenewProductPerformance,
+} from '../utils/renew-details-format.util';
 import * as path from 'path';
 
 const RENEW_PERFORMANCE_DOC_SUBSECTION = 'product_performance';
@@ -187,7 +190,9 @@ export class ProcessRenewProductPerformanceService {
     return cycle;
   }
 
-  /** GET: match POST cycle when query omitted — prefer cycle with saved performance data. */
+  /**
+   * GET: explicit renewalCycleId, else active in-progress cycle, else latest saved performance cycle.
+   */
   async resolveRenewalCycleForRead(
     urnNo: string,
     renewalCycleId?: string,
@@ -197,6 +202,14 @@ export class ProcessRenewProductPerformanceService {
     }
 
     const trimmedUrn = urnNo.trim();
+
+    const activeCycle = await this.renewalCycleModel
+      .findOne({ urnNo: trimmedUrn, status: RenewalCycleStatus.IN_PROGRESS })
+      .sort({ cycleNo: -1 })
+      .exec();
+    if (activeCycle) {
+      return activeCycle;
+    }
 
     const latestReport = await this.renewTestReportModel
       .findOne({ urnNo: trimmedUrn })
@@ -231,14 +244,6 @@ export class ProcessRenewProductPerformanceService {
       if (cycle && cycle.urnNo === trimmedUrn) {
         return cycle;
       }
-    }
-
-    const activeCycle = await this.renewalCycleModel
-      .findOne({ urnNo: trimmedUrn, status: RenewalCycleStatus.IN_PROGRESS })
-      .sort({ cycleNo: -1 })
-      .exec();
-    if (activeCycle) {
-      return activeCycle;
     }
 
     const latestCycle = await this.renewalCycleModel
@@ -649,7 +654,31 @@ export class ProcessRenewProductPerformanceService {
       certifiedEoiNos,
     );
     const publicTestReports = toPublicRenewTestReports(authoritativeTestReports);
-    const productPerformance = section.product_performance as Record<string, unknown>;
+    let productPerformance = section.product_performance as Record<
+      string,
+      unknown
+    > | null;
+
+    if (publicTestReports.length > 0) {
+      const syntheticChildRows = authoritativeTestReports.map((row, index) => ({
+        ...row,
+        urnNo: trimmedUrn,
+        processRenewProductPerformanceTestReportId: index + 1,
+        productPerformanceTestReportId: index + 1,
+      }));
+      productPerformance =
+        formatRenewProductPerformance(
+          (header as Record<string, unknown> | null) ?? null,
+          syntheticChildRows as Array<Record<string, unknown>>,
+        ) ?? productPerformance;
+      if (productPerformance) {
+        productPerformance.testReports = publicTestReports;
+        productPerformance.testReportFiles = Math.max(
+          Number(productPerformance.testReportFiles ?? 0),
+          publicTestReports.length,
+        );
+      }
+    }
 
     return {
       urnNo: trimmedUrn,

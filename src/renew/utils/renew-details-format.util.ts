@@ -551,6 +551,53 @@ export function buildStewardshipSection(
   };
 }
 
+/** Mirror cert details: each EOI row gets product_performance with cycle-scoped testReports. */
+export function spreadProductPerformanceToDetailRows(
+  rows: Array<Record<string, unknown>>,
+  performance: Record<string, unknown> | null | undefined,
+): void {
+  if (!performance) {
+    return;
+  }
+  const allReports = Array.isArray(performance.testReports)
+    ? (performance.testReports as Array<Record<string, unknown>>)
+    : [];
+
+  for (const row of rows) {
+    const details = row.product_details as Record<string, unknown> | undefined;
+    const eoiNo = String(details?.eoiNo ?? row.eoiNo ?? '').trim();
+    const testReports =
+      eoiNo && allReports.length > 0
+        ? allReports.filter(
+            (entry) =>
+              !entry.eoiNo || String(entry.eoiNo).trim() === eoiNo,
+          )
+        : allReports;
+
+    row.product_performance = {
+      ...performance,
+      testReports,
+      testReportFiles: Math.max(
+        Number(performance.testReportFiles ?? 0),
+        testReports.length,
+      ),
+    };
+    row.product_performance_test_reports = testReports.map((entry, index) => ({
+      _id: entry._id,
+      productPerformanceTestReportId:
+        entry.processRenewProductPerformanceTestReportId ??
+        entry.productPerformanceTestReportId ??
+        index + 1,
+      urnNo: entry.urnNo ?? performance.urnNo,
+      eoiNo: entry.eoiNo,
+      productName: entry.productName,
+      testReportFileName: entry.testReportFileName,
+      createdDate: entry.createdDate,
+      updatedDate: entry.updatedDate,
+    }));
+  }
+}
+
 export function buildPerformanceSection(
   header: DocRow | null | undefined,
   testReportRows: DocRow[],

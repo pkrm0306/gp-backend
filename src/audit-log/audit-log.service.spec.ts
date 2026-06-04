@@ -94,7 +94,7 @@ describe('AuditLogService', () => {
       {
         action: AUDIT_ACTION.PRODUCT_URN_STATUS_UPDATED,
         outcome: 'success',
-        new_values: { updateStatusTo: 11, urnStatus: 7, paymentStatus: 1 },
+        new_values: { updateStatusTo: 11 },
       },
     ]);
     execMock.mockResolvedValueOnce(1);
@@ -103,8 +103,6 @@ describe('AuditLogService', () => {
 
     expect(result.items[0].new_values).toEqual({
       updateStatusTo: 'Certification Fee Approved',
-      urnStatus: 'Certificate Payment Pending',
-      paymentStatus: 'Paid',
     });
   });
 });

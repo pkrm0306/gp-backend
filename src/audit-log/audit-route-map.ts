@@ -369,21 +369,12 @@ export function mapFriendlyAudit(
     };
   }
 
-  if (
-    m === 'PATCH' &&
-    /^\/payments\/[^/]+(?:\/vendor-proposal-approval)?$/.test(pathNorm)
-  ) {
-    const match = pathNorm.match(/^\/payments\/([^/]+)/);
-    const urn = match?.[1];
-    const isVendorProposalApproval = pathNorm.endsWith(
-      '/vendor-proposal-approval',
-    );
+  if (m === 'PATCH' && /^\/payments\/[^/]+$/.test(pathNorm)) {
+    const urn = pathNorm.split('/').pop();
     return {
       module: AUDIT_MODULE.PAYMENT,
       action_type: AUDIT_ACTION_TYPE.UPDATE,
-      description: isVendorProposalApproval
-        ? 'Vendor proposal approval updated'
-        : 'Payment record updated',
+      description: 'Payment record updated',
       entity_name: urn ? decodeURIComponent(urn) : undefined,
       new_values: snap,
     };

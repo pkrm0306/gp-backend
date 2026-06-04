@@ -56,6 +56,7 @@ import {
   mergeRenewDocumentSources,
   formatRenewMpManufacturingUnitForDetails,
   formatRenewWmManufacturingUnitForDetails,
+  spreadProductPerformanceToDetailRows,
 } from '../utils/renew-details-format.util';
 import {
   fetchRenewCertifiedEoiSet,
@@ -173,20 +174,18 @@ export class RenewDetailsService {
 
   private async loadRenewBundle(urnNo: string, renewalCycleId?: string) {
     const cycle = await this.resolveActiveCycle(urnNo, renewalCycleId);
-    const performanceCycle =
-      await this.processRenewProductPerformanceService.resolveRenewalCycleForRead(
-        urnNo,
-        renewalCycleId,
-      );
+    const cycleIdForRead =
+      renewalCycleId?.trim() ?? (cycle?._id ? String(cycle._id) : undefined);
 
     const performanceRead =
       await this.processRenewProductPerformanceService.loadRenewProductPerformanceReadPayload(
         urnNo,
-        renewalCycleId,
+        cycleIdForRead,
       );
 
     const headerFilter = buildRenewProcessHeaderFilter(urnNo, cycle);
     const strictDocs = Number(cycle?.cycleNo ?? 1) > 1;
+    const documentCycleId = cycle?._id ?? performanceRead.renewalCycleId;
 
     const [
       manufacturing,
@@ -230,11 +229,9 @@ export class RenewDetailsService {
         }),
       this.renewDocumentModel
         .find(
-          buildRenewDocumentsQueryFilter(
-            urnNo,
-            performanceCycle._id ?? cycle?._id,
-            { strictCycleOnly: strictDocs },
-          ),
+          buildRenewDocumentsQueryFilter(urnNo, documentCycleId, {
+            strictCycleOnly: strictDocs,
+          }),
         )
         .sort({ productDocumentId: -1 })
         .lean()
@@ -288,7 +285,7 @@ export class RenewDetailsService {
 
     return {
       cycle,
-      performanceCycle,
+      performanceCycleId: performanceRead.renewalCycleId,
       processSections: {
         product_performance: performanceRead.product_performance,
         product_performance_test_reports:
@@ -369,11 +366,20 @@ export class RenewDetailsService {
       })),
     );
 
-    const data = enriched.map((row) => ({
-      ...row,
-      process_mp_manufacturing_units: renewMpUnits,
-      process_wm_manufacturing_units: renewWmUnits,
-    }));
+    const data = enriched.map((row) => {
+      const next = {
+        ...row,
+        process_mp_manufacturing_units: renewMpUnits,
+        process_wm_manufacturing_units: renewWmUnits,
+      };
+      if (!next.product_performance) {
+        spreadProductPerformanceToDetailRows(
+          [next],
+          bundle.processSections.product_performance as Record<string, unknown> | null,
+        );
+      }
+      return next;
+    });
 
     const first = (data[0] ?? {}) as Record<string, unknown>;
     const productDetails = first.product_details as Record<string, unknown> | undefined;
@@ -444,8 +450,8 @@ export class RenewDetailsService {
           (first.manufacturer as Record<string, unknown> | undefined)?._id ??
           null,
         renewalCycleId: String(
-          bundle.performanceCycle._id ??
-            activeCycle?._id ??
+          activeCycle?._id ??
+            bundle.performanceCycleId ??
             renewalCycleId?.trim() ??
             '',
         ),
