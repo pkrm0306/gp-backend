@@ -46,9 +46,17 @@ export class ResponseInterceptor implements NestInterceptor {
           totalCount?: number;
           currentPage?: number;
           totalPages?: number;
+          pagination?: unknown;
+          meta?: unknown;
           unreadCount?: number;
           markedCount?: number;
         };
+        if (payload?.pagination !== undefined) {
+          response.pagination = payload.pagination;
+        }
+        if (payload?.meta !== undefined) {
+          response.meta = payload.meta;
+        }
         if (typeof payload?.total === 'number') {
           response.total = payload.total;
         }

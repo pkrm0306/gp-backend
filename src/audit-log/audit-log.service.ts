@@ -52,6 +52,8 @@ export class AuditLogService {
     page: number;
     limit: number;
     pages: number;
+    from: Date;
+    to: Date;
   }> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -80,16 +82,13 @@ export class AuditLogService {
     if (query.urn_no) {
       filter['resource.urn_no'] = query.urn_no;
     }
-    if (query.from || query.to) {
-      const range: Record<string, Date> = {};
-      if (query.from) {
-        range.$gte = new Date(query.from);
-      }
-      if (query.to) {
-        range.$lte = new Date(query.to);
-      }
-      filter.occurred_at = range;
+    const to = query.to ? new Date(query.to) : new Date();
+    const from = query.from ? new Date(query.from) : new Date(to);
+    if (!query.from) {
+      from.setMonth(from.getMonth() - 1);
     }
+    filter.occurred_at = { $gte: from, $lte: to };
+
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
       this.auditLogModel
@@ -107,6 +106,8 @@ export class AuditLogService {
       page,
       limit,
       pages: Math.max(1, Math.ceil(total / limit)),
+      from,
+      to,
     };
   }
 }

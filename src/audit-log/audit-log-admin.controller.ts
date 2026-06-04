@@ -24,7 +24,8 @@ export class AuditLogAdminController {
     summary: 'List audit log entries (admin)',
     description:
       'Append-only audit trail. Each row includes user-facing **module**, **action_type**, **description**, **performed_by**, and technical fields (**route**, **http_method**, **request.ip**, **status_code**). ' +
-      'For admin grids: **occurred_at** | **user_display** | **module** | **action_type** | **description** | **request.ip**.',
+      'By default this endpoint returns the latest one month of data with pagination. ' +
+      'For admin grids: **occurred_at** | **user_display** | **module** | **action_type** | **description** | **new_values** | **request.ip**.',
   })
   @ApiResponse({ status: 200, description: 'Paginated audit entries' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -39,21 +40,34 @@ export class AuditLogAdminController {
       const actor = row['actor'] as { user_id?: string } | undefined;
       return {
         ...row,
+        new_values:
+          (row['new_values'] as Record<string, unknown> | undefined) ?? null,
         user_display:
           pb?.name || pb?.email || pb?.user_id || actor?.user_id || null,
         action_display: (row['action_type'] as string | undefined) ?? null,
       };
     });
+    const pagination = {
+      totalCount: result.total,
+      page: result.page,
+      limit: result.limit,
+      totalPages: result.pages,
+    };
+    const meta = {
+      ...pagination,
+      from: result.from.toISOString(),
+      to: result.to.toISOString(),
+    };
     return {
       success: true,
       message: 'Audit log retrieved',
       data,
-      meta: {
-        total: result.total,
-        page: result.page,
-        limit: result.limit,
-        pages: result.pages,
-      },
+      pagination,
+      meta,
+      totalCount: pagination.totalCount,
+      page: pagination.page,
+      limit: pagination.limit,
+      totalPages: pagination.totalPages,
     };
   }
 }

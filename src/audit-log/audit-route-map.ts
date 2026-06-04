@@ -69,6 +69,16 @@ function methodDefaultActionType(method: string): AuditActionType {
   return AUDIT_ACTION_TYPE.UPDATE;
 }
 
+function actionVerbLabel(actionType: AuditActionType): string {
+  if (actionType === AUDIT_ACTION_TYPE.CREATE) {
+    return 'created';
+  }
+  if (actionType === AUDIT_ACTION_TYPE.DELETE) {
+    return 'deleted';
+  }
+  return 'updated';
+}
+
 function isProductFamilyPath(p: string): boolean {
   return (
     p.startsWith('/product-design') ||
@@ -83,10 +93,39 @@ function isProductFamilyPath(p: string): boolean {
   );
 }
 
+function isRawMaterialsPath(p: string): boolean {
+  return (
+    p.startsWith('/raw-materials-') ||
+    p.startsWith('/vendor/raw-materials/')
+  );
+}
+
+function isProcessPath(p: string): boolean {
+  return p.startsWith('/process-') || p.startsWith('/admin/process');
+}
+
+function pathEntityId(pathNorm: string): string | undefined {
+  const id = pathNorm.split('/').filter(Boolean).pop();
+  return id ? decodeURIComponent(id) : undefined;
+}
+
 function urnFromBody(
   body: Record<string, unknown> | undefined,
 ): string | undefined {
   return firstStringField(body, ['urn_no', 'urnNo', 'urn']);
+}
+
+function nameFromBody(
+  body: Record<string, unknown> | undefined,
+): string | undefined {
+  return firstStringField(body, [
+    'name',
+    'title',
+    'category_name',
+    'companyName',
+    'company_name',
+    'email',
+  ]);
 }
 
 /**
@@ -322,7 +361,7 @@ export function mapFriendlyAudit(
 
   if (m === 'POST' && pathNorm.endsWith('/payments')) {
     return {
-      module: AUDIT_MODULE.CERTIFICATION,
+      module: AUDIT_MODULE.PAYMENT,
       action_type: AUDIT_ACTION_TYPE.CREATE,
       description: 'Payment record created',
       entity_name: urnFromBody(body) ?? firstStringField(body, ['urnNo']),
@@ -333,7 +372,7 @@ export function mapFriendlyAudit(
   if (m === 'PATCH' && /^\/payments\/[^/]+$/.test(pathNorm)) {
     const urn = pathNorm.split('/').pop();
     return {
-      module: AUDIT_MODULE.CERTIFICATION,
+      module: AUDIT_MODULE.PAYMENT,
       action_type: AUDIT_ACTION_TYPE.UPDATE,
       description: 'Payment record updated',
       entity_name: urn ? decodeURIComponent(urn) : undefined,
@@ -343,10 +382,32 @@ export function mapFriendlyAudit(
 
   if (m === 'POST' && pathNorm.endsWith('/activity-log')) {
     return {
-      module: AUDIT_MODULE.CERTIFICATION,
+      module: AUDIT_MODULE.ACTIVITY_LOG,
       action_type: AUDIT_ACTION_TYPE.CREATE,
       description: 'Certification activity logged',
       entity_name: urnFromBody(body),
+      new_values: snap,
+    };
+  }
+
+  if (isRawMaterialsPath(pathNorm)) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.RAW_MATERIALS,
+      action_type: at,
+      description: `Raw materials data ${actionVerbLabel(at)}`,
+      entity_name: urnFromBody(body) ?? nameFromBody(body),
+      new_values: snap,
+    };
+  }
+
+  if (isProcessPath(pathNorm)) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.PROCESS,
+      action_type: at,
+      description: `Process data ${actionVerbLabel(at)}`,
+      entity_name: urnFromBody(body) ?? nameFromBody(body),
       new_values: snap,
     };
   }
@@ -367,6 +428,256 @@ export function mapFriendlyAudit(
       action_type: at,
       description,
       entity_name: urn,
+      new_values: snap,
+    };
+  }
+
+  if (
+    pathNorm.startsWith('/website/banner') ||
+    pathNorm.startsWith('/website/banners')
+  ) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.BANNER,
+      action_type: at,
+      description: `Banner ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/website/public/articles')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.ARTICLE,
+      action_type: at,
+      description: `Article ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/website/events')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.EVENT,
+      action_type: at,
+      description: `Event ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/website/public/gallery')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.GALLERY,
+      action_type: at,
+      description: `Gallery item ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/website/newsletter')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.NEWSLETTER,
+      action_type: at,
+      description: `Newsletter subscription ${actionVerbLabel(at)}`,
+      entity_name: firstStringField(body, ['email']) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/website/contact')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.CONTACT,
+      action_type: at,
+      description: `Contact inquiry ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (
+    pathNorm.startsWith('/website/team-members') ||
+    pathNorm.startsWith('/api/team-members')
+  ) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.TEAM_MEMBER,
+      action_type: at,
+      description: `Team member ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/website/manufacturer/inquiry')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.MANUFACTURER_INQUIRY,
+      action_type: at,
+      description: `Manufacturer inquiry ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (
+    pathNorm.startsWith('/website/summits') ||
+    pathNorm.startsWith('/admin/summits')
+  ) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.SUMMIT,
+      action_type: at,
+      description: `Summit ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/website')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.WEBSITE,
+      action_type: at,
+      description: `Website content ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (
+    pathNorm.startsWith('/api/manufacturers') ||
+    pathNorm.startsWith('/api/admin/manufacturers')
+  ) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.MANUFACTURER,
+      action_type: at,
+      description: `Manufacturer ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (
+    pathNorm.startsWith('/api/vendor/requests') ||
+    (pathNorm.startsWith('/api/vendor') &&
+      !pathNorm.startsWith('/api/vendor/dashboard'))
+  ) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.USER,
+      action_type: at,
+      description: `Vendor user ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/partners')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.PARTNER,
+      action_type: at,
+      description: `Partner ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/states')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.STATE,
+      action_type: at,
+      description: `State ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/countries')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.COUNTRY,
+      action_type: at,
+      description: `Country ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (
+    pathNorm.startsWith('/api/vendor/dashboard') ||
+    pathNorm.startsWith('/admin/dashboard')
+  ) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.DASHBOARD,
+      action_type: at,
+      description: `Dashboard ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/api/standards')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.STANDARD,
+      action_type: at,
+      description: `Standard ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/documents')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.DOCUMENT,
+      action_type: at,
+      description: `Document ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/admin/rbac')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.RBAC,
+      action_type: at,
+      description: `RBAC ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/zoho')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.ZOHO,
+      action_type: at,
+      description: `Zoho integration ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
+      new_values: snap,
+    };
+  }
+
+  if (pathNorm.startsWith('/admin')) {
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.ADMIN,
+      action_type: at,
+      description: `Admin action ${actionVerbLabel(at)}`,
+      entity_name: nameFromBody(body) ?? pathEntityId(pathNorm),
       new_values: snap,
     };
   }

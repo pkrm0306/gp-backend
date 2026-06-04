@@ -68,12 +68,17 @@ export class QueryAuditLogDto {
   @IsString()
   urn_no?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Start of date range. Defaults to one month before `to`/now when omitted.',
+  })
   @IsOptional()
   @IsDateString()
   from?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description: 'End of date range. Defaults to current server time.',
+  })
   @IsOptional()
   @IsDateString()
   to?: string;
