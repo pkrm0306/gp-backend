@@ -23,6 +23,8 @@ const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const NON_ACTIONABLE_AUDIT_ROUTES: Array<{ method: string; regex: RegExp }> = [
   // Triggered automatically by client token refresh on page reload/navigation.
   { method: 'POST', regex: /^\/auth\/refresh$/i },
+  // Public website/customer-facing routes are intentionally excluded from audit logs.
+  { method: '*', regex: /^\/website(?:\/|$)/i },
 ];
 
 function normalizePath(url: string): string {
@@ -97,7 +99,9 @@ function resolveAction(method: string, pathNorm: string): string {
 function shouldSkipAuditRoute(method: string, pathNorm: string): boolean {
   const m = method.toUpperCase();
   return NON_ACTIONABLE_AUDIT_ROUTES.some(
-    (route) => route.method === m && route.regex.test(pathNorm),
+    (route) =>
+      (route.method === '*' || route.method === m) &&
+      route.regex.test(pathNorm),
   );
 }
 
