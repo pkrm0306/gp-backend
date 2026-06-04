@@ -1124,10 +1124,6 @@ export class PaymentsService {
         paymentQuery.paymentType = paymentTypeHint;
       }
 
-      const paymentTypeHint =
-        updatePaymentDto.paymentType !== undefined
-          ? this.normalizePaymentType(updatePaymentDto.paymentType)
-          : undefined;
       const renewCycleIdHint = String(updatePaymentDto.renewalCycleId ?? '').trim();
 
       let existingPayment: PaymentDetailsDocument | null = null;
