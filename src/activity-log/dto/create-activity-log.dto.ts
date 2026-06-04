@@ -30,7 +30,9 @@ export class CreateActivityLogDto {
   @Min(0)
   activities_id: number;
 
-  @ApiProperty({ example: 'Registration Payment' })
+  @ApiProperty({
+    example: 'Approve/Reject Registration Fee Proposal and make payment',
+  })
   @IsString()
   @IsNotEmpty()
   activity: string;
@@ -47,7 +49,7 @@ export class CreateActivityLogDto {
   @Min(0)
   sub_activities_id?: number;
 
-  @ApiProperty({ example: 'Vendor' })
+  @ApiProperty({ example: 'Manufacturer' })
   @IsString()
   @IsNotEmpty()
   responsibility: string;

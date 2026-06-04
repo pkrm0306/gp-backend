@@ -3,22 +3,23 @@
  * Design mockups (GreenCo labels) are not used; labels come from logged activities or URN lifecycle.
  */
 
-export const URN_LIFECYCLE_MAX_STATUS = 11;
+import {
+  ACTIVITY_LIFECYCLE_MAX_STATUS,
+  ACTIVITY_LIFECYCLE_STEPS,
+  activityLifecycleName,
+  activityLifecycleResponsibility,
+  nextActivityLifecycleStatus,
+} from '../activity-log/activity-lifecycle.constants';
 
-export const URN_ACTIVITY_NAMES: Readonly<Record<number, string>> = {
-  0: 'Proposal Pending',
-  1: 'Registration Payment',
-  2: 'Approve Registration Fee',
-  3: 'Process Form In Progress',
-  4: 'Process Form Submitted',
-  5: 'Vendor Response',
-  6: 'Final Verification',
-  7: 'Certificate Payment',
-  8: 'Approve Certificate Fee',
-  9: 'Payment Rejected',
-  10: 'Approved Certificate Fee',
-  11: 'Certificate Published',
-};
+export const URN_LIFECYCLE_MAX_STATUS = ACTIVITY_LIFECYCLE_MAX_STATUS;
+
+export const URN_ACTIVITY_NAMES: Readonly<Record<number, string>> =
+  Object.fromEntries(
+    Object.entries(ACTIVITY_LIFECYCLE_STEPS).map(([status, step]) => [
+      Number(status),
+      step.activity,
+    ]),
+  ) as Readonly<Record<number, string>>;
 
 export type VendorProgressStepStatus = 'completed' | 'active' | 'pending';
 
@@ -77,52 +78,40 @@ export type ActivityLogLike = {
 };
 
 export function urnActivityName(status: number): string {
-  return URN_ACTIVITY_NAMES[status] ?? `Step ${status}`;
+  return activityLifecycleName(status);
 }
 
 export function nextUrnActivityId(currentStatus: number): number {
-  if (currentStatus >= URN_LIFECYCLE_MAX_STATUS) {
-    return URN_LIFECYCLE_MAX_STATUS;
-  }
-  if (currentStatus === 4) return 6;
-  if (currentStatus === 8) return 10;
-  return Math.min(currentStatus + 1, URN_LIFECYCLE_MAX_STATUS);
+  return nextActivityLifecycleStatus(currentStatus);
 }
 
-/** Previous milestone (inverse of next-step skips). */
+/** Previous milestone in the activity lifecycle. */
 export function previousUrnActivityId(currentStatus: number): number {
   if (currentStatus <= 0) return 0;
-  if (currentStatus === 6) return 4;
-  if (currentStatus === 10) return 8;
   return currentStatus - 1;
 }
 
-export function urnResponsibilityOwner(status: number): 'Admin' | 'Vendor' {
-  switch (status) {
-    case 0:
-    case 2:
-    case 6:
-    case 8:
-    case 9:
-    case 10:
-    case 11:
-      return 'Admin';
-    default:
-      return 'Vendor';
-  }
+export function urnResponsibilityOwner(
+  status: number,
+): 'Admin' | 'Manufacturer' {
+  return activityLifecycleResponsibility(status);
 }
 
-/** Vendor UI: Admin → CII, Vendor → Company */
+/** Normalize old labels to the canonical activity-log responsibility names. */
 export function toVendorPanelResponsibility(
   owner: string | undefined | null,
 ): string {
   const v = String(owner ?? '').trim();
-  if (!v) return 'Company';
+  if (!v) return 'Manufacturer';
   if (v.toLowerCase() === 'admin' || v.toLowerCase() === 'cii') {
-    return 'CII';
+    return 'Admin';
   }
-  if (v.toLowerCase() === 'vendor' || v.toLowerCase() === 'company') {
-    return 'Company';
+  if (
+    v.toLowerCase() === 'vendor' ||
+    v.toLowerCase() === 'company' ||
+    v.toLowerCase() === 'manufacturer'
+  ) {
+    return 'Manufacturer';
   }
   return v;
 }

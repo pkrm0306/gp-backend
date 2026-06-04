@@ -47,6 +47,12 @@ import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import {
+  activityLifecycleName,
+  activityLifecycleResponsibility,
+  ActivityLifecycleOwner,
+  nextActivityLifecycleStatus,
+} from '../activity-log/activity-lifecycle.constants';
 import { formatPaymentRecords } from '../payments/payment-proposal.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { enrichUrnDetailRowsWithSharedProcessData } from './utils/consolidate-urn-detail-items.util';
@@ -1470,61 +1476,20 @@ export class ProductRegistrationService {
   /**
    * Map urnStatus to activity name
    * Certification Flow Status Mapping (activity log labels):
-   * 0  Proposal Pending
-   * 1  Registration Payment
-   * 2  Approve Registration Fee
-   * 3  Process Form In Progress
-   * 4  Process Form Submitted
-   * 5  Vendor Response
-   * 6  Final Verification
-   * 7  Certificate Payment
-   * 8  Approve Certificate Fee
-   * 9  Payment Rejected
-   * 10 Approved Certificate Fee
-   * 11 Certificate Published
-   *
-   * Next-step display: after 4 (or 5) next is 6; after 8 (or 9) next is 10.
+   * Activity log labels and responsibility owners are shared with payments and dashboard progress.
    */
   private getActivityName(urnStatus: number): string {
-    const activityMap: { [key: number]: string } = {
-      0: 'Proposal Pending',
-      1: 'Registration Payment',
-      2: 'Approve Registration Fee',
-      3: 'Process Form In Progress',
-      4: 'Process Form Submitted',
-      5: 'Vendor Response',
-      6: 'Final Verification',
-      7: 'Certificate Payment',
-      8: 'Approve Certificate Fee',
-      9: 'Payment Rejected',
-      10: 'Approved Certificate Fee',
-      11: 'Certificate Published',
-    };
-    return activityMap[urnStatus] || 'Unknown Activity';
+    return activityLifecycleName(urnStatus);
   }
 
-  /** Next timeline step id: skips 5 after 4, and 9 after 8 (resend paths use 5 / 9). */
+  /** Next timeline step id from the canonical activity lifecycle. */
   private getNextActivityIdForLog(currentStatus: number): number {
-    if (currentStatus >= 11) return 11;
-    if (currentStatus === 4) return 6;
-    if (currentStatus === 8) return 10;
-    return Math.min(currentStatus + 1, 11);
+    return nextActivityLifecycleStatus(currentStatus);
   }
 
   /** Responsibility owner by status for activity timeline rows. */
-  private getResponsibilityForStatus(status: number): 'Admin' | 'Vendor' {
-    switch (status) {
-      case 0:
-      case 2:
-      case 6:
-      case 8:
-      case 9:
-      case 10:
-      case 11:
-        return 'Admin';
-      default:
-        return 'Vendor';
-    }
+  private getResponsibilityForStatus(status: number): ActivityLifecycleOwner {
+    return activityLifecycleResponsibility(status);
   }
 
   /**
@@ -1774,14 +1739,14 @@ export class ProductRegistrationService {
         session.endSession();
 
         // Log activity after successful product registration
-        // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment)
+        // urnStatus is 0 (Product Registration), next step is 1 (Product Approve/Reject)
         try {
           await this.activityLogService.logActivity({
             vendor_id: manufacturerId,
             manufacturer_id: manufacturerId,
             urn_no: urnNo,
             activities_id: 0, // Current urnStatus
-            activity: this.getActivityName(0), // "Proposal Pending"
+            activity: this.getActivityName(0), // "Product Registration"
             activity_status: 0,
             responsibility: this.getResponsibilityForStatus(0),
             next_responsibility: this.getResponsibilityForStatus(1),
@@ -2045,14 +2010,14 @@ export class ProductRegistrationService {
         session.endSession();
 
         // Log activity after successful bulk product registration
-        // urnStatus is 0 (Proposal Pending), next step is 1 (Registration Payment)
+        // urnStatus is 0 (Product Registration), next step is 1 (Product Approve/Reject)
         try {
           await this.activityLogService.logActivity({
             vendor_id: manufacturerId,
             manufacturer_id: manufacturerId,
             urn_no: urnNo,
             activities_id: 0, // Current urnStatus
-            activity: this.getActivityName(0), // "Proposal Pending"
+            activity: this.getActivityName(0), // "Product Registration"
             activity_status: 0,
             responsibility: this.getResponsibilityForStatus(0),
             next_responsibility: this.getResponsibilityForStatus(1),

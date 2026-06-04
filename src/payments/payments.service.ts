@@ -35,6 +35,12 @@ import {
   formatPaymentRecords,
   resolveVendorProposalApprovalStatus,
 } from './payment-proposal.util';
+import {
+  activityLifecycleName,
+  activityLifecycleResponsibility,
+  ActivityLifecycleOwner,
+  nextActivityLifecycleStatus,
+} from '../activity-log/activity-lifecycle.constants';
 import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
@@ -110,45 +116,17 @@ export class PaymentsService {
    * Certification Flow Status Mapping (URN status -> activity label)
    */
   private getActivityName(urnStatus: number): string {
-    const activityMap: { [key: number]: string } = {
-      0: 'Proposal Pending',
-      1: 'Registration Payment',
-      2: 'Approve Registration Fee',
-      3: 'Process Form In Progress',
-      4: 'Process Form Submitted',
-      5: 'Vendor Response',
-      6: 'Final Verification',
-      7: 'Certificate Payment',
-      8: 'Approve Certificate Fee',
-      9: 'Payment Rejected',
-      10: 'Approved Certificate Fee',
-      11: 'Certificate Published',
-    };
-    return activityMap[urnStatus] || 'Unknown Activity';
+    return activityLifecycleName(urnStatus);
   }
 
-  /** Next timeline step id: skips 5 after 4, and 9 after 8 (resend paths use 5 / 9). */
+  /** Next timeline step id from the canonical activity lifecycle. */
   private getNextActivityIdForLog(currentStatus: number): number {
-    if (currentStatus >= 11) return 11;
-    if (currentStatus === 4) return 6;
-    if (currentStatus === 8) return 10;
-    return Math.min(currentStatus + 1, 11);
+    return nextActivityLifecycleStatus(currentStatus);
   }
 
   /** Responsibility owner by status for activity timeline rows. */
-  private getResponsibilityForStatus(status: number): 'Admin' | 'Vendor' {
-    switch (status) {
-      case 0:
-      case 2:
-      case 6:
-      case 8:
-      case 9:
-      case 10:
-      case 11:
-        return 'Admin';
-      default:
-        return 'Vendor';
-    }
+  private getResponsibilityForStatus(status: number): ActivityLifecycleOwner {
+    return activityLifecycleResponsibility(status);
   }
 
   /** Accepts case-insensitive textual payment types and normalizes for DB enum. */
@@ -333,9 +311,9 @@ export class PaymentsService {
     urnNo: string,
     entry: {
       activity: string;
-      responsibility: 'Admin' | 'Vendor';
+      responsibility: ActivityLifecycleOwner;
       next_activity: string;
-      next_responsibility: 'Admin' | 'Vendor';
+      next_responsibility: ActivityLifecycleOwner;
       activities_id?: number;
       activity_status?: number;
     },
@@ -370,7 +348,10 @@ export class PaymentsService {
     paymentRejectionRemarks: string,
     urnStatus: number,
   ): Promise<void> {
-    const activityLabel = `Admin rejected payment: ${paymentRejectionRemarks}`;
+    const isCertification = paymentType === 'certification';
+    const activityLabel = isCertification
+      ? 'Approve/Reject Certification Fee'
+      : 'Approve/Reject Registration Fee';
     await this.logTimelineEntry(
       vendorId,
       manufacturerId,
@@ -378,8 +359,10 @@ export class PaymentsService {
       {
         activity: activityLabel,
         responsibility: 'Admin',
-        next_activity: 'Submit registration payment proof',
-        next_responsibility: 'Vendor',
+        next_activity: isCertification
+          ? 'Certification Fee Payment'
+          : 'Approve/Reject Registration Fee Proposal and make payment',
+        next_responsibility: 'Manufacturer',
         activities_id: urnStatus,
         activity_status: urnStatus,
       },
@@ -684,10 +667,11 @@ export class PaymentsService {
           manufacturerId,
           urnNo,
           {
-            activity: 'Admin generated registration fee proposal',
+            activity: 'Assign Registration Fee',
             responsibility: 'Admin',
-            next_activity: 'Vendor reviews proposal document',
-            next_responsibility: 'Vendor',
+            next_activity:
+              'Approve/Reject Registration Fee Proposal and make payment',
+            next_responsibility: 'Manufacturer',
             activities_id: urnStatus,
             activity_status: urnStatus,
           },
@@ -698,8 +682,8 @@ export class PaymentsService {
 
       const label =
         paymentType === 'certification'
-          ? 'Certificate fee payment record created'
-          : 'Registration fee payment record created';
+          ? 'Assign Certification Fee'
+          : 'Assign Registration Fee';
       await this.logTimelineEntry(
         vendorId,
         manufacturerId,
@@ -707,8 +691,11 @@ export class PaymentsService {
         {
           activity: label,
           responsibility: 'Admin',
-          next_activity: 'Vendor reviews proposal document',
-          next_responsibility: 'Vendor',
+          next_activity:
+            paymentType === 'certification'
+              ? 'Certification Fee Payment'
+              : 'Approve/Reject Registration Fee Proposal and make payment',
+          next_responsibility: 'Manufacturer',
           activities_id: urnStatus,
           activity_status: urnStatus,
         },
@@ -1537,11 +1524,12 @@ export class PaymentsService {
             {
               activity:
                 currentApproval === 2
-                  ? 'Admin uploaded revised registration fee proposal'
-                  : 'Admin generated registration fee proposal',
+                  ? 'Assign Registration Fee'
+                  : 'Assign Registration Fee',
               responsibility: 'Admin',
-              next_activity: 'Vendor reviews proposal document',
-              next_responsibility: 'Vendor',
+              next_activity:
+                'Approve/Reject Registration Fee Proposal and make payment',
+              next_responsibility: 'Manufacturer',
               activities_id: urnStatus,
               activity_status: urnStatus,
             },
@@ -1571,9 +1559,10 @@ export class PaymentsService {
             anyProduct.manufacturerId.toString(),
             normalizedUrn,
             {
-              activity: 'Vendor submitted registration payment',
-              responsibility: 'Vendor',
-              next_activity: 'Approve registration fee',
+              activity:
+                'Approve/Reject Registration Fee Proposal and make payment',
+              responsibility: 'Manufacturer',
+              next_activity: 'Approve/Reject Registration Fee',
               next_responsibility: 'Admin',
               activities_id: urnStatus,
               activity_status: urnStatus,
@@ -1609,9 +1598,9 @@ export class PaymentsService {
             anyProduct.manufacturerId.toString(),
             normalizedUrn,
             {
-              activity: 'Vendor submitted certification payment',
-              responsibility: 'Vendor',
-              next_activity: 'Approve certificate fee',
+              activity: 'Certification Fee Payment',
+              responsibility: 'Manufacturer',
+              next_activity: 'Approve/Reject Certification Fee',
               next_responsibility: 'Admin',
               activities_id: urnStatus,
               activity_status: urnStatus,
@@ -1653,13 +1642,13 @@ export class PaymentsService {
             normalizedUrn,
             {
               activity: isCertification
-                ? 'Certification payment approved by admin'
-                : 'Registration payment approved by admin',
+                ? 'Approve/Reject Certification Fee'
+                : 'Approve/Reject Registration Fee',
               responsibility: 'Admin',
               next_activity: isCertification
-                ? 'Approved certificate fee'
-                : 'Process form in progress',
-              next_responsibility: 'Vendor',
+                ? 'Approve/Reject Certification Fee'
+                : 'Process Forms in Progress',
+              next_responsibility: 'Manufacturer',
               activities_id: urnStatus,
               activity_status: urnStatus,
             },
@@ -1875,10 +1864,10 @@ export class PaymentsService {
         product.manufacturerId.toString(),
         normalizedUrn,
         {
-          activity: 'Vendor approved registration fee proposal',
-          responsibility: 'Vendor',
-          next_activity: 'Submit registration payment proof',
-          next_responsibility: 'Vendor',
+          activity: 'Approve/Reject Registration Fee Proposal and make payment',
+          responsibility: 'Manufacturer',
+          next_activity: 'Approve/Reject Registration Fee',
+          next_responsibility: 'Manufacturer',
           activities_id: urnStatus,
           activity_status: urnStatus,
         },
@@ -1886,16 +1875,16 @@ export class PaymentsService {
       );
     } else {
       const activityLabel = remarks
-        ? `Vendor rejected registration fee proposal: ${remarks}`
-        : 'Vendor rejected registration fee proposal';
+        ? `Approve/Reject Registration Fee Proposal and make payment: ${remarks}`
+        : 'Approve/Reject Registration Fee Proposal and make payment';
       await this.logTimelineEntry(
         vendorId,
         product.manufacturerId.toString(),
         normalizedUrn,
         {
           activity: activityLabel,
-          responsibility: 'Vendor',
-          next_activity: 'Upload revised proposal document',
+          responsibility: 'Manufacturer',
+          next_activity: 'Assign Registration Fee',
           next_responsibility: 'Admin',
           activities_id: urnStatus,
           activity_status: urnStatus,

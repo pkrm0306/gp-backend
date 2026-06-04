@@ -358,7 +358,8 @@ export class AuditLogService {
     }
     const out: Record<string, unknown> = { ...values };
     for (const [key, value] of Object.entries(values)) {
-      if (this.normalizeLookupKey(key) === 'updatestatusto') {
+      const normalizedKey = this.normalizeLookupKey(key);
+      if (normalizedKey === 'updatestatusto' || normalizedKey === 'urnstatus') {
         const label = this.urnStatusLabel(value);
         if (label) {
           out[key] = label;
@@ -395,6 +396,19 @@ export class AuditLogService {
       return undefined;
     }
     return URN_STATUS_LABELS[status];
+  }
+
+  private paymentStatusLabel(value: unknown): string | undefined {
+    const status =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.trim() !== ''
+          ? Number(value)
+          : NaN;
+    if (!Number.isInteger(status)) {
+      return undefined;
+    }
+    return PAYMENT_STATUS_LABELS[status];
   }
 
   private normalizeLookupKey(key: string): string {
