@@ -38,6 +38,7 @@ import { AdminListProductsFilterOptionsDto } from './dto/admin-list-products-fil
 import { AdminProductsExportDto } from './dto/admin-products-export.dto';
 import { SequenceHelper } from './helpers/sequence.helper';
 import { computeNotifyDates } from './helpers/certification-dates.util';
+import { formatAdminCertifiedProductPatchResponse } from './helpers/format-admin-certified-product-patch.util';
 import { EoiNumberService } from './services/eoi-number.service';
 import {
   matchActiveProductPlants,
@@ -69,10 +70,20 @@ import { UrnTabReviewService } from './urn-tab-review.service';
 import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-product.dto';
 import { VendorPatchCertifiedProductDto } from './dto/vendor-patch-certified-product.dto';
 import { VendorProductChangeRequestDto } from './dto/vendor-product-change-request.dto';
+import {
+  normalizeProductNameForComparison,
+  PRODUCT_NAME_ALREADY_EXISTS_MESSAGE,
+  productNameEqualsFilter,
+} from './helpers/product-name-uniqueness.util';
+import { enrichMpManufacturingUnitCalculations } from '../process-mp-manufacturing-units/utils/mp-energy-consumption-calculations.util';
+import { enrichWmManufacturingUnitCalculations } from '../process-wm-manufacturing-units/utils/wm-waste-disposal-calculations.util';
 import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
-import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
-import { uploadFile } from '../utils/upload-file.util';
+import {
+  deleteUploadedFileByDocumentLink,
+  resolveStoredUploadUrl,
+  uploadCertifiedProductImage,
+} from '../utils/upload-file.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import { EmailService } from '../common/services/email.service';
 import {
@@ -214,6 +225,150 @@ export class ProductRegistrationService {
     return null;
   }
 
+  /**
+   * Plant state **name** substring filter for vendor EOI list: `state_name`, or `state` when not an ObjectId.
+   */
+  private resolveVendorListPlantStateNameSearch(
+    dto: ListProductsDto,
+  ): string | undefined {
+    const explicit = dto.state_name != null ? String(dto.state_name).trim() : '';
+    if (explicit) {
+      return explicit;
+    }
+    const st = dto.state != null ? String(dto.state).trim() : '';
+    if (st && !/^[a-fA-F0-9]{24}$/.test(st)) {
+      return st;
+    }
+    return undefined;
+  }
+
+  /**
+   * Product ids for this vendor whose plants match country / state name / city filters.
+   * Returns `null` when no location filters are set.
+   */
+  private async findVendorProductIdsByPlantLocationFilters(
+    manufacturerId: string,
+    dto: ListProductsDto,
+  ): Promise<Types.ObjectId[] | null> {
+    const countryId = dto.countryId?.trim();
+    const stateSearch = this.resolveVendorListPlantStateNameSearch(dto);
+    const citySearch = dto.city?.trim();
+    if (!countryId && !stateSearch && !citySearch) {
+      return null;
+    }
+
+    const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+    const plantMatch: Record<string, unknown> = {
+      vendorId: vendorObjectId,
+      ...matchActiveProductPlants(),
+    };
+    if (countryId) {
+      plantMatch.countryId = this.toObjectId(countryId, 'countryId');
+    }
+
+    const pipeline: any[] = [
+      { $match: plantMatch },
+      {
+        $lookup: {
+          from: 'states',
+          localField: 'stateId',
+          foreignField: '_id',
+          as: 'st',
+        },
+      },
+      {
+        $unwind: {
+          path: '$st',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $addFields: {
+          stateName: {
+            $ifNull: [
+              '$st.stateName',
+              { $ifNull: ['$st.state_name', '$st.name'] },
+            ],
+          },
+        },
+      },
+    ];
+
+    const postMatchParts: Record<string, unknown>[] = [];
+    if (stateSearch) {
+      postMatchParts.push({
+        stateName: new RegExp(this.escapeRegexLiteral(stateSearch), 'i'),
+      });
+    }
+    if (citySearch) {
+      postMatchParts.push({
+        city: new RegExp(this.escapeRegexLiteral(citySearch), 'i'),
+      });
+    }
+    if (postMatchParts.length > 0) {
+      pipeline.push({
+        $match:
+          postMatchParts.length === 1
+            ? postMatchParts[0]
+            : { $and: postMatchParts },
+      });
+    }
+
+    pipeline.push({ $group: { _id: '$productId' } });
+
+    const rows = await this.productPlantModel.aggregate(pipeline).exec();
+    return rows.map((row) => row._id as Types.ObjectId);
+  }
+
+  /**
+   * Countries dropdown + UI hints for vendor uncertified (EOI) list location filters.
+   */
+  async vendorGetUncertifiedListFilterOptions() {
+    const countries = await this.countriesService.findAllForFilterOptions();
+    const countryOptions = (countries ?? []).map((country) => {
+      const c = country as {
+        _id?: Types.ObjectId;
+        countryName?: string;
+        country_name?: string;
+        name?: string;
+      };
+      const label =
+        String(c.countryName ?? c.country_name ?? c.name ?? '').trim() ||
+        'Country';
+      return {
+        value: String(c._id),
+        label,
+      };
+    });
+
+    return {
+      message: 'Filter options retrieved successfully',
+      data: {
+        countries: countryOptions,
+        filterControls: {
+          countryId: {
+            type: 'dropdown',
+            label: 'Country',
+            queryParam: 'countryId',
+            optionsKey: 'countries',
+          },
+          state: {
+            type: 'text',
+            label: 'State',
+            queryParam: 'state',
+            placeholder: 'Search by state name',
+          },
+          city: {
+            type: 'text',
+            label: 'City',
+            queryParam: 'city',
+            placeholder: 'Search by city',
+          },
+        },
+      },
+    };
+  }
+
   private buildVendorProductListCacheKey(
     listProductsDto: ListProductsDto,
     manufacturerId: string,
@@ -231,8 +386,17 @@ export class ProductRegistrationService {
       categoryId: listProductsDto.categoryId ?? null,
       dateFrom: listProductsDto.dateFrom ?? null,
       dateTo: listProductsDto.dateTo ?? null,
+      countryId: listProductsDto.countryId ?? null,
+      state: String(
+        this.resolveVendorListPlantStateNameSearch(listProductsDto) || '',
+      )
+        .trim()
+        .toLowerCase(),
+      city: String(listProductsDto.city || '')
+        .trim()
+        .toLowerCase(),
       sort: listProductsDto.sort === 'asc' ? 'asc' : 'desc',
-      v: 4,
+      v: 5,
     };
     return this.redisService.buildKey(
       'products',
@@ -265,7 +429,7 @@ export class ProductRegistrationService {
       manufacturerIds: this.resolveAdminListManufacturerIds(dto)?.join(',') ?? null,
       manufacturerNames:
         this.resolveAdminListManufacturerNames(dto)?.join('|') ?? null,
-      countryId: dto.countryId ?? null,
+      countryId: this.resolveAdminListCountryId(dto) ?? null,
       stateId: this.resolveAdminListPlantStateObjectId(dto) ?? null,
       stateIds: this.resolveAdminListPlantStateObjectIds(dto)?.join(',') ?? null,
       stateNames: this.resolveAdminListPlantStateNames(dto)?.join('|') ?? null,
@@ -284,7 +448,7 @@ export class ProductRegistrationService {
         this.resolveAdminListValidTillYears(dto)?.join(',') ?? null,
       sectorIds: this.resolveAdminListSectorIds(dto)?.join(',') ?? null,
       status: resolvedStatus,
-      v: 10,
+      v: 11,
     };
     return this.redisService.buildKey(
       'products',
@@ -310,6 +474,12 @@ export class ProductRegistrationService {
       return undefined;
     }
     return String(value);
+  }
+
+  /** Multipart form flags (`1`, `true`, `yes`, `on`) sent as strings. */
+  private multipartTruthy(value: unknown): boolean {
+    const v = String(value ?? '').trim().toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes' || v === 'on';
   }
 
   private normalizeUrnForCompare(urn: string): string {
@@ -419,13 +589,24 @@ export class ProductRegistrationService {
     return single ? [single] : null;
   }
 
+  private resolveAdminListCountryId(
+    dto: AdminListProductsDto,
+  ): string | undefined {
+    const raw = dto.countryId ?? dto.country_id;
+    const s = raw != null ? String(raw).trim() : '';
+    return s || undefined;
+  }
+
   private resolveAdminListCities(dto: AdminListProductsDto): string[] | null {
     if (Array.isArray(dto.cities) && dto.cities.length > 0) {
-      const cities = dto.cities.map((c) => String(c).trim()).filter((c) => c.length > 0);
+      const cities = dto.cities
+        .map((c) => String(c).trim())
+        .filter((c) => c.length > 0);
       return cities.length > 0 ? cities : null;
     }
-    if (dto.city && dto.city.trim() !== '') {
-      return [dto.city.trim()];
+    const city = String(dto.city ?? dto.city_name ?? '').trim();
+    if (city) {
+      return [city];
     }
     return null;
   }
@@ -2147,6 +2328,25 @@ export class ProductRegistrationService {
 
       const previousUrnStatus = existingProduct.urnStatus;
 
+      const nextProductName = normalizeProductNameForComparison(
+        updateProductDto.productName,
+      );
+      const storedProductName = normalizeProductNameForComparison(
+        existingProduct.productName,
+      );
+      if (
+        nextProductName &&
+        nextProductName.localeCompare(storedProductName, undefined, {
+          sensitivity: 'accent',
+        }) !== 0
+      ) {
+        await this.assertProductNameIsUnique(
+          nextProductName,
+          productObjectId,
+          'productName',
+        );
+      }
+
       const updateData: any = {
         updatedDate: new Date(),
         productName: updateProductDto.productName,
@@ -2372,10 +2572,30 @@ export class ProductRegistrationService {
       );
     }
 
+    const existingImage = String(
+      (await this.productModel
+        .findById(productObjectId)
+        .select('productImage')
+        .lean()
+        .exec())?.productImage ?? '',
+    ).trim();
+
+    const removeImage =
+      this.multipartTruthy(dto.remove_image) ||
+      this.multipartTruthy(dto.delete_image);
+
     let productImage: string | undefined;
     if (imageFile) {
-      const uploaded = await uploadFile(imageFile, 'products');
+      const uploaded = await uploadCertifiedProductImage(imageFile);
       productImage = uploaded.fileUrl;
+      if (existingImage && existingImage !== productImage) {
+        await deleteUploadedFileByDocumentLink(existingImage);
+      }
+    } else if (removeImage) {
+      productImage = '';
+      if (existingImage) {
+        await deleteUploadedFileByDocumentLink(existingImage);
+      }
     }
 
     const validTillRaw = dto.validtillDate ?? dto.validTillDate;
@@ -2389,8 +2609,24 @@ export class ProductRegistrationService {
       ...(productImage !== undefined ? { productImage } : {}),
     };
 
-    const updated = await this.updateProduct(productId, updateDto);
-    return updated;
+    await this.updateProduct(productId, updateDto);
+
+    const row = await this.productModel
+      .findById(productObjectId)
+      .select(
+        '_id urnNo eoiNo productName productDetails categoryId productImage productStatus validtillDate updatedDate',
+      )
+      .lean()
+      .exec();
+
+    if (!row) {
+      throw new NotFoundException('Product not found after update');
+    }
+
+    return formatAdminCertifiedProductPatchResponse(
+      row as Record<string, unknown>,
+      (value) => this.toMongoIdString(value),
+    );
   }
 
   async adminUpdateCertifiedProductPassport(
@@ -2466,12 +2702,18 @@ export class ProductRegistrationService {
       throw new NotFoundException('Certified product not found');
     }
 
+    const productImageRaw = row.productImage ? String(row.productImage).trim() : '';
+    const productImage = productImageRaw
+      ? resolveStoredUploadUrl(productImageRaw) || productImageRaw
+      : null;
+
     return {
       _id: this.toMongoIdString(row._id),
       urnNo: String(row.urnNo ?? ''),
       eoiNo: String(row.eoiNo ?? ''),
       productName: String(row.productName ?? ''),
-      productImage: row.productImage ? String(row.productImage) : null,
+      productImage,
+      productImageUrl: productImage,
       validtillDate: row.validtillDate ?? null,
       passport: String(row.productPassport ?? ''),
       productStatus: Number(row.productStatus ?? 0),
@@ -2522,12 +2764,22 @@ export class ProductRegistrationService {
    * Public website filter panel: active categories + country/state tree (from DB).
    */
   async getPublicCertifiedWebsiteFilterOptions() {
-    const categories = await this.categoryModel
-      .find({ category_status: 1 })
-      .select('_id category_name')
-      .sort({ category_name: 1 })
-      .lean()
+    const categoryIdsWithProducts = await this.productModel
+      .distinct('categoryId', matchWebsitePublicCertifiedProducts())
       .exec();
+
+    const categories =
+      categoryIdsWithProducts.length > 0
+        ? await this.categoryModel
+            .find({
+              _id: { $in: categoryIdsWithProducts },
+              category_status: 1,
+            })
+            .select('_id category_name')
+            .sort({ category_name: 1 })
+            .lean()
+            .exec()
+        : [];
 
     const categoryOptions = categories.map((c) => ({
       id: String(c._id),
@@ -2703,6 +2955,20 @@ export class ProductRegistrationService {
           },
         },
         {
+          $lookup: {
+            from: 'categories',
+            localField: 'categoryId',
+            foreignField: '_id',
+            as: 'category',
+          },
+        },
+        {
+          $unwind: {
+            path: '$category',
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
           $match: {
             $or: [
               { productName: rx },
@@ -2722,7 +2988,12 @@ export class ProductRegistrationService {
             productName: 1,
             eoiNo: 1,
             urnNo: 1,
-            productImage: 1,
+            productImage: {
+              $ifNull: ['$productImage', '$product_image'],
+            },
+            categoryImage: {
+              $ifNull: ['$category.category_image', '$category.categoryImage'],
+            },
           },
         },
       ])
@@ -2732,17 +3003,19 @@ export class ProductRegistrationService {
   }
 
   /**
-   * Certified product ids that have at least one active plant in the given country/states.
+   * Product ids that have at least one active plant matching country / state / city filters.
    * Returns null when no location filter is set; [] when filter is set but nothing matches.
    */
-  private async findCertifiedProductIdsByPlantLocation(
+  private async findAdminListProductIdsByPlantLocation(
     dto: AdminListProductsDto,
   ): Promise<Types.ObjectId[] | null> {
-    const countryId = String(dto.countryId ?? '').trim();
+    const countryId = this.resolveAdminListCountryId(dto);
     const stateIds = this.resolveAdminListPlantStateObjectIds(dto);
-    const hasCountry = countryId.length > 0;
+    const cities = this.resolveAdminListCities(dto);
+    const hasCountry = Boolean(countryId);
     const hasStates = Boolean(stateIds && stateIds.length > 0);
-    if (!hasCountry && !hasStates) {
+    const hasCities = Boolean(cities && cities.length > 0);
+    if (!hasCountry && !hasStates && !hasCities) {
       return null;
     }
 
@@ -2755,7 +3028,19 @@ export class ProductRegistrationService {
       };
     }
     if (hasCountry) {
-      plantMatch.countryId = this.toObjectId(countryId, 'countryId');
+      plantMatch.countryId = this.toObjectId(countryId!, 'countryId');
+    }
+    if (hasCities) {
+      if (cities!.length === 1) {
+        plantMatch.city = new RegExp(
+          this.escapeRegexLiteral(cities![0]),
+          'i',
+        );
+      } else {
+        plantMatch.$or = cities!.map((city) => ({
+          city: new RegExp(this.escapeRegexLiteral(city), 'i'),
+        }));
+      }
     }
 
     const productIds = await this.productPlantModel
@@ -2765,17 +3050,59 @@ export class ProductRegistrationService {
       return [];
     }
 
-    const certified = await this.productModel
-      .find({
-        _id: { $in: productIds },
-        productStatus: 2,
-        ...matchActiveProducts(),
-      })
+    const statuses = (() => {
+      for (const c of [dto.status, dto.productStatus, dto.product_status]) {
+        if (Array.isArray(c) && c.length > 0) {
+          return c;
+        }
+      }
+      return [];
+    })();
+
+    const productQuery: Record<string, unknown> = {
+      _id: { $in: productIds },
+      ...matchActiveProducts(),
+    };
+
+    if (statuses.length > 0) {
+      const now = new Date();
+      const includeExpired = statuses.includes(4);
+      const regularStatuses = statuses.filter((s) => s !== 4);
+      if (includeExpired && regularStatuses.length > 0) {
+        productQuery.$or = [
+          { productStatus: { $in: regularStatuses } },
+          {
+            productStatus: 2,
+            validtillDate: { $exists: true, $ne: null, $lt: now },
+          },
+        ];
+      } else if (includeExpired) {
+        productQuery.productStatus = 2;
+        productQuery.validtillDate = { $exists: true, $ne: null, $lt: now };
+      } else if (regularStatuses.length === 1) {
+        productQuery.productStatus = regularStatuses[0];
+      } else {
+        productQuery.productStatus = { $in: regularStatuses };
+      }
+    }
+
+    const rows = await this.productModel
+      .find(productQuery)
       .select('_id')
       .lean()
       .exec();
 
-    return certified.map((row) => row._id as Types.ObjectId);
+    return rows.map((row) => row._id as Types.ObjectId);
+  }
+
+  /** Certified-only alias used by the public website product grid. */
+  private async findCertifiedProductIdsByPlantLocation(
+    dto: AdminListProductsDto,
+  ): Promise<Types.ObjectId[] | null> {
+    return this.findAdminListProductIdsByPlantLocation({
+      ...dto,
+      status: [2],
+    });
   }
 
   /**
@@ -2789,12 +3116,11 @@ export class ProductRegistrationService {
       ...dto,
       status: [2],
     };
-    const { page, limit, skip, sortOrder, rowBase, urnSortField } =
-      this.buildAdminListRowBase(listDto);
-
     const locationProductIds =
       await this.findCertifiedProductIdsByPlantLocation(listDto);
     if (locationProductIds !== null && locationProductIds.length === 0) {
+      const page = listDto.page ?? 1;
+      const limit = listDto.limit ?? 10;
       return {
         data: [],
         total: 0,
@@ -2804,13 +3130,10 @@ export class ProductRegistrationService {
       };
     }
 
+    const { page, limit, skip, sortOrder, rowBase, urnSortField } =
+      this.buildAdminListRowBase(listDto, locationProductIds);
+
     let pipeline: any[] = [...rowBase];
-    if (locationProductIds && locationProductIds.length > 0) {
-      pipeline = [
-        { $match: { _id: { $in: locationProductIds } } },
-        ...pipeline,
-      ];
-    }
     const trimmedProductId = String(productId ?? '').trim();
     if (trimmedProductId) {
       pipeline = [
@@ -2838,7 +3161,12 @@ export class ProductRegistrationService {
           urnNo: 1,
           productName: 1,
           productDetails: 1,
-          productImage: 1,
+          productImage: {
+            $ifNull: ['$productImage', '$product_image'],
+          },
+          categoryImage: {
+            $ifNull: ['$category.category_image', '$category.categoryImage'],
+          },
           validtillDate: 1,
           categoryId: { $toString: '$categoryId' },
           categoryName: {
@@ -2905,13 +3233,30 @@ export class ProductRegistrationService {
       );
     }
 
+    const existingImage = String(
+      (await this.productModel
+        .findOne({
+          _id: productObjectId,
+          vendorId: vendorObjectId,
+        })
+        .select('productImage')
+        .lean()
+        .exec())?.productImage ?? '',
+    ).trim();
+
     let productImage: string | undefined;
     if (imageFile) {
-      const uploaded = await uploadFile(imageFile, 'products');
+      const uploaded = await uploadCertifiedProductImage(imageFile);
       productImage = uploaded.fileUrl;
+      if (existingImage && existingImage !== productImage) {
+        await deleteUploadedFileByDocumentLink(existingImage);
+      }
     }
 
-    const productName = dto.productName?.trim();
+    const productName =
+      dto.productName !== undefined
+        ? normalizeProductNameForComparison(dto.productName)
+        : undefined;
     const productDetails = dto.productDetails;
     const hasAnyField =
       productName !== undefined ||
@@ -2920,6 +3265,14 @@ export class ProductRegistrationService {
     if (!hasAnyField) {
       throw new BadRequestException(
         'At least one field is required: productName, productDetails, or productImage',
+      );
+    }
+
+    if (productName) {
+      await this.assertProductNameIsUnique(
+        productName,
+        productObjectId,
+        'productName',
       );
     }
 
@@ -2983,19 +3336,45 @@ export class ProductRegistrationService {
       );
     }
 
-    const currentName = String(dto.currentName ?? '').trim();
-    const requestedName = String(dto.requestedName ?? '').trim();
+    const currentName = normalizeProductNameForComparison(dto.currentName);
+    const requestedName = normalizeProductNameForComparison(dto.requestedName);
     const reason = String(dto.reason ?? '').trim();
-    if (!currentName || !requestedName || !reason) {
-      throw new BadRequestException(
-        'currentName, requestedName and reason are required',
-      );
+    const fieldErrors: Record<string, string> = {};
+    if (!requestedName) {
+      fieldErrors.requestedName = 'New Product Name is required.';
     }
-    if (requestedName === currentName) {
-      throw new BadRequestException(
-        'Requested name must be different from current name',
-      );
+    if (!reason) {
+      fieldErrors.reason = 'Reason is required.';
     }
+    if (!currentName) {
+      fieldErrors.currentName = 'Current product name is required.';
+    }
+    if (Object.keys(fieldErrors).length > 0) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Please complete all required fields.',
+        fieldErrors,
+      });
+    }
+    if (
+      requestedName.localeCompare(currentName, undefined, {
+        sensitivity: 'accent',
+      }) === 0
+    ) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Requested name must be different from current name',
+        fieldErrors: {
+          requestedName: 'Requested name must be different from current name',
+        },
+      });
+    }
+
+    await this.assertProductNameIsUnique(
+      requestedName,
+      productObjectId,
+      'requestedName',
+    );
 
     const normalizedStoredName = String(product.productName ?? '').trim();
     if (normalizedStoredName && normalizedStoredName !== currentName) {
@@ -3127,6 +3506,15 @@ export class ProductRegistrationService {
     ).trim();
 
     if (nextStatus === 'approved') {
+      const approvedName = normalizeProductNameForComparison(
+        updated.requestedName,
+      );
+      await this.assertProductNameIsUnique(
+        approvedName,
+        updated.productId as Types.ObjectId,
+        'requestedName',
+      );
+
       await this.productModel
         .findOneAndUpdate(
           matchActiveProducts({
@@ -3135,7 +3523,7 @@ export class ProductRegistrationService {
           }),
           {
             $set: {
-              productName: updated.requestedName,
+              productName: approvedName,
               updatedDate: now,
             },
           },
@@ -3246,16 +3634,112 @@ export class ProductRegistrationService {
       .replace(/'/g, '&#039;');
   }
 
+  getVendorProductChangeRequestFormMeta() {
+    return {
+      fields: [
+        {
+          key: 'requestedName',
+          label: 'New Product Name',
+          required: true,
+          maxLength: 500,
+        },
+        {
+          key: 'reason',
+          label: 'Reason',
+          required: true,
+          maxLength: 2000,
+        },
+      ],
+      validationMessages: {
+        requestedNameRequired: 'New Product Name is required.',
+        reasonRequired: 'Reason is required.',
+        productNameExists: PRODUCT_NAME_ALREADY_EXISTS_MESSAGE,
+      },
+      display: {
+        productNameWrapCss:
+          'word-break: break-word; white-space: normal; overflow-wrap: anywhere;',
+        modalSuggestedMaxWidth: 'min(520px, 92vw)',
+      },
+    };
+  }
+
+  /**
+   * Ensures product name is unique among active products and pending change requests.
+   */
+  private async assertProductNameIsUnique(
+    productName: string,
+    excludeProductId?: Types.ObjectId,
+    fieldKey: 'requestedName' | 'productName' = 'requestedName',
+  ): Promise<void> {
+    const nameFilter = productNameEqualsFilter(productName);
+    if (!nameFilter) {
+      return;
+    }
+
+    const productQuery: Record<string, unknown> = {
+      ...matchActiveProducts(),
+      productName: nameFilter,
+    };
+    if (excludeProductId) {
+      productQuery._id = { $ne: excludeProductId };
+    }
+
+    const conflictingProduct = await this.productModel
+      .findOne(productQuery)
+      .select('_id productName')
+      .lean()
+      .exec();
+
+    if (conflictingProduct) {
+      throw new BadRequestException({
+        code: 'PRODUCT_NAME_EXISTS',
+        message: PRODUCT_NAME_ALREADY_EXISTS_MESSAGE,
+        fieldErrors: {
+          [fieldKey]: PRODUCT_NAME_ALREADY_EXISTS_MESSAGE,
+        },
+      });
+    }
+
+    const pendingQuery: Record<string, unknown> = {
+      status: 'pending',
+      requestedName: nameFilter,
+    };
+    if (excludeProductId) {
+      pendingQuery.productId = { $ne: excludeProductId };
+    }
+
+    const conflictingPending = await this.vendorProductChangeRequestModel
+      .findOne(pendingQuery)
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (conflictingPending) {
+      throw new BadRequestException({
+        code: 'PRODUCT_NAME_EXISTS',
+        message: PRODUCT_NAME_ALREADY_EXISTS_MESSAGE,
+        fieldErrors: {
+          [fieldKey]: PRODUCT_NAME_ALREADY_EXISTS_MESSAGE,
+        },
+      });
+    }
+  }
+
   private mapProductChangeRequest(row: any) {
+    const currentName = String(row?.currentName ?? '');
+    const requestedName = String(row?.requestedName ?? '');
     return {
       _id: row?._id,
+      requestId: row?._id != null ? String(row._id) : undefined,
       productId: row?.productId,
       vendorId: row?.vendorId,
       manufacturerId: row?.manufacturerId,
       urnNo: row?.urnNo,
       eoiNo: row?.eoiNo,
-      currentName: row?.currentName,
-      requestedName: row?.requestedName,
+      currentName,
+      requestedName,
+      currentNameDisplay: currentName,
+      requestedNameDisplay: requestedName,
       reason: row?.reason,
       status: row?.status,
       adminRemarks: row?.adminRemarks ?? null,
@@ -3691,6 +4175,34 @@ export class ProductRegistrationService {
           createdRange.$lte = to;
         }
         nativeMatch.createdDate = createdRange;
+      }
+
+      const locationProductIds =
+        await this.findVendorProductIdsByPlantLocationFilters(
+          manufacturerId,
+          listProductsDto,
+        );
+      if (locationProductIds !== null) {
+        if (locationProductIds.length === 0) {
+          const emptyResponse = {
+            data: [],
+            pagination: {
+              page,
+              limit,
+              totalCount: 0,
+              totalPages: 0,
+            },
+          };
+          this.redisService
+            .set(cacheKey, emptyResponse, this.getProductListCacheTtlSeconds())
+            .catch((error) => {
+              this.logger.warn(
+                `Product vendor list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+              );
+            });
+          return emptyResponse;
+        }
+        nativeMatch._id = { $in: locationProductIds };
       }
 
       const basePipeline: any[] = [{ $match: nativeMatch }];
@@ -5267,7 +5779,17 @@ export class ProductRegistrationService {
         const manufacturerDetails = this.formatProductDetailsManufacturer(
           product.manufacturer as Record<string, unknown> | null,
         );
+        const assessmentReportUrl = String(product.assessmentReportUrl ?? '').trim();
+        const urnAssessmentReport = assessmentReportUrl
+          ? this.buildUrnAssessmentReportDocumentPayload(assessmentReportUrl)
+          : null;
         return {
+        ...(urnAssessmentReport
+          ? {
+              urn_assessment_report: urnAssessmentReport,
+              urnAssessmentReport,
+            }
+          : {}),
         product_details: {
           _id: product._id,
           productId: product.productId,
@@ -5774,7 +6296,8 @@ export class ProductRegistrationService {
         })),
         process_mp_manufacturing_units: (
           product.process_mp_manufacturing_units || []
-        ).map((u) => ({
+        ).map((u) =>
+          enrichMpManufacturingUnitCalculations({
           _id: u._id,
           processMpManufacturingUnitId: u.processMpManufacturingUnitId,
           vendorId: u.vendorId,
@@ -5836,8 +6359,11 @@ export class ProductRegistrationService {
           processMpManufacturingUnitStatus: u.processMpManufacturingUnitStatus,
           calculateBulkSec: u.calculateBulkSec,
           calculateBulkSwc: u.calculateBulkSwc,
+          calculateBulkStec: u.calculateBulkStec,
           calculateBulkSecMultipled: u.calculateBulkSecMultipled,
           calculateBulkSwcMultipled: u.calculateBulkSwcMultipled,
+          calculateBulkTecMultipled: u.calculateBulkTecMultipled,
+          calculateBulkStecMultipled: u.calculateBulkStecMultipled,
           measuresImplementedMpUnits: u.measuresImplementedMpUnits,
           detailsOfRainWaterHarvestingMpUnits:
             u.detailsOfRainWaterHarvestingMpUnits,
@@ -5880,43 +6406,41 @@ export class ProductRegistrationService {
         })),
         process_wm_manufacturing_units: (
           product.process_wm_manufacturing_units || []
-        ).map((u) => ({
-          _id: u._id,
-          processWmManufacturingUnitId: u.processWmManufacturingUnitId,
-          vendorId: u.vendorId,
-          urnNo: u.urnNo,
-          processWasteManagementId: u.processWasteManagementId,
-          unitName: u.unitName,
-          hazardousWasteYear1: u.hazardousWasteYear1,
-          hazardousWasteYear2: u.hazardousWasteYear2,
-          hazardousWasteYear3: u.hazardousWasteYear3,
-          hazardousWasteProductionUnit: u.hazardousWasteProductionUnit,
-          hazardousWasteQuantityUnit: u.hazardousWasteQuantityUnit,
-          hazardousWasteProductionYear1: u.hazardousWasteProductionYear1,
-          hazardousWasteProductionYear2: u.hazardousWasteProductionYear2,
-          hazardousWasteProductionYear3: u.hazardousWasteProductionYear3,
-          hazardousWasteQuantityYear1: u.hazardousWasteQuantityYear1,
-          hazardousWasteQuantityYear2: u.hazardousWasteQuantityYear2,
-          hazardousWasteQuantityYear3: u.hazardousWasteQuantityYear3,
-          nonHazardousWasteYear1: u.nonHazardousWasteYear1,
-          nonHazardousWasteYear2: u.nonHazardousWasteYear2,
-          nonHazardousWasteYear3: u.nonHazardousWasteYear3,
-          nonHazardousWasteProductionUnit: u.nonHazardousWasteProductionUnit,
-          nonHazardousWasteWaterUnit: u.nonHazardousWasteWaterUnit,
-          nonHazardousWasteProductionYear1: u.nonHazardousWasteProductionYear1,
-          nonHazardousWasteProductionYear2: u.nonHazardousWasteProductionYear2,
-          nonHazardousWasteProductionYear3: u.nonHazardousWasteProductionYear3,
-          nonHazardousWasteWaterYear1: u.nonHazardousWasteWaterYear1,
-          nonHazardousWasteWaterYear2: u.nonHazardousWasteWaterYear2,
-          nonHazardousWasteWaterYear3: u.nonHazardousWasteWaterYear3,
-          calculateBulkRshwd: u.calculateBulkRshwd,
-          calculateBulkRsnhwd: u.calculateBulkRsnhwd,
-          calculateBulkRshwdMultipled: u.calculateBulkRshwdMultipled,
-          calculateBulkRsnhwdMultipled: u.calculateBulkRsnhwdMultipled,
-          wmImplementationDetailsWmUnits: u.wmImplementationDetailsWmUnits,
-          createdDate: u.createdDate,
-          updatedDate: u.updatedDate,
-        })),
+        ).map((u) =>
+          enrichWmManufacturingUnitCalculations({
+            _id: u._id,
+            processWmManufacturingUnitId: u.processWmManufacturingUnitId,
+            vendorId: u.vendorId,
+            urnNo: u.urnNo,
+            processWasteManagementId: u.processWasteManagementId,
+            unitName: u.unitName,
+            hazardousWasteYear1: u.hazardousWasteYear1,
+            hazardousWasteYear2: u.hazardousWasteYear2,
+            hazardousWasteYear3: u.hazardousWasteYear3,
+            hazardousWasteProductionUnit: u.hazardousWasteProductionUnit,
+            hazardousWasteQuantityUnit: u.hazardousWasteQuantityUnit,
+            hazardousWasteProductionYear1: u.hazardousWasteProductionYear1,
+            hazardousWasteProductionYear2: u.hazardousWasteProductionYear2,
+            hazardousWasteProductionYear3: u.hazardousWasteProductionYear3,
+            hazardousWasteQuantityYear1: u.hazardousWasteQuantityYear1,
+            hazardousWasteQuantityYear2: u.hazardousWasteQuantityYear2,
+            hazardousWasteQuantityYear3: u.hazardousWasteQuantityYear3,
+            nonHazardousWasteYear1: u.nonHazardousWasteYear1,
+            nonHazardousWasteYear2: u.nonHazardousWasteYear2,
+            nonHazardousWasteYear3: u.nonHazardousWasteYear3,
+            nonHazardousWasteProductionUnit: u.nonHazardousWasteProductionUnit,
+            nonHazardousWasteWaterUnit: u.nonHazardousWasteWaterUnit,
+            nonHazardousWasteProductionYear1: u.nonHazardousWasteProductionYear1,
+            nonHazardousWasteProductionYear2: u.nonHazardousWasteProductionYear2,
+            nonHazardousWasteProductionYear3: u.nonHazardousWasteProductionYear3,
+            nonHazardousWasteWaterYear1: u.nonHazardousWasteWaterYear1,
+            nonHazardousWasteWaterYear2: u.nonHazardousWasteWaterYear2,
+            nonHazardousWasteWaterYear3: u.nonHazardousWasteWaterYear3,
+            wmImplementationDetailsWmUnits: u.wmImplementationDetailsWmUnits,
+            createdDate: u.createdDate,
+            updatedDate: u.updatedDate,
+          }),
+        ),
         process_life_cycle_approach: product.process_life_cycle_approach
           ? {
               _id: product.process_life_cycle_approach._id,
@@ -6185,12 +6709,7 @@ export class ProductRegistrationService {
       productStatus: statuses.length === 1 ? statuses[0] : { $in: statuses },
     };
 
-    const plantCountryMatch: Record<string, unknown> = {};
-    if (dto.countryId) {
-      plantCountryMatch.countryId = this.toObjectId(dto.countryId, 'countryId');
-    }
-
-    const [manufacturerRows, cityRows, yearRows] = await Promise.all([
+    const [manufacturerRows, yearRows] = await Promise.all([
       this.productModel
         .aggregate([
           { $match: productMatch },
@@ -6216,41 +6735,6 @@ export class ProductRegistrationService {
               _id: 0,
               value: { $toString: '$_id' },
               label: 1,
-            },
-          },
-        ])
-        .exec(),
-      this.productModel
-        .aggregate([
-          { $match: productMatch },
-          {
-            $lookup: {
-              from: 'product_plants',
-              let: { pid: '$_id' },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: { $eq: ['$productId', '$$pid'] },
-                    ...matchActiveProductPlants(),
-                    ...(Object.keys(plantCountryMatch).length > 0
-                      ? plantCountryMatch
-                      : {}),
-                  },
-                },
-                { $match: { city: { $type: 'string', $ne: '' } } },
-                { $group: { _id: '$city' } },
-              ],
-              as: 'plantCities',
-            },
-          },
-          { $unwind: '$plantCities' },
-          { $group: { _id: '$plantCities._id' } },
-          { $sort: { _id: 1 } },
-          {
-            $project: {
-              _id: 0,
-              value: '$_id',
-              label: '$_id',
             },
           },
         ])
@@ -6288,8 +6772,15 @@ export class ProductRegistrationService {
       data: {
         categories: categoryOptions,
         manufacturers: manufacturerRows as Array<{ value: string; label: string }>,
-        cities: cityRows as Array<{ value: string; label: string }>,
         validTillYears: validTillYearOptions,
+        filterControls: {
+          city: {
+            type: 'text',
+            label: 'City',
+            queryParam: 'city',
+            placeholder: 'Search by city',
+          },
+        },
       },
     };
   }
@@ -6302,7 +6793,10 @@ export class ProductRegistrationService {
     return this.adminListProductsGroupedByManufacturer(dto);
   }
 
-  private buildAdminListRowBase(dto: AdminListProductsDto): {
+  private buildAdminListRowBase(
+    dto: AdminListProductsDto,
+    locationProductIds: Types.ObjectId[] | null = null,
+  ): {
     page: number;
     limit: number;
     skip: number;
@@ -6345,6 +6839,9 @@ export class ProductRegistrationService {
     const nativeMatch: Record<string, unknown> = {
       ...matchActiveProducts(),
     };
+    if (locationProductIds != null) {
+      nativeMatch._id = { $in: locationProductIds };
+    }
     if (dto.product_type !== undefined) {
       nativeMatch.productType = dto.product_type;
     }
@@ -6511,60 +7008,6 @@ export class ProductRegistrationService {
       },
     );
 
-    const plantStateObjectIds = this.resolveAdminListPlantStateObjectIds(dto);
-    const plantStateNames = this.resolveAdminListPlantStateNames(dto);
-    const plantCities = this.resolveAdminListCities(dto);
-    const plantElemParts: Record<string, unknown>[] = [];
-
-    if (dto.countryId) {
-      plantElemParts.push({
-        countryId: this.toObjectId(dto.countryId, 'countryId'),
-      });
-    }
-    if (plantStateObjectIds && plantStateObjectIds.length > 0) {
-      plantElemParts.push({
-        stateId: {
-          $in: plantStateObjectIds.map((id) =>
-            this.toObjectId(id, 'stateId'),
-          ),
-        },
-      });
-    }
-    if (plantStateNames && plantStateNames.length > 0) {
-      if (plantStateNames.length === 1) {
-        plantElemParts.push({
-          stateName: new RegExp(this.escapeRegexLiteral(plantStateNames[0]), 'i'),
-        });
-      } else {
-        plantElemParts.push({
-          $or: plantStateNames.map((name) => ({
-            stateName: new RegExp(this.escapeRegexLiteral(name), 'i'),
-          })),
-        });
-      }
-    }
-    if (plantCities && plantCities.length > 0) {
-      if (plantCities.length === 1) {
-        plantElemParts.push({
-          city: new RegExp(this.escapeRegexLiteral(plantCities[0]), 'i'),
-        });
-      } else {
-        plantElemParts.push({
-          $or: plantCities.map((city) => ({
-            city: new RegExp(this.escapeRegexLiteral(city), 'i'),
-          })),
-        });
-      }
-    }
-
-    if (plantElemParts.length > 0) {
-      const elemMatch =
-        plantElemParts.length === 1
-          ? plantElemParts[0]
-          : { $and: plantElemParts };
-      basePipeline.push({ $match: { plants: { $elemMatch: elemMatch } } });
-    }
-
     const manufacturerNames = this.resolveAdminListManufacturerNames(dto);
     if (manufacturerNames && manufacturerNames.length > 0) {
       const escaped = manufacturerNames.map(
@@ -6667,15 +7110,29 @@ export class ProductRegistrationService {
       );
     }
 
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 10;
+
+    const locationProductIds =
+      await this.findAdminListProductIdsByPlantLocation(dto);
+    if (locationProductIds !== null && locationProductIds.length === 0) {
+      return {
+        message: 'Products listed successfully',
+        data: [],
+        total: 0,
+        page,
+        limit,
+        statusCounts: {},
+      };
+    }
+
     const {
-      page,
-      limit,
       skip,
       sortOrder,
       now,
       rowBase,
       manufacturerSortField,
-    } = this.buildAdminListRowBase(dto);
+    } = this.buildAdminListRowBase(dto, locationProductIds);
 
     const manufacturerGroupPipeline: any[] = [
       ...rowBase,
@@ -6866,16 +7323,30 @@ export class ProductRegistrationService {
       );
     }
 
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 10;
+
+    const locationProductIds =
+      await this.findAdminListProductIdsByPlantLocation(dto);
+    if (locationProductIds !== null && locationProductIds.length === 0) {
+      return {
+        message: 'Products listed successfully',
+        data: [],
+        total: 0,
+        page,
+        limit,
+        statusCounts: {},
+      };
+    }
+
     const {
-      page,
-      limit,
       skip,
       sortOrder,
       now,
       rowBase,
       statusMatch,
       urnSortField,
-    } = this.buildAdminListRowBase(dto);
+    } = this.buildAdminListRowBase(dto, locationProductIds);
     const sortField = urnSortField;
     const sectorFilterIds = this.resolveAdminListSectorIds(dto);
 
@@ -7157,7 +7628,11 @@ export class ProductRegistrationService {
 
     const rows = await this.productModel
       .aggregate([
-        { $match: { categoryId: categoryObjectId } },
+        {
+          $match: matchWebsitePublicCertifiedProducts({
+            categoryId: categoryObjectId,
+          }),
+        },
         {
           $group: {
             _id: '$manufacturerId',
@@ -7230,7 +7705,11 @@ export class ProductRegistrationService {
 
     const rows = await this.productModel
       .aggregate([
-        { $match: { manufacturerId: manufacturerObjectId } },
+        {
+          $match: matchWebsitePublicCertifiedProducts({
+            manufacturerId: manufacturerObjectId,
+          }),
+        },
         {
           $group: {
             _id: '$categoryId',
@@ -7250,6 +7729,9 @@ export class ProductRegistrationService {
             path: '$category',
             preserveNullAndEmptyArrays: false,
           },
+        },
+        {
+          $match: { 'category.category_status': 1 },
         },
         {
           $project: {

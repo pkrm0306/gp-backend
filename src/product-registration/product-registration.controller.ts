@@ -40,12 +40,27 @@ export class ProductRegistrationController {
     private readonly productRegistrationService: ProductRegistrationService,
   ) {}
 
+  @Get('list/filter-options')
+  @ApiOperation({
+    summary: 'Vendor uncertified EOI list — filter options',
+    description:
+      'Returns **countries** for a dropdown. **State** and **city** are free-text filters on `GET /product-registration/list` (not returned as dropdowns).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Filter options retrieved successfully',
+  })
+  async vendorListFilterOptions() {
+    return this.productRegistrationService.vendorGetUncertifiedListFilterOptions();
+  }
+
   @Get('list')
   @ApiOperation({
     summary: 'Vendor EOI list grouped by URN',
     description:
       'Returns paginated URN groups (not flat products). Each group includes nested **eois[]** with **EOI `productStatus`** and **statusLabel** (Pending / Submitted / …). ' +
       '**Default filter:** **Pending (0) + Submitted (1)** only (uncertified queue). Override with **`productStatusList`** (e.g. `0,1` or `3`) or a single **`productStatus`** / **`status`**. ' +
+      '**Location filters:** `countryId` (dropdown id), `state` / `state_name` (text), `city` (text) — match any manufacturing plant on the EOI. ' +
       'Pagination counts URNs. When search matches any EOI in a URN, the full **eois[]** for that URN is returned (same filters).',
   })
   @ApiQuery({
@@ -122,6 +137,35 @@ export class ProductRegistrationController {
     type: String,
     description: 'Created date to (YYYY-MM-DD)',
     example: '2026-12-31',
+  })
+  @ApiQuery({
+    name: 'countryId',
+    required: false,
+    type: String,
+    description:
+      'Filter by plant country MongoDB `_id` (from `GET /product-registration/list/filter-options` or `GET /countries`).',
+  })
+  @ApiQuery({
+    name: 'state',
+    required: false,
+    type: String,
+    description:
+      'Filter by plant state **name** (free text, partial match). Do not send state ObjectId.',
+    example: 'Telangana',
+  })
+  @ApiQuery({
+    name: 'state_name',
+    required: false,
+    type: String,
+    description: 'Snake_case alias of `state` (text).',
+    example: 'Telangana',
+  })
+  @ApiQuery({
+    name: 'city',
+    required: false,
+    type: String,
+    description: 'Filter by plant city (free text, partial match).',
+    example: 'Hyderabad',
   })
   @ApiQuery({
     name: 'sort',

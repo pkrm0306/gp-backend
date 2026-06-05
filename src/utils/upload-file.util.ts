@@ -40,7 +40,7 @@ function buildS3PublicUrl(bucket: string, region: string, key: string): string {
   return `https://${bucket}.s3.${region}.amazonaws.com/${encodedKey}`;
 }
 
-function buildPublicFileUrl(bucket: string, region: string, key: string): string {
+export function buildPublicFileUrl(bucket: string, region: string, key: string): string {
   const encodedKey = key
     .split('/')
     .map((segment) => encodeURIComponent(segment))
@@ -52,6 +52,54 @@ function buildPublicFileUrl(bucket: string, region: string, key: string): string
     }
   }
   return buildS3PublicUrl(bucket, region, key);
+}
+
+/** Extract `uploads/...` object key from a public S3 or CloudFront URL. */
+export function extractUploadsKeyFromAbsoluteUrl(url: string): string | null {
+  try {
+    const pathname = decodeURIComponent(new URL(url).pathname).replace(
+      /^\/+/,
+      '',
+    );
+    return pathname.startsWith('uploads/') ? pathname : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a stored upload path or URL to the public URL clients should use.
+ * When S3 + CloudFront are configured, returns a CloudFront URL (unless
+ * `AWS_S3_USE_DIRECT_PUBLIC_URL=true`). Rewrites legacy S3 URLs and `/uploads/...` paths.
+ */
+export function resolveStoredUploadUrl(stored?: string | null): string {
+  const raw = String(stored ?? '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  if (!isS3Configured()) {
+    return raw;
+  }
+
+  const bucket = getS3Bucket();
+  const region = getS3Region();
+
+  if (/^https?:\/\//i.test(raw)) {
+    const key = extractUploadsKeyFromAbsoluteUrl(raw);
+    if (key) {
+      return buildPublicFileUrl(bucket, region, key);
+    }
+    return raw;
+  }
+
+  const rel = normalizeUploadsRelativePath(raw);
+  if (rel) {
+    const key = rel.startsWith('uploads/') ? rel : `uploads/${rel}`;
+    return buildPublicFileUrl(bucket, region, key);
+  }
+
+  return raw;
 }
 
 /**
@@ -117,6 +165,28 @@ export async function uploadFile(
     relativePath,
     fileUrl: `/uploads/${relativePath.split('/').map(encodeURIComponent).join('/')}`,
   };
+}
+
+/** Certified product images — stored under `uploads/products/` with public CDN URL when configured. */
+export async function uploadCertifiedProductImage(
+  file: Express.Multer.File,
+): Promise<UploadResult> {
+  const uploaded = await uploadFile(file, 'products');
+  const fileUrl = resolveStoredUploadUrl(uploaded.fileUrl) || uploaded.fileUrl;
+  return { ...uploaded, fileUrl };
+}
+
+/** Admin assessment report for a certified URN — stored under `uploads/urns/{urnNo}/assessment-reports/`. */
+export async function uploadUrnAssessmentReport(
+  file: Express.Multer.File,
+  urnNo: string,
+): Promise<UploadResult> {
+  const safeUrn = String(urnNo ?? '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '_');
+  const uploaded = await uploadFile(file, `urns/${safeUrn}/assessment-reports`);
+  const fileUrl = resolveStoredUploadUrl(uploaded.fileUrl) || uploaded.fileUrl;
+  return { ...uploaded, fileUrl };
 }
 
 /**

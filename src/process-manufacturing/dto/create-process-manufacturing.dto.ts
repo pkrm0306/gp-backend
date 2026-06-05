@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
@@ -7,6 +8,7 @@ import {
   IsIn,
   Min,
 } from 'class-validator';
+import { parseOptionalDecimalNumber } from '../../common/utils/parse-optional-number.util';
 
 export class CreateProcessManufacturingDto {
   @ApiProperty({
@@ -50,7 +52,8 @@ export class CreateProcessManufacturingDto {
     example: 5000,
     required: false,
   })
-  @IsNumber()
+  @Transform(({ value }) => parseOptionalDecimalNumber(value) ?? value)
+  @IsNumber({ allowNaN: false, allowInfinity: false })
   @Min(0)
   @IsOptional()
   totalEnergyConsumption?: number;

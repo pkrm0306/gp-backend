@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsString, IsNotEmpty, IsOptional, IsIn, IsNumber } from 'class-validator';
 import { IsOptionalNonNegativeNumber } from '../validators/optional-non-negative-number.decorator';
 import { IsOptionalNumber } from '../validators/optional-number.decorator';
@@ -55,12 +55,15 @@ export class CreateProcessMpManufacturingUnitDto {
   ecdProductionUnit?: string;
 
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   ecdProductionYear1?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   ecdProductionYear2?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   ecdProductionYear3?: number;
 
@@ -69,12 +72,15 @@ export class CreateProcessMpManufacturingUnitDto {
   @IsOptional()
   ecdElectricUnit?: string;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   ecdElectricYear1?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   ecdElectricYear2?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   ecdElectricYear3?: number;
 
@@ -165,21 +171,27 @@ export class CreateProcessMpManufacturingUnitDto {
   wcdWaterUnit?: string;
 
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   wcdProductionYear1?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   wcdProductionYear2?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   wcdProductionYear3?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   wcdWaterYear1?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   wcdWaterYear2?: number;
   @ApiProperty({ required: false })
+  @Type(() => Number)
   @IsOptionalNonNegativeNumber()
   wcdWaterYear3?: number;
 
@@ -248,8 +260,23 @@ export class CreateProcessMpManufacturingUnitDto {
   @IsOptionalNumber()
   calculateBulkSwc?: number;
 
+  @ApiProperty({
+    required: false,
+    description:
+      'Bulk STEC reduction (may be negative when derived from auto-calculation).',
+  })
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  })
+  @IsOptionalNumber()
+  calculateBulkStec?: number;
+
   @ApiProperty({ required: false }) @IsString() @IsOptional() calculateBulkSecMultipled?: string;
   @ApiProperty({ required: false }) @IsString() @IsOptional() calculateBulkSwcMultipled?: string;
+  @ApiProperty({ required: false }) @IsString() @IsOptional() calculateBulkTecMultipled?: string;
+  @ApiProperty({ required: false }) @IsString() @IsOptional() calculateBulkStecMultipled?: string;
   @ApiProperty({ required: false }) @IsString() @IsOptional() measuresImplementedMpUnits?: string;
   @ApiProperty({ required: false }) @IsString() @IsOptional() detailsOfRainWaterHarvestingMpUnits?: string;
 

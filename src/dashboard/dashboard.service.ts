@@ -29,6 +29,7 @@ import {
 import { buildVendorProgressTracking } from './vendor-progress.util';
 import { buildVendorApplicationRow } from './vendor-applications.util';
 import { ListVendorApplicationsQueryDto } from './dto/list-vendor-applications-query.dto';
+import { ManufacturersService } from '../manufacturers/manufacturers.service';
 
 @Injectable()
 export class DashboardService {
@@ -45,6 +46,7 @@ export class DashboardService {
     private manufacturerModel: Model<ManufacturerDocument>,
     @InjectModel(ActivityLog.name)
     private activityLogModel: Model<ActivityLogDocument>,
+    private readonly manufacturersService: ManufacturersService,
   ) {}
 
   /**
@@ -52,11 +54,15 @@ export class DashboardService {
    * (all products/EOIs under that URN). Progress uses the same URN scope.
    */
   async listApplicationsAndUrns(
-    vendorId: string,
+    authUserId: string,
+    tokenManufacturerId: string | undefined,
     query: ListVendorApplicationsQueryDto,
   ) {
-    const vendorObjectId = new Types.ObjectId(vendorId);
-    await this.assertVendorProfileComplete(vendorObjectId);
+    const vendorObjectId = await this.resolveVendorManufacturerObjectId(
+      authUserId,
+      tokenManufacturerId,
+    );
+    await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
 
     const scopedUrn = await this.resolvePrimaryUrnProduct(
       vendorObjectId,
@@ -136,19 +142,47 @@ export class DashboardService {
     };
   }
 
-  private async assertVendorProfileComplete(
-    vendorObjectId: Types.ObjectId,
-  ): Promise<void> {
-    const manufacturer = await this.manufacturerModel
-      .findById(vendorObjectId)
-      .exec();
-    if (!manufacturer) {
-      throw new ForbiddenException('Manufacturer not found');
+  private async resolveVendorManufacturerObjectId(
+    authUserId: string,
+    tokenManufacturerId?: string,
+  ): Promise<Types.ObjectId> {
+    const { resolvedManufacturer } =
+      await this.manufacturersService.resolveManufacturerForAuthUser({
+        userId: authUserId,
+        manufacturerId: tokenManufacturerId,
+        vendorId: tokenManufacturerId,
+      });
+    if (resolvedManufacturer?._id) {
+      return resolvedManufacturer._id as Types.ObjectId;
     }
+    if (tokenManufacturerId && Types.ObjectId.isValid(tokenManufacturerId)) {
+      return new Types.ObjectId(tokenManufacturerId);
+    }
+    throw new ForbiddenException('Manufacturer not found');
+  }
+
+  private async assertVendorProfileComplete(
+    authUserId: string,
+    tokenManufacturerId?: string,
+  ): Promise<void> {
+    const { resolvedManufacturer, vendorUser } =
+      await this.manufacturersService.resolveManufacturerForAuthUser({
+        userId: authUserId,
+        manufacturerId: tokenManufacturerId,
+        vendorId: tokenManufacturerId,
+      });
+
+    if (!resolvedManufacturer) {
+      throw new ForbiddenException(
+        'Please enter your account details to access all options!',
+      );
+    }
+
     if (
-      !manufacturer.vendor_gst ||
-      !manufacturer.vendor_designation ||
-      !manufacturer.vendor_phone
+      !this.manufacturersService.isVendorAccountProfileComplete(
+        resolvedManufacturer,
+        vendorUser,
+      )
     ) {
       throw new ForbiddenException(
         'Please enter your account details to access all options!',
@@ -156,10 +190,17 @@ export class DashboardService {
     }
   }
 
-  async getDashboardData(vendorId: string, urnNo?: string) {
+  async getDashboardData(
+    authUserId: string,
+    tokenManufacturerId?: string,
+    urnNo?: string,
+  ) {
     try {
-      const vendorObjectId = new Types.ObjectId(vendorId);
-      await this.assertVendorProfileComplete(vendorObjectId);
+      const vendorObjectId = await this.resolveVendorManufacturerObjectId(
+        authUserId,
+        tokenManufacturerId,
+      );
+      await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
 
       // Execute all queries in parallel for better performance
       const [

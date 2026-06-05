@@ -6,7 +6,6 @@ import {
   IsMongoId,
   IsNotEmpty,
   IsString,
-  ValidateIf,
 } from 'class-validator';
 
 function omitEmptyOptional(value: unknown): unknown {
@@ -55,10 +54,17 @@ export class AdminPatchCertifiedProductDto {
   @Transform(({ value, obj }) =>
     omitEmptyOptional(value ?? obj?.validTillDate),
   )
-  @ValidateIf((_, value) => value !== undefined)
+  @IsNotEmpty({ message: 'validtillDate is required' })
   @IsDateString()
   validtillDate: string;
 
   @Allow()
   validTillDate?: string;
+
+  /** Multipart: `1` / `true` clears the stored product image. */
+  @Allow()
+  remove_image?: string;
+
+  @Allow()
+  delete_image?: string;
 }

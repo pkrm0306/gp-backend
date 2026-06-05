@@ -337,3 +337,58 @@ export function wasteManagementMultipartMemoryMulterOptions(): Options {
     fileFilter: certificationMultipartFileFilter,
   };
 }
+
+const FIFTY_MB = 50 * 1024 * 1024;
+
+const BLOCKED_ASSESSMENT_REPORT_EXTENSIONS = new Set(['.zip', '.zipx']);
+
+const BLOCKED_ASSESSMENT_REPORT_MIMES = new Set([
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/x-zip',
+  'multipart/x-zip',
+]);
+
+function assessmentReportFileFilter(
+  _req: unknown,
+  file: Express.Multer.File,
+  cb: (error: Error | null, acceptFile: boolean) => void,
+): void {
+  if (!file) {
+    cb(null, true);
+    return;
+  }
+  const name = String(file.originalname ?? '').trim();
+  if (!name || name.endsWith('/') || name.endsWith('\\')) {
+    cb(
+      new BadRequestException(
+        'Folder uploads are not allowed for assessment reports.',
+      ) as unknown as null,
+      false,
+    );
+    return;
+  }
+  const fileExt = extname(name).toLowerCase();
+  if (
+    BLOCKED_ASSESSMENT_REPORT_EXTENSIONS.has(fileExt) ||
+    BLOCKED_ASSESSMENT_REPORT_MIMES.has(file.mimetype)
+  ) {
+    cb(
+      new BadRequestException(
+        'Zip files are not allowed for assessment reports.',
+      ) as unknown as null,
+      false,
+    );
+    return;
+  }
+  cb(null, true);
+}
+
+/** Admin URN assessment report — any file type except zip/folders, max 50MB. */
+export function assessmentReportMemoryMulterOptions(): Options {
+  return {
+    storage: memoryStorage(),
+    limits: { fileSize: FIFTY_MB },
+    fileFilter: assessmentReportFileFilter,
+  };
+}

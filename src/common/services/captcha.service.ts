@@ -15,6 +15,17 @@ export class CaptchaService {
       this.configService.get<string>('NODE_ENV') !== 'production';
   }
 
+  /**
+   * Verify only when a non-empty token was supplied; missing token is treated as valid (optional captcha flows).
+   */
+  async verifyCaptchaIfProvided(token: string | undefined | null): Promise<boolean> {
+    const normalized = String(token ?? '').trim();
+    if (!normalized) {
+      return true;
+    }
+    return this.verifyCaptcha(normalized);
+  }
+
   async verifyCaptcha(token: string): Promise<boolean> {
     if (this.isDevelopment && !this.secretKey) {
       console.warn(

@@ -157,11 +157,16 @@ export class DashboardController {
     @CurrentUser() user: any,
     @Query('urn') urn?: string,
   ) {
-    if (!user || !user.vendorId) {
+    if (!user?.userId) {
       throw new UnauthorizedException('Unauthorized. Please login.');
     }
 
-    return this.dashboardService.getDashboardData(user.vendorId, urn);
+    const manufacturerId = user.vendorId || user.manufacturerId;
+    return this.dashboardService.getDashboardData(
+      user.userId,
+      manufacturerId,
+      urn,
+    );
   }
 
   @Get('applications-and-urns')
@@ -191,12 +196,18 @@ export class DashboardController {
     description: 'Table rows with pagination',
   })
   async listApplicationsAndUrns(
-    @CurrentUser() user: { vendorId?: string },
+    @CurrentUser()
+    user: { userId?: string; vendorId?: string; manufacturerId?: string },
     @Query() query: ListVendorApplicationsQueryDto,
   ) {
-    if (!user?.vendorId) {
+    if (!user?.userId) {
       throw new UnauthorizedException('Unauthorized. Please login.');
     }
-    return this.dashboardService.listApplicationsAndUrns(user.vendorId, query);
+    const manufacturerId = user.vendorId || user.manufacturerId;
+    return this.dashboardService.listApplicationsAndUrns(
+      user.userId,
+      manufacturerId,
+      query,
+    );
   }
 }

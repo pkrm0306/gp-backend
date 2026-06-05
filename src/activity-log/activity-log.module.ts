@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { ActivityLog, ActivityLogSchema } from './schemas/activity-log.schema';
 import { ActivityLogService } from './activity-log.service';
 import { ActivityLogController } from './activity-log.controller';
+import { AdminProcessActivityLogController } from './admin-process-activity-log.controller';
 import { ActivityLogAccessService } from './activity-log-access.service';
 import {
   Product,
@@ -22,7 +23,7 @@ import { AuthModule } from '../auth/auth.module';
     AuthModule,
     RbacModule,
   ],
-  controllers: [ActivityLogController],
+  controllers: [ActivityLogController, AdminProcessActivityLogController],
   providers: [ActivityLogService, ActivityLogAccessService, PermissionsGuard],
   exports: [ActivityLogService, ActivityLogAccessService],
 })

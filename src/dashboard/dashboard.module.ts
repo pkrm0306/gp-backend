@@ -23,9 +23,11 @@ import {
   ActivityLog,
   ActivityLogSchema,
 } from '../activity-log/schemas/activity-log.schema';
+import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 
 @Module({
   imports: [
+    ManufacturersModule,
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       { name: PaymentDetails.name, schema: PaymentDetailsSchema },

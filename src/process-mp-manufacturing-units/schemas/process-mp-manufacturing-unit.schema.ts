@@ -186,11 +186,20 @@ export class ProcessMpManufacturingUnit {
   @Prop({ required: false, type: Number })
   calculateBulkSwc?: number;
 
+  @Prop({ required: false, type: Number })
+  calculateBulkStec?: number;
+
   @Prop({ required: false })
   calculateBulkSecMultipled?: string;
 
   @Prop({ required: false })
   calculateBulkSwcMultipled?: string;
+
+  @Prop({ required: false })
+  calculateBulkTecMultipled?: string;
+
+  @Prop({ required: false })
+  calculateBulkStecMultipled?: string;
 
   @Prop({ required: false })
   measuresImplementedMpUnits?: string;

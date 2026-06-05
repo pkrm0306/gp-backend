@@ -43,7 +43,8 @@ export class WebsiteController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Public manufacturers listing',
-    description: 'Public API to list manufacturers with optional list filters.',
+    description:
+      'Public API to list manufacturers with optional list filters. Only manufacturers with at least one certified, active (non-deleted) product are returned.',
   })
   @ApiResponse({
     status: 200,
@@ -57,14 +58,15 @@ export class WebsiteController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Public categories listing',
-    description: 'Public API to list categories with optional list filters.',
+    description:
+      'Public API to list categories with optional list filters. Only categories with at least one certified, active (non-deleted) product are returned.',
   })
   @ApiResponse({
     status: 200,
     description: 'Categories retrieved successfully',
   })
   async listPublicCategories(@Query() query: ListCategoriesQueryDto) {
-    const data = await this.categoriesService.findAll(query);
+    const data = await this.categoriesService.findAllForWebsitePublic(query);
     return {
       message: 'Categories retrieved successfully',
       data,
@@ -219,7 +221,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public certified products listing (website grid)',
     description:
-      'Flat product cards for the public website. Requires at least one filter: `search` (min 2 chars), `categoryIds`, `countryId`, `stateIds`, or `productId` from search. Certified only (status 2).',
+      'Flat product cards for the public website. Requires at least one filter: `search` (min 2 chars), `categoryIds`, `countryId`, `stateIds`, or `productId` from search. Certified only (status 2). Each row includes `productImage`, `productImageUrl` (absolute URL), and category image fallbacks when the product has no image.',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({
@@ -257,15 +259,22 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public certified product passport',
     description:
-      'Public API for product detail page. Returns passport content for a certified product only.',
+      'Public API for product detail page. Returns passport content and product image URLs for a certified product only.',
   })
   @ApiResponse({
     status: 200,
     description: 'Certified product passport retrieved successfully',
   })
   @ApiResponse({ status: 404, description: 'Certified product not found' })
-  async getPublicCertifiedProductPassport(@Param('productId') productId: string) {
-    return this.websiteService.getPublicCertifiedProductPassport(productId);
+  async getPublicCertifiedProductPassport(
+    @Req() req: Request,
+    @Param('productId') productId: string,
+  ) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.websiteService.getPublicCertifiedProductPassport(
+      productId,
+      origin,
+    );
   }
 
   @Post('public/manufacturers/by-category')
@@ -392,7 +401,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Manufacturer inquiry (send email to customer)',
     description:
-      'Accepts name, email, contact, message, manufacturerId. Fetches manufacturer details and sends an email to the customer.',
+      'Accepts name, email, countryCode (+ dial code from selector), phoneNumber (local digits), optional manufacturerId, and optional message/subject. **reCAPTCHA is not required** (no `x-recaptcha-token` header needed). Matches the public manufacturer contact form. Sends a confirmation email to the visitor.',
   })
   @ApiResponse({ status: 200, description: 'Email sent successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })

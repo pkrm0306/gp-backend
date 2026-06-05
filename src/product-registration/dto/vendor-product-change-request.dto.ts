@@ -1,6 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsMongoId, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsMongoId,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 function trimString(value: unknown): string {
   return String(value ?? '').trim();
@@ -49,20 +56,28 @@ export class VendorProductChangeRequestDto {
   currentName: string;
 
   @ApiProperty({
-    description: 'Requested new product name',
+    description: 'Requested new product name (required)',
     example: 'new product m2 updated',
+    required: true,
   })
   @Transform(({ value }) => trimString(value))
   @IsString()
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'New Product Name is required.' })
+  @MinLength(1, { message: 'New Product Name is required.' })
+  @MaxLength(500, {
+    message: 'New Product Name must not exceed 500 characters.',
+  })
   requestedName: string;
 
   @ApiProperty({
-    description: 'Reason for product name change request',
+    description: 'Reason for product name change request (required)',
     example: 'Brand naming correction required after compliance review.',
+    required: true,
   })
   @Transform(({ value }) => trimString(value))
   @IsString()
-  @IsNotEmpty()
+  @IsNotEmpty({ message: 'Reason is required.' })
+  @MinLength(1, { message: 'Reason is required.' })
+  @MaxLength(2000, { message: 'Reason must not exceed 2000 characters.' })
   reason: string;
 }

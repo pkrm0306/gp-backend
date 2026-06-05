@@ -36,6 +36,7 @@ import { UpdateCategoryStatusDto } from './dto/update-category-status.dto';
 import { UpdateCategoryMultipartDto } from './dto/update-category-multipart.dto';
 import { RedisService } from '../common/redis/redis.service';
 import { uploadFile } from '../utils/upload-file.util';
+import { matchWebsitePublicCertifiedProducts } from '../product-registration/constants/website-public-product.filter';
 
 /** Listing row: Mongo lean doc plus computed image URL */
 export type CategoryListItem = Record<string, unknown> & {
@@ -402,6 +403,82 @@ export class CategoriesService implements OnModuleInit {
           `Category list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
         );
       });
+    return out;
+  }
+
+  /**
+   * Public website categories listing: only categories with at least one certified,
+   * non–soft-deleted product (same scope as the website product grid).
+   */
+  async findAllForWebsitePublic(
+    query: ListCategoriesQueryDto,
+  ): Promise<CategoryListItem[]> {
+    const cacheKey = this.redisService.buildKey(
+      'categories',
+      'list',
+      'website-public-certified-products',
+      JSON.stringify({
+        sector: query.sector ?? null,
+        sectors: String(query.sectors || '')
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean)
+          .sort()
+          .join(','),
+        status: query.status ?? null,
+        raw_material: String(query.raw_material || '')
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean)
+          .sort()
+          .join(','),
+        sort: query.sort === 'desc' ? 'desc' : 'asc',
+      }),
+    );
+    try {
+      const cached = await this.redisService.get<CategoryListItem[]>(cacheKey);
+      if (Array.isArray(cached)) {
+        return cached;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Website public category list cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+
+    const categoryIds = await this.productModel
+      .distinct('categoryId', matchWebsitePublicCertifiedProducts())
+      .exec();
+    if (!categoryIds.length) {
+      return [];
+    }
+
+    const filter = this.buildFindFilter(query, { enableMultiSector: true });
+    filter._id = { $in: categoryIds };
+    if (query.status === undefined || query.status === null) {
+      filter.category_status = 1;
+    }
+
+    const sortOrder = query.sort === 'desc' ? -1 : 1;
+    const rows = await this.categoryModel
+      .find(filter)
+      .sort({ category_name: sortOrder })
+      .lean()
+      .exec();
+
+    const out: CategoryListItem[] = rows.map((doc) => ({
+      ...(doc as Record<string, unknown>),
+      category_image_url: this.resolveCategoryImageUrl(doc.category_image),
+    }));
+
+    this.redisService
+      .set(cacheKey, out, this.getCategoryListCacheTtlSeconds())
+      .catch((error) => {
+        this.logger.warn(
+          `Website public category list cache write failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
+
     return out;
   }
 

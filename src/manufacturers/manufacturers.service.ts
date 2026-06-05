@@ -19,6 +19,7 @@ import {
   Product,
   ProductDocument,
 } from '../product-registration/schemas/product.schema';
+import { matchWebsitePublicCertifiedProducts } from '../product-registration/constants/website-public-product.filter';
 import {
   VendorUser,
   VendorUserDocument,
@@ -924,13 +925,44 @@ export class ManufacturersService {
             .exec()
         : null;
 
+    // Prefer vendor-users.manufacturerId (same as GET /api/vendor/profile) over JWT
+    // manufacturerId, which can be stale and would save profile to the wrong row.
     const resolvedManufacturer =
-      manufacturerFromToken ||
       manufacturer ||
+      manufacturerFromToken ||
       fallbackManufacturer ||
       fallbackByContact;
 
     return { resolvedManufacturer, vendorUser };
+  }
+
+  /** Public wrapper used by dashboard and other modules. */
+  async resolveManufacturerForAuthUser(
+    authUser:
+      | string
+      | { userId: string; manufacturerId?: string; vendorId?: string },
+  ) {
+    return this.resolveManufacturerForVendorProfile(authUser);
+  }
+
+  /**
+   * Vendor dashboard gate — GST (number or certificate PDF), designation, and phone.
+   * Falls back to vendor-users row when manufacturer text fields were only saved there.
+   */
+  isVendorAccountProfileComplete(
+    manufacturer: ManufacturerDocument | Manufacturer | null | undefined,
+    vendorUser?: VendorUserDocument | null,
+  ): boolean {
+    const gst =
+      String(manufacturer?.vendor_gst ?? '').trim() ||
+      String(manufacturer?.vendorGstPdf ?? '').trim();
+    const designation =
+      String(manufacturer?.vendor_designation ?? '').trim() ||
+      String(vendorUser?.designation ?? '').trim();
+    const phone =
+      String(manufacturer?.vendor_phone ?? '').trim() ||
+      String(vendorUser?.phone ?? '').trim();
+    return Boolean(gst && designation && phone);
   }
 
   /**
@@ -1281,7 +1313,7 @@ export class ManufacturersService {
         updateData.vendor_name = updateDto.name;
       }
       if (updateDto.designation !== undefined) {
-        updateData.vendor_designation = updateDto.designation;
+        updateData.vendor_designation = String(updateDto.designation).trim();
       }
       if (gstNumberToApply) {
         updateData.vendor_gst = gstNumberToApply;
@@ -1954,8 +1986,13 @@ export class ManufacturersService {
 
   private buildListFilter(
     query: ListManufacturersQueryDto,
+    restrictToManufacturerIds?: Types.ObjectId[],
   ): Record<string, unknown> {
     const parts: Record<string, unknown>[] = [];
+
+    if (restrictToManufacturerIds && restrictToManufacturerIds.length > 0) {
+      parts.push({ _id: { $in: restrictToManufacturerIds } });
+    }
 
     if (query.search !== undefined && query.search.trim() !== '') {
       const rx = new RegExp(escapeRegex(query.search.trim()), 'i');
@@ -2208,7 +2245,37 @@ export class ManufacturersService {
     };
   }
 
-  async findAllPaginated(query: ListManufacturersQueryDto) {
+  /**
+   * Public website manufacturers listing: only manufacturers with at least one certified,
+   * non–soft-deleted product.
+   */
+  async findAllPaginatedForWebsitePublic(query: ListManufacturersQueryDto) {
+    const manufacturerIds = await this.productModel
+      .distinct('manufacturerId', matchWebsitePublicCertifiedProducts())
+      .exec();
+
+    if (!manufacturerIds.length) {
+      const page = query.page ?? 1;
+      const limit = query.limit ?? 10;
+      return {
+        message: 'Manufacturers retrieved successfully',
+        data: [],
+        total: 0,
+        totalCount: 0,
+        page,
+        limit,
+        totalPages: 0,
+        currentPage: page,
+      };
+    }
+
+    return this.findAllPaginated(query, manufacturerIds);
+  }
+
+  async findAllPaginated(
+    query: ListManufacturersQueryDto,
+    restrictToManufacturerIds?: Types.ObjectId[],
+  ) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const sortBy = query.sortBy ?? 'createdAt';
@@ -2216,7 +2283,7 @@ export class ManufacturersService {
     const sortOrder = order === 'desc' ? -1 : 1;
     const sort: Record<string, 1 | -1> = { [sortBy]: sortOrder };
 
-    const filter = this.buildListFilter(query);
+    const filter = this.buildListFilter(query, restrictToManufacturerIds);
     const skip = (page - 1) * limit;
 
     const [rows, total] = await Promise.all([

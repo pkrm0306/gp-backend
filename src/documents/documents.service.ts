@@ -10,7 +10,6 @@ import {
   AllProductDocument,
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
-import { normalizeDocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { DeleteDocumentQueryDto } from './dto/delete-document-query.dto';
 import { deleteUploadedFileByDocumentLink } from '../utils/upload-file.util';
 import { DocumentVersioningService } from './document-versioning.service';
@@ -77,14 +76,8 @@ export class DocumentsService {
       throw new ForbiddenException('You are not allowed to delete this document');
     }
 
-    const normalizedRequestedSectionKey = normalizeDocumentSectionKey(query.sectionKey);
-    const normalizedStoredSectionKey = normalizeDocumentSectionKey(document.documentForm);
-
-    if (
-      document.urnNo !== query.urnNo ||
-      normalizedStoredSectionKey !== normalizedRequestedSectionKey
-    ) {
-      throw new NotFoundException('Document not found for provided urnNo and sectionKey');
+    if (document.urnNo !== query.urnNo) {
+      throw new NotFoundException('Document not found for provided urnNo');
     }
 
     await this.tryDeleteFile(document.documentLink);

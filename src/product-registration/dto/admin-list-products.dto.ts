@@ -274,6 +274,15 @@ export class AdminListProductsDto {
   countryId?: string;
 
   @ApiPropertyOptional({
+    description: 'Snake_case alias of `countryId`.',
+    example: '507f1f77bcf86cd799439010',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsMongoId()
+  country_id?: string;
+
+  @ApiPropertyOptional({
     description: 'Plant state ID',
     example: '507f1f77bcf86cd799439013',
   })
@@ -345,16 +354,31 @@ export class AdminListProductsDto {
   @IsString({ each: true })
   state_names?: string[];
 
-  @ApiPropertyOptional({ description: 'Plant city', example: 'Mumbai' })
+  @ApiPropertyOptional({
+    description:
+      'Plant **city** (free text, case-insensitive partial match on any plant for the EOI). Use a text input in the UI, not a dropdown.',
+    example: 'Mumbai',
+  })
   @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
   @IsString()
   city?: string;
 
   @ApiPropertyOptional({
+    description: 'Snake_case alias of `city` (free-text plant city filter).',
+    example: 'Mumbai',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  city_name?: string;
+
+  @ApiPropertyOptional({
     description:
-      'Multi-select plant cities (case-insensitive partial match). Takes precedence over `city` when non-empty.',
+      'Deprecated multi-select cities. Prefer single `city` text filter. Still supported for backward compatibility.',
     type: [String],
     example: ['Bengaluru', 'Mumbai'],
+    deprecated: true,
   })
   @IsOptional()
   @Transform(({ value }) => normalizeStringArray(value))

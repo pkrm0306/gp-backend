@@ -1,6 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsString, IsNotEmpty, IsOptional, IsNumber } from 'class-validator';
+import { IsOptionalNonNegativeNumber } from '../../process-mp-manufacturing-units/validators/optional-non-negative-number.decorator';
+import { IsOptionalNumber } from '../../process-mp-manufacturing-units/validators/optional-number.decorator';
 
 export class CreateProcessWmManufacturingUnitDto {
   @ApiProperty({
@@ -59,28 +61,22 @@ export class CreateProcessWmManufacturingUnitDto {
   hazardousWasteQuantityUnit?: string;
 
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   hazardousWasteProductionYear1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   hazardousWasteProductionYear2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   hazardousWasteProductionYear3?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   hazardousWasteQuantityYear1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   hazardousWasteQuantityYear2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   hazardousWasteQuantityYear3?: number;
 
   @ApiProperty({ required: false })
@@ -105,37 +101,29 @@ export class CreateProcessWmManufacturingUnitDto {
   nonHazardousWasteWaterUnit?: string;
 
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   nonHazardousWasteProductionYear1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   nonHazardousWasteProductionYear2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   nonHazardousWasteProductionYear3?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   nonHazardousWasteWaterYear1?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   nonHazardousWasteWaterYear2?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNonNegativeNumber()
   nonHazardousWasteWaterYear3?: number;
 
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNumber()
   calculateBulkRshwd?: number;
   @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
+  @IsOptionalNumber()
   calculateBulkRsnhwd?: number;
   @ApiProperty({ required: false })
   @IsString()

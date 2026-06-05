@@ -90,21 +90,18 @@ describe('DocumentsService', () => {
     expect(updateOneMock).not.toHaveBeenCalled();
   });
 
-  it('throws 404 for wrong section key', async () => {
-    findOneMock.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(
-        buildDoc({ documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE }),
-      ),
+  it('soft deletes when sectionKey does not match stored documentForm', async () => {
+    const doc = buildDoc({ documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE });
+    findOneMock.mockReturnValue({ exec: jest.fn().mockResolvedValue(doc) });
+    updateOneMock.mockResolvedValue({ acknowledged: true, modifiedCount: 1 });
+
+    const result = await service.softDeleteDocument(123, vendorA, {
+      urnNo: 'URN-1',
+      sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
     });
 
-    await expect(
-      service.softDeleteDocument(123, vendorA, {
-        urnNo: 'URN-1',
-        sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
-      }),
-    ).rejects.toBeInstanceOf(NotFoundException);
-
-    expect(updateOneMock).not.toHaveBeenCalled();
+    expect(updateOneMock).toHaveBeenCalledTimes(1);
+    expect(result.sectionKey).toBe(DocumentSectionKey.PRODUCT_PERFORMANCE);
   });
 
   it('throws 404 for wrong URN', async () => {

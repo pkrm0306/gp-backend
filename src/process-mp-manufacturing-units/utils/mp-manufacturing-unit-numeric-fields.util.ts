@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
-/** Numeric columns on process_mp_manufacturing_units (energy / water / renewable). Excludes **calculateBulkSec** / **calculateBulkSwc** — those may be negative from auto-calculation. */
+/** Numeric columns on process_mp_manufacturing_units (energy / water / renewable). Excludes **calculateBulkSec** / **calculateBulkSwc** / **calculateBulkStec** — those may be negative from auto-calculation. */
 export const MP_MANUFACTURING_UNIT_NON_NEGATIVE_NUMBER_FIELDS = [
   'ecdProductionYear1',
   'ecdProductionYear2',

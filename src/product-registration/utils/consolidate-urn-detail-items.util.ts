@@ -1,6 +1,8 @@
 type UrnDetailRow = Record<string, unknown>;
 
 const SHARED_URN_OBJECT_KEYS = [
+  'urn_assessment_report',
+  'urnAssessmentReport',
   'category',
   'manufacturer',
   'vendor',

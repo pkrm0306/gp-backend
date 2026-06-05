@@ -38,7 +38,10 @@ import { UrnTabReviewService } from './urn-tab-review.service';
 import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-product.dto';
 import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
-import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
+import {
+  adminImageMemoryMulterOptions,
+  assessmentReportMemoryMulterOptions,
+} from '../common/upload/multer-universal.config';
 import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
 import { RenewAdminTestValidityService } from '../renew/services/renew-admin-test-validity.service';
 
@@ -293,7 +296,37 @@ export class AdminProductsController {
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'Certified product updated' })
+  @ApiResponse({
+    status: 200,
+    description: 'Certified product updated',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string' },
+        data: {
+          type: 'object',
+          properties: {
+            _id: { type: 'string' },
+            productMongoId: { type: 'string' },
+            productName: { type: 'string' },
+            productDetails: { type: 'string' },
+            urnNo: { type: 'string' },
+            eoiNo: { type: 'string' },
+            categoryId: { type: 'string' },
+            productImage: { type: 'string', nullable: true },
+            productImageUrl: { type: 'string', nullable: true },
+            productStatus: { type: 'number', example: 2 },
+            validtillDate: { type: 'string', format: 'date-time', nullable: true },
+            validTill: { type: 'string', format: 'date-time', nullable: true },
+            validTillDate: { type: 'string', format: 'date-time', nullable: true },
+            valid_till_date: { type: 'string', format: 'date-time', nullable: true },
+            updatedDate: { type: 'string', format: 'date-time', nullable: true },
+          },
+        },
+      },
+    },
+  })
   @ApiResponse({ status: 400, description: 'Not certified or validation error' })
   @ApiResponse({ status: 404, description: 'Product not found' })
   async patchCertifiedProduct(
@@ -309,6 +342,107 @@ export class AdminProductsController {
     return {
       success: true,
       message: 'Certified product updated successfully',
+      data,
+    };
+  }
+
+  @Post('urn-assessment-report')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor(
+      'assessmentReportFile',
+      assessmentReportMemoryMulterOptions(),
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Upload assessment report for certified URN (admin)',
+    description:
+      'Multipart body: `urnNo` + `assessmentReportFile`. Allowed after certification is complete (urnStatus 11). Accepts any file except zip archives and folders.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['urnNo', 'assessmentReportFile'],
+      properties: {
+        urnNo: { type: 'string', example: 'URN-20260604121240' },
+        assessmentReportFile: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Assessment report uploaded' })
+  @ApiResponse({
+    status: 400,
+    description: 'URN not certified, invalid file, or zip/folder rejected',
+  })
+  @ApiResponse({ status: 404, description: 'URN not found' })
+  async uploadUrnAssessmentReportByBody(
+    @Body('urnNo') urnNo: string,
+    @UploadedFile() assessmentReportFile?: Express.Multer.File,
+  ) {
+    return this.uploadUrnAssessmentReportResponse(urnNo, assessmentReportFile);
+  }
+
+  @Post('urn/:urnNo/assessment-report')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor(
+      'assessmentReportFile',
+      assessmentReportMemoryMulterOptions(),
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Upload assessment report for certified URN (admin, path param)',
+    description:
+      'Legacy alias: URN in path. Prefer `POST urn-assessment-report` with `urnNo` in multipart body.',
+  })
+  @ApiParam({ name: 'urnNo', description: 'URN number' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['assessmentReportFile'],
+      properties: {
+        assessmentReportFile: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Assessment report uploaded' })
+  @ApiResponse({
+    status: 400,
+    description: 'URN not certified, invalid file, or zip/folder rejected',
+  })
+  @ApiResponse({ status: 404, description: 'URN not found' })
+  async uploadUrnAssessmentReport(
+    @Param('urnNo') urnNo: string,
+    @UploadedFile() assessmentReportFile?: Express.Multer.File,
+  ) {
+    return this.uploadUrnAssessmentReportResponse(urnNo, assessmentReportFile);
+  }
+
+  private async uploadUrnAssessmentReportResponse(
+    urnNo: string,
+    assessmentReportFile?: Express.Multer.File,
+  ) {
+    if (!assessmentReportFile) {
+      throw new BadRequestException('Assessment report file is required');
+    }
+    const data =
+      await this.productRegistrationService.adminUploadUrnAssessmentReport(
+        String(urnNo ?? '').trim(),
+        assessmentReportFile,
+      );
+    return {
+      success: true,
+      message: 'Assessment report uploaded successfully',
       data,
     };
   }
@@ -413,8 +547,9 @@ export class AdminProductsController {
   @ApiOperation({
     summary: 'Filter dropdown options for admin product list (certified, etc.)',
     description:
-      'Returns active categories, manufacturers/distinct values from products matching `status` (default `[2]` certified), valid-till years (past years only), and cities. ' +
-      'Use with country/state APIs: `GET /countries`, `GET /states?countryId=`.',
+      'Returns active categories, manufacturers, and valid-till years for products matching `status` (default `[2]` certified). ' +
+      '**City** is a free-text filter on `POST /admin/products/list` (`city` query in body), not a dropdown here. ' +
+      'Use `GET /countries` and `GET /states?countryId=` for country/state dropdowns.',
   })
   @ApiBody({ type: AdminListProductsFilterOptionsDto })
   @ApiResponse({ status: 200, description: 'Filter options' })
@@ -431,7 +566,7 @@ export class AdminProductsController {
       'Search matches manufacturer name, URN, EOI, or product name; when a manufacturer qualifies, nested URNs/EOIs reflect filters (Option A). ' +
       'Legacy **groupBy: urn** returns flat URN groups. `total` counts top-level groups (manufacturers or URNs). ' +
       '**EOI status (`productStatus`):** filter with `status`, `productStatus`, or `product_status` (array of **0–4**). Omit or send empty → defaults to **[0, 1]** (Pending + Submitted). ' +
-      '**Multi-select filters:** `categoryIds`, `manufacturerIds`, `manufacturerNames`, `stateIds`, `stateNames`, `validTillYears`, `cities`, plus `countryId` for plant country. Single-value aliases (`categoryId`, `stateId`, etc.) still work.',
+      '**Multi-select filters:** `categoryIds`, `manufacturerIds`, `manufacturerNames`, `stateIds`, `stateNames`, `validTillYears`, plus `countryId` for plant country. **City:** send `city` as free text (partial match), not `cities` multiselect. Single-value aliases (`categoryId`, `stateId`, etc.) still work.',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Products listed successfully' })

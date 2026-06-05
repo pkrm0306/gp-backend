@@ -28,6 +28,7 @@ import {
   findDuplicateEoiSequenceSuffixes,
 } from '../helpers/eoi-sequence.helper';
 import { EoiNumberService } from './eoi-number.service';
+import { invalidateProductListingsCache as invalidateAllProductListingsCache } from '../helpers/invalidate-product-listings-cache.util';
 
 export type SoftDeleteProductResult = {
   success: true;
@@ -356,18 +357,7 @@ export class ProductSoftDeleteService {
   }
 
   private async invalidateProductListingsCache(): Promise<void> {
-    await Promise.all([
-      this.redisService.deleteByPattern(
-        this.redisService.buildKey('products', 'list', 'vendor', '*'),
-      ),
-      this.redisService.deleteByPattern(
-        this.redisService.buildKey('products', 'list', 'admin', '*'),
-      ),
-    ]).catch((error) => {
-      this.logger.warn(
-        `Failed to invalidate product listing caches: ${(error as Error)?.message || 'unknown error'}`,
-      );
-    });
+    await invalidateAllProductListingsCache(this.redisService, this.logger);
   }
 
   private toObjectId(

@@ -147,6 +147,45 @@ export class ListProductsDto {
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   dateTo?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Filter by manufacturing plant **country** (MongoDB `_id` from countries dropdown).',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsMongoId()
+  countryId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter by plant **state name** (free text, case-insensitive partial match). Not a state id.',
+    example: 'Telangana',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  state?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `state` (text search).',
+    example: 'Telangana',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  state_name?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Filter by plant **city** (free text, case-insensitive partial match).',
+    example: 'Hyderabad',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  city?: string;
+
   @ApiProperty({
     description: 'Sort order (default: desc)',
     example: 'desc',

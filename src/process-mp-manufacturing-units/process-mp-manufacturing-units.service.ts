@@ -13,6 +13,11 @@ import {
 import { CreateProcessMpManufacturingUnitDto } from './dto/create-process-mp-manufacturing-unit.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
 import { assertMpManufacturingUnitNonNegativeNumbers } from './utils/mp-manufacturing-unit-numeric-fields.util';
+import {
+  enrichMpManufacturingUnitCalculations,
+  normalizeMpManufacturingUnitEnergyInputs,
+  pickPersistedEnergyCalculationFields,
+} from './utils/mp-energy-consumption-calculations.util';
 
 @Injectable()
 export class ProcessMpManufacturingUnitsService {
@@ -96,10 +101,6 @@ export class ProcessMpManufacturingUnitsService {
       'reOthers',
       'offsiteRenewablePower',
       'processMpManufacturingUnitStatus',
-      'calculateBulkSec',
-      'calculateBulkSwc',
-      'calculateBulkSecMultipled',
-      'calculateBulkSwcMultipled',
       'measuresImplementedMpUnits',
       'detailsOfRainWaterHarvestingMpUnits',
     ];
@@ -113,13 +114,52 @@ export class ProcessMpManufacturingUnitsService {
     dto: CreateProcessMpManufacturingUnitDto,
     urnNo: string,
   ): Record<string, unknown> {
-    const { processMpManufacturingUnitId: _id, ...fields } = dto;
-    return {
+    const {
+      processMpManufacturingUnitId: _id,
+      calculateBulkSec: _sec,
+      calculateBulkSecMultipled: _secMultipled,
+      calculateBulkSwc: _swc,
+      calculateBulkSwcMultipled: _swcMultipled,
+      calculateBulkStec: _stec,
+      calculateBulkStecMultipled: _stecMultipled,
+      calculateBulkTecMultipled: _tecMultipled,
+      ...fields
+    } = dto;
+    const payload = normalizeMpManufacturingUnitEnergyInputs({
       ...fields,
       urnNo,
       offsiteRenewablePower: dto.offsiteRenewablePower ?? 0,
       processMpManufacturingUnitStatus: dto.processMpManufacturingUnitStatus ?? 0,
-    };
+    });
+    return enrichMpManufacturingUnitCalculations(payload);
+  }
+
+  private async persistCalculatedEnergyFields(
+    rowId: unknown,
+    payload: Record<string, unknown>,
+    updatedAt: Date,
+  ) {
+    await this.model
+      .updateOne(
+        { _id: rowId },
+        {
+          $set: {
+            ...pickPersistedEnergyCalculationFields(payload),
+            updatedDate: updatedAt,
+          },
+        },
+      )
+      .exec();
+  }
+
+  private enrichUnitRow(
+    row: ProcessMpManufacturingUnitDocument | Record<string, unknown>,
+  ) {
+    const plain =
+      typeof (row as ProcessMpManufacturingUnitDocument).toObject === 'function'
+        ? (row as ProcessMpManufacturingUnitDocument).toObject()
+        : { ...(row as Record<string, unknown>) };
+    return enrichMpManufacturingUnitCalculations(plain);
   }
 
   async create(dto: CreateProcessMpManufacturingUnitDto, vendorId: string) {
@@ -150,7 +190,15 @@ export class ProcessMpManufacturingUnitsService {
             `Manufacturing unit ${dto.processMpManufacturingUnitId} not found for URN ${urnNo}`,
           );
         }
-        return updated;
+        await this.persistCalculatedEnergyFields(
+          updated._id,
+          incomingPayload,
+          now,
+        );
+        return this.enrichUnitRow({
+          ...updated.toObject(),
+          ...incomingPayload,
+        });
       }
 
       const id = await this.sequenceHelper.getProcessMpManufacturingUnitId();
@@ -160,7 +208,15 @@ export class ProcessMpManufacturingUnitsService {
         (row) => this.unitSignature(row.toObject()) === incomingSignature,
       );
       if (duplicateRow) {
-        return duplicateRow;
+        await this.persistCalculatedEnergyFields(
+          duplicateRow._id,
+          incomingPayload,
+          now,
+        );
+        return this.enrichUnitRow({
+          ...duplicateRow.toObject(),
+          ...incomingPayload,
+        });
       }
 
       const doc = new this.model({
@@ -171,7 +227,7 @@ export class ProcessMpManufacturingUnitsService {
         updatedDate: now,
       });
 
-      return await doc.save();
+      return this.enrichUnitRow(await doc.save());
     } catch (error: any) {
       if (error instanceof BadRequestException) throw error;
       console.error('[Process MP Manufacturing Units] Create error:', error);
@@ -219,10 +275,10 @@ export class ProcessMpManufacturingUnitsService {
   async listByUrn(urnNo: string, vendorId: string) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      return await this.model
+      return (await this.model
         .find({ urnNo, vendorId: vendorObjectId })
         .sort({ processMpManufacturingUnitId: 1 })
-        .exec();
+        .exec()).map((row) => this.enrichUnitRow(row));
     } catch (error: any) {
       console.error('[Process MP Manufacturing Units] List error:', error);
       throw new InternalServerErrorException(
@@ -238,10 +294,10 @@ export class ProcessMpManufacturingUnitsService {
       if (!trimmed) {
         throw new BadRequestException('URN number is required');
       }
-      return await this.model
+      return (await this.model
         .find({ urnNo: trimmed })
         .sort({ processMpManufacturingUnitId: 1 })
-        .exec();
+        .exec()).map((row) => this.enrichUnitRow(row));
     } catch (error: any) {
       if (error instanceof BadRequestException) throw error;
       console.error('[Process MP Manufacturing Units] Admin list error:', error);

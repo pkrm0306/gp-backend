@@ -22,6 +22,7 @@ import { ProcessManufacturingService } from './process-manufacturing.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProcessManufacturingDto } from './dto/create-process-manufacturing.dto';
+import { parseOptionalDecimalNumber } from '../common/utils/parse-optional-number.util';
 
 @ApiTags('Process Manufacturing')
 @Controller('process-manufacturing')
@@ -154,9 +155,9 @@ export class ProcessManufacturingController {
       portableWaterDemand: body.portableWaterDemand,
       rainWaterHarvesting: body.rainWaterHarvesting,
       beyondTheFenceInitiatives: body.beyondTheFenceInitiatives,
-      totalEnergyConsumption: body.totalEnergyConsumption
-        ? parseInt(body.totalEnergyConsumption, 10)
-        : undefined,
+      totalEnergyConsumption: parseOptionalDecimalNumber(
+        body.totalEnergyConsumption,
+      ),
       processManufacturingStatus: body.processManufacturingStatus
         ? parseInt(body.processManufacturingStatus, 10)
         : undefined,

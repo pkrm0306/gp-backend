@@ -27,6 +27,7 @@ import {
   VendorUserDocument,
 } from '../vendor-users/schemas/vendor-user.schema';
 import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
+import { resolveManufacturerInquiryPhone } from '../common/utils/normalize-phone-with-country-code.util';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { AdminService } from '../admin/admin.service';
@@ -55,7 +56,8 @@ import {
   Category,
   CategoryDocument,
 } from '../categories/schemas/category.schema';
-import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
+import { matchWebsitePublicCertifiedProducts } from '../product-registration/constants/website-public-product.filter';
+import { resolveStoredUploadUrl } from '../utils/upload-file.util';
 
 function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
   const prefs: string[] = [];
@@ -149,6 +151,75 @@ export class WebsiteService {
     return JSON.stringify(this.stableJsonValue(value));
   }
 
+  /** Ignore empty paths and Swagger placeholder `"string"`. */
+  private pickImagePath(raw: unknown): string | null {
+    const v = String(raw ?? '').trim();
+    if (!v || v.toLowerCase() === 'string') {
+      return null;
+    }
+    const resolved = resolveStoredUploadUrl(v);
+    return resolved || v;
+  }
+
+  private normalizeWebsiteImageUrl(
+    raw: unknown,
+    origin: string,
+    kind: 'product' | 'category' = 'product',
+  ): string | null {
+    const v = this.pickImagePath(raw);
+    if (!v) {
+      return null;
+    }
+    if (/^https?:\/\//i.test(v)) {
+      return v;
+    }
+    if (v.startsWith('/uploads/')) {
+      return `${origin}${v}`;
+    }
+    if (v.startsWith('uploads/')) {
+      return `${origin}/${v}`;
+    }
+    if (v.startsWith('/')) {
+      return `${origin}${v}`;
+    }
+    const folder = kind === 'category' ? 'categories' : 'products';
+    const encoded = v
+      .split('/')
+      .filter(Boolean)
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    return `${origin}/uploads/${folder}/${encoded}`;
+  }
+
+  private mapCertifiedProductCardForWebsite(
+    row: Record<string, unknown>,
+    origin: string,
+  ): Record<string, unknown> {
+    const productOnly = this.pickImagePath(
+      row.productImageUrl ?? row.productImage ?? row.product_image,
+    );
+    const categoryOnly = this.pickImagePath(
+      row.categoryImageUrl ?? row.categoryImage ?? row.category_image,
+    );
+    const displayFromProduct = productOnly;
+    const displayImage = displayFromProduct ?? categoryOnly;
+    const productImageUrl = displayFromProduct
+      ? this.normalizeWebsiteImageUrl(displayFromProduct, origin, 'product')
+      : this.normalizeWebsiteImageUrl(categoryOnly, origin, 'category');
+
+    return {
+      ...row,
+      productImage: displayImage,
+      productImageUrl,
+      categoryImage: categoryOnly,
+      categoryImageUrl: this.normalizeWebsiteImageUrl(
+        categoryOnly,
+        origin,
+        'category',
+      ),
+    };
+  }
+
   private shortHash(input: string): string {
     return crypto.createHash('sha256').update(input).digest('hex').slice(0, 40);
   }
@@ -177,6 +248,8 @@ export class WebsiteService {
       'website',
       'public',
       'manufacturers',
+      'with-certified-products',
+      'v2',
       this.shortHash(this.stableJsonStringify(normalized)),
     );
   }
@@ -203,7 +276,8 @@ export class WebsiteService {
         `Website manufacturers cache read failed: ${(error as Error)?.message || 'unknown error'}`,
       );
     }
-    const result = await this.manufacturersService.findAllPaginated(query);
+    const result =
+      await this.manufacturersService.findAllPaginatedForWebsitePublic(query);
     this.redisService
       .set(cacheKey, result, this.getWebsitePublicListCacheTtlSeconds())
       .catch((error) => {
@@ -481,7 +555,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'filter-options',
-      'v4',
+      'v5',
     );
     try {
       const cached = await this.redisService.get<{
@@ -523,21 +597,11 @@ export class WebsiteService {
       q,
       limit,
     );
-    const normalizeImageUrl = (raw: unknown) => {
-      const v = String(raw ?? '').trim();
-      if (!v) return null;
-      if (/^https?:\/\//i.test(v)) return v;
-      if (v.startsWith('/uploads/')) return `${origin}${v}`;
-      if (v.startsWith('uploads/')) return `${origin}/${v}`;
-      return v;
-    };
-
     return {
       message: 'Product suggestions retrieved successfully',
-      data: rows.map((row: Record<string, unknown>) => ({
-        ...row,
-        productImage: normalizeImageUrl(row.productImage),
-      })),
+      data: rows.map((row: Record<string, unknown>) =>
+        this.mapCertifiedProductCardForWebsite(row, origin),
+      ),
     };
   }
 
@@ -652,7 +716,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'flat',
-      'v3',
+      'v6',
       this.shortHash(this.stableJsonStringify({ ...(dto as object), origin })),
     );
     try {
@@ -676,19 +740,9 @@ export class WebsiteService {
         dto.productId,
       );
 
-    const normalizeImageUrl = (raw: unknown) => {
-      const v = String(raw ?? '').trim();
-      if (!v) return null;
-      if (/^https?:\/\//i.test(v)) return v;
-      if (v.startsWith('/uploads/')) return `${origin}${v}`;
-      if (v.startsWith('uploads/')) return `${origin}/${v}`;
-      return v;
-    };
-
-    const data = (result.data ?? []).map((row: Record<string, unknown>) => ({
-      ...row,
-      productImage: normalizeImageUrl(row.productImage),
-    }));
+    const data = (result.data ?? []).map((row: Record<string, unknown>) =>
+      this.mapCertifiedProductCardForWebsite(row, origin),
+    );
 
     const hasLocationFilter = Boolean(
       dto.countryId ?? (dto.stateIds ?? dto.state_ids)?.length,
@@ -755,7 +809,10 @@ export class WebsiteService {
     return { ...result, message: 'Certified products retrieved successfully' };
   }
 
-  async getPublicCertifiedProductPassport(productId: string) {
+  async getPublicCertifiedProductPassport(
+    productId: string,
+    origin?: string,
+  ) {
     const normalizedProductId = String(productId ?? '').trim();
     if (!normalizedProductId) {
       throw new BadRequestException('productId is required');
@@ -766,14 +823,33 @@ export class WebsiteService {
         normalizedProductId,
       );
 
+    const resolvedOrigin = String(origin ?? '').trim();
+    if (!resolvedOrigin) {
+      return {
+        message: 'Certified product passport retrieved successfully',
+        data,
+      };
+    }
+
+    const productImage = this.pickImagePath(
+      data.productImageUrl ?? data.productImage,
+    );
+    const productImageUrl = productImage
+      ? this.normalizeWebsiteImageUrl(productImage, resolvedOrigin, 'product')
+      : null;
+
     return {
       message: 'Certified product passport retrieved successfully',
-      data,
+      data: {
+        ...data,
+        productImage,
+        productImageUrl: productImageUrl ?? data.productImageUrl ?? null,
+      },
     };
   }
 
   async getPublicWebsiteStats() {
-    const cacheKey = this.redisService.buildKey('website', 'public', 'stats', 'v1');
+    const cacheKey = this.redisService.buildKey('website', 'public', 'stats', 'v2');
     try {
       const cached = await this.redisService.get<{
         message: string;
@@ -799,31 +875,18 @@ export class WebsiteService {
       );
     }
 
+    const productScope = matchWebsitePublicCertifiedProducts();
     const [companies, productCategories, ecolabelledProducts] = await Promise.all([
-      this.manufacturerModel
-        .countDocuments({
-          manufacturerStatus: { $ne: 2 },
-        })
-        .exec(),
-      this.categoryModel
-        .countDocuments({
-          category_status: 1,
-        })
-        .exec(),
-      this.productModel
-        .countDocuments(
-          matchActiveProducts({
-            productStatus: 2,
-          }),
-        )
-        .exec(),
+      this.productModel.distinct('manufacturerId', productScope).exec(),
+      this.productModel.distinct('categoryId', productScope).exec(),
+      this.productModel.countDocuments(productScope).exec(),
     ]);
 
     const payload = {
       message: 'Website stats retrieved successfully',
       data: {
-        companies,
-        productCategories,
+        companies: companies.length,
+        productCategories: productCategories.length,
         ecolabelledProducts,
       },
     };
@@ -845,6 +908,7 @@ export class WebsiteService {
       'website',
       'public',
       'manufacturers-by-category',
+      'v2',
       id,
     );
     try {
@@ -884,6 +948,7 @@ export class WebsiteService {
       'website',
       'public',
       'categories-by-manufacturer',
+      'v2',
       id,
     );
     try {
@@ -1304,6 +1369,28 @@ export class WebsiteService {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 
+    let visitorPhone = '';
+    try {
+      visitorPhone = safe(resolveManufacturerInquiryPhone(dto));
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Phone number is invalid',
+      );
+    }
+    const visitorMessage = String(dto.message ?? '').trim();
+    const visitorDetailsBlock = visitorMessage
+      ? `
+            <h3 style="margin:18px 0 8px;">Your Message</h3>
+            <div style="background:#f9fafb; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">
+              <p style="margin:0;"><strong>Phone:</strong> ${visitorPhone}</p>
+              <p style="margin:8px 0 0; white-space:pre-wrap;">${safe(visitorMessage)}</p>
+            </div>`
+      : `
+            <h3 style="margin:18px 0 8px;">Your Contact Details</h3>
+            <div style="background:#f9fafb; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">
+              <p style="margin:0;"><strong>Phone:</strong> ${visitorPhone}</p>
+            </div>`;
+
     const htmlBody = `
       <!doctype html>
       <html>
@@ -1314,17 +1401,12 @@ export class WebsiteService {
         </head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111; max-width: 640px; margin: 0 auto; padding: 20px;">
           <div style="background:#16a34a; color:#fff; padding:16px 20px; border-radius:8px 8px 0 0;">
-            <h2 style="margin:0;">Thanks, we received your message</h2>
+            <h2 style="margin:0;">Thanks, we received your inquiry</h2>
           </div>
           <div style="border:1px solid #e5e7eb; border-top:0; padding:20px; border-radius:0 0 8px 8px;">
             <p style="margin-top:0;">Hi ${safe(dto.name)},</p>
             <p>We’ve recorded your inquiry and included the manufacturer details below for your reference.</p>
-
-            <h3 style="margin:18px 0 8px;">Your Message</h3>
-            <div style="background:#f9fafb; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">
-              <p style="margin:0;"><strong>Contact:</strong> ${safe(dto.phone || dto.contact || '')}</p>
-              <p style="margin:8px 0 0; white-space:pre-wrap;">${safe(dto.message || '')}</p>
-            </div>
+${visitorDetailsBlock}
 
             <h3 style="margin:18px 0 8px;">Manufacturer Details</h3>
             <div style="background:#fff; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">

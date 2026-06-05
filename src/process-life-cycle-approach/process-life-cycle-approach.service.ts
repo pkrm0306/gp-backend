@@ -91,7 +91,6 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
     session.startTransaction();
 
     let createdFileFullPaths: string[] = [];
-    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
@@ -113,6 +112,13 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
       )
         ? lifeCycleImplementationDocumentsFiles
         : [];
+
+      const lcaReportsDisplayName =
+        createProcessLifeCycleApproachDto.lifeCycleAssesmentReportsFileName?.trim() ||
+        '';
+      const lcaImplementationDisplayName =
+        createProcessLifeCycleApproachDto.lifeCycleImplementationDocumentsFileName?.trim() ||
+        '';
 
       // Handle file uploads and set flags
       let lifeCycleAssesmentReports =
@@ -151,40 +157,9 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
         lifeCycleImplementationDocuments = 1;
       }
 
-      if (lcaReportsFiles.length > 0 || lcaImplementationFiles.length > 0) {
-        const existingDocs = await this.allProductDocumentModel
-          .find({
-            urnNo: createProcessLifeCycleApproachDto.urnNo,
-            documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
-            isDeleted: { $ne: true },
-          })
-          .session(session);
-        oldFileLinksToDeleteAfterCommit = existingDocs
-          .map((d) => d.documentLink)
-          .filter(Boolean);
-        if (existingDocs.length) {
-          await this.allProductDocumentModel.updateMany(
-            { _id: { $in: existingDocs.map((d) => d._id) } },
-            {
-              $set: {
-                isDeleted: true,
-                deletedAt: now,
-                deletedBy: vendorObjectId,
-                updatedDate: now,
-              },
-            },
-            { session },
-          );
-          await trackProductDocumentDeleteBatch({
-            versioning: this.documentVersioningService,
-            urnNo: createProcessLifeCycleApproachDto.urnNo,
-            sectionKey: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
-            userId: vendorObjectId,
-            docs: existingDocs,
-            session,
-          });
-        }
-      }
+      // Append-only per upload field: do not soft-delete all PROCESS_LIFE_CYCLE_APPROACH
+      // documents when only one of the two upload fields is used — each subsection keeps
+      // its existing files (same behaviour as process-manufacturing).
 
       // Create process life cycle approach data
       const processLifeCycleApproachData = {
@@ -223,7 +198,7 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
           documentFormSubsection: 'life_cycle_assesment_reports',
           formPrimaryId: savedProcessLifeCycleApproach.processLifeCycleApproachId,
-          documentName: lcaReportsStoredNames[i],
+          documentName: lcaReportsDisplayName || lcaReportsStoredNames[i],
           documentOriginalName: lcaReportsFiles[i].originalname,
           documentLink: lcaReportsFilePaths[i],
           createdDate: now,
@@ -240,7 +215,8 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
           documentFormSubsection: 'life_cycle_implementation_documents',
           formPrimaryId: savedProcessLifeCycleApproach.processLifeCycleApproachId,
-          documentName: lcaImplementationStoredNames[i],
+          documentName:
+            lcaImplementationDisplayName || lcaImplementationStoredNames[i],
           documentOriginalName: lcaImplementationFiles[i].originalname,
           documentLink: lcaImplementationFilePaths[i],
           createdDate: now,
@@ -265,17 +241,6 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
-
-      for (const fileLink of oldFileLinksToDeleteAfterCommit) {
-        const normalizedPath = String(fileLink).replace(/\\/g, '/');
-        if (normalizedPath && fs.existsSync(normalizedPath)) {
-          try {
-            fs.unlinkSync(normalizedPath);
-          } catch {
-            // Ignore post-commit cleanup issues
-          }
-        }
-      }
 
       return savedProcessLifeCycleApproach;
     } catch (error: any) {

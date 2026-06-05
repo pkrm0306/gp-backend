@@ -62,7 +62,7 @@ export class DocumentsController {
   @ApiOperation({
     summary: 'Soft-delete a section document',
     description:
-      'Soft-deletes a document only when the authenticated vendor owns the document and it matches the provided URN and section key.',
+      'Soft-deletes a document when the authenticated vendor owns it and it matches the provided URN. sectionKey is optional and not validated.',
   })
   @ApiResponse({
     status: 200,
@@ -85,7 +85,7 @@ export class DocumentsController {
   })
   @ApiResponse({ status: 400, description: 'Bad input' })
   @ApiResponse({ status: 403, description: 'Unauthorized ownership' })
-  @ApiResponse({ status: 404, description: 'Document not found for URN/section' })
+  @ApiResponse({ status: 404, description: 'Document not found for URN' })
   async deleteDocument(
     @CurrentUser() user: any,
     @Param() params: DeleteDocumentParamsDto,

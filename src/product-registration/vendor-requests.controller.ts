@@ -29,6 +29,23 @@ export class VendorRequestsController {
     private readonly productRegistrationService: ProductRegistrationService,
   ) {}
 
+  @Get('form-meta')
+  @ApiOperation({
+    summary: 'Form metadata for product name change popup',
+    description:
+      'Returns required field labels, validation messages, and display hints for the vendor popup (mandatory indicators, long-name wrapping).',
+  })
+  @ApiResponse({ status: 200, description: 'Form metadata' })
+  getFormMeta() {
+    const data =
+      this.productRegistrationService.getVendorProductChangeRequestFormMeta();
+    return {
+      success: true,
+      message: 'Form metadata fetched successfully',
+      data,
+    };
+  }
+
   @Get()
   @ApiOperation({
     summary: 'List vendor product name change requests',

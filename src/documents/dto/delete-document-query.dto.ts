@@ -1,9 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsNotEmpty, IsString } from 'class-validator';
-import {
-  ACCEPTED_DOCUMENT_SECTION_KEYS,
-  DocumentSectionKey,
-} from '../../common/constants/document-section-key.constants';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class DeleteDocumentQueryDto {
   @ApiProperty({
@@ -14,13 +10,12 @@ export class DeleteDocumentQueryDto {
   @IsNotEmpty()
   urnNo: string;
 
-  @ApiProperty({
-    enum: ACCEPTED_DOCUMENT_SECTION_KEYS,
-    description: 'Section key/tab where the document belongs',
-    example: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
+  @ApiPropertyOptional({
+    description:
+      'Optional section key from the vendor tab (informational only; delete is authorized by document id, URN, and vendor ownership)',
+    example: 'raw_materials_recycled_content',
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  @IsIn(ACCEPTED_DOCUMENT_SECTION_KEYS)
-  sectionKey: string;
+  sectionKey?: string;
 }
