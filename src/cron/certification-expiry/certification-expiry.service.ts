@@ -12,6 +12,7 @@ import {
   RenewalCycleStatus,
 } from '../../renew/schemas/renewal-cycle.schema';
 import { EmailService } from '../../common/services/email.service';
+import { computeGraceEndDate } from '../../product-registration/helpers/certification-dates.util';
 import { PRODUCT_STATUS_DISCONTINUED } from '../../renew/constants/product-status.constants';
 import {
   CronEmailLog,
@@ -28,8 +29,6 @@ import {
 import { CertificationExpiryQueryService } from './certification-expiry-query.service';
 import { CertificationExpiryTemplateService } from './certification-expiry-template.service';
 import { CronJobRunResult, EligibleExpiryProduct } from './certification-expiry.types';
-
-const ACTIVE_RENEWAL_URN_STATUSES = [12, 13, 14, 15, 16, 17];
 
 @Injectable()
 export class CertificationExpiryService {
@@ -112,29 +111,26 @@ export class CertificationExpiryService {
   }
 
   async runDeactivationMail(asOf = new Date()): Promise<CronJobRunResult> {
-    return this.runJob('deactivationMail', asOf, async (products, todayIso, result) => {
-      const inProgressUrns = await this.loadInProgressUrns();
+    return this.runJob(
+      'deactivationMail',
+      asOf,
+      async (products, todayIso, result) => {
       const regYear = yearMonthsAgoInTimeZone(24);
       const currentYear = Number(todayIso.slice(0, 4));
 
       for (const product of products) {
-        if (!product.thirdNotifyDate) {
+        if (!product.validtillDate) {
           result.skipped += 1;
           continue;
         }
-        const thirdIso = toIsoDateInTimeZone(product.thirdNotifyDate);
-        if (thirdIso > todayIso) {
+        const graceEndIso = toIsoDateInTimeZone(
+          computeGraceEndDate(product.validtillDate),
+        );
+        if (graceEndIso > todayIso) {
           result.skipped += 1;
           continue;
         }
-        if (
-          ACTIVE_RENEWAL_URN_STATUSES.includes(product.urnStatus) ||
-          inProgressUrns.has(product.urnNo)
-        ) {
-          result.skipped += 1;
-          continue;
-        }
-        const notifyDate = `deactivate-${thirdIso}`;
+        const notifyDate = `deactivate-${graceEndIso}`;
         const already = await this.cronEmailLogModel.exists({
           productId: product.productId,
           jobType: 'deactivationMail',
@@ -175,7 +171,9 @@ export class CertificationExpiryService {
           result.errors.push(this.errorEntry(product, error));
         }
       }
-    });
+    },
+      (date) => this.queryService.getDeactivationEligibleProducts(date),
+    );
   }
 
   private async runJob(
@@ -186,6 +184,8 @@ export class CertificationExpiryService {
       todayIso: string,
       result: CronJobRunResult,
     ) => Promise<void>,
+    loadProducts: (asOf: Date) => Promise<EligibleExpiryProduct[]> = (date) =>
+      this.queryService.getEligibleProducts(date),
   ): Promise<CronJobRunResult> {
     const result: CronJobRunResult = {
       success: true,
@@ -198,7 +198,7 @@ export class CertificationExpiryService {
       errors: [],
     };
     try {
-      const products = await this.queryService.getEligibleProducts(asOf);
+      const products = await loadProducts(asOf);
       const todayIso = todayIsoInTimeZone();
       await handler(products, todayIso, result);
       result.success = result.failed === 0;
@@ -305,15 +305,6 @@ export class CertificationExpiryService {
       renewalCycleId: inProgress?._id as Types.ObjectId | undefined,
       sentAt: new Date(),
     });
-  }
-
-  private async loadInProgressUrns(): Promise<Set<string>> {
-    const rows = await this.renewalCycleModel
-      .find({ status: RenewalCycleStatus.IN_PROGRESS })
-      .select('urnNo')
-      .lean()
-      .exec();
-    return new Set(rows.map((r) => String(r.urnNo)));
   }
 
   private internalCcEmail(): string {

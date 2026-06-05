@@ -43,6 +43,7 @@ import {
   matchActiveProductPlants,
   matchActiveProducts,
 } from './constants/active-product.filter';
+import { matchExpiredProducts } from './constants/expired-product.filter';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
@@ -1298,7 +1299,7 @@ export class ProductRegistrationService {
   /**
    * Vendor uncertified EOI list — filters on **`products.productStatus`** (EOI list status), not manufacturer/vendor status.
    * When `statuses` is omitted or empty, defaults to **Pending (0) + Submitted (1)** only.
-   * Code **4** = expired certified (`productStatus` 2 with `validtillDate` in the past).
+   * Code **4** = expired (`productStatus` 4 discontinued, or `productStatus` 2 with `validtillDate` in the past).
    * Explicit **2** alone (no 4) = active certified only (`validtillDate` null or not yet passed).
    */
   private buildVendorListProductStatusMatch(
@@ -1332,18 +1333,12 @@ export class ProductRegistrationService {
       return {
         $or: [
           { productStatus: { $in: regularStatuses } },
-          {
-            productStatus: 2,
-            validtillDate: { $exists: true, $ne: null, $lt: now },
-          },
+          matchExpiredProducts(now),
         ],
       };
     }
     if (includeExpired) {
-      return {
-        productStatus: 2,
-        validtillDate: { $exists: true, $ne: null, $lt: now },
-      };
+      return matchExpiredProducts(now);
     }
     if (regularStatuses.length === 1) {
       return { productStatus: regularStatuses[0] };
@@ -6620,17 +6615,11 @@ export class ProductRegistrationService {
         statusMatch = {
           $or: [
             { productStatus: { $in: regularStatuses } },
-            {
-              productStatus: 2,
-              validtillDate: { $exists: true, $ne: null, $lt: now },
-            },
+            matchExpiredProducts(now),
           ],
         };
       } else if (includeExpired) {
-        statusMatch = {
-          productStatus: 2,
-          validtillDate: { $exists: true, $ne: null, $lt: now },
-        };
+        statusMatch = matchExpiredProducts(now);
       } else if (regularStatuses.length === 1) {
         statusMatch = { productStatus: regularStatuses[0] };
       } else {
@@ -6806,12 +6795,7 @@ export class ProductRegistrationService {
             ],
             expired: [
               ...rowBase,
-              {
-                $match: {
-                  productStatus: 2,
-                  validtillDate: { $exists: true, $ne: null, $lt: now },
-                },
-              },
+              { $match: matchExpiredProducts(now) },
               { $count: 'count' },
             ],
           },
@@ -7094,12 +7078,7 @@ export class ProductRegistrationService {
             ],
             expired: [
               ...rowBase,
-              {
-                $match: {
-                  productStatus: 2,
-                  validtillDate: { $exists: true, $ne: null, $lt: now },
-                },
-              },
+              { $match: matchExpiredProducts(now) },
               { $count: 'count' },
             ],
           },

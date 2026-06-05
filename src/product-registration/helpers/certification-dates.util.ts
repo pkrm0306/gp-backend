@@ -68,8 +68,13 @@ export function computeNotifyDates(
   return {
     firstNotifyDate: startOfDay(subMonths(vt, 2)),
     secondNotifyDate: startOfDay(subMonths(vt, 1)),
-    thirdNotifyDate: startOfDay(addMonths(vt, 1)),
+    thirdNotifyDate: computeGraceEndDate(validtillDate),
   };
+}
+
+/** End of the 1-month grace period after validtillDate. */
+export function computeGraceEndDate(validtillDate: Date): Date {
+  return startOfDay(addMonths(startOfDay(validtillDate), 1));
 }
 
 /** Full bundle when admin approves certification payment. */

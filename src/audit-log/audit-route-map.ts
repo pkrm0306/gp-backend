@@ -412,6 +412,33 @@ export function mapFriendlyAudit(
     };
   }
 
+  if (
+    m === 'PATCH' &&
+    pathNorm.endsWith('/api/admin/products/expired-reactivate/product')
+  ) {
+    return {
+      module: AUDIT_MODULE.PRODUCT,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'Expired product reactivated to certified',
+      entity_name:
+        firstStringField(body, ['eoiNo']) ?? firstStringField(body, ['urnNo']),
+      new_values: snap,
+    };
+  }
+
+  if (
+    m === 'PATCH' &&
+    pathNorm.endsWith('/api/admin/products/expired-reactivate/urn')
+  ) {
+    return {
+      module: AUDIT_MODULE.PRODUCT,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'All expired products on URN reactivated to certified',
+      entity_name: firstStringField(body, ['urnNo']),
+      new_values: snap,
+    };
+  }
+
   if (isProductFamilyPath(pathNorm)) {
     const at = methodDefaultActionType(m);
     const urn = urnFromBody(body);

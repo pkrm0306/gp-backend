@@ -6,6 +6,7 @@ import { ProductRegistrationController } from './product-registration.controller
 import { ProductsController } from './products.controller';
 import { VendorRequestsController } from './vendor-requests.controller';
 import { AdminProductsController } from './admin-products.controller';
+import { AdminExpiredReactivateController } from './admin-expired-reactivate.controller';
 import { AdminUrnController } from './admin-urn.controller';
 import { ProductController } from './product.controller';
 import { ProductRegistrationService } from './product-registration.service';
@@ -51,6 +52,11 @@ import { UrnTabReviewService } from './urn-tab-review.service';
 import { CertificationLifecycleService } from './certification-lifecycle.service';
 import { ZohoModule } from '../zoho/zoho.module';
 import { EmailService } from '../common/services/email.service';
+import {
+  ProductStatusAudit,
+  ProductStatusAuditSchema,
+} from '../renew/schemas/product-status-audit.schema';
+import { AdminExpiredReactivateService } from './services/admin-expired-reactivate.service';
 
 @Module({
   imports: [
@@ -65,6 +71,7 @@ import { EmailService } from '../common/services/email.service';
         name: VendorProductChangeRequest.name,
         schema: VendorProductChangeRequestSchema,
       },
+      { name: ProductStatusAudit.name, schema: ProductStatusAuditSchema },
     ]),
     PassportModule,
     AuthModule,
@@ -83,6 +90,7 @@ import { EmailService } from '../common/services/email.service';
     ProductsController,
     VendorRequestsController,
     AdminProductsController,
+    AdminExpiredReactivateController,
     AdminUrnController,
     ProductController,
   ],
@@ -96,6 +104,7 @@ import { EmailService } from '../common/services/email.service';
     CertificationLifecycleService,
     VendorCertificateService,
     EmailService,
+    AdminExpiredReactivateService,
   ],
   exports: [
     ProductRegistrationService,

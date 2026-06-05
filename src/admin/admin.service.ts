@@ -96,6 +96,7 @@ import {
   ActivityLog,
   ActivityLogDocument,
 } from '../activity-log/schemas/activity-log.schema';
+import { matchExpiredProducts } from '../product-registration/constants/expired-product.filter';
 import { ProductRegistrationService } from '../product-registration/product-registration.service';
 import type {
   AdminDashboardCharts,
@@ -3432,12 +3433,7 @@ export class AdminService {
           { $group: { _id: '$urnStatus', count: { $sum: 1 } } },
         ],
         expired: [
-          {
-            $match: {
-              productStatus: 2,
-              validtillDate: { $exists: true, $ne: null, $lt: now },
-            },
-          },
+          { $match: matchExpiredProducts(now) },
           { $count: 'count' },
         ],
       },

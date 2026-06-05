@@ -5,6 +5,7 @@ import {
   Product,
   ProductDocument,
 } from '../../product-registration/schemas/product.schema';
+import { PRODUCT_STATUS_DISCONTINUED } from '../../renew/constants/product-status.constants';
 import type { DashboardMetricsQueryDto } from '../dto/dashboard-metrics-query.dto';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
 import {
@@ -53,10 +54,15 @@ export class AdminDashboardStatsService {
 
   private expiredExpr(now: Date): Record<string, unknown> {
     return {
-      $and: [
-        { $eq: ['$productStatus', 2] },
-        { $ne: [{ $ifNull: ['$validtillDate', null] }, null] },
-        { $lt: ['$validtillDate', now] },
+      $or: [
+        { $eq: ['$productStatus', PRODUCT_STATUS_DISCONTINUED] },
+        {
+          $and: [
+            { $eq: ['$productStatus', 2] },
+            { $ne: [{ $ifNull: ['$validtillDate', null] }, null] },
+            { $lt: ['$validtillDate', now] },
+          ],
+        },
       ],
     };
   }

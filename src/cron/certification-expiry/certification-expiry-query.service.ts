@@ -19,22 +19,37 @@ export class CertificationExpiryQueryService {
     private readonly productModel: Model<ProductDocument>,
   ) {}
 
-  /** Legacy getEligibleProducts() + MERN renewal exclusions. */
+  /** Legacy getEligibleProducts() + MERN renewal exclusions (notify jobs only). */
   async getEligibleProducts(asOf = new Date()): Promise<EligibleExpiryProduct[]> {
     const thresholdDate = new Date(asOf);
     thresholdDate.setDate(thresholdDate.getDate() + 60);
 
+    return this.findExpiryProducts({
+      ...matchActiveProducts(),
+      productStatus: PRODUCT_STATUS_CERTIFIED,
+      productRenewStatus: PRODUCT_RENEW_STATUS.NOT_RENEWED,
+      urnStatus: { $nin: ACTIVE_RENEWAL_URN_STATUSES },
+      validtillDate: { $exists: true, $ne: null, $lt: thresholdDate },
+    });
+  }
+
+  /** Certified products past validtill — no renewal/URN exclusions (deactivation only). */
+  async getDeactivationEligibleProducts(
+    asOf = new Date(),
+  ): Promise<EligibleExpiryProduct[]> {
+    return this.findExpiryProducts({
+      ...matchActiveProducts(),
+      productStatus: PRODUCT_STATUS_CERTIFIED,
+      validtillDate: { $exists: true, $ne: null, $lte: asOf },
+    });
+  }
+
+  private async findExpiryProducts(
+    match: Record<string, unknown>,
+  ): Promise<EligibleExpiryProduct[]> {
     const rows = await this.productModel
       .aggregate([
-        {
-          $match: {
-            ...matchActiveProducts(),
-            productStatus: PRODUCT_STATUS_CERTIFIED,
-            productRenewStatus: PRODUCT_RENEW_STATUS.NOT_RENEWED,
-            urnStatus: { $nin: ACTIVE_RENEWAL_URN_STATUSES },
-            validtillDate: { $exists: true, $ne: null, $lt: thresholdDate },
-          },
-        },
+        { $match: match },
         {
           $lookup: {
             from: 'vendors',

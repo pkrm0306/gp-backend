@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import { Types } from 'mongoose';
+import {
+  isExpiredProduct,
+  matchExpiredProducts,
+} from '../../product-registration/constants/expired-product.filter';
 import type { DashboardMetricsQueryDto } from '../dto/dashboard-metrics-query.dto';
 import type { AppliedDashboardFilters } from '../admin-dashboard-metrics.types';
 
@@ -443,10 +447,7 @@ export function productStatusFilterToMatch(
         ],
       };
     case 'overdue':
-      return {
-        productStatus: 2,
-        validtillDate: { $exists: true, $ne: null, $lt: now },
-      };
+      return matchExpiredProducts(now);
     case 'active':
       return {
         $or: [
@@ -464,11 +465,7 @@ export function isProductExpired(
   validtillDate: Date | null | undefined,
   now: Date,
 ): boolean {
-  return (
-    productStatus === 2 &&
-    validtillDate != null &&
-    new Date(validtillDate).getTime() < now.getTime()
-  );
+  return isExpiredProduct(productStatus, validtillDate, now);
 }
 
 export function bucketDateExpression(
