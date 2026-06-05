@@ -45,6 +45,8 @@ import {
   matchActiveProducts,
 } from './constants/active-product.filter';
 import { matchExpiredProducts } from './constants/expired-product.filter';
+import { matchWebsitePublicCertifiedProducts } from './constants/website-public-product.filter';
+import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { StatesService } from '../states/states.service';
@@ -83,6 +85,7 @@ import {
   deleteUploadedFileByDocumentLink,
   resolveStoredUploadUrl,
   uploadCertifiedProductImage,
+  uploadUrnAssessmentReport,
 } from '../utils/upload-file.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import { EmailService } from '../common/services/email.service';
@@ -1317,6 +1320,22 @@ export class ProductRegistrationService {
       measuresAndBenefits,
       createdDate: raw?.createdDate,
       updatedDate: raw?.updatedDate,
+    };
+  }
+
+  private buildUrnAssessmentReportDocumentPayload(
+    assessmentReportUrl: string,
+  ): Record<string, unknown> {
+    const documentLink =
+      resolveStoredUploadUrl(assessmentReportUrl) || assessmentReportUrl;
+    const fileName =
+      documentLink.split('/').filter(Boolean).pop() || 'assessment-report';
+    return {
+      documentName: 'Assessment Report',
+      documentOriginalName: fileName,
+      documentLink,
+      documentForm: 'urn_assessment_report',
+      documentFormSubsection: 'assessment_report',
     };
   }
 
@@ -4106,6 +4125,63 @@ export class ProductRegistrationService {
       urnNo,
       updatedCount: Number(updateResult.modifiedCount ?? 0),
       validTillDate: normalizedDate,
+    };
+  }
+
+  async adminUploadUrnAssessmentReport(
+    urnNo: string,
+    assessmentReportFile: Express.Multer.File,
+  ): Promise<{
+    urnNo: string;
+    assessmentReportUrl: string;
+    updatedCount: number;
+    updatedAt: Date;
+  }> {
+    const trimmedUrn = String(urnNo ?? '').trim();
+    if (!trimmedUrn) {
+      throw new BadRequestException('urnNo is required');
+    }
+
+    const products = await this.productModel
+      .find(matchActiveProducts({ urnNo: trimmedUrn }))
+      .select('_id urnStatus assessmentReportUrl')
+      .lean()
+      .exec();
+
+    if (!products.length) {
+      throw new NotFoundException(`No products found for URN: ${trimmedUrn}`);
+    }
+
+    const urnStatus = Number(products[0]?.urnStatus ?? 0);
+    if (urnStatus !== RENEWAL_URN_STATUS.COMPLETED) {
+      throw new BadRequestException(
+        'Assessment report upload is allowed only after certification is complete (urnStatus 11)',
+      );
+    }
+
+    const uploaded = await uploadUrnAssessmentReport(
+      assessmentReportFile,
+      trimmedUrn,
+    );
+    const now = new Date();
+
+    const updateResult = await this.productModel.updateMany(
+      matchActiveProducts({ urnNo: trimmedUrn }),
+      {
+        $set: {
+          assessmentReportUrl: uploaded.fileUrl,
+          updatedDate: now,
+        },
+      },
+    );
+
+    await this.invalidateProductListingsCache();
+
+    return {
+      urnNo: trimmedUrn,
+      assessmentReportUrl: uploaded.fileUrl,
+      updatedCount: Number(updateResult.modifiedCount ?? 0),
+      updatedAt: now,
     };
   }
 
