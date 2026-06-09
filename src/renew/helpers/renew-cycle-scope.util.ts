@@ -9,8 +9,86 @@ import {
   RenewalCycleDocument,
   RenewalCycleStatus,
 } from '../schemas/renewal-cycle.schema';
+import { RENEWAL_URN_STATUS } from '../constants/renewal-urn-status.constants';
 import { formatPaymentRecords } from '../../payments/payment-proposal.util';
 import { toRenewObjectId } from './renew-common.util';
+
+export type CycleScopedUrnProductSnapshot = {
+  urnStatus?: number | null;
+  renewCycleNo?: number | null;
+};
+
+export type CycleScopedUrnPaymentSnapshot = {
+  paymentStatus?: number | null;
+} | null;
+
+/** Minimum urn_status for admin renew process tabs (Product Performance, Manufacturing, …). */
+export const RENEW_ADMIN_PROCESS_TAB_UNLOCK_STATUS =
+  RENEWAL_URN_STATUS.PAYMENT_APPROVED;
+
+/**
+ * Resolve urn_status for a specific renewal cycle (admin tab gating + quick-view).
+ * Avoids returning certified status 11 while an in-progress cycle is active.
+ */
+export function resolveCycleScopedUrnStatus(
+  cycle:
+    | Pick<RenewalCycleDocument, 'cycleNo' | 'status'>
+    | null
+    | undefined,
+  product: CycleScopedUrnProductSnapshot,
+  payment?: CycleScopedUrnPaymentSnapshot,
+): number {
+  const productStatus = Number(product.urnStatus ?? 0);
+  const productCycleNo = Number(product.renewCycleNo ?? 0);
+
+  if (!cycle) {
+    return productStatus;
+  }
+
+  const cycleNo = Number(cycle.cycleNo ?? 0);
+  const paymentStatus = Number(payment?.paymentStatus ?? -1);
+
+  const inferFromPayment = (): number => {
+    if (paymentStatus === 2) {
+      return RENEWAL_URN_STATUS.PAYMENT_APPROVED;
+    }
+    if (paymentStatus === 1) {
+      return RENEWAL_URN_STATUS.PAYMENT_SUBMITTED;
+    }
+    return RENEWAL_URN_STATUS.PAYMENT_PENDING;
+  };
+
+  if (cycle.status === RenewalCycleStatus.COMPLETED) {
+    return RENEWAL_URN_STATUS.COMPLETED;
+  }
+
+  if (productCycleNo === cycleNo) {
+    if (productStatus === RENEWAL_URN_STATUS.COMPLETED) {
+      return RENEWAL_URN_STATUS.PAYMENT_PENDING;
+    }
+    if (productStatus >= RENEWAL_URN_STATUS.PAYMENT_PENDING) {
+      return productStatus;
+    }
+    return inferFromPayment();
+  }
+
+  if (productCycleNo < cycleNo) {
+    return inferFromPayment();
+  }
+
+  if (productCycleNo > cycleNo) {
+    return RENEWAL_URN_STATUS.COMPLETED;
+  }
+
+  return inferFromPayment();
+}
+
+export function canAdminAccessRenewProcessTabs(urnStatus: number): boolean {
+  return (
+    urnStatus >= RENEW_ADMIN_PROCESS_TAB_UNLOCK_STATUS ||
+    urnStatus === RENEWAL_URN_STATUS.COMPLETED
+  );
+}
 
 /** Strict renew document filter — current cycle only (no legacy null cycle rows). */
 export function buildStrictRenewDocumentsFilter(

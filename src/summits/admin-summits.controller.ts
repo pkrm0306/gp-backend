@@ -91,10 +91,10 @@ export class AdminSummitsController {
   @ApiOperation({
     summary: 'Summit form metadata (year dropdown + status options)',
     description:
-      'Use `years` for the year select in basic information. Status values are `active` and `inactive`.',
+      'Use `years` for the year select in basic information. `occupiedYears` lists years already used by other summits (one summit per year). Status values are `active` and `inactive`.',
   })
-  async getMeta() {
-    const data = this.summitsService.getFormMeta();
+  async getMeta(@Query('excludeSummitId') excludeSummitId?: string) {
+    const data = await this.summitsService.getFormMeta(excludeSummitId);
     return {
       message: 'Summit form metadata retrieved successfully',
       data,

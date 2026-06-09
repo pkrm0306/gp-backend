@@ -85,6 +85,7 @@ class SummitSpeakerDto {
   @IsOptional() @IsInt() sortOrder?: number;
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() sub?: string;
+  @IsOptional() @IsString() keyPoint?: string;
   @ApiPropertyOptional({
     type: [String],
     example: ['Sustainability', 'Green buildings'],

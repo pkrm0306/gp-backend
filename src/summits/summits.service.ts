@@ -31,7 +31,10 @@ import {
 } from './utils/summit-mapper.util';
 import { isValidSummitSlug, slugifySummitInput } from './utils/summit-slug.util';
 import { sanitizeSummitHtml } from './utils/summit-sanitize.util';
-import { normalizeSpeakerTags } from './utils/summit-speaker.util';
+import {
+  normalizeSpeakerKeyPoint,
+  normalizeSpeakerTags,
+} from './utils/summit-speaker.util';
 import {
   normalizeSummitBannersInput,
   normalizeSummitSpeakersInput,
@@ -191,9 +194,23 @@ export class SummitsService {
     return clauses.length === 1 ? clauses[0] : { $and: clauses };
   }
 
-  getFormMeta() {
+  async getFormMeta(excludeSummitId?: string) {
+    const filter: FilterQuery<SummitDocument> = { deletedAt: null };
+    const exclude = String(excludeSummitId ?? '').trim();
+    if (exclude && Types.ObjectId.isValid(exclude)) {
+      filter._id = { $ne: new Types.ObjectId(exclude) };
+    }
+    const rows = await this.summitModel.find(filter).select('year').lean().exec();
+    const occupiedYears = [
+      ...new Set(
+        rows
+          .map((row) => String(row.year ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
     return {
       years: getSummitYearOptions(),
+      occupiedYears,
       statuses: [
         { value: 'active' as const, label: 'Active' },
         { value: 'inactive' as const, label: 'Inactive' },
@@ -706,10 +723,8 @@ export class SummitsService {
       sortOrder: (item as { sortOrder?: number }).sortOrder ?? index,
       name: String((item as { name?: string }).name ?? ''),
       sub: String((item as { sub?: string }).sub ?? ''),
-      tags: normalizeSpeakerTags(
-        (item as { tags?: unknown }).tags ??
-          (item as { keyPoints?: unknown }).keyPoints,
-      ),
+      keyPoint: normalizeSpeakerKeyPoint((item as { keyPoint?: string }).keyPoint),
+      tags: normalizeSpeakerTags((item as { tags?: unknown }).tags),
       imageUrl: String((item as { imageUrl?: string }).imageUrl ?? ''),
     }));
   }

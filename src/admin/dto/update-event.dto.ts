@@ -18,7 +18,25 @@ export class UpdateEventDto {
 
   @ApiPropertyOptional({
     example: '2026-04-08',
-    description: 'Event date (ISO date string or ISO datetime).',
+    description: 'Event start date (ISO YYYY-MM-DD or DD-MM-YYYY).',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => emptyToUndefined(value))
+  eventStartDate?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-04-10',
+    description: 'Event end date (ISO YYYY-MM-DD or DD-MM-YYYY).',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => emptyToUndefined(value))
+  eventEndDate?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-04-08',
+    description: 'Legacy alias of eventStartDate.',
   })
   @IsOptional()
   @IsString()

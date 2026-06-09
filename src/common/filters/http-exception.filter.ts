@@ -96,12 +96,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
         if (extra.code && typeof extra.code === 'string') {
           apiResponse.code = extra.code;
         }
+        const fieldErrorSource = extra.fieldErrors ?? extra.errors;
         if (
-          extra.fieldErrors &&
-          typeof extra.fieldErrors === 'object' &&
-          !Array.isArray(extra.fieldErrors)
+          fieldErrorSource &&
+          typeof fieldErrorSource === 'object' &&
+          !Array.isArray(fieldErrorSource)
         ) {
-          apiResponse.fieldErrors = extra.fieldErrors as Record<string, string>;
+          apiResponse.fieldErrors = fieldErrorSource as Record<string, string>;
         }
         if (Array.isArray(extra.issues)) {
           apiResponse.issues = extra.issues as ApiResponse['issues'];

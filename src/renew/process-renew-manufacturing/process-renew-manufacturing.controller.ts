@@ -10,6 +10,8 @@ import {
 
   Param,
 
+  Query,
+
   UseGuards,
 
   UseInterceptors,
@@ -38,6 +40,7 @@ import { Model } from 'mongoose';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
 
 import { assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
+import { parseMultipartJsonIdArray } from '../../product-design/product-design-upload.util';
 
 
 
@@ -102,35 +105,26 @@ export class ProcessRenewManufacturingController {
     );
 
     const data = await this.processRenewManufacturingService.upsert(
-
       {
-
         urnNo: body.urnNo,
-
+        renewalCycleId: body.renewalCycleId
+          ? String(body.renewalCycleId)
+          : undefined,
         portableWaterDemand: body.portableWaterDemand,
-
         rainWaterHarvesting: body.rainWaterHarvesting,
-
         beyondTheFenceInitiatives: body.beyondTheFenceInitiatives,
-
         totalEnergyConsumption: body.totalEnergyConsumption
-
           ? parseInt(body.totalEnergyConsumption, 10)
-
           : undefined,
-
         processManufacturingStatus: body.processManufacturingStatus
-
           ? parseInt(body.processManufacturingStatus, 10)
-
           : undefined,
-
+        existingDocumentIds: parseMultipartJsonIdArray(
+          body.existingDocumentIds ?? body.existing_document_ids,
+        ),
       },
-
       conservationFiles,
-
       consumptionFiles,
-
     );
 
     return { success: true, message: 'Renew manufacturing saved successfully', data };
@@ -143,8 +137,14 @@ export class ProcessRenewManufacturingController {
 
   @ApiOperation({ summary: 'Get renewal process manufacturing by URN' })
 
-  async getByUrn(@Param('urnNo') urnNo: string) {
-    const data = await this.renewDetailsService.getManufacturingByUrn(urnNo);
+  async getByUrn(
+    @Param('urnNo') urnNo: string,
+    @Query('renewalCycleId') renewalCycleId?: string,
+  ) {
+    const data = await this.renewDetailsService.getManufacturingByUrn(
+      urnNo,
+      renewalCycleId,
+    );
     return { success: true, message: 'Renew manufacturing fetched successfully', data };
   }
 

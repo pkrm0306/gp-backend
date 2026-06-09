@@ -62,6 +62,7 @@ export function computeSummitSectionVisibility(
         String(s.name ?? '').trim() ||
         String(s.imageUrl ?? '').trim() ||
         String(s.sub ?? '').trim() ||
+        String(s.keyPoint ?? '').trim() ||
         (s.tags ?? []).some((t) => String(t).trim()),
     ),
     agenda: hasRichTextContentOnly(summit.agenda),

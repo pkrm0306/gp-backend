@@ -31,6 +31,7 @@ import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { AdminModule } from '../admin/admin.module';
+import { GalleryModule } from '../gallery/gallery.module';
 import { SummitsModule } from '../summits/summits.module';
 import { EmailService } from '../common/services/email.service';
 import {
@@ -54,6 +55,7 @@ import {
     CategoriesModule,
     ProductRegistrationModule,
     AdminModule,
+    GalleryModule,
     SummitsModule,
   ],
   controllers: [WebsiteController],

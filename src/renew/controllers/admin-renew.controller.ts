@@ -26,6 +26,10 @@ import { RenewalOrchestrationService } from '../services/renewal-orchestration.s
 import { RenewAdminTestValidityService } from '../services/renew-admin-test-validity.service';
 import { AdminRenewTestValidityDto } from '../dto/admin-renew-test-validity.dto';
 import { ProductRegistrationService } from '../../product-registration/product-registration.service';
+import {
+  buildRenewDetailsHttpResponse,
+  parseRenewDetailsInclude,
+} from '../utils/renew-details-response.util';
 
 class StartRenewalCycleDto {
   urnNo: string;
@@ -88,46 +92,25 @@ export class AdminRenewController {
   @Permissions(PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({
     summary: 'Full renewal URN details (admin — same shape as uncertified GET /products/details)',
+    description:
+      'Use include=full for a single workspace payload (process sections, payment, tabReviews, processComments).',
   })
   @ApiParam({ name: 'urnNo', type: String })
   async getRenewDetails(
     @Param('urnNo') urnNo: string,
     @Query('renewalCycleId') renewalCycleId?: string,
+    @Query('include') include?: string,
   ) {
     if (!urnNo?.trim()) {
       throw new BadRequestException('URN number is required');
     }
+    const includeMode = parseRenewDetailsInclude(include);
     const result = await this.renewDetailsService.getRenewDetailsByUrn(
       urnNo.trim(),
       renewalCycleId,
+      { role: 'admin', include: includeMode },
     );
-    return {
-      success: true,
-      message: 'Renew details fetched successfully',
-      data: result.data,
-      product_details_list: result.data,
-      products: result.products,
-      manufacturer: result.manufacturer,
-      manufacturing_details: result.manufacturing_details,
-      plants: result.plants,
-      plant_details: result.plant_details,
-      all_renew_product_documents: result.all_renew_product_documents,
-      all_urn_product_documents: result.all_urn_product_documents,
-      documents: result.documents,
-      renewContext: result.renewContext,
-      urnContext: {
-        urnNo: result.renewContext.urnNo,
-        urnStatus: result.renewContext.urnStatus,
-        product_renew_status: result.renewContext.productRenewStatus,
-        productRenewStatus: result.renewContext.productRenewStatus,
-        renewCycleNo: result.renewContext.renewCycleNo,
-        vendorId: result.renewContext.vendorId,
-        manufacturerId: result.renewContext.manufacturerId,
-        renewalCycleId: result.renewContext.renewalCycleId,
-      },
-      siteVisits: result.siteVisits,
-      site_visits: result.siteVisits,
-    };
+    return buildRenewDetailsHttpResponse(result, includeMode);
   }
 
   @Get('renew-list')

@@ -1323,22 +1323,6 @@ export class ProductRegistrationService {
     };
   }
 
-  private buildUrnAssessmentReportDocumentPayload(
-    assessmentReportUrl: string,
-  ): Record<string, unknown> {
-    const documentLink =
-      resolveStoredUploadUrl(assessmentReportUrl) || assessmentReportUrl;
-    const fileName =
-      documentLink.split('/').filter(Boolean).pop() || 'assessment-report';
-    return {
-      documentName: 'Assessment Report',
-      documentOriginalName: fileName,
-      documentLink,
-      documentForm: 'urn_assessment_report',
-      documentFormSubsection: 'assessment_report',
-    };
-  }
-
   private formatProductDetailsVendor(
     manufacturer: Record<string, unknown> | null | undefined,
     vendorFromCollection: Record<string, unknown> | null | undefined,
@@ -2569,6 +2553,104 @@ export class ProductRegistrationService {
    * Admin: edit a certified product (productStatus === 2 only).
    * Updates name, description, category, valid till, and optional image; reuses updateProduct transaction logic.
    */
+  private buildUrnAssessmentReportDocumentPayload(
+    assessmentReportUrl: string,
+    documentOriginalName?: string,
+  ) {
+    const link = String(assessmentReportUrl ?? '').trim();
+    const originalName =
+      String(documentOriginalName ?? '').trim() ||
+      link.replace(/\\/g, '/').split('/').filter(Boolean).pop() ||
+      'Assessment report';
+    return {
+      documentForm: 'certification_admin',
+      documentFormSubsection: 'assessment_report',
+      documentLink: link,
+      documentOriginalName: originalName,
+    };
+  }
+
+  async adminUploadUrnAssessmentReport(
+    urnNo: string,
+    file: Express.Multer.File,
+  ): Promise<{
+    urnNo: string;
+    assessmentReportUrl: string;
+    assessmentReportFileName: string;
+    assessmentReport: {
+      documentForm: string;
+      documentFormSubsection: string;
+      documentLink: string;
+      documentOriginalName: string;
+    };
+    urnAssessmentReport: {
+      documentForm: string;
+      documentFormSubsection: string;
+      documentLink: string;
+      documentOriginalName: string;
+    };
+  }> {
+    const trimmedUrn = String(urnNo ?? '').trim();
+    if (!trimmedUrn) {
+      throw new BadRequestException('URN number is required');
+    }
+
+    const products = await this.productModel
+      .find(matchActiveProducts({ urnNo: trimmedUrn }))
+      .select('_id urnStatus assessmentReportUrl')
+      .lean()
+      .exec();
+
+    if (!products.length) {
+      throw new NotFoundException('No products found for this URN');
+    }
+
+    const urnStatus = Math.max(
+      ...products.map((row) => Number(row.urnStatus ?? 0)),
+    );
+    if (urnStatus < 11) {
+      throw new BadRequestException(
+        'Assessment report can only be uploaded after certification is complete',
+      );
+    }
+
+    const uploaded = await uploadUrnAssessmentReport(file, trimmedUrn);
+    const assessmentReportUrl =
+      resolveStoredUploadUrl(uploaded.fileUrl) || uploaded.fileUrl;
+
+    const previousUrl = String(
+      products.find((row) => row.assessmentReportUrl)?.assessmentReportUrl ??
+        '',
+    ).trim();
+    if (previousUrl && previousUrl !== assessmentReportUrl) {
+      await deleteUploadedFileByDocumentLink(previousUrl);
+    }
+
+    await this.productModel
+      .updateMany(matchActiveProducts({ urnNo: trimmedUrn }), {
+        $set: {
+          assessmentReportUrl,
+          updatedDate: new Date(),
+        },
+      })
+      .exec();
+
+    const assessmentReport = this.buildUrnAssessmentReportDocumentPayload(
+      assessmentReportUrl,
+      String(file.originalname ?? '').trim() || uploaded.fileName,
+    );
+
+    await this.invalidateProductListingsCache();
+
+    return {
+      urnNo: trimmedUrn,
+      assessmentReportUrl,
+      assessmentReportFileName: uploaded.fileName,
+      assessmentReport,
+      urnAssessmentReport: assessmentReport,
+    };
+  }
+
   async adminPatchCertifiedProduct(
     productId: string,
     dto: AdminPatchCertifiedProductDto,
@@ -4128,63 +4210,6 @@ export class ProductRegistrationService {
     };
   }
 
-  async adminUploadUrnAssessmentReport(
-    urnNo: string,
-    assessmentReportFile: Express.Multer.File,
-  ): Promise<{
-    urnNo: string;
-    assessmentReportUrl: string;
-    updatedCount: number;
-    updatedAt: Date;
-  }> {
-    const trimmedUrn = String(urnNo ?? '').trim();
-    if (!trimmedUrn) {
-      throw new BadRequestException('urnNo is required');
-    }
-
-    const products = await this.productModel
-      .find(matchActiveProducts({ urnNo: trimmedUrn }))
-      .select('_id urnStatus assessmentReportUrl')
-      .lean()
-      .exec();
-
-    if (!products.length) {
-      throw new NotFoundException(`No products found for URN: ${trimmedUrn}`);
-    }
-
-    const urnStatus = Number(products[0]?.urnStatus ?? 0);
-    if (urnStatus !== RENEWAL_URN_STATUS.COMPLETED) {
-      throw new BadRequestException(
-        'Assessment report upload is allowed only after certification is complete (urnStatus 11)',
-      );
-    }
-
-    const uploaded = await uploadUrnAssessmentReport(
-      assessmentReportFile,
-      trimmedUrn,
-    );
-    const now = new Date();
-
-    const updateResult = await this.productModel.updateMany(
-      matchActiveProducts({ urnNo: trimmedUrn }),
-      {
-        $set: {
-          assessmentReportUrl: uploaded.fileUrl,
-          updatedDate: now,
-        },
-      },
-    );
-
-    await this.invalidateProductListingsCache();
-
-    return {
-      urnNo: trimmedUrn,
-      assessmentReportUrl: uploaded.fileUrl,
-      updatedCount: Number(updateResult.modifiedCount ?? 0),
-      updatedAt: now,
-    };
-  }
-
   /**
    * Vendor EOI list grouped by URN (paginate/sort URNs, not flat products).
    * Status filters apply to **`products.productStatus`** (EOI list status: Pending, Submitted, etc.), not manufacturer/vendor status.
@@ -4820,6 +4845,10 @@ export class ProductRegistrationService {
           eoi_no: '$eoiNo',
           urn_no: '$urnNo',
           product_name: '$productName',
+          product_details: { $ifNull: ['$productDetails', ''] },
+          productDetails: { $ifNull: ['$productDetails', ''] },
+          unit_count: { $ifNull: ['$plantCount', 0] },
+          plantCount: { $ifNull: ['$plantCount', 0] },
           category_name: {
             $cond: {
               if: { $ne: ['$category', null] },

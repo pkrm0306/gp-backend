@@ -3,9 +3,11 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   Param,
   Query,
   UseGuards,
+  forwardRef,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -20,6 +22,7 @@ import { DeleteDocumentParamsDto } from './dto/delete-document-params.dto';
 import { DeleteDocumentQueryDto } from './dto/delete-document-query.dto';
 import { DocumentVersioningService } from './document-versioning.service';
 import { DocumentStreamQueryDto } from './dto/document-stream-query.dto';
+import { RenewDocumentsService } from '../renew/documents/renew-documents.service';
 
 @ApiTags('Documents')
 @Controller('documents')
@@ -29,6 +32,8 @@ export class DocumentsController {
   constructor(
     private readonly documentsService: DocumentsService,
     private readonly documentVersioningService: DocumentVersioningService,
+    @Inject(forwardRef(() => RenewDocumentsService))
+    private readonly renewDocumentsService: RenewDocumentsService,
   ) {}
 
   @Get('history')
@@ -62,7 +67,8 @@ export class DocumentsController {
   @ApiOperation({
     summary: 'Soft-delete a section document',
     description:
-      'Soft-deletes a document when the authenticated vendor owns it and it matches the provided URN. sectionKey is optional and not validated.',
+      'Certification: vendor-owned row in all_product_documents (urnNo required). ' +
+      'Renewal: pass processType=renewal, renewalCycleId, and sectionKey for all_renew_product_documents.',
   })
   @ApiResponse({
     status: 200,
@@ -91,6 +97,28 @@ export class DocumentsController {
     @Param() params: DeleteDocumentParamsDto,
     @Query() query: DeleteDocumentQueryDto,
   ) {
+    if (query.processType === 'renewal') {
+      const actorId =
+        user?.vendorId ?? user?.manufacturerId ?? user?.userId ?? user?.sub;
+      if (!actorId) {
+        throw new BadRequestException('Unable to resolve user for document delete');
+      }
+      const data = await this.renewDocumentsService.softDeleteDocument(
+        params.documentId,
+        {
+          urnNo: query.urnNo,
+          sectionKey: query.sectionKey ?? '',
+          renewalCycleId: query.renewalCycleId ?? '',
+        },
+        String(actorId),
+      );
+      return {
+        success: true,
+        message: 'Document deleted successfully',
+        data,
+      };
+    }
+
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }

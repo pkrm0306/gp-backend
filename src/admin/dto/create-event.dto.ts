@@ -18,12 +18,32 @@ export class CreateEventDto {
 
   @ApiProperty({
     example: '2026-04-08',
-    description: 'Event date (ISO date string or ISO datetime).',
+    description: 'Event start date (ISO YYYY-MM-DD or DD-MM-YYYY).',
   })
   @IsString()
   @IsNotEmpty()
   @Transform(({ value }) => String(value ?? '').trim())
-  eventDate: string;
+  eventStartDate: string;
+
+  @ApiProperty({
+    example: '2026-04-10',
+    description: 'Event end date (ISO YYYY-MM-DD or DD-MM-YYYY).',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => String(value ?? '').trim())
+  eventEndDate: string;
+
+  @ApiPropertyOptional({
+    example: '2026-04-08',
+    description: 'Legacy alias of eventStartDate.',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value).trim(),
+  )
+  eventDate?: string;
 
   @ApiPropertyOptional({ example: '10:00 AM' })
   @IsOptional()

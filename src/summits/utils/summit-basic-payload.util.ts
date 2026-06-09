@@ -1,4 +1,5 @@
 import type { UpdateSummitPayloadDto } from '../dto/summit-payload.dto';
+import { normalizeSummitStatus } from './summit-status.util';
 
 export type SummitBasicInput = NonNullable<UpdateSummitPayloadDto['basic']>;
 
@@ -29,6 +30,12 @@ export function normalizeSummitBasicInput(
   const merged: SummitBasicInput = {};
   for (const key of BASIC_KEYS) {
     const value = nested?.[key] ?? root[key];
+    if (key === 'status') {
+      if (value !== undefined && value !== null) {
+        merged.status = normalizeSummitStatus(value);
+      }
+      continue;
+    }
     if (value !== undefined && value !== null && value !== '') {
       (merged as Record<string, unknown>)[key] = value;
     }

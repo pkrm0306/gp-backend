@@ -35,6 +35,7 @@ import {
   ApiHeader,
 } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
+import { parseEventDateInput } from '../events/utils/event-date.util';
 import {
   hasExplicitCategoryIdFields,
 } from '../standards/utils/merge-category-ids.util';
@@ -77,7 +78,8 @@ import {
   DASHBOARD_PERMISSION_CATALOG,
   PERMISSIONS,
 } from '../common/constants/permissions.constants';
-import { GALLERY_TYPES, GalleryType } from '../events/schemas/event.schema';
+import { GALLERY_TYPES, GalleryType } from '../gallery/schemas/gallery.schema';
+import { GalleryService } from '../gallery/gallery.service';
 import { uploadFile } from '../utils/upload-file.util';
 import {
   createBannerDiskMulterOptions,
@@ -246,6 +248,7 @@ function TeamMemberEditDocs() {
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
+    private readonly galleryService: GalleryService,
     private readonly manufacturersService: ManufacturersService,
     private readonly paymentsService: PaymentsService,
   ) {}
@@ -617,6 +620,39 @@ export class AdminController {
     );
   }
 
+  private resolveEventDateRange(body: Record<string, unknown>): {
+    eventStartDate: Date;
+    eventEndDate: Date;
+  } {
+    const pick = (keys: string[]) => {
+      for (const key of keys) {
+        if (body?.[key] !== undefined) return body[key];
+      }
+      return undefined;
+    };
+
+    const startRaw =
+      pick(['eventStartDate', 'event_start_date', 'startDate', 'start_date']) ??
+      pick(['eventDate', 'date', 'event_date']);
+    const endRaw =
+      pick(['eventEndDate', 'event_end_date', 'endDate', 'end_date']) ?? startRaw;
+
+    const eventStartDate = parseEventDateInput(startRaw);
+    const eventEndDate = parseEventDateInput(endRaw);
+    if (!eventStartDate) {
+      throw new BadRequestException('Event start date is required.');
+    }
+    if (!eventEndDate) {
+      throw new BadRequestException('Event end date is required.');
+    }
+    if (eventEndDate.getTime() < eventStartDate.getTime()) {
+      throw new BadRequestException(
+        'Event end date must be on or after the start date.',
+      );
+    }
+    return { eventStartDate, eventEndDate };
+  }
+
   private parseExternalUrlToggle(
     raw: unknown,
     required = false,
@@ -713,10 +749,12 @@ export class AdminController {
   private mapGalleryResponse(item: any) {
     const images = Array.isArray(item?.galleryImages)
       ? item.galleryImages
-      : item?.eventImage
-        ? [item.eventImage]
-        : [];
-    const rawDate = item?.eventDate ?? item?.date;
+      : item?.image
+        ? [item.image]
+        : item?.eventImage
+          ? [item.eventImage]
+          : [];
+    const rawDate = item?.date ?? item?.eventDate;
     const normalizedDate =
       rawDate instanceof Date
         ? rawDate.toISOString().slice(0, 10)
@@ -727,14 +765,14 @@ export class AdminController {
           : '';
     return {
       id: item?.id,
-      eventId: item?.eventId,
-      title: item?.eventName ?? '',
+      eventId: item?.galleryId ?? item?.eventId,
+      title: item?.title ?? item?.eventName ?? '',
       galleryType: item?.galleryType ?? '',
-      description: item?.eventDescription ?? '',
+      description: item?.description ?? item?.eventDescription ?? '',
       date: normalizedDate,
       image: images[0] ?? null,
       images,
-      event_image: item?.event_image ?? null,
+      event_image: item?.gallery_image ?? item?.event_image ?? null,
     };
   }
 
@@ -747,7 +785,7 @@ export class AdminController {
       if (!file?.buffer?.length && !file?.path) {
         continue;
       }
-      const uploaded = await uploadFile(file, 'events');
+      const uploaded = await uploadFile(file, 'gallery');
       urls.push(uploaded.fileUrl);
     }
     return urls;
@@ -1109,6 +1147,13 @@ export class AdminController {
 
     const dto = plainToClass(CreateEventDto, {
       eventName: pick(['eventName', 'title', 'name', 'event_name', 'event_title']),
+      eventStartDate:
+        pick(['eventStartDate', 'event_start_date', 'startDate', 'start_date']) ??
+        pick(['eventDate', 'date', 'event_date']),
+      eventEndDate:
+        pick(['eventEndDate', 'event_end_date', 'endDate', 'end_date']) ??
+        pick(['eventStartDate', 'event_start_date', 'startDate', 'start_date']) ??
+        pick(['eventDate', 'date', 'event_date']),
       eventDate: pick(['eventDate', 'date', 'event_date']),
       eventStartTime: pick(['eventStartTime', 'startTime', 'event_start_time']),
       eventEndTime: pick(['eventEndTime', 'endTime', 'event_end_time']),
@@ -1151,17 +1196,7 @@ export class AdminController {
       throw new BadRequestException(errorMessages.join(', '));
     }
 
-    const rawDate = String(dto.eventDate ?? '').trim();
-    const eventDate = /^\d{2}-\d{2}-\d{4}$/.test(rawDate)
-      ? new Date(
-          `${rawDate.slice(6, 10)}-${rawDate.slice(3, 5)}-${rawDate.slice(0, 2)}`,
-        )
-      : new Date(rawDate);
-    if (Number.isNaN(eventDate.getTime())) {
-      throw new BadRequestException(
-        'Invalid eventDate (expected ISO date/datetime)',
-      );
-    }
+    const { eventStartDate, eventEndDate } = this.resolveEventDateRange(body);
     const eventStatus = this.parseEventStatus(
       pick(['eventStatus', 'status', 'is_active', 'active']),
     );
@@ -1171,7 +1206,9 @@ export class AdminController {
       : undefined;
     const data = await this.adminService.createEvent({
       eventName: dto.eventName,
-      eventDate,
+      eventDate: eventStartDate,
+      eventStartDate,
+      eventEndDate,
       eventStartTime: dto.eventStartTime,
       eventEndTime: dto.eventEndTime,
       eventLocation: dto.eventLocation,
@@ -1275,6 +1312,13 @@ export class AdminController {
 
     const dto = plainToClass(UpdateEventDto, {
       eventName: pick(['eventName', 'title', 'name', 'event_name', 'event_title']),
+      eventStartDate:
+        pick(['eventStartDate', 'event_start_date', 'startDate', 'start_date']) ??
+        pick(['eventDate', 'date', 'event_date']),
+      eventEndDate:
+        pick(['eventEndDate', 'event_end_date', 'endDate', 'end_date']) ??
+        pick(['eventStartDate', 'event_start_date', 'startDate', 'start_date']) ??
+        pick(['eventDate', 'date', 'event_date']),
       eventDate: pick(['eventDate', 'date', 'event_date']),
       eventStartTime: pick(['eventStartTime', 'startTime', 'event_start_time']),
       eventEndTime: pick(['eventEndTime', 'endTime', 'event_end_time']),
@@ -1317,17 +1361,19 @@ export class AdminController {
       throw new BadRequestException(errorMessages.join(', '));
     }
 
-    let eventDate: Date | undefined = undefined;
-    if (dto.eventDate !== undefined) {
-      const raw = String(dto.eventDate ?? '').trim();
-      eventDate = /^\d{2}-\d{2}-\d{4}$/.test(raw)
-        ? new Date(`${raw.slice(6, 10)}-${raw.slice(3, 5)}-${raw.slice(0, 2)}`)
-        : new Date(raw);
-      if (Number.isNaN(eventDate.getTime())) {
-        throw new BadRequestException(
-          'Invalid eventDate (expected ISO date/datetime)',
-        );
-      }
+    let eventStartDate: Date | undefined;
+    let eventEndDate: Date | undefined;
+    if (
+      dto.eventStartDate !== undefined ||
+      dto.eventEndDate !== undefined ||
+      dto.eventDate !== undefined
+    ) {
+      const resolved = this.resolveEventDateRange({
+        eventStartDate: dto.eventStartDate ?? dto.eventDate,
+        eventEndDate: dto.eventEndDate ?? dto.eventStartDate ?? dto.eventDate,
+      });
+      eventStartDate = resolved.eventStartDate;
+      eventEndDate = resolved.eventEndDate;
     }
     const eventStatus = this.parseEventStatus(
       pick(['eventStatus', 'status', 'is_active', 'active']),
@@ -1343,7 +1389,8 @@ export class AdminController {
       : undefined;
     const data = await this.adminService.updateEvent(id, {
       ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
-      ...(eventDate !== undefined ? { eventDate } : {}),
+      ...(eventStartDate !== undefined ? { eventStartDate, eventDate: eventStartDate } : {}),
+      ...(eventEndDate !== undefined ? { eventEndDate } : {}),
       ...(dto.eventStartTime !== undefined
         ? { eventStartTime: dto.eventStartTime }
         : {}),
@@ -1439,23 +1486,28 @@ export class AdminController {
       }
       return undefined;
     };
-    const dto = plainToClass(CreateEventDto, {
-      eventName: pick(['eventName', 'title', 'name', 'event_name', 'event_title']),
-      eventDate: pick(['eventDate', 'date', 'event_date']),
-      eventDescription: pick([
-        'eventDescription',
-        'description',
-        'event_description',
-      ]),
-    });
-    const errors = await validate(dto);
-    if (errors.length > 0) {
-      const errorMessages = errors
-        .map((error) => Object.values(error.constraints || {}))
-        .flat();
-      throw new BadRequestException(errorMessages.join(', '));
+    const title = String(
+      pick(['eventName', 'title', 'name', 'event_name', 'event_title']) ?? '',
+    ).trim();
+    const rawDate = String(
+      pick(['eventDate', 'date', 'event_date']) ?? '',
+    ).trim();
+    const descriptionRaw = pick([
+      'eventDescription',
+      'description',
+      'event_description',
+    ]);
+    const description =
+      descriptionRaw === undefined || descriptionRaw === null
+        ? undefined
+        : String(descriptionRaw).trim();
+
+    if (!title || title.length < 2) {
+      throw new BadRequestException('title should not be empty');
     }
-    const rawDate = String(dto.eventDate ?? '').trim();
+    if (!rawDate) {
+      throw new BadRequestException('date should not be empty');
+    }
     const eventDate = /^\d{2}-\d{2}-\d{4}$/.test(rawDate)
       ? new Date(
           `${rawDate.slice(6, 10)}-${rawDate.slice(3, 5)}-${rawDate.slice(0, 2)}`,
@@ -1471,12 +1523,14 @@ export class AdminController {
       pick(['galleryType', 'type', 'category']),
       true,
     );
-    const data = await this.adminService.createEvent({
-      eventName: dto.eventName,
-      eventDate,
-      eventDescription: dto.eventDescription,
+    const data = await this.galleryService.createGallery({
+      title,
+      date: eventDate,
+      description,
       galleryType,
-      ...(galleryImages.length ? { galleryImages, eventImage: galleryImages[0] } : {}),
+      ...(galleryImages.length
+        ? { galleryImages, image: galleryImages[0] }
+        : {}),
     });
     return {
       message: 'Gallery item created successfully',
@@ -1550,31 +1604,38 @@ export class AdminController {
       }
       return undefined;
     };
-    const dto = plainToClass(UpdateEventDto, {
-      eventName: pick(['eventName', 'title', 'name', 'event_name', 'event_title']),
-      eventDate: pick(['eventDate', 'date', 'event_date']),
-      eventDescription: pick([
-        'eventDescription',
-        'description',
-        'event_description',
-      ]),
-    });
-    const errors = await validate(dto);
-    if (errors.length > 0) {
-      const errorMessages = errors
-        .map((error) => Object.values(error.constraints || {}))
-        .flat();
-      throw new BadRequestException(errorMessages.join(', '));
+    const titleRaw = pick(['eventName', 'title', 'name', 'event_name', 'event_title']);
+    const dateRaw = pick(['eventDate', 'date', 'event_date']);
+    const descriptionRaw = pick([
+      'eventDescription',
+      'description',
+      'event_description',
+    ]);
+    const title =
+      titleRaw === undefined || titleRaw === null
+        ? undefined
+        : String(titleRaw).trim();
+    const description =
+      descriptionRaw === undefined || descriptionRaw === null
+        ? undefined
+        : String(descriptionRaw).trim();
+
+    if (title !== undefined && title.length > 0 && title.length < 2) {
+      throw new BadRequestException('title must be longer than or equal to 2 characters');
     }
+
     let eventDate: Date | undefined = undefined;
-    if (dto.eventDate !== undefined) {
-      const raw = String(dto.eventDate ?? '').trim();
+    if (dateRaw !== undefined && dateRaw !== null) {
+      const raw = String(dateRaw).trim();
+      if (!raw) {
+        throw new BadRequestException('date should not be empty');
+      }
       eventDate = /^\d{2}-\d{2}-\d{4}$/.test(raw)
         ? new Date(`${raw.slice(6, 10)}-${raw.slice(3, 5)}-${raw.slice(0, 2)}`)
         : new Date(raw);
       if (Number.isNaN(eventDate.getTime())) {
         throw new BadRequestException(
-          'Invalid eventDate (expected ISO date/datetime)',
+          'Invalid date (expected ISO date/datetime)',
         );
       }
     }
@@ -1583,25 +1644,33 @@ export class AdminController {
       false,
     );
     const galleryImages = await this.uploadGalleryImageFiles(allImages);
-    const data = await this.adminService.updateEvent(
-      id,
-      {
-      ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
-      ...(dto.eventDescription !== undefined
-        ? { eventDescription: dto.eventDescription }
-        : {}),
-      ...(eventDate !== undefined ? { eventDate } : {}),
+    const data = await this.galleryService.updateGallery(id, {
+      ...(title !== undefined ? { title } : {}),
+      ...(description !== undefined ? { description } : {}),
+      ...(eventDate !== undefined ? { date: eventDate } : {}),
       ...(galleryType !== undefined ? { galleryType } : {}),
       ...(galleryImages.length
-        ? { galleryImages, eventImage: galleryImages[0] }
+        ? { galleryImages, image: galleryImages[0] }
         : {}),
-      },
-      'gallery',
-    );
+    });
     return {
       message: 'Gallery item updated successfully',
       data: this.mapGalleryResponse(data),
     };
+  }
+
+  @Get('events/manage/list')
+  @Permissions(PERMISSIONS.EVENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List all events (admin dashboard)',
+    description:
+      'Returns all events for the admin dashboard, including events whose end date has passed. Website visibility is derived from event end date, not manual status.',
+  })
+  @ApiResponse({ status: 200, description: 'Events retrieved successfully' })
+  async listEventsForAdmin() {
+    const data = await this.adminService.listEvents('event');
+    return { message: 'Events retrieved successfully', data };
   }
 
   @Get('events/list')
@@ -1609,7 +1678,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'List events (public website)',
     description:
-      'Returns paginated events for the public website events page. Default: page=1, limit=10. Only active events (eventStatus=1) are returned.',
+      'Returns paginated events for the public website events page. Default: page=1, limit=10. Only events whose end date has not passed are returned.',
   })
   @ApiQuery({
     name: 'page',
@@ -1757,8 +1826,8 @@ export class AdminController {
       Number.isFinite(limitNum) && limitNum > 0
         ? Math.min(limitNum, 50)
         : 50;
-    const result = await this.adminService.listGalleryPaginated(page, limit, {
-      activeOnly: true,
+    const result = await this.galleryService.listGalleryPaginated(page, limit, {
+      activeOnly: false,
     });
     const data = result.data.map((r: any) => ({
       s_no: r.s_no,
@@ -1788,7 +1857,7 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Gallery item not found' })
   async getGalleryById(@Param('id') id: string) {
-    const item: any = await this.adminService.getEventById(id, 'gallery');
+    const item: any = await this.galleryService.getGalleryById(id);
     const data = this.mapGalleryResponse(item);
     return { message: 'Gallery item retrieved successfully', data };
   }
@@ -1818,11 +1887,7 @@ export class AdminController {
     @Body() body: { status?: string },
   ) {
     const status = this.parseEventStatus(body?.status);
-    const data = await this.adminService.setOrToggleEventStatus(
-      id,
-      status,
-      'gallery',
-    );
+    const data = await this.galleryService.setOrToggleGalleryStatus(id, status);
     return { message: 'Gallery status updated successfully', data };
   }
 
@@ -2247,7 +2312,7 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Gallery item not found' })
   async deleteGallery(@Param('id') id: string) {
-    const data = await this.adminService.deleteEvent(id, 'gallery');
+    const data = await this.galleryService.deleteGallery(id);
     return { message: 'Gallery item deleted successfully', data };
   }
 
@@ -2264,7 +2329,7 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid id' })
   @ApiResponse({ status: 404, description: 'Gallery item not found' })
   async deleteGalleryAlias(@Param('id') id: string) {
-    const data = await this.adminService.deleteEvent(id, 'gallery');
+    const data = await this.galleryService.deleteGallery(id);
     return { message: 'Gallery item deleted successfully', data };
   }
 
@@ -2789,7 +2854,28 @@ export class AdminController {
     return { message: 'Team member deleted successfully', data };
   }
 
+  @Get('newsletter/list')
+  @Permissions(PERMISSIONS.SUBSCRIBERS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List newsletter subscribers (admin)',
+    description:
+      'Returns website newsletter subscriptions for the admin subscribers table. Reads directly from MongoDB.',
+  })
+  @ApiResponse({ status: 200, description: 'Subscribers retrieved successfully' })
+  async listNewsletterSubscribers() {
+    const data = await this.adminService.listNewsletterSubscribers();
+    return {
+      message:
+        data.length > 0
+          ? 'Subscribers retrieved successfully'
+          : 'No subscriptions found',
+      data,
+    };
+  }
+
   @Post('newsletter/delete')
+  @Permissions(PERMISSIONS.SUBSCRIBERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete newsletter subscriber',
@@ -2808,6 +2894,7 @@ export class AdminController {
   }
 
   @Delete('newsletter/delete')
+  @Permissions(PERMISSIONS.SUBSCRIBERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete newsletter subscriber',
@@ -2826,6 +2913,7 @@ export class AdminController {
   }
 
   @Post('newsletter/status')
+  @Permissions(PERMISSIONS.SUBSCRIBERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Set/toggle newsletter subscriber status',
@@ -2850,6 +2938,7 @@ export class AdminController {
   }
 
   @Patch('newsletter/status')
+  @Permissions(PERMISSIONS.SUBSCRIBERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Set/toggle newsletter subscriber status',
@@ -2874,6 +2963,7 @@ export class AdminController {
   }
 
   @Patch('newsletter/:id/status')
+  @Permissions(PERMISSIONS.SUBSCRIBERS_UPDATE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Set/toggle newsletter subscriber status (param)',

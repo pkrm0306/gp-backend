@@ -11,3 +11,19 @@ export function matchWebsitePublicCertifiedProducts(
     ...criteria,
   });
 }
+
+/** Certified EOIs shown on the public website (active certificate, not past validtillDate). */
+export function matchWebsitePublicActiveCertifiedProducts(
+  criteria: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const now = new Date();
+  return matchActiveProducts({
+    productStatus: WEBSITE_PUBLIC_CERTIFIED_PRODUCT_STATUS,
+    $or: [
+      { validtillDate: null },
+      { validtillDate: { $exists: false } },
+      { validtillDate: { $gte: now } },
+    ],
+    ...criteria,
+  });
+}

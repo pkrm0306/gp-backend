@@ -64,6 +64,15 @@ export class ProductsController {
               eoi_no: { type: 'string', example: 'GPMN012001' },
               urn_no: { type: 'string', example: 'URN-20240302120000' },
               product_name: { type: 'string', example: 'Solar Panel 100W' },
+              product_details: {
+                type: 'string',
+                example: 'High-efficiency monocrystalline panel',
+              },
+              unit_count: {
+                type: 'number',
+                description: 'Manufacturing unit / plant count for this EOI',
+                example: 2,
+              },
               category_name: { type: 'string', example: 'Solar Panels' },
               validtill_date: {
                 type: 'string',

@@ -24,18 +24,26 @@ import { SequenceHelper } from '../../product-registration/helpers/sequence.help
 import { DocumentSectionKey } from '../../common/constants/document-section-key.constants';
 import { uploadFile } from '../../utils/upload-file.util';
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
-import { trackProductDocumentBatch } from '../../documents/helpers/product-document-version.integration';
 import {
   assertRenewProcessEditable,
   renewOwnershipFields,
   renewUploadPath,
 } from '../helpers/renew-common.util';
+import { buildRenewProcessHeaderFilter } from '../helpers/renew-cycle-scope.util';
+import {
+  applyRenewSectionDocumentKeepList,
+  buildRenewSectionDocMigrationFilter,
+  insertRenewSectionDocuments,
+} from '../helpers/renew-section-documents.util';
+import { deleteUploadedFileByDocumentLink } from '../../utils/upload-file.util';
 import * as path from 'path';
 
 export interface UpsertRenewInnovationInput {
   urnNo: string;
+  renewalCycleId?: string;
   innovationImplementationDetails?: string;
   processInnovationStatus?: number;
+  existingDocumentIds?: string[];
 }
 
 @Injectable()
@@ -62,8 +70,11 @@ export class ProcessRenewInnovationService {
       this.productModel,
       this.renewalCycleModel,
       input.urnNo,
+      input.renewalCycleId,
     );
     const ownership = renewOwnershipFields(context);
+    const renewalCycleObjectId = cycle._id;
+    const headerFilter = buildRenewProcessHeaderFilter(ownership.urnNo, cycle);
 
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -73,7 +84,7 @@ export class ProcessRenewInnovationService {
       const trimmedUrn = ownership.urnNo;
 
       const existing = await this.renewInnovationModel
-        .findOne({ urnNo: trimmedUrn })
+        .findOne(headerFilter)
         .session(session);
       const processRenewInnovationId =
         existing?.processRenewInnovationId ??
@@ -92,13 +103,28 @@ export class ProcessRenewInnovationService {
         innovationImplementationDocuments = 1;
       }
 
+      const oldFileLinksToDeleteAfterCommit =
+        await applyRenewSectionDocumentKeepList({
+          renewDocumentModel: this.renewDocumentModel,
+          documentVersioningService: this.documentVersioningService,
+          urnNo: trimmedUrn,
+          vendorObjectId: ownership.vendorId,
+          renewalCycleObjectId,
+          cycleNo: Number(cycle.cycleNo ?? 1),
+          sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
+          existingDocumentIds: input.existingDocumentIds,
+          now,
+          session,
+        });
+
       const saved = await this.renewInnovationModel
         .findOneAndUpdate(
-          { urnNo: trimmedUrn },
+          headerFilter,
           {
             $set: {
               vendorId: ownership.vendorId,
               manufacturerId: ownership.manufacturerId,
+              renewalCycleId: renewalCycleObjectId,
               innovationImplementationDetails:
                 input.innovationImplementationDetails ?? '',
               innovationImplementationDocuments,
@@ -107,6 +133,7 @@ export class ProcessRenewInnovationService {
             },
             $setOnInsert: {
               processRenewInnovationId,
+              urnNo: trimmedUrn,
               createdDate: now,
             },
           },
@@ -114,43 +141,40 @@ export class ProcessRenewInnovationService {
         )
         .exec();
 
-      if (filePaths.length > 0) {
-        const docsToInsert = [];
-        for (let i = 0; i < filePaths.length; i++) {
-          docsToInsert.push({
-            productDocumentId: await this.sequenceHelper.getRenewProductDocumentId(),
-            vendorId: ownership.vendorId,
-            manufacturerId: ownership.manufacturerId,
-            urnNo: trimmedUrn,
-            eoiNo: '',
-            documentForm: DocumentSectionKey.PROCESS_INNOVATION,
-            documentFormSubsection: 'innovation_implementation_documents',
-            formPrimaryId: saved!.processRenewInnovationId,
-            documentName: path.basename(filePaths[i]),
-            documentOriginalName: uploadedFiles[i].originalname,
-            documentLink: filePaths[i],
-            documentTag: 'tech' as const,
-            createdDate: now,
-            updatedDate: now,
-          });
-        }
-        const inserted = await this.renewDocumentModel.insertMany(docsToInsert, {
-          session,
-        });
-        await trackProductDocumentBatch({
-          versioning: this.documentVersioningService,
-          urnNo: trimmedUrn,
-          sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
-          userId: ownership.vendorId,
-          docs: inserted,
-          processType: 'renewal',
-          renewalCycleId: cycle._id,
-          session,
+      const newDocRows = [];
+      for (let i = 0; i < filePaths.length; i++) {
+        newDocRows.push({
+          productDocumentId: await this.sequenceHelper.getRenewProductDocumentId(),
+          documentFormSubsection: 'innovation_implementation_documents',
+          documentName: path.basename(filePaths[i]),
+          documentOriginalName: uploadedFiles[i].originalname,
+          documentLink: filePaths[i],
+          eoiNo: '',
+          documentTag: 'tech' as const,
         });
       }
 
+      await insertRenewSectionDocuments({
+        renewDocumentModel: this.renewDocumentModel,
+        documentVersioningService: this.documentVersioningService,
+        urnNo: trimmedUrn,
+        vendorObjectId: ownership.vendorId,
+        manufacturerObjectId: ownership.manufacturerId,
+        renewalCycleObjectId,
+        sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
+        formPrimaryId: saved!.processRenewInnovationId,
+        now,
+        session,
+        rows: newDocRows,
+      });
+
       await session.commitTransaction();
       session.endSession();
+
+      for (const link of oldFileLinksToDeleteAfterCommit) {
+        await deleteUploadedFileByDocumentLink(link).catch(() => undefined);
+      }
+
       return saved;
     } catch (error: any) {
       await session.abortTransaction();
@@ -161,21 +185,36 @@ export class ProcessRenewInnovationService {
     }
   }
 
-  async getByUrn(urnNo: string) {
+  async getByUrn(urnNo: string, renewalCycleId?: string) {
     const trimmedUrn = urnNo.trim();
+    let cycle = null;
+    if (renewalCycleId?.trim()) {
+      cycle = await this.renewalCycleModel.findById(renewalCycleId.trim()).exec();
+    } else {
+      cycle = await this.renewalCycleModel
+        .findOne({ urnNo: trimmedUrn, status: 'in_progress' })
+        .sort({ cycleNo: -1 })
+        .exec();
+    }
+    const headerFilter = buildRenewProcessHeaderFilter(trimmedUrn, cycle);
     const header = await this.renewInnovationModel
-      .findOne({ urnNo: trimmedUrn })
+      .findOne(headerFilter)
       .lean()
       .exec();
-    const documents = await this.renewDocumentModel
-      .find({
-        urnNo: trimmedUrn,
-        documentForm: DocumentSectionKey.PROCESS_INNOVATION,
-        isDeleted: { $ne: true },
-      })
-      .lean()
-      .exec();
-
+    const docFilter =
+      cycle?._id != null
+        ? buildRenewSectionDocMigrationFilter(
+            trimmedUrn,
+            cycle._id,
+            DocumentSectionKey.PROCESS_INNOVATION,
+            Number(cycle.cycleNo ?? 1) > 1,
+          )
+        : {
+            urnNo: trimmedUrn,
+            documentForm: DocumentSectionKey.PROCESS_INNOVATION,
+            isDeleted: { $ne: true },
+          };
+    const documents = await this.renewDocumentModel.find(docFilter).lean().exec();
     return { header, documents };
   }
 }

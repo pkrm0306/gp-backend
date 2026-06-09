@@ -160,7 +160,7 @@ import { RenewAdminTestValidityService } from './services/renew-admin-test-valid
     ]),
     forwardRef(() => ProductRegistrationModule),
     ActivityLogModule,
-    DocumentsModule,
+    forwardRef(() => DocumentsModule),
     AuthModule,
     PassportModule,
     RbacModule,
@@ -209,6 +209,7 @@ import { RenewAdminTestValidityService } from './services/renew-admin-test-valid
     RenewAdminTestValidityService,
     RenewUrnTabReviewService,
     ProcessRenewCommentsService,
+    RenewDocumentsService,
   ],
 })
 export class RenewalModule {}

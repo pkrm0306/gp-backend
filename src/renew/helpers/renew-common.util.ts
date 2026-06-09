@@ -125,6 +125,7 @@ export async function assertRenewProcessEditable(
   productModel: Model<ProductDocument>,
   renewalCycleModel: Model<RenewalCycleDocument>,
   urnNo: string,
+  renewalCycleId?: string,
 ): Promise<{ cycle: RenewalCycleDocument; context: RenewUrnContext }> {
   const context = await resolveUrnRenewContext(productModel, urnNo);
 
@@ -143,27 +144,27 @@ export async function assertRenewProcessEditable(
   const urnStatus = Number(product.urnStatus);
   if (urnStatus < RENEWAL_URN_STATUS.PAYMENT_APPROVED) {
     throw new ForbiddenException(
-      'Renewal payment must be approved before editing process forms',
+      'Renewal payment must be approved before editing process sections.',
     );
   }
 
-  const editableStatuses: number[] = [
-    RENEWAL_URN_STATUS.PAYMENT_APPROVED,
-    RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING,
-  ];
-  if (!editableStatuses.includes(urnStatus)) {
-    throw new ForbiddenException(
-      'Renewal process forms cannot be edited in the current URN status',
-    );
+  let cycle: RenewalCycleDocument | null = null;
+  if (renewalCycleId?.trim()) {
+    cycle = await renewalCycleModel
+      .findById(renewalCycleId.trim())
+      .exec();
+    if (!cycle || cycle.urnNo !== context.urnNo) {
+      throw new BadRequestException('renewalCycleId does not match this URN');
+    }
+  } else {
+    cycle = await renewalCycleModel
+      .findOne({
+        urnNo: context.urnNo,
+        status: RenewalCycleStatus.IN_PROGRESS,
+      })
+      .sort({ cycleNo: -1 })
+      .exec();
   }
-
-  const cycle = await renewalCycleModel
-    .findOne({
-      urnNo: context.urnNo,
-      status: RenewalCycleStatus.IN_PROGRESS,
-    })
-    .sort({ cycleNo: -1 })
-    .exec();
 
   if (!cycle) {
     throw new ForbiddenException('No active renewal cycle found');

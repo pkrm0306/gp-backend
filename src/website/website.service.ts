@@ -31,6 +31,7 @@ import { resolveManufacturerInquiryPhone } from '../common/utils/normalize-phone
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { AdminService } from '../admin/admin.service';
+import { GalleryService } from '../gallery/gallery.service';
 import { ProductRegistrationService } from '../product-registration/product-registration.service';
 import { AdminListProductsDto } from '../product-registration/dto/admin-list-products.dto';
 import { PublicCategoryManufacturersDto } from './dto/public-category-manufacturers.dto';
@@ -56,7 +57,9 @@ import {
   Category,
   CategoryDocument,
 } from '../categories/schemas/category.schema';
-import { matchWebsitePublicCertifiedProducts } from '../product-registration/constants/website-public-product.filter';
+import {
+  matchWebsitePublicCertifiedProducts,
+} from '../product-registration/constants/website-public-product.filter';
 import { resolveStoredUploadUrl } from '../utils/upload-file.util';
 
 function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
@@ -116,6 +119,7 @@ export class WebsiteService {
     private categoryModel: Model<CategoryDocument>,
     private manufacturersService: ManufacturersService,
     private readonly adminService: AdminService,
+    private readonly galleryService: GalleryService,
     private readonly productRegistrationService: ProductRegistrationService,
     private emailService: EmailService,
     private readonly configService: ConfigService,
@@ -373,7 +377,7 @@ export class WebsiteService {
       return v;
     };
 
-    const result = await this.adminService.listGalleryPaginated(page, limit, {
+    const result = await this.galleryService.listGalleryPaginated(page, limit, {
       activeOnly: true,
     });
 
@@ -387,15 +391,15 @@ export class WebsiteService {
       return {
         s_no: row.s_no,
         id: row.id,
-        eventId: row.eventId,
-        title: row.eventName ?? '',
+        eventId: row.eventId ?? row.galleryId,
+        title: row.title ?? row.eventName ?? '',
         galleryType: row.galleryType ?? '',
-        description: row.eventDescription ?? '',
+        description: row.description ?? row.eventDescription ?? '',
         date: row.date ?? '',
         dateTime: row.dateTime ?? '',
         image: normalizedImages[0] ?? null,
         images: normalizedImages,
-        event_image: normalizeImageUrl(row.event_image),
+        event_image: normalizeImageUrl(row.gallery_image ?? row.event_image),
         is_active: row.is_active ?? true,
       };
     });
@@ -429,6 +433,7 @@ export class WebsiteService {
       'website',
       'public',
       'events',
+      'v2',
       String(page),
       String(limit),
       this.shortHash(origin),
@@ -848,8 +853,34 @@ export class WebsiteService {
     };
   }
 
+  /** Matches public website manufacturer visibility (see website `isPublicManufacturerWebsiteVisible`). */
+  private matchPublicWebsiteManufacturerVisibility(): Record<string, unknown> {
+    return {
+      $and: [
+        {
+          $or: [
+            { 'manufacturer.manufacturerStatus': { $exists: false } },
+            { 'manufacturer.manufacturerStatus': null },
+            { 'manufacturer.manufacturerStatus': 1 },
+            { 'manufacturer.manufacturerStatus': true },
+          ],
+        },
+        {
+          $nor: [
+            { 'manufacturer.vendor_status': 0 },
+            { 'manufacturer.vendor_status': '0' },
+            { 'manufacturer.vendor_status': false },
+            { 'manufacturer.vendorStatus': 0 },
+            { 'manufacturer.vendorStatus': '0' },
+            { 'manufacturer.vendorStatus': false },
+          ],
+        },
+      ],
+    };
+  }
+
   async getPublicWebsiteStats() {
-    const cacheKey = this.redisService.buildKey('website', 'public', 'stats', 'v2');
+    const cacheKey = this.redisService.buildKey('website', 'public', 'stats', 'v6');
     try {
       const cached = await this.redisService.get<{
         message: string;
@@ -875,18 +906,61 @@ export class WebsiteService {
       );
     }
 
-    const productScope = matchWebsitePublicCertifiedProducts();
-    const [companies, productCategories, ecolabelledProducts] = await Promise.all([
-      this.productModel.distinct('manufacturerId', productScope).exec(),
-      this.productModel.distinct('categoryId', productScope).exec(),
-      this.productModel.countDocuments(productScope).exec(),
-    ]);
+    const productScope = matchWebsitePublicCertifiedProducts({
+      manufacturerId: { $exists: true, $ne: null },
+      categoryId: { $exists: true, $ne: null },
+    });
+
+    const [facetResult, productCategories, ecolabelledProducts] =
+      await Promise.all([
+        this.productModel
+          .aggregate<{
+            companies: Array<{ count: number }>;
+          }>([
+            { $match: productScope },
+            {
+              $lookup: {
+                from: 'categories',
+                localField: 'categoryId',
+                foreignField: '_id',
+                as: 'category',
+              },
+            },
+            { $unwind: '$category' },
+            { $match: { 'category.category_status': 1 } },
+            {
+              $lookup: {
+                from: 'manufacturers',
+                localField: 'manufacturerId',
+                foreignField: '_id',
+                as: 'manufacturer',
+              },
+            },
+            { $unwind: '$manufacturer' },
+            { $match: this.matchPublicWebsiteManufacturerVisibility() },
+            {
+              $facet: {
+                companies: [
+                  { $group: { _id: '$manufacturerId' } },
+                  { $count: 'count' },
+                ],
+              },
+            },
+          ])
+          .exec(),
+        this.categoryModel.countDocuments({}).exec(),
+        this.productModel.countDocuments(matchWebsitePublicCertifiedProducts()).exec(),
+      ]);
+
+    const facet = facetResult[0] ?? {
+      companies: [],
+    };
 
     const payload = {
       message: 'Website stats retrieved successfully',
       data: {
-        companies: companies.length,
-        productCategories: productCategories.length,
+        companies: facet.companies[0]?.count ?? 0,
+        productCategories,
         ecolabelledProducts,
       },
     };
@@ -1077,7 +1151,7 @@ export class WebsiteService {
           status: string;
         }>
       >(cacheKey);
-      if (Array.isArray(cached)) {
+      if (Array.isArray(cached) && cached.length > 0) {
         return cached;
       }
     } catch (error) {
@@ -1102,14 +1176,21 @@ export class WebsiteService {
         .exec();
 
       const data = (rows ?? []).map((r, idx) => ({
-        id: idx + 1, // S.No for the table
+        id: r._id ? String(r._id) : String(idx + 1),
+        s_no: idx + 1,
         email: String(r.email ?? ''),
         subscribedFor:
           Array.isArray(r.subscribedFor) && r.subscribedFor.length > 0
             ? r.subscribedFor.join(', ')
             : 'Newsletter',
+        subscribeFor:
+          Array.isArray(r.subscribedFor) && r.subscribedFor.length > 0
+            ? r.subscribedFor.join(', ')
+            : 'Newsletter',
         createdAt: formatDateYYYYMMDD(r.createdAt),
+        createdDate: formatDateYYYYMMDD(r.createdAt),
         status: Number(r.status) === 1 ? 'active' : 'inactive',
+        is_active: Number(r.status) === 1,
       }));
 
       this.redisService

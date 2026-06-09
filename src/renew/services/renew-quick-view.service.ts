@@ -43,6 +43,7 @@ import {
   buildRenewPaymentsPayload,
   buildRenewProcessHeaderFilter,
   findRenewPaymentsForCycle,
+  resolveCycleScopedUrnStatus,
 } from '../helpers/renew-cycle-scope.util';
 import {
   ProcessRenewManufacturing,
@@ -232,10 +233,21 @@ export class RenewQuickViewService {
         ? String(manufacturer.manufacturerName).trim()
         : '';
 
+    const contextCycle = activeCycle ?? performanceCycle;
+    const cycleScopedUrnStatus = resolveCycleScopedUrnStatus(
+      contextCycle,
+      {
+        urnStatus: first.urnStatus,
+        renewCycleNo: first.renewCycleNo,
+      },
+      cyclePayment,
+    );
+
     return {
       urnNo: trimmedUrn,
-      urnStatus: first.urnStatus,
-      urnStatusLabel: getRenewalUrnStatusLabel(Number(first.urnStatus)),
+      urnStatus: cycleScopedUrnStatus,
+      urn_status: cycleScopedUrnStatus,
+      urnStatusLabel: getRenewalUrnStatusLabel(cycleScopedUrnStatus),
       productRenewStatus: first.productRenewStatus,
       renewCycleNo: first.renewCycleNo ?? null,
       vendorId: first.vendorId ? String(first.vendorId) : null,
@@ -275,13 +287,25 @@ export class RenewQuickViewService {
       payments: cyclePayments,
       payment: cyclePayment,
       renewContext: {
-        renewalCycleId: String(performanceCycle._id),
+        renewalCycleId: String(contextCycle._id),
+        urnStatus: cycleScopedUrnStatus,
+        urn_status: cycleScopedUrnStatus,
+        productRenewStatus: first.productRenewStatus,
+        renewCycleNo: first.renewCycleNo ?? null,
         activeRenewalCycle: activeCycle
           ? {
               id: String(activeCycle._id),
               cycleNo: activeCycle.cycleNo,
               status: activeCycle.status,
               paymentId: activeCycle.paymentId ?? null,
+            }
+          : null,
+        renewalCycle: contextCycle
+          ? {
+              id: String(contextCycle._id),
+              cycleNo: contextCycle.cycleNo,
+              status: contextCycle.status,
+              paymentId: contextCycle.paymentId ?? null,
             }
           : null,
       },

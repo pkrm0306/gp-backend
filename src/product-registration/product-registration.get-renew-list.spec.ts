@@ -25,6 +25,11 @@ describe('ProductRegistrationService.getRenewList', () => {
     expect(String(match.manufacturerId)).toBe(manufacturerId);
     expect(match.productStatus).toBe(2);
     expect(match.productStatus).not.toBe(3);
+
+    const project = pipeline.find((stage) => stage.$project)?.$project;
+    expect(project.product_details).toBeDefined();
+    expect(project.unit_count).toBeDefined();
+    expect(project.plantCount).toBeDefined();
   });
 });
 

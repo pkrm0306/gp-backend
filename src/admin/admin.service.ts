@@ -24,6 +24,14 @@ import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
 import { Event, EventDocument } from '../events/schemas/event.schema';
+import {
+  buildWebsiteVisibleEventsMatch,
+  isEventVisibleOnWebsite,
+  parseEventDateInput,
+  resolveEventEndDate,
+  resolveEventStartDate,
+  toDateOnlyIso,
+} from '../events/utils/event-date.util';
 import { Article, ArticleDocument } from '../articles/schemas/article.schema';
 import {
   EventIdCounter,
@@ -728,8 +736,16 @@ export class AdminService {
         ? String(obj.id)
         : undefined;
     const { _id, __v, ...rest } = obj ?? {};
+    const startDate = resolveEventStartDate(rest ?? {});
+    const endDate = resolveEventEndDate(rest ?? {});
+    const datePart = startDate ? toDateOnlyIso(startDate) : '';
+    const endDatePart = endDate ? toDateOnlyIso(endDate) : datePart;
     return {
       ...rest,
+      eventDate: datePart || (rest as any)?.eventDate,
+      eventStartDate: datePart,
+      eventEndDate: endDatePart,
+      is_active: isEventVisibleOnWebsite(rest ?? {}),
       galleryImages: Array.isArray((rest as any)?.galleryImages)
         ? (rest as any).galleryImages
         : (rest as any)?.eventImage
@@ -780,6 +796,8 @@ export class AdminService {
   async createEvent(payload: {
     eventName: string;
     eventDate: Date;
+    eventStartDate?: Date;
+    eventEndDate?: Date;
     eventStatus?: number;
     eventStartTime?: string;
     eventEndTime?: string;
@@ -797,6 +815,8 @@ export class AdminService {
   }) {
     const eventId = await this.nextEventId();
     const now = new Date();
+    const eventStartDate = payload.eventStartDate ?? payload.eventDate;
+    const eventEndDate = payload.eventEndDate ?? eventStartDate;
 
     const doc = new this.eventModel({
       eventId,
@@ -811,7 +831,9 @@ export class AdminService {
             : [],
       galleryType: payload.galleryType,
       eventDescription: payload.eventDescription,
-      eventDate: payload.eventDate,
+      eventDate: eventStartDate,
+      eventStartDate,
+      eventEndDate,
       eventStartTime: payload.eventStartTime,
       eventEndTime: payload.eventEndTime,
       eventLocation: payload.eventLocation,
@@ -838,6 +860,8 @@ export class AdminService {
     payload: {
       eventName?: string;
       eventDate?: Date;
+      eventStartDate?: Date;
+      eventEndDate?: Date;
       eventStartTime?: string;
       eventEndTime?: string;
       eventLocation?: string;
@@ -863,7 +887,16 @@ export class AdminService {
       String(payload.eventName).trim() !== ''
     )
       $set.eventName = payload.eventName;
-    if (payload.eventDate !== undefined) $set.eventDate = payload.eventDate;
+    if (payload.eventStartDate !== undefined) {
+      $set.eventStartDate = payload.eventStartDate;
+      $set.eventDate = payload.eventStartDate;
+    } else if (payload.eventDate !== undefined) {
+      $set.eventDate = payload.eventDate;
+      $set.eventStartDate = payload.eventDate;
+    }
+    if (payload.eventEndDate !== undefined) {
+      $set.eventEndDate = payload.eventEndDate;
+    }
     if (
       payload.eventStartTime !== undefined &&
       String(payload.eventStartTime).trim() !== ''
@@ -964,7 +997,7 @@ export class AdminService {
       .find(this.eventKindMatch(kind))
       .sort({ createdDate: -1, _id: -1 })
       .select(
-        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
       )
       .lean()
       .exec();
@@ -986,7 +1019,7 @@ export class AdminService {
       ...this.eventKindMatch('event'),
     };
     if (options?.activeOnly) {
-      where.eventStatus = 1;
+      Object.assign(where, buildWebsiteVisibleEventsMatch());
     }
 
     const [total, rows] = await Promise.all([
@@ -997,7 +1030,7 @@ export class AdminService {
         .skip((safePage - 1) * safePerPage)
         .limit(safePerPage)
         .select(
-          'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+          'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
         )
         .lean()
         .exec(),
@@ -1021,13 +1054,12 @@ export class AdminService {
   }
 
   private mapEventListRow(e: any, serialNo: number) {
-    const datePart =
-      e?.eventDate instanceof Date
-        ? e.eventDate.toISOString().slice(0, 10)
-        : e?.eventDate
-          ? new Date(e.eventDate).toISOString().slice(0, 10)
-          : '';
+    const startDate = resolveEventStartDate(e ?? {});
+    const endDate = resolveEventEndDate(e ?? {});
+    const datePart = startDate ? toDateOnlyIso(startDate) : '';
+    const endDatePart = endDate ? toDateOnlyIso(endDate) : datePart;
     const timePart = String(e?.eventStartTime ?? '').trim();
+    const visible = isEventVisibleOnWebsite(e ?? {});
     return {
       s_no: serialNo,
       id: String(e._id),
@@ -1043,9 +1075,12 @@ export class AdminService {
       eventDescription: String(e.eventDescription ?? ''),
       galleryType: e.galleryType ?? '',
       date: datePart,
+      eventDate: datePart,
+      eventStartDate: datePart,
+      eventEndDate: endDatePart,
       dateTime: [datePart, timePart].filter(Boolean).join(' '),
       location: String(e.eventLocation ?? ''),
-      is_active: Number(e.eventStatus) === 1,
+      is_active: visible,
       registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
       brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
     };
@@ -1063,7 +1098,7 @@ export class AdminService {
       ...this.eventKindMatch('gallery'),
     };
     if (options?.activeOnly) {
-      where.eventStatus = 1;
+      Object.assign(where, buildWebsiteVisibleEventsMatch());
     }
 
     const [total, rows] = await Promise.all([
@@ -2960,6 +2995,61 @@ export class AdminService {
   }
 
   /** Permanently deletes a newsletter subscriber by document id. */
+  private async invalidateNewsletterSubscribersCache(): Promise<void> {
+    const key = this.redisService.buildKey('website', 'newsletter', 'subscribers');
+    await this.redisService.del(key).catch(() => undefined);
+  }
+
+  private formatNewsletterSubscriberRow(
+    row: Record<string, unknown>,
+    serialNo: number,
+  ) {
+    const subscribedFor =
+      Array.isArray(row.subscribedFor) && row.subscribedFor.length > 0
+        ? (row.subscribedFor as string[]).join(', ')
+        : 'Newsletter';
+    const createdRaw = row.createdAt;
+    const createdAt =
+      createdRaw instanceof Date
+        ? createdRaw.toISOString().slice(0, 10)
+        : createdRaw
+          ? new Date(String(createdRaw)).toISOString().slice(0, 10)
+          : '';
+    const isActive = Number(row.status) === 1;
+    return {
+      id: row._id ? String(row._id) : '',
+      s_no: serialNo,
+      email: String(row.email ?? ''),
+      subscribedFor,
+      subscribeFor: subscribedFor,
+      createdAt,
+      createdDate: createdAt,
+      status: isActive ? 'active' : 'inactive',
+      is_active: isActive,
+    };
+  }
+
+  /** Admin subscribers list — always reads MongoDB (no stale Redis empty cache). */
+  async listNewsletterSubscribers() {
+    const rows = await this.newsletterSubscriberModel
+      .find(
+        {},
+        {
+          email: 1,
+          subscribedFor: 1,
+          status: 1,
+          createdAt: 1,
+        },
+      )
+      .sort({ createdAt: -1, _id: -1 })
+      .lean()
+      .exec();
+
+    return (rows ?? []).map((row, idx) =>
+      this.formatNewsletterSubscriberRow(row as Record<string, unknown>, idx + 1),
+    );
+  }
+
   async deleteNewsletterSubscriber(subscriberId: string) {
     const raw = String(subscriberId ?? '').trim();
     if (!raw) {
@@ -2976,6 +3066,7 @@ export class AdminService {
         throw new NotFoundException('Subscriber not found');
       }
 
+      await this.invalidateNewsletterSubscribersCache();
       return { id: raw };
     }
 
@@ -3007,6 +3098,7 @@ export class AdminService {
       throw new NotFoundException('Subscriber not found');
     }
 
+    await this.invalidateNewsletterSubscribersCache();
     return { id: target };
   }
 
@@ -3083,6 +3175,8 @@ export class AdminService {
       .exec();
 
     if (!updated) throw new NotFoundException('Subscriber not found');
+
+    await this.invalidateNewsletterSubscribersCache();
 
     return {
       id: targetId,

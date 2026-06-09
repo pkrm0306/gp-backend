@@ -56,6 +56,7 @@ import {
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { AuthModule } from '../auth/auth.module';
+import { GalleryModule } from '../gallery/gallery.module';
 import {
   PaymentDetails,
   PaymentDetailsSchema,
@@ -70,6 +71,7 @@ import {
     SectorsModule,
     ProductRegistrationModule,
     PaymentsModule,
+    GalleryModule,
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       { name: ProductPlant.name, schema: ProductPlantSchema },
@@ -97,6 +99,6 @@ import {
     EmailService,
     PermissionsGuard,
   ],
-  exports: [AdminService],
+  exports: [AdminService, GalleryModule],
 })
 export class AdminModule {}

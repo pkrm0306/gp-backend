@@ -44,30 +44,26 @@ import { uploadFile } from '../../utils/upload-file.util';
 
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
 
-import { trackProductDocumentBatch } from '../../documents/helpers/product-document-version.integration';
-
 import {
-
   assertRenewProcessEditable,
-
   renewOwnershipFields,
-
   renewUploadPath,
-
 } from '../helpers/renew-common.util';
-
+import { buildRenewProcessHeaderFilter } from '../helpers/renew-cycle-scope.util';
+import {
+  applyRenewSectionDocumentKeepList,
+  buildRenewSectionDocMigrationFilter,
+  insertRenewSectionDocuments,
+} from '../helpers/renew-section-documents.util';
+import { deleteUploadedFileByDocumentLink } from '../../utils/upload-file.util';
 import * as path from 'path';
 
-
-
 export interface UpsertRenewWasteManagementInput {
-
   urnNo: string;
-
+  renewalCycleId?: string;
   wmImplementationDetails?: string;
-
   processWasteManagementStatus?: number;
-
+  existingDocumentIds?: string[];
 }
 
 
@@ -113,37 +109,24 @@ export class ProcessRenewWasteManagementService {
   ) {
 
     const { cycle, context } = await assertRenewProcessEditable(
-
       this.productModel,
-
       this.renewalCycleModel,
-
       input.urnNo,
-
+      input.renewalCycleId,
     );
-
     const ownership = renewOwnershipFields(context);
-
-
+    const renewalCycleObjectId = cycle._id;
+    const headerFilter = buildRenewProcessHeaderFilter(ownership.urnNo, cycle);
 
     const session = await this.connection.startSession();
-
     session.startTransaction();
 
-
-
     try {
-
       const now = new Date();
-
       const trimmedUrn = ownership.urnNo;
 
-
-
       const existing = await this.renewWasteModel
-
-        .findOne({ urnNo: trimmedUrn })
-
+        .findOne(headerFilter)
         .session(session);
 
       const processRenewWasteManagementId =
@@ -178,119 +161,75 @@ export class ProcessRenewWasteManagementService {
 
 
 
+      const oldFileLinksToDeleteAfterCommit =
+        await applyRenewSectionDocumentKeepList({
+          renewDocumentModel: this.renewDocumentModel,
+          documentVersioningService: this.documentVersioningService,
+          urnNo: trimmedUrn,
+          vendorObjectId: ownership.vendorId,
+          renewalCycleObjectId,
+          cycleNo: Number(cycle.cycleNo ?? 1),
+          sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+          existingDocumentIds: input.existingDocumentIds,
+          now,
+          session,
+        });
+
       const saved = await this.renewWasteModel
-
         .findOneAndUpdate(
-
-          { urnNo: trimmedUrn },
-
+          headerFilter,
           {
-
             $set: {
-
               vendorId: ownership.vendorId,
-
               manufacturerId: ownership.manufacturerId,
-
+              renewalCycleId: renewalCycleObjectId,
               wmImplementationDetails: input.wmImplementationDetails ?? '',
-
               wmSupportingDocuments,
-
               processWasteManagementStatus:
-
                 input.processWasteManagementStatus ?? 0,
-
               updatedDate: now,
-
             },
-
             $setOnInsert: {
-
               processRenewWasteManagementId,
-
+              urnNo: trimmedUrn,
               createdDate: now,
-
             },
-
           },
-
           { upsert: true, new: true, session },
-
         )
-
         .exec();
 
-
-
-      if (filePaths.length > 0) {
-
-        const docsToInsert = [];
-
-        for (let i = 0; i < filePaths.length; i++) {
-
-          docsToInsert.push({
-
-            productDocumentId: await this.sequenceHelper.getRenewProductDocumentId(),
-
-            vendorId: ownership.vendorId,
-
-            manufacturerId: ownership.manufacturerId,
-
-            urnNo: trimmedUrn,
-
-            documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
-
-            documentFormSubsection: 'wm_supporting_documents',
-
-            formPrimaryId: saved!.processRenewWasteManagementId,
-
-            documentName: path.basename(filePaths[i]),
-
-            documentOriginalName: uploadedFiles[i].originalname,
-
-            documentLink: filePaths[i],
-
-            createdDate: now,
-
-            updatedDate: now,
-
-          });
-
-        }
-
-        const inserted = await this.renewDocumentModel.insertMany(docsToInsert, {
-
-          session,
-
+      const newDocRows = [];
+      for (let i = 0; i < filePaths.length; i++) {
+        newDocRows.push({
+          productDocumentId: await this.sequenceHelper.getRenewProductDocumentId(),
+          documentFormSubsection: 'wm_supporting_documents',
+          documentName: path.basename(filePaths[i]),
+          documentOriginalName: uploadedFiles[i].originalname,
+          documentLink: filePaths[i],
         });
-
-        await trackProductDocumentBatch({
-
-          versioning: this.documentVersioningService,
-
-          urnNo: trimmedUrn,
-
-          sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
-
-          userId: ownership.vendorId,
-
-          docs: inserted,
-
-          processType: 'renewal',
-
-          renewalCycleId: cycle._id,
-
-          session,
-
-        });
-
       }
 
-
+      await insertRenewSectionDocuments({
+        renewDocumentModel: this.renewDocumentModel,
+        documentVersioningService: this.documentVersioningService,
+        urnNo: trimmedUrn,
+        vendorObjectId: ownership.vendorId,
+        manufacturerObjectId: ownership.manufacturerId,
+        renewalCycleObjectId,
+        sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+        formPrimaryId: saved!.processRenewWasteManagementId,
+        now,
+        session,
+        rows: newDocRows,
+      });
 
       await session.commitTransaction();
-
       session.endSession();
+
+      for (const link of oldFileLinksToDeleteAfterCommit) {
+        await deleteUploadedFileByDocumentLink(link).catch(() => undefined);
+      }
 
       return saved;
 
@@ -312,38 +251,34 @@ export class ProcessRenewWasteManagementService {
 
 
 
-  async getByUrn(urnNo: string) {
-
+  async getByUrn(urnNo: string, renewalCycleId?: string) {
     const trimmedUrn = urnNo.trim();
-
-    const header = await this.renewWasteModel
-
-      .findOne({ urnNo: trimmedUrn })
-
-      .lean()
-
-      .exec();
-
-    const documents = await this.renewDocumentModel
-
-      .find({
-
-        urnNo: trimmedUrn,
-
-        documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
-
-        isDeleted: { $ne: true },
-
-      })
-
-      .lean()
-
-      .exec();
-
-
-
+    let cycle = null;
+    if (renewalCycleId?.trim()) {
+      cycle = await this.renewalCycleModel.findById(renewalCycleId.trim()).exec();
+    } else {
+      cycle = await this.renewalCycleModel
+        .findOne({ urnNo: trimmedUrn, status: 'in_progress' })
+        .sort({ cycleNo: -1 })
+        .exec();
+    }
+    const headerFilter = buildRenewProcessHeaderFilter(trimmedUrn, cycle);
+    const header = await this.renewWasteModel.findOne(headerFilter).lean().exec();
+    const docFilter =
+      cycle?._id != null
+        ? buildRenewSectionDocMigrationFilter(
+            trimmedUrn,
+            cycle._id,
+            DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+            Number(cycle.cycleNo ?? 1) > 1,
+          )
+        : {
+            urnNo: trimmedUrn,
+            documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+            isDeleted: { $ne: true },
+          };
+    const documents = await this.renewDocumentModel.find(docFilter).lean().exec();
     return { header, documents };
-
   }
 
 }

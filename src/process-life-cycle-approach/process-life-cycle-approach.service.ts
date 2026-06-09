@@ -20,11 +20,6 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
-import { DocumentVersioningService } from '../documents/document-versioning.service';
-import {
-  trackProductDocumentBatch,
-  trackProductDocumentDeleteBatch,
-} from '../documents/helpers/product-document-version.integration';
 
 @Injectable()
 export class ProcessLifeCycleApproachService implements OnModuleInit {
@@ -35,7 +30,6 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
-    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   async onModuleInit() {
@@ -224,19 +218,7 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
         });
       }
       if (docsToInsert.length) {
-        const insertedDocs = await this.allProductDocumentModel.insertMany(
-          docsToInsert,
-          { session },
-        );
-        await trackProductDocumentBatch({
-          versioning: this.documentVersioningService,
-          urnNo: createProcessLifeCycleApproachDto.urnNo,
-          sectionKey: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
-          userId: vendorObjectId,
-          docs: insertedDocs,
-          action: 'added',
-          session,
-        });
+        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
       }
 
       await session.commitTransaction();

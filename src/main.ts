@@ -28,6 +28,7 @@ function ensureUploadDirectories() {
     join(base, 'banners'),
     join(base, 'manufacturers'),
     join(base, 'events'),
+    join(base, 'gallery'),
     join(base, 'summits'),
     join(base, 'team-members'),
   ];

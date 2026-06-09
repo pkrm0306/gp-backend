@@ -1,16 +1,12 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
+import {
+  GALLERY_TYPES,
+  GalleryType,
+} from '../../gallery/schemas/gallery.schema';
 
 export type EventDocument = Event & Document;
-export const GALLERY_TYPES = [
-  'Summits',
-  'Awards',
-  'Site Audits',
-  'Workshops',
-  'Trainings',
-  'Other',
-] as const;
-export type GalleryType = (typeof GALLERY_TYPES)[number];
+export { GALLERY_TYPES, GalleryType };
 
 @Schema({ collection: 'events', timestamps: false })
 export class Event {
@@ -40,6 +36,14 @@ export class Event {
 
   @Prop({ required: true })
   eventDate: Date;
+
+  /** Inclusive event start date (falls back to `eventDate` on legacy rows). */
+  @Prop()
+  eventStartDate?: Date;
+
+  /** Inclusive event end date (falls back to start/`eventDate` on legacy rows). */
+  @Prop()
+  eventEndDate?: Date;
 
   @Prop()
   eventStartTime?: string;

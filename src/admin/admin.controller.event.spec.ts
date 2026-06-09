@@ -14,9 +14,23 @@ describe('AdminController Event Endpoints', () => {
     deleteEvent: jest.fn(),
   } as unknown as jest.Mocked<AdminService>;
 
+  const galleryServiceMock = {
+    setOrToggleGalleryStatus: jest.fn(),
+    createGallery: jest.fn(),
+    updateGallery: jest.fn(),
+    listGalleryPaginated: jest.fn(),
+    getGalleryById: jest.fn(),
+    deleteGallery: jest.fn(),
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new AdminController(adminServiceMock, {} as any, {} as any);
+    controller = new AdminController(
+      adminServiceMock,
+      galleryServiceMock as any,
+      {} as any,
+      {} as any,
+    );
   });
 
   it('creates event successfully with required fields', async () => {
@@ -75,14 +89,14 @@ describe('AdminController Event Endpoints', () => {
   });
 
   it('updates gallery status by parsing active/inactive', async () => {
-    adminServiceMock.setOrToggleEventStatus.mockResolvedValue({
-      id: 'e1',
+    galleryServiceMock.setOrToggleGalleryStatus.mockResolvedValue({
+      id: 'g1',
       status: 'active',
       is_active: true,
-    } as any);
+    });
 
-    const res = await controller.updateGalleryStatus('e1', { status: 'active' });
-    expect(adminServiceMock.setOrToggleEventStatus).toHaveBeenCalledWith('e1', 1, 'gallery');
+    const res = await controller.updateGalleryStatus('g1', { status: 'active' });
+    expect(galleryServiceMock.setOrToggleGalleryStatus).toHaveBeenCalledWith('g1', 1);
     expect(res.message).toBe('Gallery status updated successfully');
   });
 

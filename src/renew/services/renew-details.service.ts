@@ -62,6 +62,7 @@ import {
   fetchRenewCertifiedEoiSet,
   filterRenewDetailsRows,
   filterRenewRowsByCertifiedEoi,
+  matchRenewEligibleProducts,
 } from '../helpers/renew-eligible-product.util';
 import {
   PaymentDetails,
@@ -71,16 +72,31 @@ import {
   buildRenewProcessHeaderFilter,
   findRenewPaymentsForCycle,
   formatCycleScopedPaymentRecords,
+  resolveCycleScopedUrnStatus,
 } from '../helpers/renew-cycle-scope.util';
 import {
   Product,
   ProductDocument,
 } from '../../product-registration/schemas/product.schema';
+import { RenewUrnTabReviewService } from './renew-urn-tab-review.service';
+import { ProcessRenewCommentsService } from '../process-renew-comments/process-renew-comments.service';
+import { assertRenewActorCanEditUrn } from '../helpers/renew-common.util';
+import { RenewDetailsIncludeMode } from '../utils/renew-details-response.util';
+import { RENEWAL_URN_STATUS } from '../constants/renewal-urn-status.constants';
+
+export type RenewDetailsRole = 'admin' | 'vendor';
+
+export type GetRenewDetailsOptions = {
+  role: RenewDetailsRole;
+  include?: RenewDetailsIncludeMode;
+  actorVendorOrManufacturerId?: string;
+};
 
 export type RenewDetailsResult = {
   data: Array<Record<string, unknown>>;
   /** Certified EOIs with joined category + product_plants (per-row mirror). */
   products: Array<Record<string, unknown>>;
+  product_details_list?: Array<Record<string, unknown>>;
   manufacturer: Record<string, unknown> | null;
   manufacturing_details: Record<string, unknown> | null;
   plants: Array<Record<string, unknown>>;
@@ -89,7 +105,14 @@ export type RenewDetailsResult = {
   all_urn_product_documents: Array<Record<string, unknown>>;
   documents: Array<Record<string, unknown>>;
   renewContext: Record<string, unknown>;
+  urnContext?: Record<string, unknown>;
   siteVisits: unknown[];
+  payment?: Record<string, unknown> | null;
+  payments?: Array<Record<string, unknown>>;
+  vendor?: Record<string, unknown> | null;
+  category?: Record<string, unknown> | null;
+  tabReviews?: Record<string, unknown>;
+  processComments?: Record<string, unknown>;
 };
 
 function dedupePlantsById(
@@ -151,7 +174,59 @@ export class RenewDetailsService {
     private readonly productModel: Model<ProductDocument>,
     @InjectModel(PaymentDetails.name)
     private readonly paymentModel: Model<PaymentDetailsDocument>,
+    private readonly renewUrnTabReviewService: RenewUrnTabReviewService,
+    private readonly processRenewCommentsService: ProcessRenewCommentsService,
   ) {}
+
+  private buildCompactProductDetailsList(
+    rows: Array<Record<string, unknown>>,
+  ): Array<Record<string, unknown>> {
+    return rows.map((row) => {
+      const productDetails = (row.product_details ?? {}) as Record<string, unknown>;
+      const plants = (row.plants as Array<Record<string, unknown>> | undefined) ?? [];
+      const eoiNo = String(productDetails.eoiNo ?? row.eoiNo ?? '').trim();
+      const plantsForEoi = eoiNo
+        ? plants.filter((plant) => String(plant.eoiNo ?? '').trim() === eoiNo)
+        : plants;
+      const unitCount = Number(
+        productDetails.plantCount ??
+          productDetails.hpUnits ??
+          plantsForEoi.length ??
+          0,
+      );
+      return {
+        eoiNo: productDetails.eoiNo ?? row.eoiNo ?? null,
+        productName: productDetails.productName ?? row.productName ?? null,
+        productStatus: productDetails.productStatus ?? row.productStatus ?? null,
+        hpUnits: unitCount,
+        plantCount: unitCount,
+        product_details: productDetails,
+      };
+    });
+  }
+
+  private buildVendorSummary(
+    first: Record<string, unknown>,
+  ): Record<string, unknown> | null {
+    const vendor = first.vendor as Record<string, unknown> | undefined;
+    if (!vendor) {
+      return null;
+    }
+    const manufacturer = first.manufacturer as Record<string, unknown> | undefined;
+    const company =
+      vendor.companyName ??
+      vendor.manufacturerName ??
+      vendor.vendor_name ??
+      manufacturer?.manufacturerName ??
+      null;
+    return {
+      _id: vendor._id ?? null,
+      company,
+      contact: vendor.contactName ?? company,
+      email: vendor.vendor_email ?? vendor.email ?? null,
+      phone: vendor.vendor_phone ?? vendor.phone ?? null,
+    };
+  }
 
   private async resolveActiveCycle(
     urnNo: string,
@@ -315,10 +390,20 @@ export class RenewDetailsService {
   async getRenewDetailsByUrn(
     urnNo: string,
     renewalCycleId?: string,
+    options?: GetRenewDetailsOptions,
   ): Promise<RenewDetailsResult> {
     const trimmedUrn = urnNo.trim();
     if (!trimmedUrn) {
       throw new BadRequestException('URN number is required');
+    }
+
+    const include = options?.include ?? 'summary';
+    if (options?.role === 'vendor' && options.actorVendorOrManufacturerId) {
+      await assertRenewActorCanEditUrn(
+        this.productModel,
+        trimmedUrn,
+        options.actorVendorOrManufacturerId,
+      );
     }
 
     const [allDetailRows, bundle] = await Promise.all([
@@ -400,6 +485,7 @@ export class RenewDetailsService {
     const documents = allRenewDocuments;
 
     let cyclePayments: Array<Record<string, unknown>> = [];
+    let cyclePayment: Record<string, unknown> | null = null;
     if (bundle.cycle) {
       const payRows = await findRenewPaymentsForCycle(
         this.paymentModel,
@@ -409,7 +495,33 @@ export class RenewDetailsService {
       cyclePayments = formatCycleScopedPaymentRecords(
         payRows as unknown as Array<Record<string, unknown>>,
       );
+      cyclePayment = cyclePayments[0] ?? null;
     }
+
+    const productSnapshot = await this.productModel
+      .findOne({ urnNo: trimmedUrn, ...matchRenewEligibleProducts() })
+      .select('urnStatus renewCycleNo productRenewStatus')
+      .lean()
+      .exec();
+    const contextCycle = bundle.cycle;
+    const cycleScopedUrnStatus = resolveCycleScopedUrnStatus(
+      contextCycle,
+      {
+        urnStatus: Number(
+          productSnapshot?.urnStatus ??
+            productDetails?.urnStatus ??
+            first.urnStatus ??
+            0,
+        ),
+        renewCycleNo: Number(
+          productSnapshot?.renewCycleNo ??
+            productDetails?.renewCycleNo ??
+            first.renewCycleNo ??
+            0,
+        ),
+      },
+      cyclePayment,
+    );
 
     const dataWithDocuments = data.map((row) => ({
       ...row,
@@ -417,27 +529,23 @@ export class RenewDetailsService {
       all_urn_product_documents: allRenewDocuments,
       documents: allRenewDocuments,
       payments: cyclePayments,
-      payment: cyclePayments[0] ?? null,
+      payment: cyclePayment,
     }));
 
-    return {
-      data: dataWithDocuments,
-      products,
-      manufacturer,
-      manufacturing_details,
-      plants,
-      plant_details,
-      all_renew_product_documents: allRenewDocuments,
-      all_urn_product_documents: allRenewDocuments,
-      documents,
-      siteVisits,
-      renewContext: {
+    const renewContext = {
         urnNo: trimmedUrn,
-        urnStatus: productDetails?.urnStatus ?? first.urnStatus ?? null,
+        urnStatus: cycleScopedUrnStatus,
+        urn_status: cycleScopedUrnStatus,
         productRenewStatus:
-          productDetails?.productRenewStatus ?? first.productRenewStatus ?? null,
+          productSnapshot?.productRenewStatus ??
+          productDetails?.productRenewStatus ??
+          first.productRenewStatus ??
+          null,
         renewCycleNo:
-          productDetails?.renewCycleNo ?? first.renewCycleNo ?? null,
+          productSnapshot?.renewCycleNo ??
+          productDetails?.renewCycleNo ??
+          first.renewCycleNo ??
+          null,
         category: category ?? null,
         categoryName:
           category?.categoryName ?? category?.category_name ?? null,
@@ -471,12 +579,85 @@ export class RenewDetailsService {
               paymentId: activeCycle.paymentId ?? null,
             }
           : null,
-      },
+    };
+
+    const urnContext = {
+      urnNo: trimmedUrn,
+      urnStatus: cycleScopedUrnStatus,
+      productRenewStatus:
+        productSnapshot?.productRenewStatus ??
+        productDetails?.productRenewStatus ??
+        first.productRenewStatus ??
+        null,
+      product_renew_status:
+        productSnapshot?.productRenewStatus ??
+        productDetails?.productRenewStatus ??
+        first.productRenewStatus ??
+        null,
+      renewCycleNo:
+        productSnapshot?.renewCycleNo ??
+        productDetails?.renewCycleNo ??
+        first.renewCycleNo ??
+        null,
+      vendorId: renewContext.vendorId,
+      manufacturerId: renewContext.manufacturerId,
+      renewalCycleId: renewContext.renewalCycleId,
+    };
+
+    const baseResult: RenewDetailsResult = {
+      data: dataWithDocuments,
+      products,
+      manufacturer,
+      manufacturing_details,
+      plants,
+      plant_details,
+      all_renew_product_documents: allRenewDocuments,
+      all_urn_product_documents: allRenewDocuments,
+      documents,
+      siteVisits,
+      renewContext,
+      urnContext,
+    };
+
+    if (include !== 'full') {
+      return baseResult;
+    }
+
+    const cycleIdForExtras = String(
+      activeCycle?._id ?? renewalCycleId?.trim() ?? '',
+    );
+    const fullExtras: Partial<RenewDetailsResult> = {
+      product_details_list: this.buildCompactProductDetailsList(dataWithDocuments),
+      payment: cyclePayment,
+      payments: cyclePayments,
+      category: (category as Record<string, unknown> | null) ?? null,
+      vendor: this.buildVendorSummary(first),
+    };
+
+    if (options?.role === 'admin' && cycleIdForExtras) {
+      const [tabReviewsRaw, processComments] = await Promise.all([
+        this.renewUrnTabReviewService.getUrnTabReviews(trimmedUrn, cycleIdForExtras),
+        this.processRenewCommentsService.adminGetCommentsPayload(
+          trimmedUrn,
+          cycleIdForExtras,
+        ),
+      ]);
+      fullExtras.tabReviews = {
+        ...(tabReviewsRaw as Record<string, unknown>),
+        urnStatus: cycleScopedUrnStatus,
+        canReview: cycleScopedUrnStatus === RENEWAL_URN_STATUS.CHECK_PROCESS_FORMS,
+      };
+      fullExtras.processComments = processComments;
+    }
+
+    return {
+      ...baseResult,
+      ...fullExtras,
     };
   }
 
-  async getManufacturingByUrn(urnNo: string) {
-    const bundle = await this.loadRenewBundle(urnNo.trim());
+  async getManufacturingByUrn(urnNo: string, renewalCycleId?: string) {
+    const bundle = await this.loadRenewBundle(urnNo.trim(), renewalCycleId);
     return {
       process_manufacturing: bundle.processSections.process_manufacturing,
       process_manufacturing_documents:
@@ -486,16 +667,16 @@ export class RenewDetailsService {
     };
   }
 
-  async getInnovationByUrn(urnNo: string) {
-    const bundle = await this.loadRenewBundle(urnNo.trim());
+  async getInnovationByUrn(urnNo: string, renewalCycleId?: string) {
+    const bundle = await this.loadRenewBundle(urnNo.trim(), renewalCycleId);
     return {
       process_innovation: bundle.processSections.process_innovation,
       process_innovation_documents: bundle.processSections.process_innovation_documents,
     };
   }
 
-  async getWasteByUrn(urnNo: string) {
-    const bundle = await this.loadRenewBundle(urnNo.trim());
+  async getWasteByUrn(urnNo: string, renewalCycleId?: string) {
+    const bundle = await this.loadRenewBundle(urnNo.trim(), renewalCycleId);
     return {
       process_waste_management: bundle.processSections.process_waste_management,
       process_waste_management_documents:

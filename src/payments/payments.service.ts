@@ -1475,6 +1475,32 @@ export class PaymentsService {
         });
       }
 
+      const previousPaymentStatus = Number(existingPayment.paymentStatus ?? 0);
+      const newPaymentStatus = Number(updatedPayment.paymentStatus ?? 0);
+      const renewPaymentSubmitted =
+        paymentType === 'renew' &&
+        this.isVendorPortalRole(actorRole) &&
+        previousPaymentStatus !== 1 &&
+        newPaymentStatus === 1;
+
+      if (renewPaymentSubmitted) {
+        const renewUrnFilter = buildProductFilterForUrnStatusUpdate(
+          { urnNo: { $in: urnOptions }, vendorId: effectiveVendorObjectId },
+          'renew',
+          RENEWAL_URN_STATUS.PAYMENT_SUBMITTED,
+        );
+        await this.productModel.updateMany(
+          renewUrnFilter,
+          {
+            $set: {
+              urnStatus: RENEWAL_URN_STATUS.PAYMENT_SUBMITTED,
+              updatedDate: now,
+            },
+          },
+          { session },
+        );
+      }
+
       if (
         paymentStatusUpdate.adminApprovedPayment &&
         paymentType === 'renew' &&
@@ -1572,8 +1598,6 @@ export class PaymentsService {
         }
       }
 
-      const previousPaymentStatus = Number(existingPayment.paymentStatus ?? 0);
-      const newPaymentStatus = Number(updatedPayment.paymentStatus ?? 0);
       const certificationSubmitted =
         paymentType === 'certification' &&
         this.isVendorPortalRole(actorRole) &&

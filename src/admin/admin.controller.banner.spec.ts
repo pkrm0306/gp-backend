@@ -16,7 +16,12 @@ describe('AdminController Banner Endpoints', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new AdminController(adminServiceMock, {} as any, {} as any);
+    controller = new AdminController(
+      adminServiceMock,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
   });
 
   it('lists banners for vendor id from token', async () => {

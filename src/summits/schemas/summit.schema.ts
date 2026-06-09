@@ -74,6 +74,9 @@ export class SummitSpeakerItem {
   @Prop({ default: '' })
   sub: string;
 
+  @Prop({ default: '' })
+  keyPoint: string;
+
   @Prop({ type: [String], default: [] })
   tags: string[];
 

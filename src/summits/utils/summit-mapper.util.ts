@@ -44,8 +44,9 @@ export interface SummitApiResponse {
     sortOrder: number;
     name: string;
     sub: string;
+    keyPoint: string;
     tags: string[];
-    /** Alias of `tags` for frontend forms that use `keyPoints` */
+    /** Legacy read-only alias — first key point string when present */
     keyPoints: string[];
     imageUrl: string;
   }>;
@@ -221,13 +222,15 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
     eventOutcomes: mapTextItems(doc.eventOutcomes),
     speakers: sortByOrder(doc.speakers ?? []).map((s) => {
       const tags = s.tags ?? [];
+      const keyPoint = String(s.keyPoint ?? '').trim();
       return {
         id: s.id,
         sortOrder: s.sortOrder ?? 0,
         name: s.name ?? '',
         sub: s.sub ?? '',
+        keyPoint,
         tags,
-        keyPoints: tags,
+        keyPoints: keyPoint ? [keyPoint] : [],
         imageUrl: s.imageUrl ?? '',
       };
     }),

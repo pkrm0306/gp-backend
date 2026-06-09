@@ -358,6 +358,7 @@ export class RenewUrnStatusService {
       return {
         urnNo: trimmedUrn,
         urnStatus: currentStatus,
+        renewalCycleId: String(cycle._id),
         message: 'URN status unchanged',
       };
     }
@@ -462,6 +463,7 @@ export class RenewUrnStatusService {
         await this.renewalOrchestrationService.onRenewPaymentApproved({
           urnNo: trimmedUrn,
           paymentId,
+          renewalCycleId: String(cycle._id),
           vendorId: ownership.vendorId,
           userId: userObjectId,
           session,
@@ -489,6 +491,7 @@ export class RenewUrnStatusService {
       return {
         urnNo: trimmedUrn,
         urnStatus: targetStatus,
+        renewalCycleId: String(cycle._id),
         message: 'URN status updated',
       };
     }
@@ -496,6 +499,7 @@ export class RenewUrnStatusService {
     return {
       urnNo: trimmedUrn,
       urnStatus: targetStatus,
+      renewalCycleId: String(cycle._id),
       message: 'URN status updated',
     };
   }

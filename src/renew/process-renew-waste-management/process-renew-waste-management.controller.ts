@@ -10,6 +10,8 @@ import {
 
   Param,
 
+  Query,
+
   UseGuards,
 
   UseInterceptors,
@@ -38,6 +40,7 @@ import { Model } from 'mongoose';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
 
 import { assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
+import { parseMultipartJsonIdArray } from '../../product-design/product-design-upload.util';
 
 
 
@@ -96,23 +99,20 @@ export class ProcessRenewWasteManagementController {
     );
 
     const data = await this.processRenewWasteManagementService.upsert(
-
       {
-
         urnNo: body.urnNo,
-
-        wmImplementationDetails: body.wmImplementationDetails,
-
-        processWasteManagementStatus: body.processWasteManagementStatus
-
-          ? parseInt(body.processWasteManagementStatus, 10)
-
+        renewalCycleId: body.renewalCycleId
+          ? String(body.renewalCycleId)
           : undefined,
-
+        wmImplementationDetails: body.wmImplementationDetails,
+        processWasteManagementStatus: body.processWasteManagementStatus
+          ? parseInt(body.processWasteManagementStatus, 10)
+          : undefined,
+        existingDocumentIds: parseMultipartJsonIdArray(
+          body.existingDocumentIds ?? body.existing_document_ids,
+        ),
       },
-
       wmFiles,
-
     );
 
     return { success: true, message: 'Renew waste management saved successfully', data };
@@ -125,12 +125,15 @@ export class ProcessRenewWasteManagementController {
 
   @ApiOperation({ summary: 'Get renewal waste management by URN' })
 
-  async getByUrn(@Param('urnNo') urnNo: string) {
-
-    const data = await this.renewDetailsService.getWasteByUrn(urnNo);
-
+  async getByUrn(
+    @Param('urnNo') urnNo: string,
+    @Query('renewalCycleId') renewalCycleId?: string,
+  ) {
+    const data = await this.renewDetailsService.getWasteByUrn(
+      urnNo,
+      renewalCycleId,
+    );
     return { success: true, message: 'Renew waste management fetched successfully', data };
-
   }
 
 }

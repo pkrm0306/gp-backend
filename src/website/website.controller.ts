@@ -78,7 +78,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public website impact stats',
     description:
-      'Returns cached counters for website hero/impact section: companies, product categories, and ecolabelled products.',
+      'Returns cached counters for the website impact section: certified manufacturers (companies), total product categories in the categories list, and total certified ecolabelled products.',
   })
   @ApiResponse({
     status: 200,

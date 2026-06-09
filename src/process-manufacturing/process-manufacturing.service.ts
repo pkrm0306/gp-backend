@@ -221,7 +221,7 @@ export class ProcessManufacturingService implements OnModuleInit {
           formPrimaryId: savedProcessManufacturing.processManufacturingId,
           documentName: consumptionDisplayName || uploaded.fileName,
           documentOriginalName: energyConsumptionFiles[i].originalname,
-          documentLink: uploaded.fileUrl,
+          documentLink: uploaded.fileUrl, 
           createdDate: now,
           updatedDate: now,
         });

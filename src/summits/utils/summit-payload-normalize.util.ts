@@ -1,4 +1,7 @@
-import { normalizeSpeakerTags } from './summit-speaker.util';
+import {
+  normalizeSpeakerKeyPoint,
+  normalizeSpeakerTags,
+} from './summit-speaker.util';
 
 /** Strip removed banner fields (title, subtitle) from client payloads. */
 export function normalizeSummitBannersInput(raw: unknown): unknown {
@@ -11,16 +14,51 @@ export function normalizeSummitBannersInput(raw: unknown): unknown {
   });
 }
 
-/** Map frontend `keyPoints` → `tags`; strip unknown speaker keys. */
+function speakerTagArraysEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/** Keep speaker key point text and tag pills as separate persisted fields. */
 export function normalizeSummitSpeakersInput(raw: unknown): unknown {
   if (!Array.isArray(raw)) return raw;
   return raw.map((item) => {
     if (!item || typeof item !== 'object') return item;
     const row = item as Record<string, unknown>;
-    const { keyPoints, tags, ...rest } = row;
+    const { keyPoints, keyPoint, tags, ...rest } = row;
+    const normalizedTags = normalizeSpeakerTags(tags);
+    let normalizedKeyPoint = normalizeSpeakerKeyPoint(keyPoint);
+
+    if (!normalizedKeyPoint && keyPoints !== undefined) {
+      const legacyKeyPoints = normalizeSpeakerTags(keyPoints);
+      if (legacyKeyPoints.length === 1) {
+        const candidate = normalizeSpeakerKeyPoint(legacyKeyPoints[0]);
+        if (
+          candidate !== normalizedTags.join(' ') &&
+          !speakerTagArraysEqual(legacyKeyPoints, normalizedTags)
+        ) {
+          normalizedKeyPoint = candidate;
+        }
+      } else if (
+        legacyKeyPoints.length > 1 &&
+        !speakerTagArraysEqual(legacyKeyPoints, normalizedTags)
+      ) {
+        normalizedKeyPoint = normalizeSpeakerKeyPoint(legacyKeyPoints[0]);
+      }
+    }
+
+    if (
+      normalizedKeyPoint &&
+      normalizedTags.length > 0 &&
+      (normalizedKeyPoint === normalizedTags.join(' ') ||
+        speakerTagArraysEqual(normalizeSpeakerTags([normalizedKeyPoint]), normalizedTags))
+    ) {
+      normalizedKeyPoint = '';
+    }
+
     return {
       ...rest,
-      tags: normalizeSpeakerTags(tags ?? keyPoints),
+      keyPoint: normalizedKeyPoint,
+      tags: normalizedTags,
     };
   });
 }

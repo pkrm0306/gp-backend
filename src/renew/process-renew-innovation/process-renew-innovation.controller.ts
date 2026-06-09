@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Param,
+  Query,
   UseGuards,
   UseInterceptors,
   UploadedFiles,
@@ -19,6 +20,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
 import { assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
+import { parseMultipartJsonIdArray } from '../../product-design/product-design-upload.util';
 
 @ApiTags('Renew - Innovation')
 @Controller('renew/process-innovation')
@@ -50,10 +52,16 @@ export class ProcessRenewInnovationController {
     const data = await this.processRenewInnovationService.upsert(
       {
         urnNo: body.urnNo,
+        renewalCycleId: body.renewalCycleId
+          ? String(body.renewalCycleId)
+          : undefined,
         innovationImplementationDetails: body.innovationImplementationDetails,
         processInnovationStatus: body.processInnovationStatus
           ? parseInt(body.processInnovationStatus, 10)
           : undefined,
+        existingDocumentIds: parseMultipartJsonIdArray(
+          body.existingDocumentIds ?? body.existing_document_ids,
+        ),
       },
       uploadFiles,
     );
@@ -62,8 +70,14 @@ export class ProcessRenewInnovationController {
 
   @Get(':urnNo')
   @ApiOperation({ summary: 'Get renewal process innovation by URN' })
-  async getByUrn(@Param('urnNo') urnNo: string) {
-    const data = await this.renewDetailsService.getInnovationByUrn(urnNo);
+  async getByUrn(
+    @Param('urnNo') urnNo: string,
+    @Query('renewalCycleId') renewalCycleId?: string,
+  ) {
+    const data = await this.renewDetailsService.getInnovationByUrn(
+      urnNo,
+      renewalCycleId,
+    );
     return { success: true, message: 'Renew innovation fetched successfully', data };
   }
 }
