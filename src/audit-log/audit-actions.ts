@@ -14,6 +14,11 @@ export const AUDIT_ACTION = {
   PRODUCT_URN_STATUS_UPDATED: 'PRODUCT_URN_STATUS_UPDATED',
   EXPIRED_REACTIVATE_PRODUCT: 'expired_reactivate_product',
   EXPIRED_REACTIVATE_URN: 'expired_reactivate_urn',
+  REJECTED_RESTORE_PRODUCT: 'rejected_restore_product',
+  REJECTED_RESTORE_URN: 'rejected_restore_urn',
+  EOI_REASSIGNED_ON_RESTORE: 'eoi_reassigned_on_restore',
+  PRODUCT_DISCONTINUED: 'product_discontinued',
+  ADMIN_ADD_PRODUCT_TO_URN: 'admin_add_product_to_urn',
   ACTIVITY_LOG_CREATED: 'ACTIVITY_LOG_CREATED',
   RAW_MATERIALS_DELETED: 'RAW_MATERIALS_DELETED',
 } as const;

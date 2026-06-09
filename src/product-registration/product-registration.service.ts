@@ -738,6 +738,89 @@ export class ProductRegistrationService {
     }
   }
 
+  private resolveAdminListStatusFilter(dto: AdminListProductsDto): number[] {
+    for (const c of [dto.status, dto.productStatus, dto.product_status]) {
+      if (Array.isArray(c) && c.length > 0) {
+        return c.map((s) => Number(s)).filter((s) => Number.isFinite(s));
+      }
+    }
+    return [];
+  }
+
+  private isAdminRejectedOnlyListFilter(dto: AdminListProductsDto): boolean {
+    const statuses = this.resolveAdminListStatusFilter(dto);
+    const regularStatuses = statuses.filter((s) => s !== 4);
+    return regularStatuses.length === 1 && regularStatuses[0] === 3;
+  }
+
+  private async enrichAdminRejectedListUrns(
+    grouped: Array<{ urns?: Array<Record<string, unknown>> }>,
+  ): Promise<void> {
+    const urnNos = [
+      ...new Set(
+        grouped.flatMap((m) =>
+          (m.urns ?? [])
+            .map((u) => String(u.urnNo ?? u.urn_number ?? '').trim())
+            .filter(Boolean),
+        ),
+      ),
+    ];
+    if (!urnNos.length) {
+      return;
+    }
+
+    const [certifiedRows, rejectedRows] = await Promise.all([
+      this.productModel
+        .aggregate<{ _id: string; count: number }>([
+          {
+            $match: {
+              urnNo: { $in: urnNos },
+              productStatus: 2,
+              ...matchActiveProducts(),
+            },
+          },
+          { $group: { _id: '$urnNo', count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.productModel
+        .aggregate<{ _id: string; count: number }>([
+          {
+            $match: {
+              urnNo: { $in: urnNos },
+              productStatus: 3,
+              ...matchActiveProducts(),
+            },
+          },
+          { $group: { _id: '$urnNo', count: { $sum: 1 } } },
+        ])
+        .exec(),
+    ]);
+
+    const certifiedByUrn = new Map(
+      certifiedRows.map((row) => [row._id, row.count] as const),
+    );
+    const rejectedByUrn = new Map(
+      rejectedRows.map((row) => [row._id, row.count] as const),
+    );
+
+    for (const manufacturer of grouped) {
+      for (const urn of manufacturer.urns ?? []) {
+        const urnNo = String(urn.urnNo ?? urn.urn_number ?? '').trim();
+        const certifiedProductCount = certifiedByUrn.get(urnNo) ?? 0;
+        const rejectedProductCount =
+          rejectedByUrn.get(urnNo) ??
+          (Array.isArray(urn.eois) ? urn.eois.length : Number(urn.totalEoi ?? 0));
+        const hasCertifiedProducts = certifiedProductCount > 0;
+        urn.hasCertifiedProducts = hasCertifiedProducts;
+        urn.certifiedProductCount = certifiedProductCount;
+        urn.rejectedProductCount = rejectedProductCount;
+        urn.allowedTargets = hasCertifiedProducts
+          ? ['certified']
+          : ['uncertified', 'certified'];
+      }
+    }
+  }
+
   private formatAdminListUrnGroup(urn: {
     urnNo: string;
     createdDate: Date;
@@ -2069,16 +2152,15 @@ export class ProductRegistrationService {
           urnNo,
         );
 
-        // Get initial manufacturer-specific product count (before inserting any products)
-        const initialManufacturerProductCount =
-          await this.eoiNumberService.countActiveProductsByManufacturer(
+        const initialMaxActiveSequence =
+          await this.eoiNumberService.getMaxActiveSequenceSuffix(
             manufacturerObjectId,
             session,
           );
 
         console.log(
-          '[Bulk Product Registration] Initial manufacturer product count:',
-          initialManufacturerProductCount,
+          '[Bulk Product Registration] Initial max active EOI sequence:',
+          initialMaxActiveSequence,
         );
 
         const results = [];
@@ -2087,10 +2169,7 @@ export class ProductRegistrationService {
         for (let i = 0; i < bulkRegisterProductDto.products.length; i++) {
           const registerProductDto = bulkRegisterProductDto.products[i];
 
-          // Calculate manufacturer_product_count for this product
-          // Start from initial count + 1, then increment for each subsequent product
-          const manufacturerProductCount =
-            initialManufacturerProductCount + i + 1;
+          const manufacturerProductCount = initialMaxActiveSequence + i + 1;
 
           // Generate EOI: Individual EOI per product using manufacturer-specific count
           const eoiNo = await this.generateEOIWithCount(
@@ -7386,9 +7465,12 @@ export class ProductRegistrationService {
       }
     }
 
-    const grouped = (payload.data ?? []).map((m: any) =>
+    let grouped = (payload.data ?? []).map((m: any) =>
       this.formatAdminListManufacturerGroup(m),
     );
+    if (this.isAdminRejectedOnlyListFilter(dto)) {
+      await this.enrichAdminRejectedListUrns(grouped);
+    }
 
     const response = {
       message: 'Products listed successfully',

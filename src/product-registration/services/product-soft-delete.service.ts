@@ -61,8 +61,8 @@ export class ProductSoftDeleteService {
   ) {}
 
   /**
-   * Soft-delete one EOI product, cascade to plants, and re-sequence active EOIs
-   * manufacturer-wise with Product ↔ ProductPlant eoiNo kept in sync.
+   * Soft-delete one EOI product and cascade to plants.
+   * Inactive products keep their eoiNo; active siblings are not renumbered.
    */
   async softDeleteProduct(
     productId: string,
@@ -196,21 +196,16 @@ export class ProductSoftDeleteService {
         )
         .exec();
 
-      const updatedSequenceCount = await this.resequenceActiveEoisForManufacturer(
-        manufacturerId,
-        session,
-      );
-
       await session.commitTransaction();
 
       await this.invalidateProductListingsCache();
 
       return {
         success: true,
-        message: 'EOI deleted and sequences rearranged successfully',
+        message: 'EOI deleted successfully',
         deleted_product_id: String(productObjectId),
         deleted_plant_count: plantSoftDeleteResult.modifiedCount ?? 0,
-        updated_sequence_count: updatedSequenceCount,
+        updated_sequence_count: 0,
         manufacturer_id: manufacturerId,
       };
     } catch (error) {

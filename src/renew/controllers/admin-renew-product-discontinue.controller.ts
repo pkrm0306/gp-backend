@@ -56,17 +56,18 @@ export class AdminRenewProductDiscontinueController {
     @Body() body: BulkReactivateProductsBodyDto,
     @CurrentUser() user: { userId?: string; sub?: string; _id?: string },
   ) {
-    const data = await this.discontinueService.bulkReactivate(
+    await this.discontinueService.bulkReactivate(
       urnNo,
       body.productIds ?? [],
       this.adminUserId(user),
     );
-    return { success: true, ...data };
   }
 
   @Patch('products/:productId/toggle-status')
   @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
-  @ApiOperation({ summary: 'Toggle product status between certified (2) and discontinued (4)' })
+  @ApiOperation({
+    summary: 'Discontinue certified product during renewal (soft-delete; productStatus unchanged)',
+  })
   @ApiParam({ name: 'urnNo', type: String })
   @ApiParam({ name: 'productId', type: String })
   async toggleStatus(

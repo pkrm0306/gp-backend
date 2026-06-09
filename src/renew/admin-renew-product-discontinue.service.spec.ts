@@ -7,7 +7,6 @@ import { Types } from 'mongoose';
 import { AdminRenewProductDiscontinueService } from './services/admin-renew-product-discontinue.service';
 import {
   PRODUCT_STATUS_CERTIFIED,
-  PRODUCT_STATUS_DISCONTINUED,
   PRODUCT_STATUS_PENDING,
 } from './constants/product-status.constants';
 
@@ -18,10 +17,10 @@ describe('AdminRenewProductDiscontinueService', () => {
 
   let findChain: { lean: jest.Mock; exec: jest.Mock };
   let findOneExec: jest.Mock;
+  let findOneLeanExec: jest.Mock;
   let updateOne: jest.Mock;
-  let updateMany: jest.Mock;
   let auditCreate: jest.Mock;
-  let auditInsertMany: jest.Mock;
+  let auditRecord: jest.Mock;
   let service: AdminRenewProductDiscontinueService;
 
   beforeEach(() => {
@@ -30,10 +29,10 @@ describe('AdminRenewProductDiscontinueService', () => {
       exec: jest.fn(),
     };
     findOneExec = jest.fn();
+    findOneLeanExec = jest.fn();
     updateOne = jest.fn().mockResolvedValue({ acknowledged: true });
-    updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
     auditCreate = jest.fn().mockResolvedValue({});
-    auditInsertMany = jest.fn().mockResolvedValue([]);
+    auditRecord = jest.fn().mockResolvedValue(undefined);
 
     const productModel = {
       find: jest.fn().mockReturnValue({
@@ -41,23 +40,27 @@ describe('AdminRenewProductDiscontinueService', () => {
           sort: jest.fn().mockReturnValue(findChain),
         }),
       }),
-      findOne: jest.fn().mockReturnValue({ exec: findOneExec }),
+      findOne: jest.fn().mockImplementation(() => ({
+        exec: findOneExec,
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockReturnValue({ exec: findOneLeanExec }),
+        }),
+      })),
       updateOne,
-      updateMany,
-    };
-
-    const auditModel = {
-      create: auditCreate,
-      insertMany: auditInsertMany,
     };
 
     service = new AdminRenewProductDiscontinueService(
-      productModel as any,
-      auditModel as any,
+      productModel as never,
+      { create: auditCreate } as never,
+      { record: auditRecord } as never,
+      {
+        deleteByPattern: jest.fn().mockResolvedValue(undefined),
+        buildKey: jest.fn((...parts: string[]) => parts.join(':')),
+      } as never,
     );
   });
 
-  it('lists products for URN sorted by createdDate', async () => {
+  it('lists only active certified products for URN', async () => {
     const createdDate = new Date('2024-01-15T10:00:00.000Z');
     findChain.exec.mockResolvedValue([
       {
@@ -71,28 +74,24 @@ describe('AdminRenewProductDiscontinueService', () => {
 
     const data = await service.listProducts(urnNo);
 
-    expect(data).toEqual([
-      {
-        _id: String(productId),
-        eoiNo: 'EOI-1',
-        productName: 'Sample',
-        productStatus: 2,
-        createdAt: createdDate,
-      },
-    ]);
+    expect(data[0]).toMatchObject({
+      _id: String(productId),
+      eoiNo: 'EOI-1',
+      productStatus: 2,
+    });
   });
 
-  it('toggles 2 → 4 and sets discontinue fields with audit', async () => {
+  it('soft-deletes certified product without changing productStatus', async () => {
     findOneExec.mockResolvedValue({
       _id: productId,
       urnNo,
+      eoiNo: 'GPPMI003004',
       productStatus: PRODUCT_STATUS_CERTIFIED,
     });
 
-    const result = await service.toggleProductStatus(
+    const result = await service.discontinueProduct(
       urnNo,
       String(productId),
-      PRODUCT_STATUS_CERTIFIED,
       adminUserId,
       'EOL',
     );
@@ -100,59 +99,34 @@ describe('AdminRenewProductDiscontinueService', () => {
     expect(result).toMatchObject({
       success: true,
       productId: String(productId),
-      fromStatus: 2,
-      toStatus: 4,
+      eoiNo: 'GPPMI003004',
+      productStatus: 2,
+      isDeleted: true,
     });
     expect(updateOne).toHaveBeenCalledWith(
       { _id: productId },
       {
         $set: expect.objectContaining({
-          productStatus: PRODUCT_STATUS_DISCONTINUED,
+          is_deleted: true,
+          deleted_at: expect.any(Date),
           discontinuedAt: expect.any(Date),
-          discontinuedBy: expect.any(Types.ObjectId),
-          updatedDate: expect.any(Date),
+          discontinueReason: 'EOL',
         }),
       },
     );
+    expect(updateOne.mock.calls[0][1].$set).not.toHaveProperty(
+      'productStatus',
+    );
     expect(auditCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        urnNo,
         fromStatus: 2,
-        toStatus: 4,
+        toStatus: 2,
         reason: 'EOL',
       }),
     );
   });
 
-  it('toggles 4 → 2 and clears discontinue fields with audit', async () => {
-    findOneExec.mockResolvedValue({
-      _id: productId,
-      urnNo,
-      productStatus: PRODUCT_STATUS_DISCONTINUED,
-    });
-
-    const result = await service.toggleProductStatus(
-      urnNo,
-      String(productId),
-      PRODUCT_STATUS_DISCONTINUED,
-      adminUserId,
-    );
-
-    expect(result.toStatus).toBe(PRODUCT_STATUS_CERTIFIED);
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: productId },
-      {
-        $set: expect.objectContaining({
-          productStatus: PRODUCT_STATUS_CERTIFIED,
-          discontinuedAt: null,
-          discontinuedBy: null,
-        }),
-      },
-    );
-    expect(auditCreate).toHaveBeenCalled();
-  });
-
-  it('rejects non-toggleable currentStatus with 400', async () => {
+  it('rejects discontinue when currentStatus is not certified', async () => {
     await expect(
       service.toggleProductStatus(
         urnNo,
@@ -163,24 +137,10 @@ describe('AdminRenewProductDiscontinueService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('returns 404 when product is not under urnNo', async () => {
-    findOneExec.mockResolvedValue(null);
-
-    await expect(
-      service.toggleProductStatus(
-        urnNo,
-        String(productId),
-        PRODUCT_STATUS_CERTIFIED,
-        adminUserId,
-      ),
-    ).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('returns 409 when DB status differs from body currentStatus', async () => {
-    findOneExec.mockResolvedValue({
-      _id: productId,
-      urnNo,
-      productStatus: PRODUCT_STATUS_DISCONTINUED,
+  it('returns 409 when product is already soft-deleted', async () => {
+    findOneLeanExec.mockResolvedValue({
+      is_deleted: true,
+      productStatus: PRODUCT_STATUS_CERTIFIED,
     });
 
     await expect(
@@ -193,36 +153,17 @@ describe('AdminRenewProductDiscontinueService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('bulk reactivate updates only matching URN ids and audits changes', async () => {
-    const otherId = new Types.ObjectId();
-    const findExec = jest.fn().mockResolvedValue([
-      { _id: productId, productStatus: PRODUCT_STATUS_DISCONTINUED },
-      { _id: otherId, productStatus: PRODUCT_STATUS_DISCONTINUED },
-    ]);
-    (service as any).productModel.find = jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({ exec: findExec }),
-      }),
-    });
-    updateMany.mockResolvedValue({ modifiedCount: 2 });
+  it('returns 404 when product is not under urnNo', async () => {
+    findOneExec.mockResolvedValue(null);
 
-    const result = await service.bulkReactivate(
-      urnNo,
-      [String(productId), String(otherId)],
-      adminUserId,
-    );
+    await expect(
+      service.discontinueProduct(urnNo, String(productId), adminUserId),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
 
-    expect(result).toEqual({ success: true, updatedCount: 2 });
-    expect(updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ urnNo }),
-      expect.objectContaining({
-        $set: expect.objectContaining({ productStatus: PRODUCT_STATUS_CERTIFIED }),
-      }),
-    );
-    expect(auditInsertMany).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({ fromStatus: 4, toStatus: 2 }),
-      ]),
-    );
+  it('rejects bulk reactivate', async () => {
+    await expect(
+      service.bulkReactivate(urnNo, [String(productId)], adminUserId),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

@@ -20,6 +20,20 @@ export class Product {
   @Prop({ required: true })
   eoiNo: string;
 
+  /** Numeric suffix aligned with eoiNo (last 3 digits). */
+  @Prop()
+  eoiSequence?: number;
+
+  /** Previous eoiNo before reassignment on restore / undo-delete. */
+  @Prop()
+  previousEoiNo?: string;
+
+  @Prop({ type: Date })
+  eoiReassignedAt?: Date;
+
+  @Prop({ type: Date })
+  rejectedAt?: Date;
+
   @Prop({ required: true })
   urnNo: string;
 
@@ -98,11 +112,17 @@ export class Product {
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   deleted_by?: Types.ObjectId | null;
 
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  addedByAdminId?: Types.ObjectId;
+
   @Prop({ type: Date, default: null })
   discontinuedAt?: Date | null;
 
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   discontinuedBy?: Types.ObjectId | null;
+
+  @Prop()
+  discontinueReason?: string;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);
@@ -118,3 +138,4 @@ ProductSchema.index({ urnNo: 1, is_deleted: 1, productStatus: 1 });
 ProductSchema.index({ urnNo: 1, eoiNo: 1 });
 ProductSchema.index({ manufacturerId: 1, is_deleted: 1, createdDate: 1 });
 ProductSchema.index({ manufacturerId: 1, is_deleted: 1, eoiNo: 1 });
+ProductSchema.index({ manufacturerId: 1, productStatus: 1, is_deleted: 1 });

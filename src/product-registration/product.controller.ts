@@ -33,7 +33,7 @@ export class ProductController {
   @ApiOperation({
     summary: 'Soft delete EOI product and re-sequence manufacturer EOIs',
     description:
-      'Soft-deletes the product and all related product plants, then re-numbers active EOI sequences manufacturer-wise. Uses a database transaction; rolls back on failure. ' +
+      'Soft-deletes the product and all related product plants. Active sibling EOIs are not renumbered. Uses a database transaction; rolls back on failure. ' +
       'Restricted to platform admin and staff users with products:delete permission.',
   })
   @ApiParam({
@@ -43,14 +43,14 @@ export class ProductController {
   })
   @ApiResponse({
     status: 200,
-    description: 'EOI deleted and sequences rearranged',
+    description: 'EOI deleted successfully',
     schema: {
       type: 'object',
       properties: {
         success: { type: 'boolean', example: true },
         message: {
           type: 'string',
-          example: 'EOI deleted and sequences rearranged successfully',
+          example: 'EOI deleted successfully',
         },
         deleted_product_id: { type: 'string' },
         deleted_plant_count: { type: 'number', example: 3 },

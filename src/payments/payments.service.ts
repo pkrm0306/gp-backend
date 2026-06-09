@@ -893,23 +893,13 @@ export class PaymentsService {
                     productStatus: 3,
                     rejectedDetails:
                       'Auto-rejected: not selected for certification fee',
+                    rejectedAt: now,
                     updatedDate: now,
                   },
                 },
                 { session },
               )
               .exec();
-          }
-
-          const manufacturerId = String(urnProducts[0].manufacturerId ?? '');
-          if (manufacturerId) {
-            updatedSequenceCount =
-              await this.productSoftDeleteService.resequenceForManufacturerInSession(
-                manufacturerId,
-                session,
-                { excludeRejected: true },
-              );
-            resequenceApplied = true;
           }
         }
 

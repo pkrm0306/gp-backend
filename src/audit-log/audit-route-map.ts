@@ -530,6 +530,33 @@ export function mapFriendlyAudit(
     };
   }
 
+  if (
+    m === 'PATCH' &&
+    pathNorm.endsWith('/api/admin/products/rejected-restore/product')
+  ) {
+    return {
+      module: AUDIT_MODULE.PRODUCT,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'Rejected product restored',
+      entity_name:
+        firstStringField(body, ['eoiNo']) ?? firstStringField(body, ['urnNo']),
+      new_values: snap,
+    };
+  }
+
+  if (
+    m === 'PATCH' &&
+    pathNorm.endsWith('/api/admin/products/rejected-restore/urn')
+  ) {
+    return {
+      module: AUDIT_MODULE.PRODUCT,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'All rejected products on URN restored',
+      entity_name: firstStringField(body, ['urnNo']),
+      new_values: snap,
+    };
+  }
+
   if (isProductFamilyPath(pathNorm)) {
     const at = methodDefaultActionType(m);
     const urn = urnFromBody(body);

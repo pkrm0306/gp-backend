@@ -7,6 +7,8 @@ import { ProductsController } from './products.controller';
 import { VendorRequestsController } from './vendor-requests.controller';
 import { AdminProductsController } from './admin-products.controller';
 import { AdminExpiredReactivateController } from './admin-expired-reactivate.controller';
+import { AdminRejectedRestoreController } from './admin-rejected-restore.controller';
+import { AdminUrnAddProductController } from './admin-urn-add-product.controller';
 import { AdminUrnController } from './admin-urn.controller';
 import { ProductController } from './product.controller';
 import { ProductRegistrationService } from './product-registration.service';
@@ -57,6 +59,8 @@ import {
   ProductStatusAuditSchema,
 } from '../renew/schemas/product-status-audit.schema';
 import { AdminExpiredReactivateService } from './services/admin-expired-reactivate.service';
+import { AdminRejectedRestoreService } from './services/admin-rejected-restore.service';
+import { AdminAddProductToUrnService } from './services/admin-add-product-to-urn.service';
 
 @Module({
   imports: [
@@ -91,6 +95,8 @@ import { AdminExpiredReactivateService } from './services/admin-expired-reactiva
     VendorRequestsController,
     AdminProductsController,
     AdminExpiredReactivateController,
+    AdminRejectedRestoreController,
+    AdminUrnAddProductController,
     AdminUrnController,
     ProductController,
   ],
@@ -105,6 +111,8 @@ import { AdminExpiredReactivateService } from './services/admin-expired-reactiva
     VendorCertificateService,
     EmailService,
     AdminExpiredReactivateService,
+    AdminRejectedRestoreService,
+    AdminAddProductToUrnService,
   ],
   exports: [
     ProductRegistrationService,

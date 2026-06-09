@@ -12,11 +12,16 @@ import {
   ProductStatusAuditDocument,
 } from '../schemas/product-status-audit.schema';
 import { matchActiveProducts } from '../../product-registration/constants/active-product.filter';
+import { PRODUCT_STATUS_CERTIFIED } from '../constants/product-status.constants';
+import { AuditLogService } from '../../audit-log/audit-log.service';
+import { AUDIT_ACTION } from '../../audit-log/audit-actions';
 import {
-  PRODUCT_STATUS_CERTIFIED,
-  PRODUCT_STATUS_DISCONTINUED,
-  TOGGLEABLE_DISCONTINUE_STATUSES,
-} from '../constants/product-status.constants';
+  AUDIT_ACTION_TYPE,
+  AUDIT_MODULE,
+} from '../../audit-log/audit-friendlies';
+import { invalidateProductListingsCache } from '../../product-registration/helpers/invalidate-product-listings-cache.util';
+import { RedisService } from '../../common/redis/redis.service';
+import { Logger } from '@nestjs/common';
 
 export interface ProductDiscontinueListItem {
   _id: string;
@@ -28,11 +33,15 @@ export interface ProductDiscontinueListItem {
 
 @Injectable()
 export class AdminRenewProductDiscontinueService {
+  private readonly logger = new Logger(AdminRenewProductDiscontinueService.name);
+
   constructor(
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
     @InjectModel(ProductStatusAudit.name)
     private readonly auditModel: Model<ProductStatusAuditDocument>,
+    private readonly auditLogService: AuditLogService,
+    private readonly redisService: RedisService,
   ) {}
 
   async listProducts(urnNo: string): Promise<ProductDiscontinueListItem[]> {
@@ -42,7 +51,11 @@ export class AdminRenewProductDiscontinueService {
     }
 
     const rows = await this.productModel
-      .find({ urnNo: trimmedUrn, ...matchActiveProducts() })
+      .find({
+        urnNo: trimmedUrn,
+        productStatus: PRODUCT_STATUS_CERTIFIED,
+        ...matchActiveProducts(),
+      })
       .select('_id eoiNo productName productStatus createdDate')
       .sort({ createdDate: 1 })
       .lean()
@@ -57,25 +70,20 @@ export class AdminRenewProductDiscontinueService {
     }));
   }
 
-  async toggleProductStatus(
+  async discontinueProduct(
     urnNo: string,
     productId: string,
-    currentStatus: number,
     adminUserId: string,
     reason?: string,
   ): Promise<{
     success: true;
     productId: string;
-    fromStatus: number;
-    toStatus: number;
+    eoiNo: string;
+    productStatus: number;
+    discontinuedAt: Date;
+    isDeleted: true;
     updatedAt: Date;
   }> {
-    if (!TOGGLEABLE_DISCONTINUE_STATUSES.includes(currentStatus as 2 | 4)) {
-      throw new BadRequestException(
-        'Only certified (2) or discontinued (4) products can be toggled',
-      );
-    }
-
     if (!Types.ObjectId.isValid(productId)) {
       throw new NotFoundException('Product not found');
     }
@@ -86,123 +94,127 @@ export class AdminRenewProductDiscontinueService {
     const now = new Date();
 
     const product = await this.productModel
-      .findOne({ _id: productObjectId, urnNo: trimmedUrn, ...matchActiveProducts() })
+      .findOne({
+        _id: productObjectId,
+        urnNo: trimmedUrn,
+        productStatus: PRODUCT_STATUS_CERTIFIED,
+        ...matchActiveProducts(),
+      })
       .exec();
 
     if (!product) {
       throw new NotFoundException('Product not found');
     }
 
-    if (Number(product.productStatus) !== currentStatus) {
-      throw new ConflictException('Product status has changed');
-    }
-
-    const toStatus =
-      currentStatus === PRODUCT_STATUS_CERTIFIED
-        ? PRODUCT_STATUS_DISCONTINUED
-        : PRODUCT_STATUS_CERTIFIED;
-
-    const update: Record<string, unknown> = {
-      productStatus: toStatus,
-      updatedDate: now,
-    };
-
-    if (toStatus === PRODUCT_STATUS_DISCONTINUED) {
-      update.discontinuedAt = now;
-      update.discontinuedBy = adminObjectId;
-    } else {
-      update.discontinuedAt = null;
-      update.discontinuedBy = null;
-    }
-
-    await this.productModel.updateOne({ _id: productObjectId }, { $set: update });
-
-    await this.auditModel.create({
-      productId: productObjectId,
-      urnNo: trimmedUrn,
-      fromStatus: currentStatus,
-      toStatus,
-      reason: reason?.trim() || undefined,
-      changedBy: adminObjectId,
-      changedAt: now,
-    });
-
-    return {
-      success: true,
-      productId: String(productObjectId),
-      fromStatus: currentStatus,
-      toStatus,
-      updatedAt: now,
-    };
-  }
-
-  async bulkReactivate(
-    urnNo: string,
-    productIds: string[],
-    adminUserId: string,
-  ): Promise<{ success: true; updatedCount: number }> {
-    const trimmedUrn = urnNo.trim();
-    if (!trimmedUrn) {
-      throw new BadRequestException('urnNo is required');
-    }
-
-    const ids = (productIds ?? [])
-      .filter((id) => Types.ObjectId.isValid(id))
-      .map((id) => new Types.ObjectId(id));
-
-    if (!ids.length) {
-      return { success: true, updatedCount: 0 };
-    }
-
-    const now = new Date();
-    const adminObjectId = new Types.ObjectId(adminUserId);
-
-    const products = await this.productModel
-      .find({
-        _id: { $in: ids },
-        urnNo: trimmedUrn,
-        ...matchActiveProducts(),
-      })
-      .select('_id productStatus')
-      .lean()
-      .exec();
-
-    if (!products.length) {
-      return { success: true, updatedCount: 0 };
-    }
-
-    const productObjectIds = products.map((p) => p._id);
-
-    const updateResult = await this.productModel.updateMany(
-      { _id: { $in: productObjectIds }, urnNo: trimmedUrn, ...matchActiveProducts() },
+    await this.productModel.updateOne(
+      { _id: productObjectId },
       {
         $set: {
-          productStatus: PRODUCT_STATUS_CERTIFIED,
+          is_deleted: true,
+          deleted_at: now,
+          deleted_by: adminObjectId,
+          discontinuedAt: now,
+          discontinuedBy: adminObjectId,
+          discontinueReason: reason?.trim() || null,
           updatedDate: now,
-          discontinuedAt: null,
-          discontinuedBy: null,
         },
       },
     );
 
-    const audits = products
-      .filter((p) => Number(p.productStatus) !== PRODUCT_STATUS_CERTIFIED)
-      .map((p) => ({
-        productId: p._id,
-        urnNo: trimmedUrn,
-        fromStatus: Number(p.productStatus),
-        toStatus: PRODUCT_STATUS_CERTIFIED,
-        changedBy: adminObjectId,
-        changedAt: now,
-      }));
+    await this.auditModel.create({
+      productId: productObjectId,
+      urnNo: trimmedUrn,
+      fromStatus: Number(product.productStatus),
+      toStatus: Number(product.productStatus),
+      reason: reason?.trim() || 'Renewal discontinue (soft-delete)',
+      changedBy: adminObjectId,
+      changedAt: now,
+    });
 
-    if (audits.length) {
-      await this.auditModel.insertMany(audits);
-    }
+    await this.auditLogService.record({
+      occurred_at: now,
+      action: AUDIT_ACTION.PRODUCT_DISCONTINUED,
+      outcome: 'success',
+      module: AUDIT_MODULE.PRODUCT,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      entity_name: String(product.eoiNo),
+      description: 'Product discontinued during renewal (soft-delete)',
+      performed_by: { user_id: adminUserId },
+      old_values: {
+        is_deleted: false,
+        productStatus: Number(product.productStatus),
+        eoiNo: product.eoiNo,
+      },
+      new_values: {
+        is_deleted: true,
+        productStatus: Number(product.productStatus),
+        eoiNo: product.eoiNo,
+        urnNo: trimmedUrn,
+        discontinuedAt: now.toISOString(),
+      },
+      http_method: 'PATCH',
+      route: '/api/admin/renewals/:urnNo/product-discontinue/products/:productId',
+      status_code: 200,
+    });
+
+    await invalidateProductListingsCache(this.redisService, this.logger);
 
     return {
       success: true,
-      updatedCount: updateResult.modifiedCount ?? 0,
+      productId: String(productObjectId),
+      eoiNo: String(product.eoiNo),
+      productStatus: Number(product.productStatus),
+      discontinuedAt: now,
+      isDeleted: true,
+      updatedAt: now,
     };
+  }
+
+  /** @deprecated Renewal discontinue is one-way; use a dedicated restore flow if needed. */
+  async bulkReactivate(
+    _urnNo: string,
+    _productIds: string[],
+    _adminUserId: string,
+  ): Promise<never> {
+    throw new BadRequestException(
+      'Bulk reactivate is not supported for renewal discontinue. Discontinued products are soft-deleted and require a separate restore flow.',
+    );
+  }
+
+  /** @deprecated Use discontinueProduct — status 4 toggle removed. */
+  async toggleProductStatus(
+    urnNo: string,
+    productId: string,
+    currentStatus: number,
+    adminUserId: string,
+    reason?: string,
+  ): Promise<{
+    success: true;
+    productId: string;
+    eoiNo: string;
+    productStatus: number;
+    discontinuedAt: Date;
+    isDeleted: true;
+    updatedAt: Date;
+  }> {
+    if (currentStatus !== PRODUCT_STATUS_CERTIFIED) {
+      throw new BadRequestException(
+        'Only certified (2) products can be discontinued. productStatus is not changed on discontinue.',
+      );
+    }
+
+    const trimmedUrn = urnNo.trim();
+    const productObjectId = new Types.ObjectId(productId);
+    const existing = await this.productModel
+      .findOne({ _id: productObjectId, urnNo: trimmedUrn })
+      .select('is_deleted productStatus')
+      .lean()
+      .exec();
+
+    if (existing?.is_deleted === true) {
+      throw new ConflictException('Product is already discontinued or deleted');
+    }
+
+    return this.discontinueProduct(trimmedUrn, productId, adminUserId, reason);
   }
 }
