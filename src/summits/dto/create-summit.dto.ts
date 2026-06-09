@@ -18,14 +18,6 @@ export class CreateSummitDto {
   @MinLength(2)
   title: string;
 
-  @ApiPropertyOptional({ example: 'greenpro-summit-2026' })
-  @IsOptional()
-  @IsString()
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
-    message: 'slug must be lowercase letters, numbers, and hyphens only',
-  })
-  slug?: string;
-
   @ApiPropertyOptional({ example: '2026-03-15' })
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be YYYY-MM-DD' })

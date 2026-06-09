@@ -6,7 +6,6 @@ export type SummitBasicInput = NonNullable<UpdateSummitPayloadDto['basic']>;
 const BASIC_KEYS = [
   'year',
   'title',
-  'slug',
   'date',
   'location',
   'status',

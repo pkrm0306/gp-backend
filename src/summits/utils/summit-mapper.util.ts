@@ -7,7 +7,6 @@ export interface SummitApiResponse {
   basic: {
     year: string;
     title: string;
-    slug: string;
     date: string;
     location: string;
     status: string;
@@ -182,7 +181,6 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
     basic: {
       year: doc.year ?? '',
       title: doc.title ?? '',
-      slug: doc.slug ?? '',
       date: doc.date ?? '',
       location: doc.location ?? '',
       status: normalizeSummitStatus(doc.status),

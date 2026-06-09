@@ -292,13 +292,15 @@ export class SummitsService {
   }
 
   async create(dto: CreateSummitDto) {
-    const slug = dto.slug
-      ? slugifySummitInput(dto.slug)
-      : slugifySummitInput(dto.title);
+    const title = dto.title.trim();
+    const slug = slugifySummitInput(title);
     if (!isValidSummitSlug(slug)) {
       throw new BadRequestException({
-        message: 'Invalid slug',
-        errors: { 'basic.slug': 'Slug must be URL-safe (lowercase, hyphenated)' },
+        message: 'Invalid title',
+        errors: {
+          'basic.title':
+            'Title must produce a valid URL identifier (use letters and numbers)',
+        },
       });
     }
     const year = dto.year.trim();
@@ -307,7 +309,7 @@ export class SummitsService {
 
     const doc = await this.summitModel.create({
       year,
-      title: dto.title.trim(),
+      title,
       slug,
       date: dto.date ?? '',
       location: dto.location?.trim() ?? '',
@@ -338,7 +340,7 @@ export class SummitsService {
     this.applyFullPayload(doc, payload);
     await this.validateForActiveIfNeeded(doc);
     const basicPatch = normalizeSummitBasicInput(payload);
-    if (basicPatch?.slug) {
+    if (basicPatch?.title !== undefined) {
       await this.assertSlugUnique(doc.slug, doc._id);
     }
     if (basicPatch?.year !== undefined) {
@@ -361,7 +363,7 @@ export class SummitsService {
         const basicPatch = normalizeSummitBasicInput(body);
         if (basicPatch) {
           this.applyBasic(doc, basicPatch);
-          if (basicPatch.slug) {
+          if (basicPatch.title !== undefined) {
             await this.assertSlugUnique(doc.slug, doc._id);
           }
           if (basicPatch.year !== undefined) {
@@ -532,7 +534,10 @@ export class SummitsService {
     if (existing) {
       throw new ConflictException({
         message: 'Slug already exists',
-        errors: { 'basic.slug': 'Slug must be unique' },
+        errors: {
+          'basic.title':
+            'A summit with a similar title already exists. Use a different title.',
+        },
       });
     }
   }
@@ -621,13 +626,17 @@ export class SummitsService {
       doc.year = String(basic.year).trim();
       doc.markModified('year');
     }
-    if (basic.title !== undefined) doc.title = String(basic.title).trim();
-    if (basic.slug !== undefined) {
-      const slug = slugifySummitInput(basic.slug);
+    if (basic.title !== undefined) {
+      const title = String(basic.title).trim();
+      doc.title = title;
+      const slug = slugifySummitInput(title);
       if (!isValidSummitSlug(slug)) {
         throw new BadRequestException({
-          message: 'Invalid slug',
-          errors: { 'basic.slug': 'Slug must be URL-safe' },
+          message: 'Invalid title',
+          errors: {
+            'basic.title':
+              'Title must produce a valid URL identifier (use letters and numbers)',
+          },
         });
       }
       doc.slug = slug;
@@ -759,9 +768,6 @@ export class SummitsService {
     const errors: Record<string, string> = {};
     if (!doc.title?.trim()) {
       errors['basic.title'] = 'Title is required before activating';
-    }
-    if (!doc.slug?.trim() || !isValidSummitSlug(doc.slug)) {
-      errors['basic.slug'] = 'Valid slug is required before activating';
     }
     if (!doc.date?.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(doc.date)) {
       errors['basic.date'] = 'Valid date (YYYY-MM-DD) is required before activating';
