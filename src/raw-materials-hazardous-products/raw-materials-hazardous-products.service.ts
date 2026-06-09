@@ -33,11 +33,23 @@ import {
   trackProductDocumentDeleteBatch,
   trackUploadedProductDocument,
 } from '../documents/helpers/product-document-version.integration';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AUDIT_ACTION } from '../audit-log/audit-actions';
+import { AUDIT_ACTION_TYPE, AUDIT_MODULE } from '../audit-log/audit-friendlies';
 
 export type HazardousProductRowInput = {
   productsName?: string;
   productsTestReport?: string;
   productsTestReportFileName?: string;
+};
+
+type RawMaterialsDeleteActor = {
+  user_id?: string;
+  name?: string;
+  email?: string;
+  role?: string;
+  vendor_id?: string;
+  manufacturer_id?: string;
 };
 
 @Injectable()
@@ -50,6 +62,7 @@ export class RawMaterialsHazardousProductsService {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private toObjectId(
@@ -90,17 +103,26 @@ export class RawMaterialsHazardousProductsService {
     };
   }
 
-  private toPublicProductRow(row: RawMaterialsHazardousProductsDocument | Record<string, unknown>) {
-    const o = typeof (row as RawMaterialsHazardousProductsDocument).toObject === 'function'
-      ? (row as RawMaterialsHazardousProductsDocument).toObject()
-      : row;
+  private toPublicProductRow(
+    row: RawMaterialsHazardousProductsDocument | Record<string, unknown>,
+  ) {
+    const o =
+      typeof (row as RawMaterialsHazardousProductsDocument).toObject ===
+      'function'
+        ? (row as RawMaterialsHazardousProductsDocument).toObject()
+        : row;
     return {
       _id: (o as { _id?: Types.ObjectId })._id,
-      rawMaterialsHazardousProductsId: (o as RawMaterialsHazardousProducts).rawMaterialsHazardousProductsId,
+      rawMaterialsHazardousProductsId: (o as RawMaterialsHazardousProducts)
+        .rawMaterialsHazardousProductsId,
       urnNo: (o as RawMaterialsHazardousProducts).urnNo,
       vendorId: (o as RawMaterialsHazardousProducts).vendorId,
-      productsName: String((o as RawMaterialsHazardousProducts).productsName ?? ''),
-      productsTestReport: String((o as RawMaterialsHazardousProducts).productsTestReport ?? ''),
+      productsName: String(
+        (o as RawMaterialsHazardousProducts).productsName ?? '',
+      ),
+      productsTestReport: String(
+        (o as RawMaterialsHazardousProducts).productsTestReport ?? '',
+      ),
       productsTestReportFileName: String(
         (o as RawMaterialsHazardousProducts).productsTestReport ?? '',
       ),
@@ -115,7 +137,8 @@ export class RawMaterialsHazardousProductsService {
     if (!Array.isArray(products)) {
       return [];
     }
-    const rows: Array<{ productName: string; testReportReference: string }> = [];
+    const rows: Array<{ productName: string; testReportReference: string }> =
+      [];
     for (const item of products) {
       const normalized = normalizeRawMaterialsProductRow(
         item as Record<string, unknown>,
@@ -168,17 +191,94 @@ export class RawMaterialsHazardousProductsService {
     urnNo: string,
     vendorId: string,
     session?: ClientSession,
+    actor?: RawMaterialsDeleteActor,
   ): Promise<void> {
     const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-    await this.model.deleteMany(
-      { urnNo: urnNo.trim(), vendorId: vendorObjectId },
+    const normalizedUrn = urnNo.trim();
+    const filter = { urnNo: normalizedUrn, vendorId: vendorObjectId };
+    const existingRows = await this.model
+      .find(filter)
+      .lean()
+      .session(session ?? null)
+      .exec();
+
+    await this.model.deleteMany(filter, { session });
+
+    if (!existingRows.length) {
+      return;
+    }
+
+    await this.auditLogService.record(
+      {
+        action: AUDIT_ACTION.RAW_MATERIALS_DELETED,
+        outcome: 'success',
+        module: AUDIT_MODULE.RAW_MATERIALS,
+        action_type: AUDIT_ACTION_TYPE.DELETE,
+        entity_name: normalizedUrn,
+        description: 'Raw materials hazardous product rows deleted',
+        performed_by: {
+          user_id: actor?.user_id ?? actor?.vendor_id ?? vendorId,
+          name: actor?.name,
+          email: actor?.email,
+        },
+        old_values: {
+          records: existingRows.map((row) => this.toAuditSnapshot(row)),
+          count: existingRows.length,
+        },
+        actor: {
+          user_id: actor?.user_id,
+          role: actor?.role,
+          vendor_id: actor?.vendor_id ?? vendorId,
+          manufacturer_id: actor?.manufacturer_id,
+        },
+        resource: {
+          type: 'RawMaterialsHazardousProducts',
+          id: normalizedUrn,
+          urn_no: normalizedUrn,
+        },
+        changes: {
+          records: {
+            before: existingRows.length,
+            after: 0,
+          },
+        },
+        metadata: {
+          tab: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+          deletion_type: 'replace_or_clear',
+        },
+      },
       { session },
     );
   }
 
   /** Remove all product metadata rows for URN (details-only save / explicit clear). */
-  async clearAllProductsForUrn(urnNo: string, vendorId: string): Promise<void> {
-    await this.deleteAllProductsForUrn(urnNo, vendorId);
+  async clearAllProductsForUrn(
+    urnNo: string,
+    vendorId: string,
+    actor?: RawMaterialsDeleteActor,
+  ): Promise<void> {
+    await this.deleteAllProductsForUrn(urnNo, vendorId, undefined, actor);
+  }
+
+  private toAuditSnapshot(
+    row: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return JSON.parse(
+      JSON.stringify(row, (_key, value) => {
+        if (value instanceof Date) {
+          return value.toISOString();
+        }
+        if (
+          value &&
+          typeof value === 'object' &&
+          (value as { _bsontype?: string })._bsontype === 'ObjectId'
+        ) {
+          return String(value);
+        }
+        return value;
+      }),
+    ) as Record<string, unknown>;
   }
 
   private async syncHazardousProductDocuments(params: {
@@ -192,7 +292,9 @@ export class RawMaterialsHazardousProductsService {
     firstProductRowId?: number;
     createdFileFullPaths: string[];
   }): Promise<{
-    documents: ReturnType<RawMaterialsHazardousProductsService['mapDocument']>[];
+    documents: ReturnType<
+      RawMaterialsHazardousProductsService['mapDocument']
+    >[];
     oldFileLinksToDeleteAfterCommit: string[];
   }> {
     const {
@@ -227,8 +329,7 @@ export class RawMaterialsHazardousProductsService {
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
     for (const doc of existingDocs) {
-      const retain =
-        keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
+      const retain = keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
       if (retain) {
         retainIds.push(doc._id as Types.ObjectId);
       } else {
@@ -272,8 +373,9 @@ export class RawMaterialsHazardousProductsService {
       );
     }
 
-    const documents: ReturnType<RawMaterialsHazardousProductsService['mapDocument']>[] =
-      [];
+    const documents: ReturnType<
+      RawMaterialsHazardousProductsService['mapDocument']
+    >[] = [];
     for (let i = 0; i < uploadedFiles.length; i++) {
       const file = uploadedFiles[i];
       const uploaded = await this.saveFileToUrnFolder(file, urnNo);
@@ -331,11 +433,16 @@ export class RawMaterialsHazardousProductsService {
     products?: HazardousProductRowInput[];
     uploadedFiles?: Express.Multer.File[];
     existingDocumentIds?: string[];
+    actor?: RawMaterialsDeleteActor;
   }): Promise<{
     urnNo: string;
     vendorId: string;
-    products: ReturnType<RawMaterialsHazardousProductsService['toPublicProductRow']>[];
-    documents: ReturnType<RawMaterialsHazardousProductsService['mapDocument']>[];
+    products: ReturnType<
+      RawMaterialsHazardousProductsService['toPublicProductRow']
+    >[];
+    documents: ReturnType<
+      RawMaterialsHazardousProductsService['mapDocument']
+    >[];
   }> {
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -370,11 +477,17 @@ export class RawMaterialsHazardousProductsService {
         }
       }
 
-      await this.deleteAllProductsForUrn(urnNo, params.vendorId, session);
+      await this.deleteAllProductsForUrn(
+        urnNo,
+        params.vendorId,
+        session,
+        params.actor,
+      );
 
       const docsToInsert = [];
       for (const row of meaningfulRows) {
-        const id = await this.sequenceHelper.getRawMaterialsHazardousProductsId();
+        const id =
+          await this.sequenceHelper.getRawMaterialsHazardousProductsId();
         docsToInsert.push({
           rawMaterialsHazardousProductsId: id,
           urnNo,
@@ -391,7 +504,8 @@ export class RawMaterialsHazardousProductsService {
           ? await this.model.insertMany(docsToInsert, { session })
           : [];
 
-      const firstProductRowId = insertedProducts[0]?.rawMaterialsHazardousProductsId;
+      const firstProductRowId =
+        insertedProducts[0]?.rawMaterialsHazardousProductsId;
 
       const docSync = await this.syncHazardousProductDocuments({
         urnNo,
@@ -425,7 +539,8 @@ export class RawMaterialsHazardousProductsService {
                 .find({
                   vendorId: vendorObjectId,
                   urnNo,
-                  documentForm: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+                  documentForm:
+                    DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
                   isDeleted: { $ne: true },
                 })
                 .sort({ productDocumentId: -1 })
@@ -510,7 +625,10 @@ export class RawMaterialsHazardousProductsService {
     dto: CreateRawMaterialsHazardousProductsDto,
     vendorId: string,
     productsTestReportFile?: Express.Multer.File,
-    options?: { replaceTableBeforeInsert?: boolean },
+    options?: {
+      replaceTableBeforeInsert?: boolean;
+      actor?: RawMaterialsDeleteActor;
+    },
   ) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
@@ -522,7 +640,12 @@ export class RawMaterialsHazardousProductsService {
       const hasProductText = hasPartialRawMaterialsProductRow(productRow);
 
       if (options?.replaceTableBeforeInsert) {
-        await this.deleteAllProductsForUrn(urnNo, vendorId);
+        await this.deleteAllProductsForUrn(
+          urnNo,
+          vendorId,
+          undefined,
+          options.actor,
+        );
       }
 
       if (!hasProductText && productsTestReportFile) {

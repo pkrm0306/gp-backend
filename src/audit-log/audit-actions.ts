@@ -15,6 +15,7 @@ export const AUDIT_ACTION = {
   EXPIRED_REACTIVATE_PRODUCT: 'expired_reactivate_product',
   EXPIRED_REACTIVATE_URN: 'expired_reactivate_urn',
   ACTIVITY_LOG_CREATED: 'ACTIVITY_LOG_CREATED',
+  RAW_MATERIALS_DELETED: 'RAW_MATERIALS_DELETED',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTION)[keyof typeof AUDIT_ACTION];

@@ -5,7 +5,15 @@ import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema';
 import { AuditLogService } from './audit-log.service';
 import { AuditHttpInterceptor } from './audit-http.interceptor';
 import { AuditLogAdminController } from './audit-log-admin.controller';
-import { Category, CategorySchema } from '../categories/schemas/category.schema';
+import { AuditEntryFactory } from './audit-entry.factory';
+import { AuditLookupResolver } from './audit-lookup-resolver.service';
+import { AuditRouteMapper } from './audit-route-map';
+import { AuditStatusResolver } from './audit-status-resolver.service';
+import { AuditValueTransformer } from './audit-value-transformer.service';
+import {
+  Category,
+  CategorySchema,
+} from '../categories/schemas/category.schema';
 import { Sector, SectorSchema } from '../sectors/schemas/sector.schema';
 import {
   Manufacturer,
@@ -42,9 +50,14 @@ import {
   ],
   controllers: [AuditLogAdminController],
   providers: [
+    AuditEntryFactory,
+    AuditLookupResolver,
+    AuditRouteMapper,
+    AuditStatusResolver,
+    AuditValueTransformer,
     AuditLogService,
     { provide: APP_INTERCEPTOR, useClass: AuditHttpInterceptor },
   ],
-  exports: [AuditLogService],
+  exports: [AuditEntryFactory, AuditLogService],
 })
 export class AuditLogModule {}

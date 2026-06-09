@@ -111,8 +111,10 @@ export class RawMaterialsHazardousProductsController {
       assertRawMaterialsDocumentTypes(uploadedFiles);
     }
 
-    const meaningfulIncoming = (productsJson as Array<Record<string, unknown>>).filter(
-      (row) => hasPartialRawMaterialsProductRow(normalizeRawMaterialsProductRow(row)),
+    const meaningfulIncoming = (
+      productsJson as Array<Record<string, unknown>>
+    ).filter((row) =>
+      hasPartialRawMaterialsProductRow(normalizeRawMaterialsProductRow(row)),
     );
 
     await this.stepGate.assertStepSubmitAllowed({
@@ -136,6 +138,16 @@ export class RawMaterialsHazardousProductsController {
       }>,
       uploadedFiles,
       existingDocumentIds: parseMultipartJsonIdArray(body.existingDocumentIds),
+      actor: {
+        user_id: user?.userId ? String(user.userId) : undefined,
+        name: user?.name ? String(user.name) : undefined,
+        email: user?.email ? String(user.email) : undefined,
+        role: user?.role ? String(user.role) : undefined,
+        vendor_id: user?.vendorId ? String(user.vendorId) : undefined,
+        manufacturer_id: user?.manufacturerId
+          ? String(user.manufacturerId)
+          : undefined,
+      },
     });
 
     return {
@@ -170,10 +182,17 @@ export class RawMaterialsHazardousProductsController {
         productsTestReportFile: { type: 'string', format: 'binary' },
         replaceTable: {
           type: 'string',
-          description: 'true on first row of a multi-row save — deletes all rows before insert',
+          description:
+            'true on first row of a multi-row save — deletes all rows before insert',
         },
-        rowIndex: { type: 'string', description: '0-based index in this save batch' },
-        totalRows: { type: 'string', description: 'Row count in this save batch' },
+        rowIndex: {
+          type: 'string',
+          description: '0-based index in this save batch',
+        },
+        totalRows: {
+          type: 'string',
+          description: 'Row count in this save batch',
+        },
       },
     },
   })
@@ -214,7 +233,9 @@ export class RawMaterialsHazardousProductsController {
       files: uploadFiles,
       rows: [productRow as Record<string, unknown>],
       rowKeys: ['productName', 'testReportReference'],
-      persistedRecordCount: replaceTableBeforeInsert ? 0 : meaningfulProductCount,
+      persistedRecordCount: replaceTableBeforeInsert
+        ? 0
+        : meaningfulProductCount,
     });
 
     if (!hasProductText && uploadFiles.length > 0) {
@@ -243,6 +264,16 @@ export class RawMaterialsHazardousProductsController {
 
     const data = await this.service.create(dto, user.vendorId, primaryFile, {
       replaceTableBeforeInsert,
+      actor: {
+        user_id: user?.userId ? String(user.userId) : undefined,
+        name: user?.name ? String(user.name) : undefined,
+        email: user?.email ? String(user.email) : undefined,
+        role: user?.role ? String(user.role) : undefined,
+        vendor_id: user?.vendorId ? String(user.vendorId) : undefined,
+        manufacturer_id: user?.manufacturerId
+          ? String(user.manufacturerId)
+          : undefined,
+      },
     });
     return {
       success: true,
@@ -253,7 +284,8 @@ export class RawMaterialsHazardousProductsController {
 
   @Get(':urn_no')
   @ApiOperation({
-    summary: 'List hazardous product rows for vendor table (excludes file-only stubs)',
+    summary:
+      'List hazardous product rows for vendor table (excludes file-only stubs)',
   })
   @ApiParam({ name: 'urn_no', example: 'URN-20260305124230' })
   @ApiResponse({ status: 200, description: 'Retrieved successfully' })

@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import { Request } from 'express';
 import {
   AUDIT_ACTION_TYPE,
@@ -6,7 +7,10 @@ import {
   AuditModule,
   FriendlyAuditFields,
 } from './audit-friendlies';
-import { AUDIT_SENSITIVE_BODY_KEYS } from './audit-privacy';
+import {
+  AuditPrimitiveSnapshot,
+  AuditValueTransformer,
+} from './audit-value-transformer.service';
 
 function bodyObj(req: Request): Record<string, unknown> | undefined {
   const b = req.body;
@@ -32,30 +36,6 @@ export function firstStringField(
     }
   }
   return undefined;
-}
-
-/** Shallow snapshot: strings (trimmed), numbers, booleans, null — no nested objects. */
-export function safeBodySnapshot(
-  body: Record<string, unknown> | undefined,
-  stringMax = 500,
-): Record<string, unknown> | undefined {
-  if (!body) {
-    return undefined;
-  }
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(body)) {
-    if (AUDIT_SENSITIVE_BODY_KEYS.has(k)) {
-      continue;
-    }
-    if (typeof v === 'string') {
-      out[k] = v.length > stringMax ? v.slice(0, stringMax) : v;
-    } else if (typeof v === 'number' || typeof v === 'boolean') {
-      out[k] = v;
-    } else if (v === null) {
-      out[k] = null;
-    }
-  }
-  return Object.keys(out).length ? out : undefined;
 }
 
 function methodDefaultActionType(method: string): AuditActionType {
@@ -95,8 +75,7 @@ function isProductFamilyPath(p: string): boolean {
 
 function isRawMaterialsPath(p: string): boolean {
   return (
-    p.startsWith('/raw-materials-') ||
-    p.startsWith('/vendor/raw-materials/')
+    p.startsWith('/raw-materials-') || p.startsWith('/vendor/raw-materials/')
   );
 }
 
@@ -113,6 +92,40 @@ function urnFromBody(
   body: Record<string, unknown> | undefined,
 ): string | undefined {
   return firstStringField(body, ['urn_no', 'urnNo', 'urn']);
+}
+
+function resolveUrnStatusAuditAction(
+  typeStr: unknown,
+  toNum: number,
+): { action_type: AuditActionType; description: string } {
+  if (typeStr === 'product_status' && toNum === 3) {
+    return {
+      action_type: AUDIT_ACTION_TYPE.REJECT,
+      description: 'Product certification rejected',
+    };
+  }
+  if (typeStr === 'urn_status' && (toNum === 5 || toNum === 9)) {
+    return {
+      action_type: AUDIT_ACTION_TYPE.REJECT,
+      description:
+        toNum === 9
+          ? 'Certification / URN payment rejected'
+          : 'Certification / URN sent back to vendor',
+    };
+  }
+  if (
+    typeStr === 'urn_status' &&
+    (toNum === 2 || toNum === 11 || toNum === 14)
+  ) {
+    return {
+      action_type: AUDIT_ACTION_TYPE.APPROVE,
+      description: 'Certification / URN status advanced',
+    };
+  }
+  return {
+    action_type: AUDIT_ACTION_TYPE.UPDATE,
+    description: 'Certification / URN status updated',
+  };
 }
 
 function nameFromBody(
@@ -184,10 +197,11 @@ export function mapFriendlyAudit(
   pathNorm: string,
   req: Request,
   outcome: 'success' | 'failure',
+  snapshot?: AuditPrimitiveSnapshot,
 ): FriendlyAuditFields {
   const m = method.toUpperCase();
   const body = bodyObj(req);
-  const snap = safeBodySnapshot(body);
+  const snap = snapshot;
 
   if (m === 'POST' && pathNorm.endsWith('/auth/login')) {
     return {
@@ -310,12 +324,69 @@ export function mapFriendlyAudit(
     };
   }
 
+  if (m === 'PATCH' && /^\/api\/sectors\/[^/]+\/status$/.test(pathNorm)) {
+    const id = pathNorm.split('/').filter(Boolean).at(-2);
+    return {
+      module: AUDIT_MODULE.SECTOR,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'Sector status updated',
+      entity_name: firstStringField(body, ['name']) ?? id,
+      new_values: snap,
+    };
+  }
+
   if (m === 'DELETE' && /^\/api\/sectors\/[^/]+$/.test(pathNorm)) {
     const id = pathNorm.split('/').pop();
     return {
       module: AUDIT_MODULE.SECTOR,
       action_type: AUDIT_ACTION_TYPE.DELETE,
       description: 'Sector deleted',
+      entity_name: id,
+    };
+  }
+
+  if (m === 'POST' && pathNorm === '/api/standards') {
+    return {
+      module: AUDIT_MODULE.STANDARD,
+      action_type: AUDIT_ACTION_TYPE.CREATE,
+      description: 'Standard created',
+      entity_name: nameFromBody(body),
+      new_values: snap,
+    };
+  }
+
+  if (
+    (m === 'PATCH' || m === 'PUT') &&
+    /^\/api\/standards\/[^/]+(?:\/edit)?$/.test(pathNorm)
+  ) {
+    const parts = pathNorm.split('/').filter(Boolean);
+    const id = parts.at(-1) === 'edit' ? parts.at(-2) : parts.at(-1);
+    return {
+      module: AUDIT_MODULE.STANDARD,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'Standard updated',
+      entity_name: nameFromBody(body) ?? id,
+      new_values: snap,
+    };
+  }
+
+  if (m === 'PATCH' && /^\/api\/standards\/[^/]+\/status$/.test(pathNorm)) {
+    const id = pathNorm.split('/').filter(Boolean).at(-2);
+    return {
+      module: AUDIT_MODULE.STANDARD,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'Standard status updated',
+      entity_name: nameFromBody(body) ?? id,
+      new_values: snap,
+    };
+  }
+
+  if (m === 'DELETE' && /^\/api\/standards\/[^/]+$/.test(pathNorm)) {
+    const id = pathNorm.split('/').pop();
+    return {
+      module: AUDIT_MODULE.STANDARD,
+      action_type: AUDIT_ACTION_TYPE.DELETE,
+      description: 'Standard deleted',
       entity_name: id,
     };
   }
@@ -337,15 +408,11 @@ export function mapFriendlyAudit(
         : typeof toVal === 'string' && toVal.trim() !== ''
           ? Number(toVal)
           : NaN;
-    const isUrnReject = typeStr === 'urn_status' && toNum === 4;
+    const actionMeta = resolveUrnStatusAuditAction(typeStr, toNum);
     return {
       module: AUDIT_MODULE.CERTIFICATION,
-      action_type: isUrnReject
-        ? AUDIT_ACTION_TYPE.REJECT
-        : AUDIT_ACTION_TYPE.APPROVE,
-      description: isUrnReject
-        ? 'Certification / URN rejected'
-        : 'Certification / URN status advanced',
+      action_type: actionMeta.action_type,
+      description: actionMeta.description,
       entity_name: urn,
       new_values:
         typeof typeStr === 'string' || !Number.isNaN(toNum)
@@ -365,6 +432,30 @@ export function mapFriendlyAudit(
       action_type: AUDIT_ACTION_TYPE.CREATE,
       description: 'Payment record created',
       entity_name: urnFromBody(body) ?? firstStringField(body, ['urnNo']),
+      new_values: snap,
+    };
+  }
+
+  if (
+    m === 'PATCH' &&
+    /^\/payments\/[^/]+\/vendor-proposal-approval$/.test(pathNorm)
+  ) {
+    const urn = pathNorm.split('/').filter(Boolean)[1];
+    const status = body?.['vendorProposalApprovalStatus'];
+    const statusNum =
+      typeof status === 'number'
+        ? status
+        : typeof status === 'string' && status.trim() !== ''
+          ? Number(status)
+          : NaN;
+    const rejected = statusNum === 2;
+    return {
+      module: AUDIT_MODULE.PROPOSAL,
+      action_type: rejected
+        ? AUDIT_ACTION_TYPE.REJECT
+        : AUDIT_ACTION_TYPE.APPROVE,
+      description: rejected ? 'Proposal rejected' : 'Proposal approved',
+      entity_name: urn ? decodeURIComponent(urn) : undefined,
       new_values: snap,
     };
   }
@@ -718,4 +809,24 @@ export function mapFriendlyAudit(
     description,
     entity_name: urnFromBody(body),
   };
+}
+
+@Injectable()
+export class AuditRouteMapper {
+  constructor(private readonly valueTransformer: AuditValueTransformer) {}
+
+  map(
+    method: string,
+    pathNorm: string,
+    req: Request,
+    outcome: 'success' | 'failure',
+  ): FriendlyAuditFields {
+    return mapFriendlyAudit(
+      method,
+      pathNorm,
+      req,
+      outcome,
+      this.valueTransformer.safeBodySnapshot(bodyObj(req)),
+    );
+  }
 }

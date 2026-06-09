@@ -93,3 +93,51 @@ AuditLogSchema.index({ 'actor.user_id': 1, occurred_at: -1 });
 AuditLogSchema.index({ 'performed_by.user_id': 1, occurred_at: -1 });
 AuditLogSchema.index({ 'resource.type': 1, 'resource.id': 1, occurred_at: -1 });
 AuditLogSchema.index({ 'resource.urn_no': 1, occurred_at: -1 });
+AuditLogSchema.index(
+  { 'metadata.audit_event_id': 1 },
+  {
+    unique: true,
+    sparse: true,
+    partialFilterExpression: {
+      'metadata.audit_event_id': { $type: 'string' },
+    },
+  },
+);
+
+const AUDIT_IMMUTABLE_ERROR =
+  'Audit logs are append-only and cannot be modified';
+
+function rejectAuditMutation(next: (error?: Error) => void) {
+  next(new Error(AUDIT_IMMUTABLE_ERROR));
+}
+
+AuditLogSchema.pre('save', function (next) {
+  if (!this.isNew) {
+    next(new Error(AUDIT_IMMUTABLE_ERROR));
+    return;
+  }
+  next();
+});
+AuditLogSchema.pre('updateOne', rejectAuditMutation);
+AuditLogSchema.pre('updateMany', rejectAuditMutation);
+AuditLogSchema.pre('findOneAndUpdate', rejectAuditMutation);
+AuditLogSchema.pre('replaceOne', rejectAuditMutation);
+AuditLogSchema.pre('findOneAndReplace', rejectAuditMutation);
+AuditLogSchema.pre('deleteOne', rejectAuditMutation);
+AuditLogSchema.pre('deleteMany', rejectAuditMutation);
+AuditLogSchema.pre('findOneAndDelete', rejectAuditMutation);
+AuditLogSchema.pre(
+  'bulkWrite',
+  function (next, ops: Array<Record<string, unknown>>) {
+    const hasMutation = ops.some((op) =>
+      ['updateOne', 'updateMany', 'replaceOne', 'deleteOne', 'deleteMany'].some(
+        (operation) => Object.prototype.hasOwnProperty.call(op, operation),
+      ),
+    );
+    if (hasMutation) {
+      next(new Error(AUDIT_IMMUTABLE_ERROR));
+      return;
+    }
+    next();
+  },
+);

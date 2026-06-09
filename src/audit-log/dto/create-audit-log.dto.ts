@@ -1,4 +1,11 @@
+import type { ClientSession } from 'mongoose';
+
 export type AuditOutcome = 'success' | 'failure';
+
+export interface AuditRecordOptions {
+  session?: ClientSession;
+  throwOnError?: boolean;
+}
 
 export class CreateAuditLogDto {
   occurred_at?: Date;
