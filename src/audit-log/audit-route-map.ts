@@ -532,6 +532,20 @@ export function mapFriendlyAudit(
 
   if (
     m === 'PATCH' &&
+    pathNorm.endsWith('/api/admin/products/certified-reject/product')
+  ) {
+    return {
+      module: AUDIT_MODULE.PRODUCT,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'Certified product rejected by admin',
+      entity_name:
+        firstStringField(body, ['eoiNo']) ?? firstStringField(body, ['urnNo']),
+      new_values: snap,
+    };
+  }
+
+  if (
+    m === 'PATCH' &&
     pathNorm.endsWith('/api/admin/products/rejected-restore/product')
   ) {
     return {

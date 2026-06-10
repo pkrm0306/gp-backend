@@ -27,6 +27,11 @@ import {
   compareProductsForResequence,
   findDuplicateEoiSequenceSuffixes,
 } from '../helpers/eoi-sequence.helper';
+import { matchEoiSequenceActiveProducts } from '../constants/eoi-sequence-active.filter';
+import {
+  PRODUCT_STATUS_PENDING,
+  PRODUCT_STATUS_SUBMITTED,
+} from '../../renew/constants/product-status.constants';
 import { EoiNumberService } from './eoi-number.service';
 import { invalidateProductListingsCache as invalidateAllProductListingsCache } from '../helpers/invalidate-product-listings-cache.util';
 
@@ -62,7 +67,9 @@ export class ProductSoftDeleteService {
 
   /**
    * Soft-delete one EOI product and cascade to plants.
-   * Inactive products keep their eoiNo; active siblings are not renumbered.
+   * Deleting an uncertified product (pending/submitted) re-sequences active EOIs
+   * (status 0/1/2) for the manufacturer. Rejected, discontinued, and soft-deleted
+   * rows keep their stored eoiNo.
    */
   async softDeleteProduct(
     productId: string,
@@ -196,16 +203,27 @@ export class ProductSoftDeleteService {
         )
         .exec();
 
+      const deletedStatus = Number(product.productStatus);
+      const shouldResequence =
+        deletedStatus === PRODUCT_STATUS_PENDING ||
+        deletedStatus === PRODUCT_STATUS_SUBMITTED;
+
+      const updatedSequenceCount = shouldResequence
+        ? await this.resequenceActiveEoisForManufacturer(manufacturerId, session)
+        : 0;
+
       await session.commitTransaction();
 
       await this.invalidateProductListingsCache();
 
       return {
         success: true,
-        message: 'EOI deleted successfully',
+        message: shouldResequence
+          ? 'EOI deleted and sequences rearranged successfully'
+          : 'EOI deleted successfully',
         deleted_product_id: String(productObjectId),
         deleted_plant_count: plantSoftDeleteResult.modifiedCount ?? 0,
-        updated_sequence_count: 0,
+        updated_sequence_count: updatedSequenceCount,
         manufacturer_id: manufacturerId,
       };
     } catch (error) {
@@ -222,10 +240,6 @@ export class ProductSoftDeleteService {
   private async resequenceActiveEoisForManufacturer(
     manufacturerId: string,
     session: ClientSession,
-    options?: {
-      /** Exclude rejected products (productStatus=3) from resequence set. */
-      excludeRejected?: boolean;
-    },
   ): Promise<number> {
     const manufacturerObjectId = this.toObjectId(
       manufacturerId,
@@ -234,9 +248,8 @@ export class ProductSoftDeleteService {
 
     const activeProducts = await this.productModel
       .find(
-        matchActiveProducts({
+        matchEoiSequenceActiveProducts({
           manufacturerId: manufacturerObjectId,
-          ...(options?.excludeRejected ? { productStatus: { $ne: 3 } } : {}),
         }),
         { _id: 1, eoiNo: 1, createdDate: 1, productId: 1 },
       )
@@ -276,7 +289,13 @@ export class ProductSoftDeleteService {
       await this.productModel
         .updateOne(
           { _id: sorted[index]._id },
-          { $set: { eoiNo: newEoiNo, updatedDate: now } },
+          {
+            $set: {
+              eoiNo: newEoiNo,
+              eoiSequence: sequenceNumber,
+              updatedDate: now,
+            },
+          },
           { session },
         )
         .exec();
@@ -302,15 +321,8 @@ export class ProductSoftDeleteService {
   async resequenceForManufacturerInSession(
     manufacturerId: string,
     session: ClientSession,
-    options?: {
-      excludeRejected?: boolean;
-    },
   ): Promise<number> {
-    return this.resequenceActiveEoisForManufacturer(
-      manufacturerId,
-      session,
-      options,
-    );
+    return this.resequenceActiveEoisForManufacturer(manufacturerId, session);
   }
 
   /**

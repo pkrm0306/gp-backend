@@ -19,6 +19,7 @@ export const AUDIT_ACTION = {
   EOI_REASSIGNED_ON_RESTORE: 'eoi_reassigned_on_restore',
   PRODUCT_DISCONTINUED: 'product_discontinued',
   ADMIN_ADD_PRODUCT_TO_URN: 'admin_add_product_to_urn',
+  CERTIFIED_REJECT_PRODUCT: 'certified_reject_product',
   ACTIVITY_LOG_CREATED: 'ACTIVITY_LOG_CREATED',
   RAW_MATERIALS_DELETED: 'RAW_MATERIALS_DELETED',
 } as const;

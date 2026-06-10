@@ -33,7 +33,7 @@ export class ProductController {
   @ApiOperation({
     summary: 'Soft delete EOI product and re-sequence manufacturer EOIs',
     description:
-      'Soft-deletes the product and all related product plants. Active sibling EOIs are not renumbered. Uses a database transaction; rolls back on failure. ' +
+      'Soft-deletes the product and all related product plants. When the deleted product is uncertified (pending/submitted), remaining active EOIs (status 0/1/2) for the manufacturer are re-numbered 1..n. Uses a database transaction; rolls back on failure. ' +
       'Restricted to platform admin and staff users with products:delete permission.',
   })
   @ApiParam({
