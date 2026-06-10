@@ -21,6 +21,7 @@ describe('AdminRenewProductDiscontinueService', () => {
   let updateOne: jest.Mock;
   let auditCreate: jest.Mock;
   let auditRecord: jest.Mock;
+  let resequenceForManufacturerInSession: jest.Mock;
   let service: AdminRenewProductDiscontinueService;
 
   beforeEach(() => {
@@ -33,6 +34,17 @@ describe('AdminRenewProductDiscontinueService', () => {
     updateOne = jest.fn().mockResolvedValue({ acknowledged: true });
     auditCreate = jest.fn().mockResolvedValue({});
     auditRecord = jest.fn().mockResolvedValue(undefined);
+    resequenceForManufacturerInSession = jest.fn().mockResolvedValue(2);
+
+    const session = {
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn(),
+      abortTransaction: jest.fn(),
+      endSession: jest.fn(),
+    };
+    const connection = {
+      startSession: jest.fn().mockResolvedValue(session),
+    };
 
     const productModel = {
       find: jest.fn().mockReturnValue({
@@ -52,6 +64,8 @@ describe('AdminRenewProductDiscontinueService', () => {
     service = new AdminRenewProductDiscontinueService(
       productModel as never,
       { create: auditCreate } as never,
+      connection as never,
+      { resequenceForManufacturerInSession } as never,
       { record: auditRecord } as never,
       {
         deleteByPattern: jest.fn().mockResolvedValue(undefined),
@@ -87,6 +101,7 @@ describe('AdminRenewProductDiscontinueService', () => {
       urnNo,
       eoiNo: 'GPPMI003004',
       productStatus: PRODUCT_STATUS_CERTIFIED,
+      manufacturerId: new Types.ObjectId(),
     });
 
     const result = await service.discontinueProduct(
@@ -113,16 +128,21 @@ describe('AdminRenewProductDiscontinueService', () => {
           discontinueReason: 'EOL',
         }),
       },
+      expect.objectContaining({ session: expect.anything() }),
     );
+    expect(resequenceForManufacturerInSession).toHaveBeenCalled();
     expect(updateOne.mock.calls[0][1].$set).not.toHaveProperty(
       'productStatus',
     );
     expect(auditCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        fromStatus: 2,
-        toStatus: 2,
-        reason: 'EOL',
-      }),
+      [
+        expect.objectContaining({
+          fromStatus: 2,
+          toStatus: 2,
+          reason: 'EOL',
+        }),
+      ],
+      expect.objectContaining({ session: expect.anything() }),
     );
   });
 

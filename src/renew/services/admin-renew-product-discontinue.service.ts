@@ -4,9 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
+import { ProductSoftDeleteService } from '../../product-registration/services/product-soft-delete.service';
 import {
   ProductStatusAudit,
   ProductStatusAuditDocument,
@@ -26,6 +27,7 @@ import { Logger } from '@nestjs/common';
 export interface ProductDiscontinueListItem {
   _id: string;
   eoiNo: string;
+  eoiSequence?: number;
   productName: string;
   productStatus: number;
   createdAt: Date;
@@ -40,6 +42,9 @@ export class AdminRenewProductDiscontinueService {
     private readonly productModel: Model<ProductDocument>,
     @InjectModel(ProductStatusAudit.name)
     private readonly auditModel: Model<ProductStatusAuditDocument>,
+    @InjectConnection()
+    private readonly connection: Connection,
+    private readonly productSoftDeleteService: ProductSoftDeleteService,
     private readonly auditLogService: AuditLogService,
     private readonly redisService: RedisService,
   ) {}
@@ -56,14 +61,18 @@ export class AdminRenewProductDiscontinueService {
         productStatus: PRODUCT_STATUS_CERTIFIED,
         ...matchActiveProducts(),
       })
-      .select('_id eoiNo productName productStatus createdDate')
-      .sort({ createdDate: 1 })
+      .select('_id eoiNo eoiSequence productName productStatus createdDate')
+      .sort({ eoiSequence: 1, createdDate: 1 })
       .lean()
       .exec();
 
     return rows.map((row) => ({
       _id: String(row._id),
       eoiNo: row.eoiNo,
+      eoiSequence:
+        row.eoiSequence != null && Number.isFinite(Number(row.eoiSequence))
+          ? Number(row.eoiSequence)
+          : undefined,
       productName: row.productName,
       productStatus: Number(row.productStatus ?? 0),
       createdAt: row.createdDate,
@@ -83,6 +92,8 @@ export class AdminRenewProductDiscontinueService {
     discontinuedAt: Date;
     isDeleted: true;
     updatedAt: Date;
+    updatedSequenceCount: number;
+    resequenceApplied: boolean;
   }> {
     if (!Types.ObjectId.isValid(productId)) {
       throw new NotFoundException('Product not found');
@@ -106,30 +117,61 @@ export class AdminRenewProductDiscontinueService {
       throw new NotFoundException('Product not found');
     }
 
-    await this.productModel.updateOne(
-      { _id: productObjectId },
-      {
-        $set: {
-          is_deleted: true,
-          deleted_at: now,
-          deleted_by: adminObjectId,
-          discontinuedAt: now,
-          discontinuedBy: adminObjectId,
-          discontinueReason: reason?.trim() || null,
-          updatedDate: now,
-        },
-      },
-    );
+    const manufacturerId = String(product.manufacturerId ?? '').trim();
+    if (!manufacturerId) {
+      throw new BadRequestException('Product manufacturer is missing');
+    }
 
-    await this.auditModel.create({
-      productId: productObjectId,
-      urnNo: trimmedUrn,
-      fromStatus: Number(product.productStatus),
-      toStatus: Number(product.productStatus),
-      reason: reason?.trim() || 'Renewal discontinue (soft-delete)',
-      changedBy: adminObjectId,
-      changedAt: now,
-    });
+    const session = await this.connection.startSession();
+    session.startTransaction();
+
+    let updatedSequenceCount = 0;
+
+    try {
+      await this.productModel.updateOne(
+        { _id: productObjectId },
+        {
+          $set: {
+            is_deleted: true,
+            deleted_at: now,
+            deleted_by: adminObjectId,
+            discontinuedAt: now,
+            discontinuedBy: adminObjectId,
+            discontinueReason: reason?.trim() || null,
+            updatedDate: now,
+          },
+        },
+        { session },
+      );
+
+      updatedSequenceCount =
+        await this.productSoftDeleteService.resequenceForManufacturerInSession(
+          manufacturerId,
+          session,
+        );
+
+      await this.auditModel.create(
+        [
+          {
+            productId: productObjectId,
+            urnNo: trimmedUrn,
+            fromStatus: Number(product.productStatus),
+            toStatus: Number(product.productStatus),
+            reason: reason?.trim() || 'Renewal discontinue (soft-delete)',
+            changedBy: adminObjectId,
+            changedAt: now,
+          },
+        ],
+        { session },
+      );
+
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
 
     await this.auditLogService.record({
       occurred_at: now,
@@ -151,6 +193,7 @@ export class AdminRenewProductDiscontinueService {
         eoiNo: product.eoiNo,
         urnNo: trimmedUrn,
         discontinuedAt: now.toISOString(),
+        updatedSequenceCount,
       },
       http_method: 'PATCH',
       route: '/api/admin/renewals/:urnNo/product-discontinue/products/:productId',
@@ -167,6 +210,8 @@ export class AdminRenewProductDiscontinueService {
       discontinuedAt: now,
       isDeleted: true,
       updatedAt: now,
+      updatedSequenceCount,
+      resequenceApplied: updatedSequenceCount > 0,
     };
   }
 

@@ -1,7 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsArray, IsIn, IsMongoId, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
-import { TOGGLEABLE_DISCONTINUE_STATUSES } from '../constants/product-status.constants';
+
+export class DiscontinueProductBodyDto {
+  @ApiPropertyOptional({ description: 'Optional reason recorded on the soft-deleted product' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
 
 export class ToggleProductStatusBodyDto {
   @ApiProperty({ enum: [2, 4], description: 'Current status must match DB before toggle' })

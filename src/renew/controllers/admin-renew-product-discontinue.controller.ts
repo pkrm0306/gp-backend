@@ -19,7 +19,11 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions.constants';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AdminRenewProductDiscontinueService } from '../services/admin-renew-product-discontinue.service';
-import { ToggleProductStatusBodyDto, BulkReactivateProductsBodyDto } from '../dto/admin-product-discontinue.dto';
+import {
+  DiscontinueProductBodyDto,
+  ToggleProductStatusBodyDto,
+  BulkReactivateProductsBodyDto,
+} from '../dto/admin-product-discontinue.dto';
 
 @ApiTags('Admin Renewals')
 @Controller('api/admin/renewals/:urnNo/product-discontinue')
@@ -63,10 +67,32 @@ export class AdminRenewProductDiscontinueController {
     );
   }
 
+  @Patch('products/:productId/discontinue')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @ApiOperation({
+    summary: 'Soft-delete certified product during renewal and resequence remaining EOIs',
+  })
+  @ApiParam({ name: 'urnNo', type: String })
+  @ApiParam({ name: 'productId', type: String })
+  async discontinue(
+    @Param('urnNo') urnNo: string,
+    @Param('productId') productId: string,
+    @Body() body: DiscontinueProductBodyDto,
+    @CurrentUser() user: { userId?: string; sub?: string; _id?: string },
+  ) {
+    const data = await this.discontinueService.discontinueProduct(
+      urnNo,
+      productId,
+      this.adminUserId(user),
+      body?.reason,
+    );
+    return { success: true, ...data };
+  }
+
   @Patch('products/:productId/toggle-status')
   @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
   @ApiOperation({
-    summary: 'Discontinue certified product during renewal (soft-delete; productStatus unchanged)',
+    summary: 'Deprecated alias — use PATCH .../discontinue (soft-delete + EOI resequence)',
   })
   @ApiParam({ name: 'urnNo', type: String })
   @ApiParam({ name: 'productId', type: String })
