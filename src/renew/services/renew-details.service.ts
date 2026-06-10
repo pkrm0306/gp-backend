@@ -69,9 +69,9 @@ import {
   PaymentDetailsDocument,
 } from '../../payments/schemas/payment-details.schema';
 import {
+  buildRenewPaymentsPayload,
   buildRenewProcessHeaderFilter,
   findRenewPaymentsForCycle,
-  formatCycleScopedPaymentRecords,
   resolveCycleScopedUrnStatus,
 } from '../helpers/renew-cycle-scope.util';
 import {
@@ -492,10 +492,9 @@ export class RenewDetailsService {
         trimmedUrn,
         bundle.cycle,
       );
-      cyclePayments = formatCycleScopedPaymentRecords(
-        payRows as unknown as Array<Record<string, unknown>>,
-      );
-      cyclePayment = cyclePayments[0] ?? null;
+      const paymentPayload = buildRenewPaymentsPayload(payRows);
+      cyclePayments = paymentPayload.payments;
+      cyclePayment = paymentPayload.payment;
     }
 
     const productSnapshot = await this.productModel
