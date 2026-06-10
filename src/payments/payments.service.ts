@@ -900,6 +900,24 @@ export class PaymentsService {
                 { session },
               )
               .exec();
+
+            // Re-number remaining active EOIs (pending/submitted/certified).
+            // Rejected products keep their original eoiNo — no conflict with active rows.
+            const manufacturerIds = [
+              ...new Set(
+                urnProducts
+                  .map((p) => String(p.manufacturerId ?? '').trim())
+                  .filter(Boolean),
+              ),
+            ];
+            for (const manufacturerId of manufacturerIds) {
+              updatedSequenceCount +=
+                await this.productSoftDeleteService.resequenceForManufacturerInSession(
+                  manufacturerId,
+                  session,
+                );
+            }
+            resequenceApplied = updatedSequenceCount > 0;
           }
         }
 
