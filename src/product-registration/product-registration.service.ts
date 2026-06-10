@@ -1009,6 +1009,8 @@ export class ProductRegistrationService {
       categoryName: name,
       category_name: name,
       sector: category.sector ?? null,
+      category_raw_material_forms:
+        category.category_raw_material_forms ?? null,
     };
   }
 
