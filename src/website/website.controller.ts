@@ -385,7 +385,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Website team members list',
     description:
-      'Returns active team members for the website: name, designation, email, mobile, image, and social links.',
+      'Returns active team members for the website: name, designation, email, mobile, image, social links, team, display order, and sector(s).',
   })
   @ApiResponse({ status: 200, description: 'Team members list' })
   async listWebsiteTeamMembers() {

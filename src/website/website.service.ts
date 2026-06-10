@@ -1329,7 +1329,7 @@ export class WebsiteService {
    * sorted by displayOrder so website follows admin ordering.
    */
   async listWebsiteTeamMembers() {
-    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list');
+    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list-v2');
     try {
       const cached = await this.redisService.get<
         Array<{
@@ -1339,10 +1339,17 @@ export class WebsiteService {
           designation: string;
           email: string;
           mobile: string;
+          displayOrder: number;
+          team: string;
           image: string | null;
           facebookUrl: string;
           twitterUrl: string;
           linkedinUrl: string;
+          sector_ids: number[];
+          sectorIds: number[];
+          sector_id: number | null;
+          sector_name: string | null;
+          sectors: { id: number; name: string }[];
         }>
       >(cacheKey);
       if (Array.isArray(cached)) {
@@ -1361,25 +1368,33 @@ export class WebsiteService {
       .find({ type: 'staff', status: 1 })
       .sort({ displayOrder: 1, _id: 1 })
       .select(
-        'name designation email phone image facebookUrl twitterUrl linkedinUrl displayOrder team',
+        'name designation email phone image facebookUrl twitterUrl linkedinUrl displayOrder team sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
 
-    const data = (rows ?? []).map((m: any, idx: number) => ({
-      s_no: idx + 1,
-      id: String(m._id),
-      name: String(m.name ?? ''),
-      designation: String(m.designation ?? ''),
-      email: String(m.email ?? ''),
-      mobile: String(m.phone ?? ''),
-      displayOrder: Number((m as any).displayOrder) || 0,
-      team: String((m as any).team ?? ''),
-      image: sanitizeWebsiteImagePath(m.image),
-      facebookUrl: String(m.facebookUrl ?? ''),
-      twitterUrl: String(m.twitterUrl ?? ''),
-      linkedinUrl: String(m.linkedinUrl ?? ''),
-    }));
+    const baseRows = await Promise.all(
+      (rows ?? []).map(async (m: any, idx: number) => {
+        const sector_ids = await this.adminService.resolveTeamMemberSectorIds(m);
+        return {
+          s_no: idx + 1,
+          id: String(m._id),
+          name: String(m.name ?? ''),
+          designation: String(m.designation ?? ''),
+          email: String(m.email ?? ''),
+          mobile: String(m.phone ?? ''),
+          displayOrder: Number((m as any).displayOrder) || 0,
+          team: String((m as any).team ?? ''),
+          image: sanitizeWebsiteImagePath(m.image),
+          facebookUrl: String(m.facebookUrl ?? ''),
+          twitterUrl: String(m.twitterUrl ?? ''),
+          linkedinUrl: String(m.linkedinUrl ?? ''),
+          sector_ids,
+        };
+      }),
+    );
+
+    const data = await this.adminService.attachTeamMemberSectorFields(baseRows);
     this.redisService
       .set(cacheKey, data, this.getWebsitePublicListCacheTtlSeconds())
       .catch((error) => {

@@ -614,8 +614,30 @@ export class AdminService {
     });
   }
 
+  /** Resolve sector ids for a team member row (includes legacy category fallback). */
+  async resolveTeamMemberSectorIds(member: {
+    sector_ids?: unknown;
+    sector_id?: unknown;
+    category_ids?: unknown;
+    category_id?: unknown;
+  }): Promise<number[]> {
+    return this.normalizeTeamMemberSectorIds(member);
+  }
+
+  /** Attach sector_ids, sectorIds, sector_id, sector_name, and sectors to list rows. */
+  async attachTeamMemberSectorFields<T extends Record<string, unknown>>(
+    rows: Array<T & { sector_ids: number[] }>,
+  ): Promise<
+    Array<
+      Omit<T, 'category_ids' | 'categoryIds' | 'category_id' | 'sector_ids'> &
+        TeamMemberSectorFields
+    >
+  > {
+    return this.attachSectorsToTeamMemberRows(rows);
+  }
+
   private invalidateWebsiteTeamMembersListCache(): void {
-    const key = this.redisService.buildKey('website', 'team-members', 'list');
+    const key = this.redisService.buildKey('website', 'team-members', 'list-v2');
     this.redisService.del(key).catch((err) => {
       this.logger.warn(
         `Website team-members cache invalidation failed: ${(err as Error)?.message || 'unknown'}`,
@@ -1891,11 +1913,6 @@ export class AdminService {
       if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
         throw new BadRequestException('Display order must be a positive integer');
       }
-      if (desiredOrder > maxAllowed) {
-        throw new BadRequestException(
-          `Display order must be between 1 and ${maxAllowed}`,
-        );
-      }
 
       if (desiredOrder <= totalNonDeleted) {
         await this.vendorUserModel
@@ -1989,11 +2006,6 @@ export class AdminService {
       data.displayOrder === undefined ? maxAllowed : data.displayOrder;
     if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
       throw new BadRequestException('Display order must be a positive integer');
-    }
-    if (desiredOrder > maxAllowed) {
-      throw new BadRequestException(
-        `Display order must be between 1 and ${maxAllowed}`,
-      );
     }
 
     if (desiredOrder <= totalNonDeleted) {
@@ -2787,11 +2799,6 @@ export class AdminService {
       data.displayOrder === undefined ? maxAllowed : data.displayOrder;
     if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
       throw new BadRequestException('Display order must be a positive integer');
-    }
-    if (desiredOrder > maxAllowed) {
-      throw new BadRequestException(
-        `Display order must be between 1 and ${maxAllowed}`,
-      );
     }
 
     const currentOrder = Number((member as any).displayOrder) || maxAllowed;
