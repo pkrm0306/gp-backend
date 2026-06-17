@@ -1,12 +1,11 @@
 import {
-  Body,
   Controller,
   Get,
   Param,
   Post,
+  Req,
   UseGuards,
   UseInterceptors,
-  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
@@ -19,6 +18,8 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
+import type { Request } from 'express';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -26,8 +27,8 @@ import { RawMaterialsRegionalMaterialsService } from './raw-materials-regional-m
 import { CreateRawMaterialsRegionalMaterialsDto } from './dto/create-raw-materials-regional-materials.dto';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseMultipartJsonArray,
-  pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
@@ -43,6 +44,33 @@ const REGIONAL_UNIT_ROW_KEYS = [
   'yeardata2',
 ];
 
+const REGIONAL_FILE_FIELDS = [
+  'regionalMaterialsFile',
+  'regionalMaterialsFiles',
+  'regional_materials_file',
+  'regional_materials_files',
+  'file',
+  'files',
+  'supportingDocument',
+  'supportingDocuments',
+  'document',
+  'documents',
+];
+
+function isRegionalMaterialsUploadField(fieldname: string): boolean {
+  const field = String(fieldname ?? '').trim();
+  if (!field) {
+    return false;
+  }
+  if (REGIONAL_FILE_FIELDS.includes(field)) {
+    return true;
+  }
+  return (
+    field.startsWith('regionalMaterialsFile') ||
+    field.startsWith('regional_materials_file')
+  );
+}
+
 @ApiTags('Raw Materials Regional Materials')
 @Controller('raw-materials-regional-materials')
 @UseGuards(JwtAuthGuard)
@@ -56,6 +84,8 @@ export class RawMaterialsRegionalMaterialsController {
   @Post()
   @ApiOperation({
     summary: 'Create raw materials regional materials units (per URN)',
+    description:
+      '**units** replaces all rows for the URN. Multiple supporting PDF/Excel uploads supported via repeated `regionalMaterialsFile` fields. `existingDocumentIds`: omit = keep all saved docs; JSON array = retain only listed productDocumentId values.',
   })
   @UseInterceptors(
     AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
@@ -94,7 +124,16 @@ export class RawMaterialsRegionalMaterialsController {
             },
           ],
         },
-        regionalMaterialsFile: { type: 'string', format: 'binary' },
+        regionalMaterialsFile: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'One or more supporting documents (PDF/Excel)',
+        },
+        existingDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentId values to retain when removing files',
+        },
       },
     },
   })
@@ -135,25 +174,24 @@ export class RawMaterialsRegionalMaterialsController {
       },
     },
   })
-  async create(
-    @CurrentUser() user: any,
-    @Body() body: any,
-    @UploadedFiles() uploadedFiles?: Express.Multer.File[],
-  ) {
+  async create(@CurrentUser() user: any, @Req() req: Request) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
 
+    const body = (req.body ?? {}) as Record<string, unknown>;
     const units = parseMultipartJsonArray(body.units, 'units');
-    const regionalMaterialsFile = pickUploadFile(uploadedFiles, [
-      'regionalMaterialsFile',
-      'file',
-      'supportingDocument',
-      'document',
-    ]);
+    const allUploadedFiles = collectAllUploadFiles(
+      req.files as Express.Multer.File[] | undefined,
+    );
+    const uploadFiles = allUploadedFiles.filter((f) =>
+      isRegionalMaterialsUploadField(String(f.fieldname ?? '')),
+    );
+    const resolvedUploadFiles =
+      uploadFiles.length > 0 ? uploadFiles : allUploadedFiles;
 
-    if (regionalMaterialsFile) {
-      assertRawMaterialsDocumentTypes([regionalMaterialsFile]);
+    if (resolvedUploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(resolvedUploadFiles);
     }
     const urnNo = parseRequiredRawMaterialsUrn(body);
     const persistedRecordCount = await this.service.countPersistedByUrn(
@@ -164,7 +202,7 @@ export class RawMaterialsRegionalMaterialsController {
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
-      files: regionalMaterialsFile ? [regionalMaterialsFile] : [],
+      files: resolvedUploadFiles,
       rows: units as Array<Record<string, unknown>>,
       rowKeys: REGIONAL_UNIT_ROW_KEYS,
       persistedRecordCount,
@@ -172,12 +210,17 @@ export class RawMaterialsRegionalMaterialsController {
 
     const dto: CreateRawMaterialsRegionalMaterialsDto = {
       urnNo,
-      vendorId: body.vendorId,
-      regionalMaterialsFileName: body.regionalMaterialsFileName,
+      vendorId: body.vendorId as string | undefined,
+      regionalMaterialsFileName: body.regionalMaterialsFileName as
+        | string
+        | undefined,
       units: units as CreateRawMaterialsRegionalMaterialsDto['units'],
     };
 
-    const data = await this.service.create(dto, user.vendorId, regionalMaterialsFile);
+    const data = await this.service.create(dto, user.vendorId, {
+      uploadFiles: resolvedUploadFiles,
+      existingDocumentIds: parseMultipartJsonIdArray(body.existingDocumentIds),
+    });
     return { success: true, data };
   }
 

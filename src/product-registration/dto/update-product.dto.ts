@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsNumber,
   IsDateString,
+  IsBoolean,
   Allow,
   ValidateIf,
   IsNotEmpty,
@@ -17,6 +18,19 @@ function omitEmptyOptional(value: unknown): unknown {
     return undefined;
   }
   return value;
+}
+
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === '' || value === null || value === undefined) {
+    return undefined;
+  }
+  if (value === true || value === 'true' || value === 1 || value === '1') {
+    return true;
+  }
+  if (value === false || value === 'false' || value === 0 || value === '0') {
+    return false;
+  }
+  return undefined;
 }
 
 export class UpdateProductDto {
@@ -70,6 +84,27 @@ export class UpdateProductDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsMongoId()
   categoryId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Admin EOI edit — when changing category, if true, reset category-specific assessment/process data for the URN. ' +
+      'Ignored when categoryId is unchanged. Defaults to false when omitted.',
+    default: false,
+  })
+  @Transform(({ value }) => parseOptionalBoolean(value))
+  @IsOptional()
+  @IsBoolean()
+  resetCategoryAssessmentData?: boolean;
+
+  /**
+   * Read-only echo from admin list/details — ignored; server resolves prior category from DB.
+   */
+  @Allow()
+  previousCategoryId?: string;
+
+  /** Read-only echo from category-change UI — ignored; send `categoryId` for the new value. */
+  @Allow()
+  newCategoryId?: string;
 
   @ApiPropertyOptional({ description: 'Product image URL' })
   @Transform(({ value }) => omitEmptyOptional(value))

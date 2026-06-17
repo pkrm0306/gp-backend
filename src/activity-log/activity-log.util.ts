@@ -1,4 +1,93 @@
 import { ActivityLogDocument } from './schemas/activity-log.schema';
+import {
+  activityLifecycleName,
+  activityLifecycleResponsibility,
+  nextActivityLifecycleStatus,
+} from './activity-lifecycle.constants';
+
+/** Marks timeline rows that must not become Quick View "current activity". */
+export const AUXILIARY_ACTIVITY_SUB_IDS = {
+  URN_SITE_VISIT: 1,
+} as const;
+
+export type ActivityLogLike = {
+  activity?: string;
+  activities_id?: number;
+  activity_status?: number;
+  sub_activities_id?: number;
+  responsibility?: string;
+  next_activity?: string | null;
+  next_responsibility?: string | null;
+  next_acitivities_id?: number | null;
+  created_at?: Date | string;
+  createdAt?: Date | string;
+};
+
+const SITE_VISIT_ACTIVITY_PREFIXES = [
+  'Admin added site visit ',
+  'Admin updated site visit ',
+  'Admin deleted site visit ',
+] as const;
+
+export function isAuxiliaryActivityLog(row: ActivityLogLike): boolean {
+  const subId = Number(row.sub_activities_id);
+  if (subId === AUXILIARY_ACTIVITY_SUB_IDS.URN_SITE_VISIT) {
+    return true;
+  }
+  const activity = String(row.activity ?? '').trim();
+  return SITE_VISIT_ACTIVITY_PREFIXES.some((prefix) =>
+    activity.startsWith(prefix),
+  );
+}
+
+function sortActivityLogsChronologically(
+  logs: ActivityLogLike[],
+): ActivityLogLike[] {
+  return [...logs].sort((a, b) => {
+    const ta = new Date(a.created_at ?? a.createdAt ?? 0).getTime();
+    const tb = new Date(b.created_at ?? b.createdAt ?? 0).getTime();
+    return ta - tb;
+  });
+}
+
+/**
+ * Quick View current step — last lifecycle row, skipping auxiliary admin events
+ * (e.g. site visit CRUD) that must not override workflow stage.
+ */
+export function resolveCurrentWorkflowActivityLog(
+  logs: ActivityLogLike[],
+  urnStatus?: number,
+): Record<string, unknown> | null {
+  const sorted = sortActivityLogsChronologically(logs);
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    const row = sorted[i];
+    if (isAuxiliaryActivityLog(row)) {
+      continue;
+    }
+    return {
+      ...formatActivityLogRow(row as ActivityLogDocument),
+      // Quick View "Current Activity" is always actionable until advanced.
+      status: 0,
+    };
+  }
+
+  if (typeof urnStatus !== 'number' || !Number.isFinite(urnStatus)) {
+    return null;
+  }
+
+  const status = Math.trunc(urnStatus);
+  const nextId = nextActivityLifecycleStatus(status);
+  return {
+    activities_id: status,
+    activity_status: status,
+    activity: activityLifecycleName(status),
+    status: 0,
+    responsibility: activityLifecycleResponsibility(status),
+    next_acitivities_id: nextId,
+    next_activity: activityLifecycleName(nextId),
+    next_responsibility: activityLifecycleResponsibility(nextId),
+  };
+}
 
 export type ActivityLogCaller = {
   role?: string;
@@ -61,6 +150,7 @@ export function formatActivityLogRow(
     next_responsibility: plain.next_responsibility,
     next_acitivities_id: plain.next_acitivities_id,
     activities_id: plain.activities_id,
+    sub_activities_id: plain.sub_activities_id,
     created_at: createdAt,
     updated_at: updatedAt,
     createdAt,

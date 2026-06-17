@@ -45,8 +45,8 @@ export class ListProductsDto {
   page?: number = 1;
 
   @ApiProperty({
-    description: 'Number of items per page (default: 10)',
-    example: 10,
+    description: 'Number of items per page (default: 20)',
+    example: 20,
     required: false,
     minimum: 1,
   })
@@ -54,7 +54,7 @@ export class ListProductsDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  limit?: number = 10;
+  limit?: number = 20;
 
   @ApiProperty({
     description:
@@ -158,6 +158,15 @@ export class ListProductsDto {
   countryId?: string;
 
   @ApiPropertyOptional({
+    description: 'Snake_case alias of `countryId`.',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsMongoId()
+  country_id?: string;
+
+  @ApiPropertyOptional({
     description:
       'Filter by plant **state name** (free text, case-insensitive partial match). Not a state id.',
     example: 'Telangana',
@@ -185,6 +194,15 @@ export class ListProductsDto {
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsString()
   city?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `city`.',
+    example: 'Hyderabad',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  city_name?: string;
 
   @ApiProperty({
     description: 'Sort order (default: desc)',

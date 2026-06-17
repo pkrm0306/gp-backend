@@ -24,14 +24,16 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import {
   countVendorUrnDocuments,
   hasAnyMeaningfulBodyField,
+  parseRawMaterialsUnitNumericInput,
   RAW_MATERIALS_AT_LEAST_ONE_MESSAGE,
+  sumNullableRawMaterialsNumerics,
+  normalizeRawMaterialsUtilizationRmcRow,
+  withRawMaterialsNumericFields,
 } from '../common/raw-materials/raw-materials-upload.util';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import {
-  trackProductDocumentDeleteBatch,
-  trackUploadedProductDocument,
-} from '../documents/helpers/product-document-version.integration';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 
 type Step15Files = {
   file1?: Express.Multer.File;
@@ -82,22 +84,22 @@ export class RawMaterialsUtilizationRmcService {
     });
   }
 
-  /** Partial-save: invalid/empty numerics become 0 (avoids Mongoose Cast to Number NaN). */
-  private safeRmcNumber(value: unknown, fallback = 0): number {
-    if (value === undefined || value === null || value === '') {
-      return fallback;
-    }
-    const n = Number(value);
-    return Number.isFinite(n) ? n : fallback;
+  /** Partial-save: invalid/empty numerics become null (explicit 0 preserved). */
+  private parseRmcNumericInput(value: unknown): number | null {
+    return parseRawMaterialsUnitNumericInput(value);
   }
 
   private sanitizeRmcNumericPayload(
-    payload: Record<string, number>,
-  ): Record<string, number> {
-    const out: Record<string, number> = {};
+    payload: Record<string, number | null>,
+  ): Record<string, number | null> {
+    const out: Record<string, number | null> = {};
     for (const [key, value] of Object.entries(payload)) {
+      if (value === null || value === undefined) {
+        out[key] = null;
+        continue;
+      }
       const n = Number(value);
-      out[key] = Number.isFinite(n) ? n : 0;
+      out[key] = Number.isFinite(n) ? n : null;
     }
     return out;
   }
@@ -168,91 +170,93 @@ export class RawMaterialsUtilizationRmcService {
   private parseAndNormalizePayload(rawInput: Record<string, any>) {
     const input = this.applyAliases(rawInput);
     const numericFields = this.getNumericSchemaFields();
-    const numericPayload: Record<string, number> = {};
+    const numericPayload: Record<string, number | null> = {};
 
     for (const field of numericFields) {
-      numericPayload[field] = this.safeRmcNumber(input[field], 0);
+      if (this.wasFieldProvided(input, field)) {
+        numericPayload[field] = this.parseRmcNumericInput(input[field]);
+      }
     }
 
-    // Deferred Step 15 field validation (vendor partial-save; re-enable when product confirms).
-    // const fieldErrors: Record<string, string> = {};
-    // for (const field of numericFields) {
-    //   const n = numericPayload[field];
-    //   if (!Number.isFinite(n)) fieldErrors[field] = 'Must be numeric';
-    //   else if (n < 0) fieldErrors[field] = 'Must be >= 0';
-    // }
-    // year range 1900–2100 and distinct consumption years — commented out
-    // if (Object.keys(fieldErrors).length > 0) this.buildValidationError(fieldErrors);
+    const setTotal = (key: string, parts: Array<number | null | undefined>) => {
+      const total = sumNullableRawMaterialsNumerics(...parts);
+      if (total !== null) {
+        numericPayload[key] = total;
+      }
+    };
 
-    numericPayload.total1 =
-      (numericPayload.cement1 ?? 0) +
-      (numericPayload.flyash1 ?? 0) +
-      (numericPayload.coarseAggregate1 ?? 0) +
-      (numericPayload.fineAggregate1 ?? 0) +
-      (numericPayload.admixture1 ?? 0) +
-      (numericPayload.alcofine1 ?? 0) +
-      (numericPayload.ggbs1 ?? 0) +
-      (numericPayload.anyOtherMaterial1 ?? 0);
+    setTotal('total1', [
+      numericPayload.cement1,
+      numericPayload.flyash1,
+      numericPayload.coarseAggregate1,
+      numericPayload.fineAggregate1,
+      numericPayload.admixture1,
+      numericPayload.alcofine1,
+      numericPayload.ggbs1,
+      numericPayload.anyOtherMaterial1,
+    ]);
+    setTotal('total2', [
+      numericPayload.cement2,
+      numericPayload.flyash2,
+      numericPayload.coarseAggregate2,
+      numericPayload.fineAggregate2,
+      numericPayload.admixture2,
+      numericPayload.alcofine2,
+      numericPayload.ggbs2,
+      numericPayload.anyOtherMaterial2,
+    ]);
+    setTotal('total3', [
+      numericPayload.cement3,
+      numericPayload.flyash3,
+      numericPayload.coarseAggregate3,
+      numericPayload.fineAggregate3,
+      numericPayload.admixture3,
+      numericPayload.alcofine3,
+      numericPayload.ggbs3,
+      numericPayload.anyOtherMaterial3,
+    ]);
+    setTotal('brandTotalConcrete', [
+      numericPayload.brandConcreteWithHighScm,
+      numericPayload.brandHighStrengthConcrete,
+      numericPayload.brandSelfCpmactingConcrete,
+      numericPayload.brandLowDensityConcrete,
+      numericPayload.brandClsmConcrete,
+      numericPayload.brandAnyOtherTypes,
+    ]);
+    setTotal('productionYear1TotalConcrete', [
+      numericPayload.productionYear1ConcreteWithHighScm,
+      numericPayload.productionYear1HighStrengthConcrete,
+      numericPayload.productionYear1SelfCpmactingConcrete,
+      numericPayload.productionYear1LowDensityConcrete,
+      numericPayload.productionYear1ClsmConcrete,
+      numericPayload.productionYear1AnyOtherTypes,
+    ]);
+    setTotal('productionYear2TotalConcrete', [
+      numericPayload.productionYear2ConcreteWithHighScm,
+      numericPayload.productionYear2HighStrengthConcrete,
+      numericPayload.productionYear2SelfCpmactingConcrete,
+      numericPayload.productionYear2LowDensityConcrete,
+      numericPayload.productionYear2ClsmConcrete,
+      numericPayload.productionYear2AnyOtherTypes,
+    ]);
+    setTotal('productionYear3TotalConcrete', [
+      numericPayload.productionYear3ConcreteWithHighScm,
+      numericPayload.productionYear3HighStrengthConcrete,
+      numericPayload.productionYear3SelfCpmactingConcrete,
+      numericPayload.productionYear3LowDensityConcrete,
+      numericPayload.productionYear3ClsmConcrete,
+      numericPayload.productionYear3AnyOtherTypes,
+    ]);
 
-    numericPayload.total2 =
-      (numericPayload.cement2 ?? 0) +
-      (numericPayload.flyash2 ?? 0) +
-      (numericPayload.coarseAggregate2 ?? 0) +
-      (numericPayload.fineAggregate2 ?? 0) +
-      (numericPayload.admixture2 ?? 0) +
-      (numericPayload.alcofine2 ?? 0) +
-      (numericPayload.ggbs2 ?? 0) +
-      (numericPayload.anyOtherMaterial2 ?? 0);
-
-    numericPayload.total3 =
-      (numericPayload.cement3 ?? 0) +
-      (numericPayload.flyash3 ?? 0) +
-      (numericPayload.coarseAggregate3 ?? 0) +
-      (numericPayload.fineAggregate3 ?? 0) +
-      (numericPayload.admixture3 ?? 0) +
-      (numericPayload.alcofine3 ?? 0) +
-      (numericPayload.ggbs3 ?? 0) +
-      (numericPayload.anyOtherMaterial3 ?? 0);
-
-    numericPayload.brandTotalConcrete =
-      (numericPayload.brandConcreteWithHighScm ?? 0) +
-      (numericPayload.brandHighStrengthConcrete ?? 0) +
-      (numericPayload.brandSelfCpmactingConcrete ?? 0) +
-      (numericPayload.brandLowDensityConcrete ?? 0) +
-      (numericPayload.brandClsmConcrete ?? 0) +
-      (numericPayload.brandAnyOtherTypes ?? 0);
-
-    numericPayload.productionYear1TotalConcrete =
-      (numericPayload.productionYear1ConcreteWithHighScm ?? 0) +
-      (numericPayload.productionYear1HighStrengthConcrete ?? 0) +
-      (numericPayload.productionYear1SelfCpmactingConcrete ?? 0) +
-      (numericPayload.productionYear1LowDensityConcrete ?? 0) +
-      (numericPayload.productionYear1ClsmConcrete ?? 0) +
-      (numericPayload.productionYear1AnyOtherTypes ?? 0);
-
-    numericPayload.productionYear2TotalConcrete =
-      (numericPayload.productionYear2ConcreteWithHighScm ?? 0) +
-      (numericPayload.productionYear2HighStrengthConcrete ?? 0) +
-      (numericPayload.productionYear2SelfCpmactingConcrete ?? 0) +
-      (numericPayload.productionYear2LowDensityConcrete ?? 0) +
-      (numericPayload.productionYear2ClsmConcrete ?? 0) +
-      (numericPayload.productionYear2AnyOtherTypes ?? 0);
-
-    numericPayload.productionYear3TotalConcrete =
-      (numericPayload.productionYear3ConcreteWithHighScm ?? 0) +
-      (numericPayload.productionYear3HighStrengthConcrete ?? 0) +
-      (numericPayload.productionYear3SelfCpmactingConcrete ?? 0) +
-      (numericPayload.productionYear3LowDensityConcrete ?? 0) +
-      (numericPayload.productionYear3ClsmConcrete ?? 0) +
-      (numericPayload.productionYear3AnyOtherTypes ?? 0);
-
-    const opcUsed = numericPayload.totalQuantityOfOpcUsed ?? 0;
-    const supplementary = numericPayload.totalQuantityOfSupplementary ?? 0;
-    const opcDenom = opcUsed + supplementary;
-    numericPayload.opcSubstitution =
-      opcDenom > 0
-        ? Number((supplementary / opcDenom).toFixed(4))
-        : 0;
+    const opcUsed = numericPayload.totalQuantityOfOpcUsed ?? null;
+    const supplementary = numericPayload.totalQuantityOfSupplementary ?? null;
+    if (opcUsed !== null || supplementary !== null) {
+      const opcDenom = (opcUsed ?? 0) + (supplementary ?? 0);
+      numericPayload.opcSubstitution =
+        opcDenom > 0
+          ? Number(((supplementary ?? 0) / opcDenom).toFixed(4))
+          : 0;
+    }
 
     return this.sanitizeRmcNumericPayload(numericPayload);
   }
@@ -276,96 +280,82 @@ export class RawMaterialsUtilizationRmcService {
   }
 
   private buildResponse(doc: any) {
+    const d = withRawMaterialsNumericFields(
+      typeof doc?.toObject === 'function' ? doc.toObject() : { ...doc },
+      this.getNumericSchemaFields(),
+    );
     return {
-      urnNo: doc.urnNo,
-      vendorId: String(doc.vendorId),
+      urnNo: d.urnNo,
+      vendorId: String(d.vendorId),
       data: {
-        consumption_year1: doc.consumptionYear1,
-        consumption_year2: doc.consumptionYear2,
-        consumption_year3: doc.consumptionYear3,
+        consumption_year1: d.consumptionYear1,
+        consumption_year2: d.consumptionYear2,
+        consumption_year3: d.consumptionYear3,
         rawConsumption: {
-          cement1: doc.cement1,
-          cement2: doc.cement2,
-          cement3: doc.cement3,
-          flyash1: doc.flyash1,
-          flyash2: doc.flyash2,
-          flyash3: doc.flyash3,
-          coarseAggregate1: doc.coarseAggregate1,
-          coarseAggregate2: doc.coarseAggregate2,
-          coarseAggregate3: doc.coarseAggregate3,
-          fineAggregate1: doc.fineAggregate1,
-          fineAggregate2: doc.fineAggregate2,
-          fineAggregate3: doc.fineAggregate3,
-          admixture1: doc.admixture1,
-          admixture2: doc.admixture2,
-          admixture3: doc.admixture3,
-          alcofine1: doc.alcofine1,
-          alcofine2: doc.alcofine2,
-          alcofine3: doc.alcofine3,
-          ggbs1: doc.ggbs1,
-          ggbs2: doc.ggbs2,
-          ggbs3: doc.ggbs3,
-          anyOtherMaterial1: doc.anyOtherMaterial1,
-          anyOtherMaterial2: doc.anyOtherMaterial2,
-          anyOtherMaterial3: doc.anyOtherMaterial3,
+          cement1: d.cement1,
+          cement2: d.cement2,
+          cement3: d.cement3,
+          flyash1: d.flyash1,
+          flyash2: d.flyash2,
+          flyash3: d.flyash3,
+          coarseAggregate1: d.coarseAggregate1,
+          coarseAggregate2: d.coarseAggregate2,
+          coarseAggregate3: d.coarseAggregate3,
+          fineAggregate1: d.fineAggregate1,
+          fineAggregate2: d.fineAggregate2,
+          fineAggregate3: d.fineAggregate3,
+          admixture1: d.admixture1,
+          admixture2: d.admixture2,
+          admixture3: d.admixture3,
+          alcofine1: d.alcofine1,
+          alcofine2: d.alcofine2,
+          alcofine3: d.alcofine3,
+          ggbs1: d.ggbs1,
+          ggbs2: d.ggbs2,
+          ggbs3: d.ggbs3,
+          anyOtherMaterial1: d.anyOtherMaterial1,
+          anyOtherMaterial2: d.anyOtherMaterial2,
+          anyOtherMaterial3: d.anyOtherMaterial3,
         },
         concreteTypes: {
-          brandConcreteWithHighScm: doc.brandConcreteWithHighScm,
-          brandHighStrengthConcrete: doc.brandHighStrengthConcrete,
-          brandSelfCpmactingConcrete: doc.brandSelfCpmactingConcrete,
-          brandLowDensityConcrete: doc.brandLowDensityConcrete,
-          brandClsmConcrete: doc.brandClsmConcrete,
-          brandAnyOtherTypes: doc.brandAnyOtherTypes,
+          brandConcreteWithHighScm: d.brandConcreteWithHighScm,
+          brandHighStrengthConcrete: d.brandHighStrengthConcrete,
+          brandSelfCpmactingConcrete: d.brandSelfCpmactingConcrete,
+          brandLowDensityConcrete: d.brandLowDensityConcrete,
+          brandClsmConcrete: d.brandClsmConcrete,
+          brandAnyOtherTypes: d.brandAnyOtherTypes,
         },
         opcSummary: {
-          total_quantity_of_opc_used: doc.totalQuantityOfOpcUsed,
-          total_quantity_of_supplementary: doc.totalQuantityOfSupplementary,
-          total_opc_substitution_ratio: doc.opcSubstitution,
+          total_quantity_of_opc_used: d.totalQuantityOfOpcUsed,
+          total_quantity_of_supplementary: d.totalQuantityOfSupplementary,
+          total_opc_substitution_ratio: d.opcSubstitution,
         },
       },
       computed: {
-        total_fields1: doc.total1,
-        total_fields2: doc.total2,
-        total_fields3: doc.total3,
-        total_brand_name_concrete: doc.brandTotalConcrete,
-        total_production_year1_final: doc.productionYear1TotalConcrete,
-        total_production_year2_final: doc.productionYear2TotalConcrete,
-        total_production_year3_final: doc.productionYear3TotalConcrete,
+        total_fields1: d.total1,
+        total_fields2: d.total2,
+        total_fields3: d.total3,
+        total_brand_name_concrete: d.brandTotalConcrete,
+        total_production_year1_final: d.productionYear1TotalConcrete,
+        total_production_year2_final: d.productionYear2TotalConcrete,
+        total_production_year3_final: d.productionYear3TotalConcrete,
       },
-      updatedDate: doc.updatedDate,
+      updatedDate: d.updatedDate,
     };
   }
 
   private withLegacyRmcAliases(row: any) {
     const base = typeof row?.toObject === 'function' ? row.toObject() : row;
     if (!base) return base;
-
-    const out: any = { ...base };
-    for (const mat of ['Iron', 'Steel', 'Copper', 'Recycled', 'Aggregate']) {
-      for (const yr of [1, 2, 3, 4]) {
-        const canonical = `percentYear${yr}Subsititution${mat}`;
-        const legacy = `percentYear${yr}Subsitution${mat}`;
-        if (out[legacy] === undefined && out[canonical] !== undefined) {
-          out[legacy] = out[canonical];
-        }
-      }
-    }
-
-    for (const yr of [1, 2, 3, 4]) {
-      const canonical = `plantYear${yr}PercentSubstitution`;
-      const legacy = `plantYear${yr}PercentSubsitution`;
-      if (out[legacy] === undefined && out[canonical] !== undefined) {
-        out[legacy] = out[canonical];
-      }
-    }
-
-    return out;
+    return normalizeRawMaterialsUtilizationRmcRow(
+      base as Record<string, unknown>,
+    );
   }
 
   private async upsertStep15Document(
     urnNo: string,
     vendorObjectId: Types.ObjectId,
-    payload: Record<string, number>,
+    payload: Record<string, number | null>,
   ): Promise<RawMaterialsUtilizationRmcDocument> {
     const now = new Date();
     const safePayload = this.sanitizeRmcNumericPayload(payload);
@@ -416,51 +406,6 @@ export class RawMaterialsUtilizationRmcService {
     }
 
     const now = new Date();
-    const step15DocumentSubsections = [
-      'step_15_1_supporting_document',
-      'step_15_2_supporting_document',
-      'supporting_documents',
-    ];
-    const existingDocs = await this.allProductDocumentModel.find({
-      urnNo,
-      vendorId: vendorObjectId,
-      documentForm:
-        DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
-      documentFormSubsection: { $in: step15DocumentSubsections },
-      isDeleted: { $ne: true },
-    });
-    await this.allProductDocumentModel.updateMany(
-      {
-        urnNo,
-        vendorId: vendorObjectId,
-        documentForm:
-          DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
-        documentFormSubsection: { $in: step15DocumentSubsections },
-        isDeleted: { $ne: true },
-      },
-      {
-        $set: {
-          isDeleted: true,
-          deletedAt: now,
-          deletedBy: vendorObjectId,
-          updatedDate: now,
-        },
-      },
-    );
-    if (existingDocs.length) {
-      await trackProductDocumentDeleteBatch({
-        versioning: this.documentVersioningService,
-        urnNo,
-        sectionKey: DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
-        userId: vendorObjectId,
-        docs: existingDocs,
-        slotKeyMode: 'subsection',
-      });
-    }
-
-    const existingBySubsection = new Map(
-      existingDocs.map((doc) => [String(doc.documentFormSubsection ?? ''), doc]),
-    );
 
     const createDoc = async (
       file: Express.Multer.File,
@@ -488,22 +433,17 @@ export class RawMaterialsUtilizationRmcService {
         createdDate: now,
         updatedDate: now,
       });
-      await trackUploadedProductDocument(this.documentVersioningService, {
-        urnNo,
-        sectionKey: DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
-        subsectionKey: documentFormSubsection,
-        userId: vendorObjectId,
-        documentId: createdDoc._id,
-        productDocumentId,
-        filePath: storedRelativePath,
-        originalName: file.originalname,
-        storedName: fileNameHint?.trim() || path.basename(storedRelativePath),
-        file,
-        action: existingBySubsection.has(documentFormSubsection)
-          ? 'replaced'
-          : 'added',
-        slotKeyMode: 'subsection',
-      });
+      await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+          userId: vendorObjectId,
+          vendorId: vendorObjectId,
+          doc: createdDoc,
+          file: file,
+        });
     };
 
     if (files.file1) {

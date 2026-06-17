@@ -15,14 +15,14 @@ export class ProcessProductStewardship {
   @Prop({ required: true })
   urnNo: string;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  seaSupportingDocuments: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  seaSupportingDocuments?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: false })
   qualityManagementDetails?: string;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  qmSupportingDocuments: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  qmSupportingDocuments?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: false })
   eprImplementedDetails?: string;
@@ -30,8 +30,8 @@ export class ProcessProductStewardship {
   @Prop({ required: false })
   eprGreenPackagingDetails?: string;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  eprSupportingDocuments: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  eprSupportingDocuments?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: true, type: Number, default: 0 })
   productStewardshipStatus: number; // 0=Pending, 1=Completed

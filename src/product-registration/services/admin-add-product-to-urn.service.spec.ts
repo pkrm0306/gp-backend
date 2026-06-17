@@ -22,6 +22,7 @@ describe('AdminAddProductToUrnService', () => {
   let plantFind: jest.Mock;
   let auditRecord: jest.Mock;
   let startSession: jest.Mock;
+  let certificationPaymentCount: jest.Mock;
   let service: AdminAddProductToUrnService;
   let countryId: string;
   let stateId: string;
@@ -71,6 +72,7 @@ describe('AdminAddProductToUrnService', () => {
       }),
     });
     auditRecord = jest.fn().mockResolvedValue(undefined);
+    certificationPaymentCount = jest.fn().mockResolvedValue(0);
 
     const session = {
       startTransaction: jest.fn(),
@@ -96,7 +98,14 @@ describe('AdminAddProductToUrnService', () => {
       } as never,
       { findById: categoryFindById } as never,
       { findById: manufacturerFindById } as never,
-      { startSession } as never,
+      {
+        startSession,
+        db: {
+          collection: jest.fn().mockReturnValue({
+            countDocuments: certificationPaymentCount,
+          }),
+        },
+      } as never,
       { assignNextActiveEoiNo } as never,
       {
         getProductId,
@@ -156,6 +165,29 @@ describe('AdminAddProductToUrnService', () => {
     expect(auditRecord).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'admin_add_product_to_urn' }),
     );
+  });
+
+  it('blocks add-product when certification fee exists', async () => {
+    certificationPaymentCount.mockResolvedValue(1);
+    await expect(
+      service.addProductToUrn(
+        urnNo,
+        {
+          productName: 'Late product',
+          productDetails: 'desc',
+          plants: [
+            {
+              plantName: 'Plant A',
+              plantLocation: '123 Industrial Area',
+              countryId,
+              stateId,
+              city: 'Hyderabad',
+            },
+          ],
+        },
+        adminUserId,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects wrong categoryId in body', async () => {

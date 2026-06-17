@@ -222,6 +222,7 @@ export class ProcessRenewWasteManagementService {
         now,
         session,
         rows: newDocRows,
+        slotKeyMode: 'subsection',
       });
 
       await session.commitTransaction();

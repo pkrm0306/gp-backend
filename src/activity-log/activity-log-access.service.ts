@@ -52,6 +52,21 @@ export class ActivityLogAccessService {
     return normalizeUrnNo(String(product.urnNo ?? normalized));
   }
 
+  async resolveMaxUrnWorkflowStatus(urnNo: string): Promise<number> {
+    const normalized = normalizeUrnNo(urnNo);
+    const options = urnCandidates(normalized);
+    const rows = await this.productModel
+      .find(matchActiveProducts({ urnNo: { $in: options } }))
+      .select('urnStatus')
+      .lean()
+      .exec();
+    let maxStatus = 0;
+    for (const row of rows) {
+      maxStatus = Math.max(maxStatus, Number(row.urnStatus ?? 0));
+    }
+    return maxStatus;
+  }
+
   async assertCallerCanReadUrnLogs(
     urnNo: string,
     user?: ActivityLogCaller,

@@ -13,7 +13,9 @@ import { ActivityLogAccessService } from './activity-log-access.service';
 import {
   ActivityLogCaller,
   formatActivityLogRow,
+  isAuxiliaryActivityLog,
   normalizeUrnNo,
+  resolveCurrentWorkflowActivityLog,
   urnCandidates,
 } from './activity-log.util';
 
@@ -82,7 +84,8 @@ export class ActivityLogService {
         next_responsibility: data.next_responsibility,
         next_acitivities_id: data.next_acitivities_id,
         next_activity: data.next_activity,
-        status: data.status ?? 1,
+        // Timeline entries represent the next actionable step by default.
+        status: data.status ?? 0,
         // created_at and updated_at will be automatically set by Mongoose timestamps
       };
 
@@ -139,13 +142,54 @@ export class ActivityLogService {
   async getActivityLogsByUrnForCaller(
     urnNo: string,
     user?: ActivityLogCaller,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<{
+    allEntries: Record<string, unknown>[];
+    workflowEntries: Record<string, unknown>[];
+    auxiliaryEvents: Record<string, unknown>[];
+    currentActivity: Record<string, unknown> | null;
+  }> {
     const normalized =
       await this.activityLogAccessService.assertCallerCanReadUrnLogs(
         urnNo,
         user,
       );
-    const rows = await this.getActivityLogsByUrn(normalized);
-    return rows.map((row) => formatActivityLogRow(row));
+    return this.buildUrnActivityLogPayload(normalized);
+  }
+
+  /** Quick View / admin URN details — workflow activity without auth caller check. */
+  async getQuickViewActivityForUrn(
+    urnNo: string,
+  ): Promise<Record<string, unknown> | null> {
+    const normalized = normalizeUrnNo(urnNo);
+    if (!normalized) {
+      return null;
+    }
+    const payload = await this.buildUrnActivityLogPayload(normalized);
+    return payload.currentActivity;
+  }
+
+  private async buildUrnActivityLogPayload(normalizedUrn: string): Promise<{
+    allEntries: Record<string, unknown>[];
+    workflowEntries: Record<string, unknown>[];
+    auxiliaryEvents: Record<string, unknown>[];
+    currentActivity: Record<string, unknown> | null;
+  }> {
+    const [rows, urnStatus] = await Promise.all([
+      this.getActivityLogsByUrn(normalizedUrn),
+      this.activityLogAccessService.resolveMaxUrnWorkflowStatus(normalizedUrn),
+    ]);
+    const allEntries = rows.map((row) => formatActivityLogRow(row));
+    const workflowEntries = allEntries.filter(
+      (row) => !isAuxiliaryActivityLog(row),
+    );
+    const auxiliaryEvents = allEntries.filter((row) =>
+      isAuxiliaryActivityLog(row),
+    );
+    return {
+      allEntries,
+      workflowEntries,
+      auxiliaryEvents,
+      currentActivity: resolveCurrentWorkflowActivityLog(rows, urnStatus),
+    };
   }
 }

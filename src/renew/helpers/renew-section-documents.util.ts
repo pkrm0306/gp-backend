@@ -9,6 +9,7 @@ import { DocumentVersioningService } from '../../documents/document-versioning.s
 import {
   trackProductDocumentBatch,
   trackProductDocumentDeleteBatch,
+  trackUploadedProductDocument,
 } from '../../documents/helpers/product-document-version.integration';
 
 export function resolveRenewDocumentIdRefs(ids: string[]): {
@@ -171,6 +172,7 @@ export async function applyRenewSectionDocumentKeepList(params: {
       sectionKey,
       userId: vendorObjectId,
       docs: docsToDelete,
+      slotKeyMode: 'subsection',
       processType: 'renewal',
       renewalCycleId: renewalCycleObjectId,
       session,
@@ -200,6 +202,8 @@ export async function insertRenewSectionDocuments(params: {
     eoiNo?: string;
     documentTag?: 'tech' | 'process' | 'social';
   }>;
+  /** When set, versions by subsection + tag (append-only; no auto soft-delete on upload). */
+  slotKeyMode?: 'productDocumentId' | 'subsection' | 'subsectionTag';
 }): Promise<void> {
   const {
     renewDocumentModel,
@@ -213,10 +217,31 @@ export async function insertRenewSectionDocuments(params: {
     now,
     session,
     rows,
+    slotKeyMode = 'subsection',
   } = params;
 
   if (!rows.length) {
     return;
+  }
+
+  const versionActions: Array<'added' | 'replaced'> = [];
+  if (slotKeyMode === 'subsection' || slotKeyMode === 'subsectionTag') {
+    for (const row of rows) {
+      const slotFilter: Record<string, unknown> = {
+        urnNo,
+        renewalCycleId: renewalCycleObjectId,
+        documentForm: sectionKey,
+        documentFormSubsection: row.documentFormSubsection,
+        isDeleted: { $ne: true },
+      };
+      if (slotKeyMode === 'subsectionTag') {
+        slotFilter.documentTag = row.documentTag ?? 'tech';
+      }
+      const existingInSlot = await renewDocumentModel
+        .countDocuments(slotFilter)
+        .session(session);
+      versionActions.push(existingInSlot > 0 ? 'replaced' : 'added');
+    }
   }
 
   const docsToInsert = rows.map((row) => ({
@@ -238,6 +263,33 @@ export async function insertRenewSectionDocuments(params: {
   }));
 
   const inserted = await renewDocumentModel.insertMany(docsToInsert, { session });
+
+  if (slotKeyMode === 'subsection' || slotKeyMode === 'subsectionTag') {
+    for (let i = 0; i < inserted.length; i++) {
+      const doc = inserted[i];
+      await trackUploadedProductDocument(documentVersioningService, {
+        urnNo,
+        sectionKey,
+        subsectionKey: doc.documentFormSubsection,
+        ...(slotKeyMode === 'subsectionTag'
+          ? { documentTag: doc.documentTag ?? rows[i]?.documentTag ?? 'tech' }
+          : {}),
+        userId: vendorObjectId,
+        documentId: doc._id,
+        productDocumentId: doc.productDocumentId,
+        filePath: doc.documentLink,
+        originalName: doc.documentOriginalName,
+        storedName: doc.documentName,
+        action: versionActions[i] ?? 'added',
+        slotKeyMode,
+        processType: 'renewal',
+        renewalCycleId: renewalCycleObjectId,
+        session,
+      });
+    }
+    return;
+  }
+
   await trackProductDocumentBatch({
     versioning: documentVersioningService,
     urnNo,

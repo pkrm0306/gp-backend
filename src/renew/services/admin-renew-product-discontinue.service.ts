@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
-import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
+import {
+  Product,
+  ProductDocument,
+} from '../../product-registration/schemas/product.schema';
 import { ProductSoftDeleteService } from '../../product-registration/services/product-soft-delete.service';
 import {
   ProductStatusAudit,
@@ -30,12 +33,15 @@ export interface ProductDiscontinueListItem {
   eoiSequence?: number;
   productName: string;
   productStatus: number;
+  productStatusLabel: 'Certified';
   createdAt: Date;
 }
 
 @Injectable()
 export class AdminRenewProductDiscontinueService {
-  private readonly logger = new Logger(AdminRenewProductDiscontinueService.name);
+  private readonly logger = new Logger(
+    AdminRenewProductDiscontinueService.name,
+  );
 
   constructor(
     @InjectModel(Product.name)
@@ -75,6 +81,7 @@ export class AdminRenewProductDiscontinueService {
           : undefined,
       productName: row.productName,
       productStatus: Number(row.productStatus ?? 0),
+      productStatusLabel: 'Certified',
       createdAt: row.createdDate,
     }));
   }
@@ -89,6 +96,9 @@ export class AdminRenewProductDiscontinueService {
     productId: string;
     eoiNo: string;
     productStatus: number;
+    productStatusLabel: 'Certified';
+    discontinueStatus: 'discontinued';
+    discontinueStatusLabel: 'Discontinued';
     discontinuedAt: Date;
     isDeleted: true;
     updatedAt: Date;
@@ -190,13 +200,17 @@ export class AdminRenewProductDiscontinueService {
       new_values: {
         is_deleted: true,
         productStatus: Number(product.productStatus),
+        productStatusLabel: 'Certified',
+        discontinueStatus: 'discontinued',
+        discontinueStatusLabel: 'Discontinued',
         eoiNo: product.eoiNo,
         urnNo: trimmedUrn,
         discontinuedAt: now.toISOString(),
         updatedSequenceCount,
       },
       http_method: 'PATCH',
-      route: '/api/admin/renewals/:urnNo/product-discontinue/products/:productId',
+      route:
+        '/api/admin/renewals/:urnNo/product-discontinue/products/:productId',
       status_code: 200,
     });
 
@@ -207,6 +221,9 @@ export class AdminRenewProductDiscontinueService {
       productId: String(productObjectId),
       eoiNo: String(product.eoiNo),
       productStatus: Number(product.productStatus),
+      productStatusLabel: 'Certified',
+      discontinueStatus: 'discontinued',
+      discontinueStatusLabel: 'Discontinued',
       discontinuedAt: now,
       isDeleted: true,
       updatedAt: now,
@@ -238,6 +255,9 @@ export class AdminRenewProductDiscontinueService {
     productId: string;
     eoiNo: string;
     productStatus: number;
+    productStatusLabel: 'Certified';
+    discontinueStatus: 'discontinued';
+    discontinueStatusLabel: 'Discontinued';
     discontinuedAt: Date;
     isDeleted: true;
     updatedAt: Date;

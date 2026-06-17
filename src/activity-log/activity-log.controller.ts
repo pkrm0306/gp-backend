@@ -69,7 +69,9 @@ export class ActivityLogController {
   @ApiOperation({
     summary: 'Get activity logs by URN (admin or vendor)',
     description:
-      'Returns activity logs for a URN, sorted by created_at ascending (last row = current activity in Quick View). ' +
+      'Returns workflow activity logs for a URN (site-visit admin events are in `auxiliaryEvents`, not `data`). ' +
+      'Use `currentActivity` / `quickView` for Quick View status. ' +
+      'Legacy clients that read the last `data[]` row should use workflow-only `data`. ' +
       '**Admin/staff** may read any URN. **Vendor/partner** may only read URNs they own (403 otherwise). ' +
       'Empty array when no logs yet.',
   })
@@ -135,7 +137,12 @@ export class ActivityLogController {
         throw new BadRequestException('URN number is required');
       }
 
-      const data = await this.activityLogService.getActivityLogsByUrnForCaller(
+      const {
+        workflowEntries,
+        auxiliaryEvents,
+        allEntries,
+        currentActivity,
+      } = await this.activityLogService.getActivityLogsByUrnForCaller(
         urnNo.trim(),
         user,
       );
@@ -143,7 +150,11 @@ export class ActivityLogController {
       return {
         success: true,
         message: 'Activity logs retrieved successfully',
-        data,
+        data: workflowEntries,
+        allEntries,
+        auxiliaryEvents,
+        currentActivity,
+        quickView: currentActivity,
       };
     } catch (error: any) {
       console.error('Controller error:', error);

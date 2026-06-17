@@ -13,7 +13,10 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+} from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -177,7 +180,10 @@ export class PaymentsController {
 
   @Post()
   @UseInterceptors(
-    FileInterceptor('proposal_file', certificationMultipartMemoryMulterOptions()),
+    FileInterceptor(
+      'proposal_file',
+      certificationMultipartMemoryMulterOptions(),
+    ),
   )
   @ApiOperation({
     summary: 'Create payment details',
@@ -308,11 +314,10 @@ export class PaymentsController {
     @UploadedFile() proposalFile?: Express.Multer.File,
   ) {
     try {
-      const actorId = user?.manufacturerId || user?.vendorId || user?.userId || user?.id;
+      const actorId =
+        user?.manufacturerId || user?.vendorId || user?.userId || user?.id;
       if (!actorId) {
-        throw new BadRequestException(
-          'Actor ID not found in token',
-        );
+        throw new BadRequestException('Actor ID not found in token');
       }
 
       // Parse numeric fields from form data
@@ -381,9 +386,73 @@ export class PaymentsController {
     }
   }
 
+  @Get(':urnNo')
+  @ApiOperation({
+    summary: 'Get payment details by URN',
+    description:
+      'Returns payment_details for the authenticated vendor or admin. ' +
+      'Includes submission status, TDS/supporting-document metadata, and reference-number uniqueness rule.',
+  })
+  @ApiParam({
+    name: 'urnNo',
+    description: 'URN number',
+    example: 'URN-20260409142354',
+    type: String,
+  })
+  @ApiQuery({
+    name: 'paymentType',
+    required: false,
+    enum: ['registration', 'certification', 'renew'],
+    description: 'Optional payment type filter',
+  })
+  @ApiQuery({
+    name: 'renewalCycleId',
+    required: false,
+    description: 'Required when loading renew payments',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Payment retrieved successfully' },
+        data: { type: 'object' },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Payment not found' })
+  async getPaymentByUrn(
+    @CurrentUser() user: any,
+    @Param('urnNo') urnNoParam: string,
+    @Query('paymentType') paymentType?: string,
+    @Query('renewalCycleId') renewalCycleId?: string,
+  ) {
+    const urnNo = String(urnNoParam ?? '').trim();
+    if (!urnNo) {
+      throw new BadRequestException('Invalid urnNo');
+    }
+
+    const vendorId = user?.manufacturerId || user?.vendorId;
+    const data = await this.paymentsService.getPaymentByUrn(urnNo, {
+      vendorId,
+      actorRole: user?.role || user?.type,
+      paymentType,
+      renewalCycleId,
+    });
+
+    return {
+      success: true,
+      message: 'Payment retrieved successfully',
+      data,
+    };
+  }
+
   @Patch(':urnNo/vendor-proposal-approval')
   @ApiOperation({
-    summary: 'Vendor approve or reject registration fee proposal (vendor portal only)',
+    summary:
+      'Vendor approve or reject registration fee proposal (vendor portal only)',
     description:
       '**Vendor/partner login only** — not for admin or staff tokens. ' +
       'Sets vendorProposalApprovalStatus to 1 (approve) or 2 (reject). ' +
@@ -450,6 +519,7 @@ export class PaymentsController {
       [
         { name: 'cheque_or_dd_file', maxCount: 1 },
         { name: 'tds_file', maxCount: 1 },
+        { name: 'supporting_document', maxCount: 1 },
         { name: 'proposal_file', maxCount: 1 },
       ],
       certificationMultipartMemoryMulterOptions(),
@@ -485,7 +555,11 @@ export class PaymentsController {
         },
         onlinePaymentId: { type: 'number', example: 0 },
         paymentReferenceNo: { type: 'string', example: 'REF123456' },
-        paymentChequeDate: { type: 'string', format: 'date-time', example: '2026-03-06T00:00:00.000Z' },
+        paymentChequeDate: {
+          type: 'string',
+          format: 'date-time',
+          example: '2026-03-06T00:00:00.000Z',
+        },
         productsToBeCertified: { type: 'string', example: '[101,102]' },
         paymentStatus: { type: 'number', enum: [0, 1, 2, 3], example: 0 },
         paymentRejectionRemarks: {
@@ -495,7 +569,11 @@ export class PaymentsController {
           example: 'Cheque image is unclear. Please upload a readable copy.',
           maxLength: 500,
         },
-        urnStatus: { type: 'number', enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], example: 1 },
+        urnStatus: {
+          type: 'number',
+          enum: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+          example: 1,
+        },
         cheque_or_dd_file: {
           type: 'string',
           format: 'binary',
@@ -505,6 +583,12 @@ export class PaymentsController {
           type: 'string',
           format: 'binary',
           description: 'Required when paymentMode is cheque_or_dd',
+        },
+        supporting_document: {
+          type: 'string',
+          format: 'binary',
+          description:
+            'Supporting Document for vendor payment submission. Alias of tds_file for backward compatibility.',
         },
       },
     },
@@ -535,6 +619,7 @@ export class PaymentsController {
     files?: {
       cheque_or_dd_file?: Express.Multer.File[];
       tds_file?: Express.Multer.File[];
+      supporting_document?: Express.Multer.File[];
       proposal_file?: Express.Multer.File[];
     },
   ) {
@@ -546,21 +631,37 @@ export class PaymentsController {
 
       const updatePaymentDto: UpdatePaymentDto = {
         urnNo: body.urnNo,
-        quoteAmount: body.quoteAmount !== undefined ? parseFloat(body.quoteAmount) : undefined,
-        quoteGstAmount: body.quoteGstAmount !== undefined ? parseFloat(body.quoteGstAmount) : undefined,
-        quoteTdsAmount: body.quoteTdsAmount !== undefined ? parseFloat(body.quoteTdsAmount) : undefined,
-        quoteTotal: body.quoteTotal !== undefined ? parseFloat(body.quoteTotal) : undefined,
+        quoteAmount:
+          body.quoteAmount !== undefined
+            ? parseFloat(body.quoteAmount)
+            : undefined,
+        quoteGstAmount:
+          body.quoteGstAmount !== undefined
+            ? parseFloat(body.quoteGstAmount)
+            : undefined,
+        quoteTdsAmount:
+          body.quoteTdsAmount !== undefined
+            ? parseFloat(body.quoteTdsAmount)
+            : undefined,
+        quoteTotal:
+          body.quoteTotal !== undefined
+            ? parseFloat(body.quoteTotal)
+            : undefined,
         adminGstNo: body.adminGstNo,
         vendorGstNo: body.vendorGstNo,
         paymentType: body.paymentType,
         paymentMode: body.paymentMode,
         onlinePaymentId:
-          body.onlinePaymentId !== undefined ? parseInt(body.onlinePaymentId, 10) : undefined,
+          body.onlinePaymentId !== undefined
+            ? parseInt(body.onlinePaymentId, 10)
+            : undefined,
         paymentReferenceNo: body.paymentReferenceNo,
         paymentChequeDate: body.paymentChequeDate,
         productsToBeCertified: body.productsToBeCertified,
         paymentStatus:
-          body.paymentStatus !== undefined ? parseInt(body.paymentStatus, 10) : undefined,
+          body.paymentStatus !== undefined
+            ? parseInt(body.paymentStatus, 10)
+            : undefined,
         paymentRejectionRemarks:
           body.paymentRejectionRemarks !== undefined &&
           body.paymentRejectionRemarks !== null
@@ -569,12 +670,15 @@ export class PaymentsController {
                 body.payment_rejection_remarks !== null
               ? String(body.payment_rejection_remarks)
               : undefined,
-        urnStatus: body.urnStatus !== undefined ? parseInt(body.urnStatus, 10) : undefined,
+        urnStatus:
+          body.urnStatus !== undefined
+            ? parseInt(body.urnStatus, 10)
+            : undefined,
         renewalCycleId: body.renewalCycleId,
       };
 
       const chequeOrDdFile = files?.cheque_or_dd_file?.[0];
-      const tdsFile = files?.tds_file?.[0];
+      const tdsFile = files?.tds_file?.[0] ?? files?.supporting_document?.[0];
       const proposalFile = files?.proposal_file?.[0];
       const vendorId = user?.manufacturerId || user?.vendorId;
 

@@ -415,4 +415,27 @@ export class SectorsService implements OnModuleInit {
     ];
     return lines.join('\r\n');
   }
+
+  /** Active sectors for admin/vendor filter dropdowns (Building, Industries, …). */
+  async buildDropdownOptions(): Promise<Array<{ value: string; label: string }>> {
+    const rows = await this.sectorModel
+      .find({ status: 1, deleted_at: null })
+      .select('id name')
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+    return (rows ?? [])
+      .map((row) => {
+        const id = Number((row as { id?: number }).id);
+        if (!Number.isFinite(id)) {
+          return null;
+        }
+        const label = String((row as { name?: string }).name ?? '').trim();
+        return {
+          value: String(id),
+          label: label || `Sector ${id}`,
+        };
+      })
+      .filter((row): row is { value: string; label: string } => row != null);
+  }
 }

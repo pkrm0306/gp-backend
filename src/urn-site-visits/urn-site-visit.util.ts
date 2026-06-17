@@ -26,8 +26,6 @@ export function formatSiteVisitRecord(
     address_line2: plain.addressLine2 ?? '',
     city: plain.city ?? '',
     state: plain.state ?? '',
-    postalCode: plain.postalCode ?? '',
-    postal_code: plain.postalCode ?? '',
     country: plain.country ?? '',
     auditType: plain.auditType ?? null,
     audit_type: plain.auditType ?? null,

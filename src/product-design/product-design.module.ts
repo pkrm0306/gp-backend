@@ -9,6 +9,7 @@ import {
   AllProductDocument,
   AllProductDocumentSchema,
 } from './schemas/all-product-document.schema';
+import { Product, ProductSchema } from '../product-registration/schemas/product.schema';
 import { ProductDesignService } from './product-design.service';
 import { ProductDesignController } from './product-design.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -21,6 +22,7 @@ import { AuthModule } from '../auth/auth.module';
       { name: ProductDesign.name, schema: ProductDesignSchema },
       { name: PdMeasure.name, schema: PdMeasureSchema },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
+      { name: Product.name, schema: ProductSchema },
     ]),
     ProductRegistrationModule, // For SequenceHelper
     PassportModule,

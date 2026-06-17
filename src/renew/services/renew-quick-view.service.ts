@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -26,7 +30,10 @@ import {
   ProcessRenewMpManufacturingUnit,
   ProcessRenewMpManufacturingUnitDocument,
 } from '../schemas/process-renew-mp-manufacturing-unit.schema';
-import { DocStream, DocStreamDocument } from '../../documents/schemas/doc-stream.schema';
+import {
+  DocStream,
+  DocStreamDocument,
+} from '../../documents/schemas/doc-stream.schema';
 import { getRenewalUrnStatusLabel } from '../constants/renewal-urn-status.constants';
 import { toRenewObjectId } from '../helpers/renew-common.util';
 import {
@@ -49,6 +56,10 @@ import {
   ProcessRenewManufacturing,
   ProcessRenewManufacturingDocument,
 } from '../schemas/process-renew-manufacturing.schema';
+import {
+  resolveRenewPlantState,
+  withRenewPlantsStateAliases,
+} from '../utils/renew-plant-state.util';
 
 @Injectable()
 export class RenewQuickViewService {
@@ -121,7 +132,10 @@ export class RenewQuickViewService {
       : null;
 
     let activeCycle = renewalCycleId?.trim()
-      ? await this.renewalCycleModel.findById(renewalCycleId.trim()).lean().exec()
+      ? await this.renewalCycleModel
+          .findById(renewalCycleId.trim())
+          .lean()
+          .exec()
       : null;
     if (activeCycle && activeCycle.urnNo !== trimmedUrn) {
       throw new BadRequestException('renewalCycleId does not match this URN');
@@ -154,7 +168,8 @@ export class RenewQuickViewService {
     const performanceCycle =
       await this.processRenewProductPerformanceService.resolveRenewalCycleForRead(
         trimmedUrn,
-        renewalCycleId ?? (activeCycle?._id ? String(activeCycle._id) : undefined),
+        renewalCycleId ??
+          (activeCycle?._id ? String(activeCycle._id) : undefined),
       );
     const performanceRead =
       await this.processRenewProductPerformanceService.loadRenewProductPerformanceReadPayload(
@@ -179,7 +194,9 @@ export class RenewQuickViewService {
     const documents = filterRenewRowsByCertifiedEoi(
       mergeRenewDocumentSources(
         documentRows as Array<Record<string, unknown>>,
-        performanceRead.product_performance_documents as Array<Record<string, unknown>>,
+        performanceRead.product_performance_documents as Array<
+          Record<string, unknown>
+        >,
       ),
       certifiedEoiNos,
     );
@@ -228,6 +245,7 @@ export class RenewQuickViewService {
       await this.productRegistrationService.getManufacturerAndPlantsForUrn(
         trimmedUrn,
       );
+    const renewPlants = withRenewPlantsStateAliases(plants);
     const manufacturerName =
       manufacturer?.manufacturerName != null
         ? String(manufacturer.manufacturerName).trim()
@@ -251,12 +269,14 @@ export class RenewQuickViewService {
       productRenewStatus: first.productRenewStatus,
       renewCycleNo: first.renewCycleNo ?? null,
       vendorId: first.vendorId ? String(first.vendorId) : null,
-      manufacturerId: first.manufacturerId ? String(first.manufacturerId) : null,
+      manufacturerId: first.manufacturerId
+        ? String(first.manufacturerId)
+        : null,
       manufacturerName: manufacturerName || null,
       manufacturer: manufacturer ?? null,
       manufacturing_details: manufacturer ?? null,
-      plants,
-      plant_details: plants,
+      plants: renewPlants,
+      plant_details: renewPlants,
       category: category
         ? {
             id: category._id,
@@ -324,8 +344,8 @@ export class RenewQuickViewService {
       all_renew_product_documents: documents,
       all_urn_product_documents: documents,
       manufacturingUnitsSummary:
-        plants.length > 0
-          ? plants.map((plant) => ({
+        renewPlants.length > 0
+          ? renewPlants.map((plant) => ({
               plantName: plant.plantName,
               plant_name: plant.plantName,
               plantLocation: plant.plantLocation,
@@ -333,6 +353,8 @@ export class RenewQuickViewService {
               eoiNo: plant.eoiNo,
               city: plant.city,
               stateName: plant.stateName,
+              state: resolveRenewPlantState(plant),
+              State: resolveRenewPlantState(plant),
               countryName: plant.countryName,
             }))
           : mpUnits.map((u) => ({

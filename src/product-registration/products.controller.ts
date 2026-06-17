@@ -6,6 +6,7 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   UseGuards,
   BadRequestException,
   UploadedFile,
@@ -184,7 +185,8 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Get vendor Save & Next guidance after admin resend',
     description:
-      'When urnStatus is 5 (admin sent back for corrections), returns which process tabs and raw material steps may be saved. Only rejected sections have canSaveAndNext=true; approved sections are read-only on the vendor panel.',
+      'When urnStatus is 5 (admin sent back for corrections), returns which process tabs and raw material steps may be saved. ' +
+      'Includes `tabAccess` — when urnStatus is 6–10 (after admin final submit, before certification fee approval), all process tabs are disabled except Quick View and Payment.',
   })
   @ApiParam({
     name: 'urn_no',
@@ -208,6 +210,37 @@ export class ProductsController {
       success: true,
       message: 'Vendor URN tab review guidance retrieved',
       data,
+      tabAccess: data.tabAccess,
+    };
+  }
+
+  @Get('vendor-tab-access/:urn_no')
+  @ApiOperation({
+    summary: 'Vendor URN process tab enable/disable map',
+    description:
+      'Returns which vendor URN workspace tabs are enabled. After admin final submit (urnStatus 6–10), only `quick_view` and `payment` are enabled until certification fee is approved (urnStatus 11).',
+  })
+  @ApiParam({
+    name: 'urn_no',
+    description: 'URN number',
+    example: 'URN-20240302120000',
+  })
+  async getVendorUrnTabAccess(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Param('urn_no') urnNo: string,
+  ) {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const data = await this.urnTabReviewService.getVendorUrnTabAccess(
+      urnNo,
+      user.manufacturerId,
+    );
+    return {
+      success: true,
+      message: 'Vendor URN tab access retrieved',
+      data,
+      tabAccess: data,
     };
   }
 
@@ -403,7 +436,10 @@ export class ProductsController {
     status: 401,
     description: 'Unauthorized - Invalid or missing token',
   })
-  async getProductDetailsByUrn(@Param('urn_no') urnNo: string) {
+  async getProductDetailsByUrn(
+    @Param('urn_no') urnNo: string,
+    @CurrentUser() user?: { manufacturerId?: string },
+  ) {
     try {
       if (!urnNo || urnNo.trim() === '') {
         throw new BadRequestException('URN number is required');
@@ -411,16 +447,60 @@ export class ProductsController {
 
       const data = await this.productRegistrationService.getProductDetailsByUrn(
         urnNo.trim(),
+        { excludeExpired: true },
       );
 
       const siteVisits =
         (data[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
+      const firstDetails = data[0] as
+        | {
+            urnStatus?: number;
+            productRenewStatus?: number;
+            product_details?: {
+              visibleRawMaterialSteps?: number[];
+              urnStatus?: number;
+              productRenewStatus?: number;
+            };
+            category?: { visibleRawMaterialSteps?: number[] };
+          }
+        | undefined;
+      const visibleRawMaterialSteps =
+        firstDetails?.product_details?.visibleRawMaterialSteps ??
+        firstDetails?.category?.visibleRawMaterialSteps ??
+        [];
+      const urnStatus = Number(
+        (firstDetails as { urnStatus?: number; product_details?: { urnStatus?: number } })
+          ?.urnStatus ??
+          firstDetails?.product_details?.urnStatus ??
+          0,
+      );
+      const productRenewStatus = Number(
+        (firstDetails as { productRenewStatus?: number; product_details?: { productRenewStatus?: number } })
+          ?.productRenewStatus ??
+          firstDetails?.product_details?.productRenewStatus ??
+          0,
+      );
+      const trimmedUrn = urnNo.trim();
+      const tabAccess =
+        user?.manufacturerId != null
+          ? await this.urnTabReviewService.getVendorUrnTabAccess(
+              trimmedUrn,
+              String(user.manufacturerId),
+            )
+          : undefined;
 
       return {
         success: true,
         data,
         siteVisits,
         site_visits: siteVisits,
+        visibleRawMaterialSteps,
+        urnContext: {
+          urnNo: trimmedUrn,
+          urnStatus: urnStatus || null,
+          productRenewStatus: productRenewStatus || null,
+        },
+        tabAccess,
       };
     } catch (error: any) {
       console.error('Controller error:', error);
@@ -511,28 +591,88 @@ export class ProductsController {
     }
   }
 
-  @Get('certificates/eoi/:productId')
+  @Get('certificates/eoi/:productId/plants')
   @ApiOperation({
-    summary: 'Download certified product certificate (single EOI)',
+    summary: 'List plant certificates for a certified EOI',
     description:
-      'Vendor-only. Downloads the GreenPro certificate PDF for one certified product (`productStatus = 2`) owned by the logged-in manufacturer.',
+      'Vendor-only. Returns each manufacturing plant (unit) under the EOI with individual download paths. ' +
+      'Use when Units > 1 to show per-plant certificate actions.',
   })
   @ApiParam({
     name: 'productId',
     description: 'MongoDB product document _id from certified list',
   })
-  @ApiResponse({ status: 200, description: 'Certificate PDF download' })
-  @ApiResponse({ status: 404, description: 'Certified product not found' })
-  async downloadEoiCertificate(
+  async listEoiPlantCertificates(
     @CurrentUser() user: { manufacturerId?: string },
     @Param('productId') productId: string,
+  ) {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const data = await this.vendorCertificateService.listEoiPlantCertificates(
+      user.manufacturerId,
+      productId,
+    );
+    return {
+      message: 'Plant certificates retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('certificates/eoi/:productId/plants/:plantId')
+  @ApiOperation({
+    summary: 'Download one plant certificate for a certified EOI',
+    description:
+      'Vendor-only. Downloads a single GreenPro certificate PDF for one manufacturing plant under the EOI.',
+  })
+  @ApiParam({ name: 'productId', description: 'MongoDB product _id' })
+  @ApiParam({ name: 'plantId', description: 'MongoDB product_plants _id' })
+  async downloadEoiPlantCertificate(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Param('productId') productId: string,
+    @Param('plantId') plantId: string,
   ): Promise<StreamableFile> {
     if (!user?.manufacturerId) {
       throw new BadRequestException('Manufacturer ID not found in token');
     }
+    const file = await this.vendorCertificateService.downloadEoiPlantCertificate(
+      user.manufacturerId,
+      productId,
+      plantId,
+    );
+    return new StreamableFile(file.buffer, {
+      type: file.contentType,
+      disposition: `attachment; filename="${file.fileName}"`,
+    });
+  }
+
+  @Get('certificates/eoi/:productId')
+  @ApiOperation({
+    summary: 'Download certified product certificate(s) for one EOI',
+    description:
+      'Vendor-only. Downloads GreenPro certificate PDF(s) for one certified product (`productStatus = 2`). ' +
+      '**Default (`format=merged`)**: one PDF with one page per plant (5 units → 5 pages). ' +
+      '**`format=zip`**: separate PDF file per plant inside a ZIP archive.',
+  })
+  @ApiParam({
+    name: 'productId',
+    description: 'MongoDB product document _id from certified list',
+  })
+  @ApiResponse({ status: 200, description: 'Certificate PDF or ZIP download' })
+  @ApiResponse({ status: 404, description: 'Certified product not found' })
+  async downloadEoiCertificate(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Param('productId') productId: string,
+    @Query('format') format?: 'merged' | 'zip',
+  ): Promise<StreamableFile> {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const resolvedFormat = format === 'zip' ? 'zip' : 'merged';
     const file = await this.vendorCertificateService.downloadEoiCertificate(
       user.manufacturerId,
       productId,
+      resolvedFormat,
     );
     return new StreamableFile(file.buffer, {
       type: file.contentType,

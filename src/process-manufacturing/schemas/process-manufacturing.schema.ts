@@ -14,8 +14,8 @@ export class ProcessManufacturing {
   @Prop({ required: true })
   urnNo: string;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  energyConservationSupportingDocuments: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  energyConservationSupportingDocuments?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: false })
   portableWaterDemand?: string;
@@ -29,8 +29,8 @@ export class ProcessManufacturing {
   @Prop({ required: false, type: Number })
   totalEnergyConsumption?: number;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  energyConsumptionDocuments: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  energyConsumptionDocuments?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: true, type: Number, default: 0 })
   processManufacturingStatus: number; // 0=Pending, 1=Completed

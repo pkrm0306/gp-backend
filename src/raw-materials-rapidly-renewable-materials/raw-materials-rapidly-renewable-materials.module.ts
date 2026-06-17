@@ -10,6 +10,7 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { RawMaterialsRapidlyRenewableMaterialsService } from './raw-materials-rapidly-renewable-materials.service';
 import { RawMaterialsRapidlyRenewableMaterialsController } from './raw-materials-rapidly-renewable-materials.controller';
+import { Product, ProductSchema } from '../product-registration/schemas/product.schema';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
@@ -22,6 +23,7 @@ import { AuthModule } from '../auth/auth.module';
         schema: RawMaterialsRapidlyRenewableMaterialsSchema,
       },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
+      { name: Product.name, schema: ProductSchema },
     ]),
     ProductRegistrationModule,
     PassportModule,

@@ -14,7 +14,6 @@ import {
   ProductPlant,
   ProductPlantSchema,
 } from '../product-registration/schemas/product-plant.schema';
-import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { AuthModule } from '../auth/auth.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -26,7 +25,6 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
       { name: Product.name, schema: ProductSchema },
       { name: ProductPlant.name, schema: ProductPlantSchema },
     ]),
-    ActivityLogModule,
     RbacModule,
     AuthModule,
   ],

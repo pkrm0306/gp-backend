@@ -39,6 +39,30 @@ export function objectIdKey(id: Types.ObjectId | string | undefined): string {
   return categoryIdKey(id);
 }
 
+export const URN_MERGE_OWNERSHIP_MISMATCH_MESSAGE =
+  'Source and Target URNs must belong to the same Manufacturer and Vendor.';
+
+export function buildOwnershipMismatchBlocker(
+  source: Pick<UrnMergeProductRow, 'vendorId' | 'manufacturerId'>,
+  target: Pick<UrnMergeProductRow, 'vendorId' | 'manufacturerId'>,
+): UrnMergeBlocker[] {
+  const hasVendorMismatch =
+    objectIdKey(source.vendorId) !== objectIdKey(target.vendorId);
+  const hasManufacturerMismatch =
+    objectIdKey(source.manufacturerId) !== objectIdKey(target.manufacturerId);
+
+  if (!hasVendorMismatch && !hasManufacturerMismatch) {
+    return [];
+  }
+
+  return [
+    {
+      code: hasVendorMismatch ? 'VENDOR_MISMATCH' : 'MANUFACTURER_MISMATCH',
+      message: URN_MERGE_OWNERSHIP_MISMATCH_MESSAGE,
+    },
+  ];
+}
+
 export function buildRenewalBlockers(
   urnLabel: string,
   rows: Array<{ urnStatus?: number; productRenewStatus?: number }>,
@@ -49,7 +73,7 @@ export function buildRenewalBlockers(
     if (urnStatus >= 12 && urnStatus <= 17) {
       blockers.push({
         code: 'RENEWAL_URN_STATUS_ACTIVE',
-        message: `${urnLabel} has active renewal urnStatus ${urnStatus}`,
+        message: `${urnLabel} has an active renewal process`,
       });
       break;
     }

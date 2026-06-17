@@ -13,10 +13,8 @@ import {
 import { DeleteDocumentQueryDto } from './dto/delete-document-query.dto';
 import { deleteUploadedFileByDocumentLink } from '../utils/upload-file.util';
 import { DocumentVersioningService } from './document-versioning.service';
-import {
-  buildAllProductDocumentTrackInput,
-  slotKeyFromProductDocumentId,
-} from './helpers/document-version.helper';
+import { buildAllProductDocumentTrackInput } from './helpers/document-version.helper';
+import { certificationStreamSlotKeyForDocument } from './helpers/certification-document-version.util';
 
 @Injectable()
 export class DocumentsService {
@@ -100,7 +98,12 @@ export class DocumentsService {
         urnNo: document.urnNo,
         sectionKey: document.documentForm,
         subsectionKey: document.documentFormSubsection ?? null,
-        slotKey: slotKeyFromProductDocumentId(document.productDocumentId),
+        slotKey: certificationStreamSlotKeyForDocument({
+          documentForm: document.documentForm,
+          documentFormSubsection: document.documentFormSubsection,
+          documentTag: document.documentTag,
+          productDocumentId: document.productDocumentId,
+        }),
         action: 'deleted',
         documentId: document._id as Types.ObjectId,
         productDocumentId: document.productDocumentId,

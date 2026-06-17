@@ -14,14 +14,14 @@ export class ProductDesign {
   @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })
   vendorId: Types.ObjectId;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  ecoVisionUpload: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  ecoVisionUpload?: number | null; // 0=No File Available, 1=File Available
 
   @Prop()
   statergies?: string;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  productDesignSupportingDocument: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  productDesignSupportingDocument?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: true, type: Number, default: 0 })
   productDesignStatus: number; // 0=Pending, 1=Completed

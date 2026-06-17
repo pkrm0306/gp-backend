@@ -21,7 +21,11 @@ describe('renew-details-response.util', () => {
     const baseResult = {
       data: [
         {
-          product_details: { eoiNo: 'GP001', productName: 'p', productStatus: 2 },
+          product_details: {
+            eoiNo: 'GP001',
+            productName: 'p',
+            productStatus: 2,
+          },
           category: { categoryName: 'Cat' },
           vendor: { companyName: 'Co', vendor_email: 'a@b.com' },
         },
@@ -29,8 +33,12 @@ describe('renew-details-response.util', () => {
       products: [],
       manufacturer: null,
       manufacturing_details: null,
-      plants: [],
-      plant_details: [],
+      plants: [
+        { plantName: 'Unit 1', stateName: 'Tamil Nadu', State: 'Tamil Nadu' },
+      ],
+      plant_details: [
+        { plantName: 'Unit 1', stateName: 'Tamil Nadu', State: 'Tamil Nadu' },
+      ],
       all_renew_product_documents: [],
       all_urn_product_documents: [],
       documents: [],
@@ -65,12 +73,22 @@ describe('renew-details-response.util', () => {
         },
         'full',
       );
-      expect(body.payment).toEqual({ paymentType: 'renew', renewalCycleId: 'c1' });
+      expect(body.payment).toEqual({
+        paymentType: 'renew',
+        renewalCycleId: 'c1',
+      });
       expect(body.payments).toEqual([]);
       expect(body.tabReviews).toEqual({ urnNo: 'URN-1' });
       expect(body.processComments).toEqual({ productPerformance: 'x' });
       expect(body.vendor).toMatchObject({ company: 'Co', email: 'a@b.com' });
       expect(body.category).toEqual({ categoryName: 'Cat' });
+      expect(body.plants).toEqual([
+        {
+          plantName: 'Unit 1',
+          stateName: 'Tamil Nadu',
+          State: 'Tamil Nadu',
+        },
+      ]);
     });
   });
 });

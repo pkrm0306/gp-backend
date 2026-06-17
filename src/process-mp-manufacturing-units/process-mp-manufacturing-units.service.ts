@@ -128,7 +128,7 @@ export class ProcessMpManufacturingUnitsService {
     const payload = normalizeMpManufacturingUnitEnergyInputs({
       ...fields,
       urnNo,
-      offsiteRenewablePower: dto.offsiteRenewablePower ?? 0,
+      offsiteRenewablePower: dto.offsiteRenewablePower ?? null,
       processMpManufacturingUnitStatus: dto.processMpManufacturingUnitStatus ?? 0,
     });
     return enrichMpManufacturingUnitCalculations(payload);

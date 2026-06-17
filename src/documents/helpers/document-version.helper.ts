@@ -37,6 +37,17 @@ export function paymentTypeToProcessType(
   return paymentType === 'renew' ? 'renewal' : 'initial';
 }
 
+/** Separate version streams per payment phase (registration vs certification vs renew). */
+export function paymentStreamSubsectionKey(
+  paymentType?: string | null,
+): string | null {
+  const t = String(paymentType ?? '').trim().toLowerCase();
+  if (t === 'registration' || t === 'certification' || t === 'renew') {
+    return t;
+  }
+  return null;
+}
+
 export function toObjectId(
   id: string | Types.ObjectId,
   fieldName = 'id',
@@ -111,7 +122,7 @@ export function buildPaymentDocumentTrackInput(
     processType: paymentTypeToProcessType(input.paymentType),
     renewalCycleId: normalizeRenewalCycleId(input.renewalCycleId),
     sectionKey: 'payment',
-    subsectionKey: null,
+    subsectionKey: paymentStreamSubsectionKey(input.paymentType),
     slotKey: input.field,
     liveSource: PAYMENT_DETAILS_LIVE_SOURCE,
     liveRef: buildPaymentDocumentLiveRef(input.paymentId, input.field),
@@ -179,4 +190,14 @@ export function slotKeyFromProductDocumentId(productDocumentId: number): string 
 
 export function slotKeyFromSubsection(subsection?: string | null): string {
   return subsection?.trim() || 'default';
+}
+
+/** Innovation and similar sections: one version stream per subsection + document tag. */
+export function slotKeyFromSubsectionAndTag(
+  subsection?: string | null,
+  tag?: string | null,
+): string {
+  const sub = subsection?.trim() || 'default';
+  const t = tag?.trim() || 'tech';
+  return `${sub}__${t}`;
 }

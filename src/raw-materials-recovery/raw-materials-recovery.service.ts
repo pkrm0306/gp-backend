@@ -21,10 +21,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackUploadedProductDocument } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 import {
   assertUnitYearFieldsPositive,
   filterMeaningfulRows,
+  mapRawMaterialsStandardGridUnitForSave,
+  RAW_MATERIALS_STANDARD_GRID_NUMERIC_KEYS,
+  withRawMaterialsNumericFields,
 } from '../common/raw-materials/raw-materials-upload.util';
 
 const RECOVERY_UNIT_KEYS = [
@@ -59,6 +63,8 @@ export class RawMaterialsRecoveryService {
     private model: Model<RawMaterialsRecoveryDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -87,16 +93,22 @@ export class RawMaterialsRecoveryService {
   }
 
   private toResponseUnit(row: Partial<RawMaterialsRecovery>) {
-    return {
-      rawMaterialsRecoveryId: row.rawMaterialsRecoveryId,
-      unitName: row.unitName,
-      year: row.year,
-      unit1: row.unit1,
-      yeardata1: row.yeardata1,
-      unit2: row.unit2,
-      yeardata2: row.yeardata2,
-      yeardata3: this.roundToTwo(Number(row.yeardata3 ?? 0)),
-    };
+    return withRawMaterialsNumericFields(
+      {
+        rawMaterialsRecoveryId: row.rawMaterialsRecoveryId,
+        unitName: row.unitName,
+        year: row.year,
+        unit1: row.unit1,
+        yeardata1: row.yeardata1,
+        unit2: row.unit2,
+        yeardata2: row.yeardata2,
+        yeardata3:
+          row.yeardata3 === undefined || row.yeardata3 === null
+            ? null
+            : this.roundToTwo(Number(row.yeardata3)),
+      },
+      RAW_MATERIALS_STANDARD_GRID_NUMERIC_KEYS,
+    );
   }
 
   private mapProductDocument(d: AllProductDocumentDocument): RecoveryProductDocumentRow {
@@ -156,27 +168,13 @@ export class RawMaterialsRecoveryService {
       assertUnitYearFieldsPositive(meaningfulUnits);
 
       for (const unit of meaningfulUnits) {
-        // if (Number(unit.yeardata1 ?? 0) <= 0) {
-        //   throw new BadRequestException(
-        //     'yeardata1 must be greater than 0 for each unit',
-        //   );
-        // }
-        const yeardata1 = Number(unit.yeardata1 ?? 0);
-        const yeardata2 = Number(unit.yeardata2 ?? 0);
-        const yeardata3 =
-          yeardata1 > 0 ? (yeardata2 / yeardata1) * 100 : 0;
+        const mapped = mapRawMaterialsStandardGridUnitForSave(unit);
         const id = await this.sequenceHelper.getRawMaterialsRecoveryId();
         docsToCreate.push({
           rawMaterialsRecoveryId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: String(unit.unitName ?? '').trim(),
-          year: Number(unit.year ?? 0),
-          unit1: Number(unit.unit1 ?? 0),
-          yeardata1,
-          unit2: Number(unit.unit2 ?? 0),
-          yeardata2,
-          yeardata3,
+          ...mapped,
           createdDate: now,
           updatedDate: now,
         });
@@ -210,18 +208,16 @@ export class RawMaterialsRecoveryService {
           updatedDate: now,
         });
         documents.push(this.mapProductDocument(masterDoc));
-        await trackUploadedProductDocument(this.documentVersioningService, {
+        await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
-          subsectionKey: 'supporting_documents',
           userId: vendorObjectId,
-          documentId: masterDoc._id,
-          productDocumentId,
-          filePath: storedRelativePath,
-          originalName: recoveryFile.originalname,
-          storedName: path.basename(storedRelativePath),
+          vendorId: vendorObjectId,
+          doc: masterDoc,
           file: recoveryFile,
-          action: 'added',
         });
       }
 

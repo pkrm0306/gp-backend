@@ -7,4 +7,4 @@
 export const RM_PARTIAL_TEXT = { required: false, default: '' } as const;
 
 /** Was required: true on unit grid numbers — deferred until product confirms. */
-export const RM_PARTIAL_NUMBER = { required: false, default: 0 } as const;
+export const RM_PARTIAL_NUMBER = { required: false, default: null } as const;

@@ -18,6 +18,7 @@ import {
 } from './schemas/all-product-document.schema';
 import { CreateProductDesignDto } from './dto/create-product-design.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import {
   deleteUploadedFileByDocumentLink,
@@ -30,10 +31,12 @@ import {
 import { normalizeMeasureBenefitRow } from '../common/form-partial-field.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
 import {
-  trackProductDocumentBatch,
-  trackProductDocumentDeleteBatch,
-} from '../documents/helpers/product-document-version.integration';
+  isVendorResubmitCycle,
+  trackInsertedCertificationDocuments,
+} from '../documents/helpers/certification-document-version.util';
+import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 
 @Injectable()
 export class ProductDesignService implements OnModuleInit {
@@ -44,6 +47,8 @@ export class ProductDesignService implements OnModuleInit {
     private pdMeasureModel: Model<PdMeasureDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
@@ -409,6 +414,7 @@ export class ProductDesignService implements OnModuleInit {
         sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
         userId: vendorObjectId,
         docs: docsToDelete,
+        slotKeyMode: 'subsection',
         session,
       });
     }
@@ -451,6 +457,11 @@ export class ProductDesignService implements OnModuleInit {
     }
 
     if (docRows.length) {
+      const isResubmitCycle = await isVendorResubmitCycle(
+        this.productModel,
+        urnNo,
+        session,
+      );
       const docsToInsert = [];
       for (const row of docRows) {
         const productDocumentId =
@@ -474,14 +485,17 @@ export class ProductDesignService implements OnModuleInit {
         docsToInsert,
         { session },
       );
-      await trackProductDocumentBatch({
+      await trackInsertedCertificationDocuments({
         versioning: this.documentVersioningService,
+        documentModel: this.allProductDocumentModel,
         urnNo,
         sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
         userId: vendorObjectId,
-        docs: insertedDocs,
-        action: 'added',
+        vendorId: vendorObjectId,
+        insertedDocs,
+        isResubmitCycle,
         session,
+        filesByIndex: [...ecoVisionFiles, ...supportingDocumentFiles],
       });
     }
 
@@ -534,6 +548,11 @@ export class ProductDesignService implements OnModuleInit {
     ecoVisionDocumentCount: number;
     supportingDocumentCount: number;
   }> {
+    await assertVendorCanEditUrn(
+      this.productModel,
+      vendorId,
+      createProductDesignDto.urnNo,
+    );
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -588,9 +607,9 @@ export class ProductDesignService implements OnModuleInit {
         productDesignId,
         urnNo: createProductDesignDto.urnNo,
         vendorId: vendorObjectId,
-        ecoVisionUpload: 0,
+        ecoVisionUpload: null,
         statergies: strategiesText,
-        productDesignSupportingDocument: 0,
+        productDesignSupportingDocument: null,
         productDesignStatus: createProductDesignDto.productDesignStatus ?? 0,
         measuresAndBenefits: embeddedMeasures,
         createdDate: now,

@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
+  Allow,
   IsDateString,
   IsNotEmpty,
   IsOptional,
@@ -52,15 +53,12 @@ export class UpdateUrnSiteVisitDto {
   @MaxLength(200)
   state?: string;
 
-  @ApiPropertyOptional()
-  @Transform(({ obj, value }) =>
-    value === undefined ? obj?.postal_code : value,
-  )
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(32)
-  postalCode?: string;
+  /** Legacy clients may still send postal code; it is ignored. */
+  @Allow()
+  postalCode?: unknown;
+
+  @Allow()
+  postal_code?: unknown;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -1,11 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
 import { memoryStorage, Options } from 'multer';
-import { extname } from 'path';
+import {
+  isAllowedStandardDocumentFile,
+  standardDocumentMulterFileFilter,
+  STANDARD_DOCUMENT_VALIDATION_MESSAGE,
+} from './document-upload.validation';
 
 const TEN_MB = 10 * 1024 * 1024;
 const FIVE_MB = 5 * 1024 * 1024;
-
-const UNIVERSAL_MIMES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 
 const ADMIN_IMAGE_MIMES = new Set([
   'image/jpeg',
@@ -15,72 +17,17 @@ const ADMIN_IMAGE_MIMES = new Set([
   'image/webp',
 ]);
 
-const CERTIFICATION_MIMES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/jpg',
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.ms-excel',
-]);
-
-const CERTIFICATION_EXTENSIONS = new Set([
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.pdf',
-  '.doc',
-  '.docx',
-  '.xls',
-  '.xlsx',
-]);
-
-function certificationMultipartFileFilter(
-  _req: unknown,
-  file: Express.Multer.File,
-  cb: (error: Error | null, acceptFile: boolean) => void,
-): void {
-  if (!file) {
-    cb(null, true);
-    return;
-  }
-  const fileExt = extname(file.originalname || '').toLowerCase();
-  if (
-    CERTIFICATION_MIMES.has(file.mimetype) ||
-    CERTIFICATION_EXTENSIONS.has(fileExt)
-  ) {
-    cb(null, true);
-    return;
-  }
-  cb(
-    new BadRequestException(
-      'Invalid file type. Only PNG, JPEG, PDF, Word (.doc, .docx), and Excel (.xls, .xlsx) files are allowed.',
-    ) as unknown as null,
-    false,
-  );
-}
-
 /**
  * Memory storage for S3 or local upload via `uploadFile()` helper.
- * Allowed: PDF, JPG, PNG — max 10MB.
+ * Allowed: standard document types — max 10MB.
  */
 export function universalMemoryMulterOptions(): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB },
-    fileFilter: (_req, file, cb) => {
-      if (UNIVERSAL_MIMES.has(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(null, false);
-      }
-    },
+    fileFilter: standardDocumentMulterFileFilter,
   };
 }
-
-const STANDARD_DOC_EXTENSIONS = new Set(['.pdf', '.jpg', '.jpeg', '.png']);
 
 /**
  * Standards create/update (`file` field). Memory buffer → shared `uploadFile()` in
@@ -90,26 +37,7 @@ export function standardsDocumentMemoryMulterOptions(): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB },
-    fileFilter: (_req, file, cb) => {
-      if (!file?.originalname) {
-        cb(null, true);
-        return;
-      }
-      const ext = extname(file.originalname || '').toLowerCase();
-      if (
-        UNIVERSAL_MIMES.has(file.mimetype) ||
-        STANDARD_DOC_EXTENSIONS.has(ext)
-      ) {
-        cb(null, true);
-        return;
-      }
-      cb(
-        new BadRequestException(
-          'Standard document must be PDF, JPG, or PNG (max 10MB).',
-        ) as unknown as null,
-        false,
-      );
-    },
+    fileFilter: standardDocumentMulterFileFilter,
   };
 }
 
@@ -132,7 +60,7 @@ export function adminImageMemoryMulterOptions(maxBytes = FIVE_MB): Options {
   };
 }
 
-/** Admin articles: image fields + PDF on `pdf` / `file`. */
+/** Admin articles: image fields + standard documents on `pdf` / `file`. */
 export function adminArticleMemoryMulterOptions(): Options {
   return {
     storage: memoryStorage(),
@@ -143,12 +71,12 @@ export function adminArticleMemoryMulterOptions(): Options {
         return;
       }
       if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-        if (file.mimetype === 'application/pdf') {
+        if (isAllowedStandardDocumentFile(file)) {
           cb(null, true);
         } else {
           cb(
             new BadRequestException(
-              'Only PDF files are allowed for file/pdf field',
+              STANDARD_DOCUMENT_VALIDATION_MESSAGE,
             ) as unknown as null,
             false,
           );
@@ -164,154 +92,45 @@ export function adminArticleMemoryMulterOptions(): Options {
   };
 }
 
-/** Certification / URN multipart uploads (images, PDF, Office docs). */
+/** Certification / URN multipart document uploads. */
 export function certificationMultipartMemoryMulterOptions(): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB },
-    fileFilter: certificationMultipartFileFilter,
+    fileFilter: standardDocumentMulterFileFilter,
   };
 }
 
-const SUPPORTING_DESIGN_EXTENSIONS = new Set(['.pdf', '.xls', '.xlsx']);
-const SUPPORTING_DESIGN_MIMES = new Set([
-  'application/pdf',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-]);
-
-const PRODUCT_PERFORMANCE_UPLOAD_FIELD_NAMES = new Set([
-  'files',
-  'testReportFile',
-  'testReportFiles',
-  'file',
-]);
-
-function productPerformanceMultipartFileFilter(
-  _req: unknown,
-  file: Express.Multer.File,
-  cb: (error: Error | null, acceptFile: boolean) => void,
-): void {
-  if (!file) {
-    cb(null, true);
-    return;
-  }
-  const field = String(file.fieldname ?? '');
-  if (PRODUCT_PERFORMANCE_UPLOAD_FIELD_NAMES.has(field)) {
-    const fileExt = extname(file.originalname || '').toLowerCase();
-    if (
-      SUPPORTING_DESIGN_MIMES.has(file.mimetype) ||
-      SUPPORTING_DESIGN_EXTENSIONS.has(fileExt)
-    ) {
-      cb(null, true);
-      return;
-    }
-    cb(
-      new BadRequestException(
-        'Invalid supporting document type. Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed.',
-      ) as unknown as null,
-      false,
-    );
-    return;
-  }
-  certificationMultipartFileFilter(_req, file, cb);
-}
-
-/** Product performance — test report files: PDF/Excel only (matches Product Design supporting docs). */
+/** Product performance — test report files. */
 export function productPerformanceMultipartMemoryMulterOptions(
   maxFiles = 20,
 ): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB, files: maxFiles },
-    fileFilter: productPerformanceMultipartFileFilter,
+    fileFilter: standardDocumentMulterFileFilter,
   };
 }
 
-function rawMaterialsSupportingFileFilter(
-  _req: unknown,
-  file: Express.Multer.File,
-  cb: (error: Error | null, acceptFile: boolean) => void,
-): void {
-  if (!file) {
-    cb(null, true);
-    return;
-  }
-  const fileExt = extname(file.originalname || '').toLowerCase();
-  if (
-    SUPPORTING_DESIGN_MIMES.has(file.mimetype) ||
-    SUPPORTING_DESIGN_EXTENSIONS.has(fileExt)
-  ) {
-    cb(null, true);
-    return;
-  }
-  cb(
-    new BadRequestException(
-      'Invalid supporting document type. Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed.',
-    ) as unknown as null,
-    false,
-  );
-}
-
-/** Raw Materials steps — all upload fields PDF/Excel only, 10MB (vendor supporting docs). */
+/** Raw Materials steps — all upload fields, 10MB (vendor supporting docs). */
 export function rawMaterialsMultipartMemoryMulterOptions(
   maxFiles = 20,
 ): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB, files: maxFiles },
-    fileFilter: rawMaterialsSupportingFileFilter,
+    fileFilter: standardDocumentMulterFileFilter,
   };
 }
 
-const PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES = new Set([
-  'supportingDesignFile',
-  'supportingDocumentFile',
-  'supportingDocumentFiles',
-  'supportingDocuments',
-  'productDesignSupportingDocument',
-  'supporting_document',
-  'supporting_documents',
-]);
-
-function productDesignMultipartFileFilter(
-  _req: unknown,
-  file: Express.Multer.File,
-  cb: (error: Error | null, acceptFile: boolean) => void,
-): void {
-  if (!file) {
-    cb(null, true);
-    return;
-  }
-  const field = String(file.fieldname ?? '');
-  if (PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES.has(field)) {
-    const fileExt = extname(file.originalname || '').toLowerCase();
-    if (
-      SUPPORTING_DESIGN_MIMES.has(file.mimetype) ||
-      SUPPORTING_DESIGN_EXTENSIONS.has(fileExt)
-    ) {
-      cb(null, true);
-      return;
-    }
-    cb(
-      new BadRequestException(
-        'Invalid supporting document type. Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed.',
-      ) as unknown as null,
-      false,
-    );
-    return;
-  }
-  certificationMultipartFileFilter(_req, file, cb);
-}
-
-/** Product design — eco vision (broad types) + supporting (PDF/Excel only), max 40 parts. */
+/** Product design — eco vision + supporting documents, max 40 parts. */
 export function productDesignMultipartMemoryMulterOptions(
   maxFiles = 40,
 ): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB, files: maxFiles },
-    fileFilter: productDesignMultipartFileFilter,
+    fileFilter: standardDocumentMulterFileFilter,
   };
 }
 
@@ -334,20 +153,11 @@ export function wasteManagementMultipartMemoryMulterOptions(): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: maxMb * 1024 * 1024 },
-    fileFilter: certificationMultipartFileFilter,
+    fileFilter: standardDocumentMulterFileFilter,
   };
 }
 
 const FIFTY_MB = 50 * 1024 * 1024;
-
-const BLOCKED_ASSESSMENT_REPORT_EXTENSIONS = new Set(['.zip', '.zipx']);
-
-const BLOCKED_ASSESSMENT_REPORT_MIMES = new Set([
-  'application/zip',
-  'application/x-zip-compressed',
-  'application/x-zip',
-  'multipart/x-zip',
-]);
 
 function assessmentReportFileFilter(
   _req: unknown,
@@ -368,14 +178,10 @@ function assessmentReportFileFilter(
     );
     return;
   }
-  const fileExt = extname(name).toLowerCase();
-  if (
-    BLOCKED_ASSESSMENT_REPORT_EXTENSIONS.has(fileExt) ||
-    BLOCKED_ASSESSMENT_REPORT_MIMES.has(file.mimetype)
-  ) {
+  if (!isAllowedStandardDocumentFile(file)) {
     cb(
       new BadRequestException(
-        'Zip files are not allowed for assessment reports.',
+        STANDARD_DOCUMENT_VALIDATION_MESSAGE,
       ) as unknown as null,
       false,
     );
@@ -384,7 +190,7 @@ function assessmentReportFileFilter(
   cb(null, true);
 }
 
-/** Admin URN assessment report — any file type except zip/folders, max 50MB. */
+/** Admin URN assessment report — standard document types, max 50MB. */
 export function assessmentReportMemoryMulterOptions(): Options {
   return {
     storage: memoryStorage(),

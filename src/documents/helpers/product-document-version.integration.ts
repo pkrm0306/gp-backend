@@ -8,12 +8,14 @@ import {
   fileMetadataFromMulter,
   slotKeyFromProductDocumentId,
   slotKeyFromSubsection,
+  slotKeyFromSubsectionAndTag,
 } from './document-version.helper';
 
 export interface ProductDocumentVersionRow {
   _id: Types.ObjectId | string;
   productDocumentId: number;
   documentFormSubsection?: string | null;
+  documentTag?: string | null;
   documentLink?: string | null;
   documentName?: string | null;
   documentOriginalName?: string | null;
@@ -26,7 +28,7 @@ export interface TrackProductDocumentBatchParams {
   userId: string | Types.ObjectId;
   docs: ProductDocumentVersionRow[];
   action?: DocumentVersionAction;
-  slotKeyMode?: 'productDocumentId' | 'subsection';
+  slotKeyMode?: 'productDocumentId' | 'subsection' | 'subsectionTag';
   processType?: DocumentProcessType;
   renewalCycleId?: string | Types.ObjectId | null;
   roundNo?: number | null;
@@ -57,9 +59,14 @@ export async function trackProductDocumentBatch(
       sectionKey,
       subsectionKey: doc.documentFormSubsection ?? null,
       slotKey:
-        slotKeyMode === 'subsection'
-          ? slotKeyFromSubsection(doc.documentFormSubsection)
-          : slotKeyFromProductDocumentId(doc.productDocumentId),
+        slotKeyMode === 'subsectionTag'
+          ? slotKeyFromSubsectionAndTag(
+              doc.documentFormSubsection,
+              doc.documentTag,
+            )
+          : slotKeyMode === 'subsection'
+            ? slotKeyFromSubsection(doc.documentFormSubsection)
+            : slotKeyFromProductDocumentId(doc.productDocumentId),
       action,
       documentId: doc._id,
       productDocumentId: doc.productDocumentId,
@@ -87,6 +94,7 @@ export async function trackUploadedProductDocument(
     urnNo: string;
     sectionKey: string;
     subsectionKey?: string | null;
+    documentTag?: string | null;
     userId: string | Types.ObjectId;
     documentId: Types.ObjectId | string;
     productDocumentId: number;
@@ -95,7 +103,7 @@ export async function trackUploadedProductDocument(
     storedName: string;
     file?: Express.Multer.File;
     action?: DocumentVersionAction;
-    slotKeyMode?: 'productDocumentId' | 'subsection';
+    slotKeyMode?: 'productDocumentId' | 'subsection' | 'subsectionTag';
     processType?: DocumentProcessType;
     renewalCycleId?: string | Types.ObjectId | null;
     roundNo?: number | null;
@@ -108,9 +116,11 @@ export async function trackUploadedProductDocument(
     sectionKey: params.sectionKey,
     subsectionKey: params.subsectionKey ?? null,
     slotKey:
-      params.slotKeyMode === 'subsection'
-        ? slotKeyFromSubsection(params.subsectionKey)
-        : slotKeyFromProductDocumentId(params.productDocumentId),
+      params.slotKeyMode === 'subsectionTag'
+        ? slotKeyFromSubsectionAndTag(params.subsectionKey, params.documentTag)
+        : params.slotKeyMode === 'subsection'
+          ? slotKeyFromSubsection(params.subsectionKey)
+          : slotKeyFromProductDocumentId(params.productDocumentId),
     action: params.action ?? 'added',
     documentId: params.documentId,
     productDocumentId: params.productDocumentId,

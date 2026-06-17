@@ -1,14 +1,14 @@
 import { Model, Types } from 'mongoose';
-import { hasPartialRawMaterialsProductRow } from '../form-partial-field.util';
+import {
+  hasPartialRawMaterialsProductRow,
+  normalizeRawMaterialsProductRow,
+} from '../form-partial-field.util';
 
 /** Vendor product table row — excludes file-only / empty placeholder DB rows. */
 export function isHazardousProductRowForVendorDisplay(
   row: Record<string, unknown> | null | undefined,
 ): boolean {
-  return hasPartialRawMaterialsProductRow({
-    productsName: row?.productsName ?? row?.productName,
-    productsTestReport: row?.productsTestReport ?? row?.testReportReference,
-  });
+  return hasPartialRawMaterialsProductRow(normalizeRawMaterialsProductRow(row));
 }
 
 export function filterHazardousProductsForVendorDisplay<T extends Record<string, unknown>>(

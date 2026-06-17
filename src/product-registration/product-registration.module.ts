@@ -27,6 +27,7 @@ import { CountriesModule } from '../countries/countries.module';
 import { StatesModule } from '../states/states.module';
 import { AuthModule } from '../auth/auth.module';
 import { CategoriesModule } from '../categories/categories.module';
+import { SectorsModule } from '../sectors/sectors.module';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -51,6 +52,10 @@ import {
   VendorProductChangeRequest,
   VendorProductChangeRequestSchema,
 } from './schemas/vendor-product-change-request.schema';
+import {
+  ProcessFinalReview,
+  ProcessFinalReviewSchema,
+} from './schemas/process-final-review.schema';
 import { UrnTabReviewService } from './urn-tab-review.service';
 import { CertificationLifecycleService } from './certification-lifecycle.service';
 import { ZohoModule } from '../zoho/zoho.module';
@@ -61,8 +66,14 @@ import {
 } from '../renew/schemas/product-status-audit.schema';
 import { AdminExpiredReactivateService } from './services/admin-expired-reactivate.service';
 import { AdminRejectedRestoreService } from './services/admin-rejected-restore.service';
-import { AdminAddProductToUrnService } from './services/admin-add-product-to-urn.service';
 import { AdminCertifiedRejectService } from './services/admin-certified-reject.service';
+import { AdminAddProductToUrnService } from './services/admin-add-product-to-urn.service';
+import { CategoryChangeCleanupService } from './services/category-change-cleanup.service';
+import { ProcessFinalReviewService } from './services/process-final-review.service';
+import {
+  ProcessComments,
+  ProcessCommentsSchema,
+} from '../process-comments/schemas/process-comments.schema';
 
 @Module({
   imports: [
@@ -78,6 +89,8 @@ import { AdminCertifiedRejectService } from './services/admin-certified-reject.s
         schema: VendorProductChangeRequestSchema,
       },
       { name: ProductStatusAudit.name, schema: ProductStatusAuditSchema },
+      { name: ProcessFinalReview.name, schema: ProcessFinalReviewSchema },
+      { name: ProcessComments.name, schema: ProcessCommentsSchema },
     ]),
     PassportModule,
     AuthModule,
@@ -85,6 +98,7 @@ import { AdminCertifiedRejectService } from './services/admin-certified-reject.s
     CountriesModule,
     StatesModule,
     CategoriesModule,
+    SectorsModule,
     ActivityLogModule,
     RbacModule,
     UrnSiteVisitsModule,
@@ -115,8 +129,10 @@ import { AdminCertifiedRejectService } from './services/admin-certified-reject.s
     EmailService,
     AdminExpiredReactivateService,
     AdminRejectedRestoreService,
-    AdminAddProductToUrnService,
     AdminCertifiedRejectService,
+    AdminAddProductToUrnService,
+    CategoryChangeCleanupService,
+    ProcessFinalReviewService,
   ],
   exports: [
     ProductRegistrationService,

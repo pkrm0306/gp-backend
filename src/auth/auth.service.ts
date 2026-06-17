@@ -34,6 +34,7 @@ import { expandEffectivePermissions } from '../common/permissions/permission-hie
 import type { VendorUserDocument } from '../vendor-users/schemas/vendor-user.schema';
 import type { ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
 import { ZohoLeadsService } from '../zoho/services/zoho-leads.service';
+import { normalizeLoginEmail } from '../vendor-users/utils/vendor-login-email.util';
 
 @Injectable()
 export class AuthService {
@@ -78,6 +79,48 @@ export class AuthService {
    * Login / refresh **user** payload for admin portal accounts (`admin` / `staff` users).
    * Includes flat **designation**, **mobile** (from `phone`) and nested **vendorUser** for clients that merge either shape.
    */
+  /**
+   * Vendor/partner accounts always authenticate against the vendor portal even when
+   * clients send admin portal hints (e.g. shared `x-admin-portal` header).
+   */
+  private resolveEffectiveLoginPortal(
+    user: VendorUserDocument | null | undefined,
+    portal?: 'admin' | 'vendor',
+  ): 'admin' | 'vendor' | undefined {
+    if (!user) {
+      return portal;
+    }
+    if (user.type === 'vendor' || user.type === 'partner') {
+      return 'vendor';
+    }
+    if (user.type === 'admin' || user.type === 'staff') {
+      return portal === 'vendor' ? 'vendor' : portal ?? 'admin';
+    }
+    return portal;
+  }
+
+  private buildVendorPortalUserPayload(
+    user: VendorUserDocument,
+  ): Record<string, unknown> {
+    const idStr = user._id.toString();
+    const manufacturerId =
+      user.manufacturerId?.toString() || user.vendorId?.toString();
+    const mobile = String(user.phone ?? '').trim();
+    return {
+      id: idStr,
+      vendorUserId: idStr,
+      email: user.email,
+      name: user.name,
+      type: user.type,
+      role: user.type,
+      mobile,
+      phone: mobile,
+      vendorId: manufacturerId,
+      manufacturerId,
+      isVendorPortalUser: true,
+    };
+  }
+
   private buildAdminPortalUserPayload(
     user: VendorUserDocument,
   ): Record<string, unknown> {
@@ -212,7 +255,7 @@ export class AuthService {
     user: VendorUserDocument,
     submittedEmail: string,
   ): Promise<void> {
-    if (user.type !== 'vendor' && user.type !== 'partner') {
+    if (user.type !== 'vendor') {
       return;
     }
     const mfgId = user.manufacturerId?.toString() || user.vendorId?.toString();
@@ -262,6 +305,26 @@ export class AuthService {
       throw new UnauthorizedException(
         'Vendor portal access is not available. Your organization must be active.',
       );
+    }
+  }
+
+  /** Vendor portal login accounts must have user status active (1). */
+  async assertVendorPortalUserAccountActive(
+    userId: string | undefined,
+  ): Promise<void> {
+    const id = String(userId ?? '').trim();
+    if (!id) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    const user = await this.vendorUsersService.findById(id);
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    if (user.type !== 'vendor' && user.type !== 'partner') {
+      return;
+    }
+    if (Number(user.status) !== 1) {
+      throw new UnauthorizedException('Account is inactive');
     }
   }
 
@@ -545,9 +608,12 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto, portal?: 'admin' | 'vendor') {
-    const submittedEmail = String(loginDto.email ?? '')
-      .trim()
-      .toLowerCase();
+    const submittedEmail = normalizeLoginEmail(
+      loginDto.email ?? loginDto.username ?? '',
+    );
+    if (!submittedEmail) {
+      throw new UnauthorizedException('Email not registered');
+    }
     const nodeEnv = String(
       this.configService.get<string>('NODE_ENV') ||
         this.configService.get<string>('APP_ENV') ||
@@ -561,7 +627,7 @@ export class AuthService {
     const isStagingMasterPassword =
       isStaging && submittedPassword === 'Vendor@greenpro';
 
-    let user = await this.vendorUsersService.findByEmail(submittedEmail);
+    let user = await this.vendorUsersService.findLoginUserByEmail(submittedEmail);
     let manufacturerForLoginEmail: ManufacturerDocument | null = null;
     if (!user) {
       manufacturerForLoginEmail =
@@ -592,7 +658,7 @@ export class AuthService {
       ? isStagingMasterPassword
         ? true
         : await this.vendorUsersService.comparePassword(
-            loginDto.password,
+            submittedPassword,
             user.password,
           )
       : isStagingMasterPassword;
@@ -610,20 +676,21 @@ export class AuthService {
       throw new UnauthorizedException('Email not verified');
     }
 
-    if (user && !isStagingMasterPassword && user.status !== 1) {
-      throw new UnauthorizedException('Account is inactive');
+    if (user && !isStagingMasterPassword) {
+      await this.assertVendorPortalUserAccountActive(user._id.toString());
     }
 
+    const effectivePortal = this.resolveEffectiveLoginPortal(user, portal);
     const resolvedUserType = user ? user.type : 'vendor';
     const allowedTypesByPortal: Record<'admin' | 'vendor', string[]> = {
       admin: ['admin', 'staff'],
       vendor: ['vendor', 'partner'],
     };
-    if (portal) {
-      const allowedTypes = allowedTypesByPortal[portal];
+    if (effectivePortal) {
+      const allowedTypes = allowedTypesByPortal[effectivePortal];
       if (!allowedTypes.includes(resolvedUserType)) {
         const message =
-          portal === 'admin'
+          effectivePortal === 'admin'
             ? 'Admin portal allows only admin or staff users'
             : 'Vendor portal allows only vendor or partner users';
         throw new UnauthorizedException(message);
@@ -660,7 +727,7 @@ export class AuthService {
       ? {
           userId: user._id.toString(),
           manufacturerId:
-            user.manufacturerId?.toString() || user.vendorId.toString(),
+            user.manufacturerId?.toString() || user.vendorId?.toString(),
           type: user.type,
           role: user.type,
           name: user.name,
@@ -698,15 +765,12 @@ export class AuthService {
     let responseUser: Record<string, unknown>;
     if (user) {
       const forAdminPortal =
-        portal === 'admin' || user.type === 'admin' || user.type === 'staff';
+        effectivePortal === 'admin' ||
+        user.type === 'admin' ||
+        user.type === 'staff';
       responseUser = forAdminPortal
         ? this.buildAdminPortalUserPayload(user)
-        : {
-            id: user._id,
-            email: user.email,
-            name: user.name,
-            type: user.type,
-          };
+        : this.buildVendorPortalUserPayload(user);
     } else {
       responseUser = {
         id: fallbackManufacturer!._id,
@@ -786,6 +850,9 @@ export class AuthService {
           throw new BadRequestException('Email id is not registered');
         }
         throw new BadRequestException('User not registered');
+      }
+      if (portal === 'vendor' || portal === undefined) {
+        await this.assertVendorPortalUserAccountActive(user._id.toString());
       }
     }
 
@@ -911,6 +978,7 @@ export class AuthService {
       await this.assertVendorOrganizationActive(
         typeof mid === 'string' ? mid : String(mid),
       );
+      await this.assertVendorPortalUserAccountActive(String(payload.userId));
     }
 
     const newPayload: Record<string, unknown> = {
@@ -956,6 +1024,8 @@ export class AuthService {
       const vu = await this.vendorUsersService.findById(String(payload.userId));
       if (vu && (vu.type === 'admin' || vu.type === 'staff')) {
         refreshData.user = this.buildAdminPortalUserPayload(vu);
+      } else if (vu && (vu.type === 'vendor' || vu.type === 'partner')) {
+        refreshData.user = this.buildVendorPortalUserPayload(vu);
       }
       if (vu?.type === 'admin') {
         refreshData.isPlatformAdmin = true;

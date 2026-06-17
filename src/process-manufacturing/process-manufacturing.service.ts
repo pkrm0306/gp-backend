@@ -23,8 +23,13 @@ import {
   UploadResult,
 } from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackProductDocumentBatch } from '../documents/helpers/product-document-version.integration';
+import {
+  isVendorResubmitCycle,
+  trackInsertedCertificationDocuments,
+} from '../documents/helpers/certification-document-version.util';
+import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 
 @Injectable()
 export class ProcessManufacturingService implements OnModuleInit {
@@ -33,6 +38,8 @@ export class ProcessManufacturingService implements OnModuleInit {
     private processManufacturingModel: Model<ProcessManufacturingDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
@@ -96,6 +103,11 @@ export class ProcessManufacturingService implements OnModuleInit {
     energyConservationSupportingDocumentsFiles?: Express.Multer.File[],
     energyConsumptionDocumentsFiles?: Express.Multer.File[],
   ): Promise<ProcessManufacturingDocument> {
+    await assertVendorCanEditUrn(
+      this.productModel,
+      vendorId,
+      createProcessManufacturingDto.urnNo,
+    );
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -127,7 +139,7 @@ export class ProcessManufacturingService implements OnModuleInit {
         '';
 
       let energyConservationSupportingDocuments =
-        existingManufacturing?.energyConservationSupportingDocuments ?? 0;
+        existingManufacturing?.energyConservationSupportingDocuments ?? null;
       const energyConservationUploads: UploadResult[] = [];
       if (energyConservationFiles.length > 0) {
         for (const energyConservationSupportingDocumentsFile of energyConservationFiles) {
@@ -142,7 +154,7 @@ export class ProcessManufacturingService implements OnModuleInit {
       }
 
       let energyConsumptionDocuments =
-        existingManufacturing?.energyConsumptionDocuments ?? 0;
+        existingManufacturing?.energyConsumptionDocuments ?? null;
       const energyConsumptionUploads: UploadResult[] = [];
       if (energyConsumptionFiles.length > 0) {
         for (const energyConsumptionDocumentsFile of energyConsumptionFiles) {
@@ -227,18 +239,26 @@ export class ProcessManufacturingService implements OnModuleInit {
         });
       }
       if (docsToInsert.length) {
+        const isResubmitCycle = await isVendorResubmitCycle(
+          this.productModel,
+          createProcessManufacturingDto.urnNo,
+          session,
+        );
         const insertedDocs = await this.allProductDocumentModel.insertMany(
           docsToInsert,
           { session },
         );
-        await trackProductDocumentBatch({
+        await trackInsertedCertificationDocuments({
           versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo: createProcessManufacturingDto.urnNo,
           sectionKey: DocumentSectionKey.PROCESS_MANUFACTURING,
           userId: vendorObjectId,
-          docs: insertedDocs,
-          action: 'added',
+          vendorId: vendorObjectId,
+          insertedDocs,
+          isResubmitCycle,
           session,
+          filesByIndex: [...energyConservationFiles, ...energyConsumptionFiles],
         });
       }
 

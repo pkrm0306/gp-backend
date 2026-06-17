@@ -24,6 +24,7 @@ import {
   ActivityLogSchema,
 } from '../activity-log/schemas/activity-log.schema';
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
+import { VendorDashboardOverviewService } from './vendor-dashboard-overview.service';
 
 @Module({
   imports: [
@@ -38,7 +39,7 @@ import { ManufacturersModule } from '../manufacturers/manufacturers.module';
     ]),
   ],
   controllers: [DashboardController],
-  providers: [DashboardService],
-  exports: [DashboardService],
+  providers: [DashboardService, VendorDashboardOverviewService],
+  exports: [DashboardService, VendorDashboardOverviewService],
 })
 export class DashboardModule {}

@@ -16,16 +16,17 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import { CreateRawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesDto } from './dto/create-raw-materials-elimination-of-ozone-depleting-global-warming-substances.dto';
 import { uploadFile } from '../utils/upload-file.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import {
-  trackProductDocumentDeleteBatch,
-  trackUploadedProductDocument,
-} from '../documents/helpers/product-document-version.integration';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 
 @Injectable()
 export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesService {
   constructor(
     @InjectModel(AllProductDocument.name)
     private readonly allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private readonly productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -83,43 +84,6 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesServi
       const urnNo = dto.urnNo.trim();
       const now = new Date();
 
-      const existingDocs = await this.allProductDocumentModel.find({
-        vendorId: vendorObjectId,
-        urnNo,
-        documentForm:
-          DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
-        isDeleted: { $ne: true },
-      });
-
-      await this.allProductDocumentModel.updateMany(
-        {
-          vendorId: vendorObjectId,
-          urnNo,
-          documentForm:
-            DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
-          isDeleted: { $ne: true },
-        },
-        {
-          $set: {
-            isDeleted: true,
-            deletedAt: now,
-            deletedBy: vendorObjectId,
-            updatedDate: now,
-          },
-        },
-      );
-      if (existingDocs.length) {
-        await trackProductDocumentDeleteBatch({
-          versioning: this.documentVersioningService,
-          urnNo,
-          sectionKey:
-            DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
-          userId: vendorObjectId,
-          docs: existingDocs,
-          slotKeyMode: 'subsection',
-        });
-      }
-
       const storedRelativePath = await this.saveFileToUrnFolder(
         ozoneReportFile,
         urnNo,
@@ -141,21 +105,18 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesServi
         createdDate: now,
         updatedDate: now,
       });
-      await trackUploadedProductDocument(this.documentVersioningService, {
-        urnNo,
-        sectionKey:
+      await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
+          urnNo,
+          sectionKey:
           DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
-        subsectionKey: 'supporting_documents',
-        userId: vendorObjectId,
-        documentId: doc._id,
-        productDocumentId,
-        filePath: storedRelativePath,
-        originalName: ozoneReportFile.originalname,
-        storedName: path.basename(storedRelativePath),
-        file: ozoneReportFile,
-        action: 'replaced',
-        slotKeyMode: 'subsection',
-      });
+          userId: vendorObjectId,
+          vendorId: vendorObjectId,
+          doc: doc,
+          file: ozoneReportFile,
+        });
 
       return {
         urnNo,

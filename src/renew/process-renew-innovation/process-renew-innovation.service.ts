@@ -166,6 +166,7 @@ export class ProcessRenewInnovationService {
         now,
         session,
         rows: newDocRows,
+        slotKeyMode: 'subsectionTag',
       });
 
       await session.commitTransaction();

@@ -98,7 +98,11 @@ export class AdminUrnSiteVisitsController {
   @Post()
   @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create site visit for a URN (admin)' })
+  @ApiOperation({
+    summary: 'Create site visit for a URN (admin)',
+    description:
+      'Address fields: plant `name`, `addressLine1`, optional `addressLine2`, `city`, `state`, `country`. Postal code is not collected.',
+  })
   @ApiBody({ type: CreateUrnSiteVisitDto })
   @ApiResponse({ status: 201, description: 'Site visit created' })
   async create(
@@ -118,7 +122,11 @@ export class AdminUrnSiteVisitsController {
 
   @Put(':id')
   @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
-  @ApiOperation({ summary: 'Update site visit (admin)' })
+  @ApiOperation({
+    summary: 'Update site visit (admin)',
+    description:
+      'Updatable address fields exclude postal code (not collected on site visits).',
+  })
   @ApiParam({ name: 'id' })
   @ApiBody({ type: UpdateUrnSiteVisitDto })
   async update(

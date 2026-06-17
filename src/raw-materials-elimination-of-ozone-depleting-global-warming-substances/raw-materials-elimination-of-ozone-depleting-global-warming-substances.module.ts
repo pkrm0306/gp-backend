@@ -4,6 +4,7 @@ import {
   AllProductDocument,
   AllProductDocumentSchema,
 } from '../product-design/schemas/all-product-document.schema';
+import { Product, ProductSchema } from '../product-registration/schemas/product.schema';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
@@ -14,6 +15,7 @@ import { RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesService }
   imports: [
     MongooseModule.forFeature([
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
+      { name: Product.name, schema: ProductSchema },
     ]),
     ProductRegistrationModule,
     PassportModule,

@@ -58,6 +58,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       await this.authService.assertVendorOrganizationActive(
         String(manufacturerId),
       );
+      await this.authService.assertVendorPortalUserAccountActive(
+        payload.userId,
+      );
     }
 
     if (!payload.userId || !role) {

@@ -85,14 +85,14 @@ describe('AdminRejectedRestoreService', () => {
   });
 
   describe('getRestoreOptions', () => {
-    it('allows both targets when URN has no certified products', async () => {
+    it('allows uncertified only when URN has no certified products', async () => {
       countDocuments
         .mockResolvedValueOnce(0)
         .mockResolvedValueOnce(2);
 
       const result = await service.getRestoreOptions(urnNo);
 
-      expect(result.allowedTargets).toEqual(['uncertified', 'certified']);
+      expect(result.allowedTargets).toEqual(['uncertified']);
       expect(result.rejectedProductCount).toBe(2);
     });
 
@@ -156,6 +156,25 @@ describe('AdminRejectedRestoreService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
+    it('blocks certified restore when URN has no certified products', async () => {
+      findOneExec.mockResolvedValue({
+        _id: productObjectId,
+        eoiNo: 'GPPMI003003',
+        productStatus: PRODUCT_STATUS_REJECTED,
+        manufacturerId,
+      });
+      countDocuments.mockResolvedValue(0);
+
+      await expect(
+        service.restoreProduct(
+          urnNo,
+          productObjectId.toHexString(),
+          PRODUCT_STATUS_CERTIFIED,
+          adminUserId,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
     it('throws 409 when product is not rejected', async () => {
       findOneExec.mockResolvedValue({
         _id: productObjectId,
@@ -176,7 +195,7 @@ describe('AdminRejectedRestoreService', () => {
   });
 
   describe('restoreUrn', () => {
-    it('restores all rejected products with sequential new EOIs', async () => {
+    it('restores all rejected products to uncertified with sequential new EOIs', async () => {
       findLeanExec.mockResolvedValue([
         {
           _id: productObjectId,
@@ -188,7 +207,7 @@ describe('AdminRejectedRestoreService', () => {
 
       const result = await service.restoreUrn(
         urnNo,
-        PRODUCT_STATUS_CERTIFIED,
+        PRODUCT_STATUS_PENDING,
         adminUserId,
       );
 

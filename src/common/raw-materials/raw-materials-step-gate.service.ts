@@ -20,7 +20,7 @@ import {
 } from '../constants/document-section-key.constants';
 import {
   assertAtLeastOneRawMaterialsField,
-  hasAnyMeaningfulBodyField,
+  hasAnyMeaningfulRawMaterialsSavePayload,
 } from './raw-materials-upload.util';
 
 export {
@@ -41,6 +41,8 @@ export type RawMaterialsAtLeastOneParams = {
   persistedRecordCount?: number;
   /** Step 15 grid / multipart body (any non-metadata field). */
   multipartBody?: Record<string, unknown>;
+  /** Multipart / JSON body for partial product-row detection. */
+  body?: Record<string, unknown>;
 };
 
 @Injectable()
@@ -76,7 +78,8 @@ export class RawMaterialsStepGateService {
         )
       : 0;
 
-    if (params.multipartBody && hasAnyMeaningfulBodyField(params.multipartBody)) {
+    const payloadBody = params.body ?? params.multipartBody;
+    if (payloadBody && hasAnyMeaningfulRawMaterialsSavePayload(payloadBody)) {
       return;
     }
 
@@ -85,6 +88,7 @@ export class RawMaterialsStepGateService {
       textValues: params.textValues,
       rows: params.rows,
       rowKeys: params.rowKeys,
+      body: params.body ?? params.multipartBody,
       retainedDocumentCount,
       persistedRecordCount: params.persistedRecordCount ?? 0,
     });

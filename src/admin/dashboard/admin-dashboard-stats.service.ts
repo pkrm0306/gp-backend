@@ -23,6 +23,7 @@ import {
 } from '../utils/admin-dashboard-product-status.util';
 import type { AdminDashboardCharts } from '../admin-dashboard-metrics.types';
 import type { AdminDashboardStatsBundle } from './admin-dashboard-stats.types';
+import type { AdminDashboardRejectionTrend } from './admin-dashboard-rejection-trend.types';
 
 @Injectable()
 export class AdminDashboardStatsService {
@@ -393,5 +394,119 @@ export class AdminDashboardStatsService {
       urnPipeline: widgets.urnPipeline,
       ...trends,
     };
+  }
+
+  /**
+   * Monthly (or weekly/quarterly) rejected product volume for the Rejection Trend area chart.
+   * Buckets by `rejectedAt`, falling back to `updatedDate` for legacy rows.
+   */
+  async getRejectionTrend(
+    filters: ResolvedDashboardFilters,
+  ): Promise<AdminDashboardRejectionTrend> {
+    const now = new Date();
+    const granularity = filters.granularity ?? 'monthly';
+    const snapshotMatch = buildProductSnapshotMatch(filters, now);
+    const rejectedMatch: Record<string, unknown> = {
+      ...snapshotMatch,
+      productStatus: 3,
+    };
+
+    const dateMatch: Record<string, unknown> = { ...rejectedMatch };
+    if (filters.dateRange) {
+      dateMatch.$expr = {
+        $and: [
+          {
+            $gte: [
+              { $ifNull: ['$rejectedAt', '$updatedDate'] },
+              filters.dateRange.from,
+            ],
+          },
+          {
+            $lte: [
+              { $ifNull: ['$rejectedAt', '$updatedDate'] },
+              filters.dateRange.to,
+            ],
+          },
+        ],
+      };
+    }
+
+    const bucketId = bucketDateExpression(
+      granularity,
+      'rejectionDate',
+    );
+
+    const [trendRows, rejectedInRange, totalRejected] = await Promise.all([
+      this.productModel
+        .aggregate<{
+          _id: {
+            year?: number;
+            month?: number;
+            quarter?: number;
+            week?: number;
+          };
+          count: number;
+        }>([
+          { $match: dateMatch },
+          {
+            $addFields: {
+              rejectionDate: { $ifNull: ['$rejectedAt', '$updatedDate'] },
+            },
+          },
+          { $group: { _id: bucketId, count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.productModel.countDocuments(dateMatch).exec(),
+      this.productModel.countDocuments(rejectedMatch).exec(),
+    ]);
+
+    const sortedRows = [...trendRows].sort((a, b) =>
+      this.compareChartBuckets(a._id, b._id, granularity),
+    );
+
+    const chart = sortedRows.map((row) => ({
+      label: formatBucketLabel(granularity, row._id),
+      year: row._id.year ?? 0,
+      month: row._id.month,
+      quarter: row._id.quarter,
+      week: row._id.week,
+      count: row.count ?? 0,
+    }));
+
+    const maxCount = chart.reduce((max, point) => Math.max(max, point.count), 0);
+    const suggestedMax = this.suggestRejectionTrendYMax(maxCount);
+    const subtitle =
+      granularity === 'weekly'
+        ? 'Weekly rejected product volume'
+        : granularity === 'quarterly'
+          ? 'Quarterly rejected product volume'
+          : 'Monthly rejected product volume';
+
+    return {
+      title: 'Rejection Trend',
+      subtitle,
+      unit: 'products',
+      granularity,
+      totals: {
+        rejectedInRange,
+        totalRejected,
+      },
+      chart,
+      yAxis: {
+        min: 0,
+        suggestedMax,
+      },
+    };
+  }
+
+  private suggestRejectionTrendYMax(maxCount: number): number {
+    if (maxCount <= 0) return 1;
+    if (maxCount <= 1) return 1;
+    if (maxCount <= 4) return 4;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(maxCount)));
+    const normalized = maxCount / magnitude;
+    const nice =
+      normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+    return nice * magnitude;
   }
 }

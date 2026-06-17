@@ -23,9 +23,11 @@ import {
   PRODUCT_STATUS_CERTIFIED,
   PRODUCT_STATUS_DISCONTINUED,
 } from '../../renew/constants/product-status.constants';
+import { PRODUCT_RENEW_STATUS } from '../../renew/constants/renewal-urn-status.constants';
 
 type ReactivationUpdate = {
   productStatus: number;
+  productRenewStatus: number;
   updatedDate: Date;
   validtillDate: Date;
   firstNotifyDate: Date;
@@ -226,6 +228,7 @@ export class AdminExpiredReactivateService {
       validityExtended,
       update: {
         productStatus: PRODUCT_STATUS_CERTIFIED,
+        productRenewStatus: PRODUCT_RENEW_STATUS.NOT_RENEWED,
         updatedDate: now,
         validtillDate,
         firstNotifyDate: notifyDates.firstNotifyDate,

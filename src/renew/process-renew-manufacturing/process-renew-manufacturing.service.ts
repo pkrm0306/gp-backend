@@ -252,6 +252,7 @@ export class ProcessRenewManufacturingService {
         now,
         session,
         rows: newDocRows,
+        slotKeyMode: 'subsection',
       });
 
       await session.commitTransaction();

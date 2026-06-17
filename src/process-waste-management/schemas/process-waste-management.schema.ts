@@ -17,8 +17,8 @@ export class ProcessWasteManagement {
   @Prop({ required: false })
   wmImplementationDetails?: string;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  wmSupportingDocuments: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  wmSupportingDocuments?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: true, type: Number, default: 0 })
   processWasteManagementStatus: number; // 0=Pending, 1=Completed

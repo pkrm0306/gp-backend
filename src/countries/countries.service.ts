@@ -26,13 +26,40 @@ export class CountriesService {
     return Number.isFinite(ttl) && ttl > 0 ? ttl : 300;
   }
 
-  /** Full country list for website filter tree — always from DB (no Redis cache). */
+  /** Full country list for filter dropdowns — always from DB (no Redis cache, no product scope). */
   async findAllForFilterOptions() {
     return this.countryModel
       .find()
-      .sort({ name: 1, countryName: 1, country_name: 1 })
+      .sort({ countryName: 1, country_name: 1, name: 1 })
       .lean()
       .exec();
+  }
+
+  /**
+   * All countries as `{ value, label }` for dropdowns (uncertified list filters, etc.).
+   * Not scoped to existing products — every row in `countries` is included.
+   */
+  async buildDropdownOptions(): Promise<Array<{ value: string; label: string }>> {
+    const countries = await this.findAllForFilterOptions();
+    return (countries ?? [])
+      .map((country) => {
+        const c = country as {
+          _id?: { toString(): string };
+          countryName?: string;
+          country_name?: string;
+          name?: string;
+        };
+        const value = String(c._id ?? '').trim();
+        if (!value || value === 'undefined') {
+          return null;
+        }
+        const label =
+          String(c.countryName ?? c.country_name ?? c.name ?? '').trim() ||
+          'Country';
+        return { value, label };
+      })
+      .filter((row): row is { value: string; label: string } => row != null)
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
   }
 
   async findAll() {
@@ -48,7 +75,7 @@ export class CountriesService {
 
     const rows = await this.countryModel
       .find()
-      .sort({ name: 1, countryName: 1, country_name: 1 })
+      .sort({ countryName: 1, country_name: 1, name: 1 })
       .lean()
       .exec();
     this.redisService

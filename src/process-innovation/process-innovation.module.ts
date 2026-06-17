@@ -8,6 +8,7 @@ import {
   AllProductDocument,
   AllProductDocumentSchema,
 } from '../product-design/schemas/all-product-document.schema';
+import { Product, ProductSchema } from '../product-registration/schemas/product.schema';
 import { ProcessInnovationService } from './process-innovation.service';
 import { ProcessInnovationController } from './process-innovation.controller';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
@@ -19,6 +20,7 @@ import { AuthModule } from '../auth/auth.module';
     MongooseModule.forFeature([
       { name: ProcessInnovation.name, schema: ProcessInnovationSchema },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
+      { name: Product.name, schema: ProductSchema },
     ]),
     ProductRegistrationModule, // for SequenceHelper
     PassportModule,

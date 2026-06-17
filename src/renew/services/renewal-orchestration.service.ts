@@ -94,7 +94,7 @@ import {
 } from '../schemas/process-renew-product-performance.schema';
 
 import { RenewalCycleService } from './renewal-cycle.service';
-import { RenewalCycleDocument } from '../schemas/renewal-cycle.schema';
+import { RenewalCycleDocument, RenewalCycleStatus } from '../schemas/renewal-cycle.schema';
 import { buildRenewProcessHeaderFilter } from '../helpers/renew-cycle-scope.util';
 import { RenewDocumentPromotionService } from './renew-document-promotion.service';
 import { runInTransactionIfSupported } from '../helpers/mongo-session.util';
@@ -495,14 +495,6 @@ export class RenewalOrchestrationService {
 
 
 
-    if (Number(anyProduct.productRenewStatus) === PRODUCT_RENEW_STATUS.RENEWED) {
-
-      throw new BadRequestException('URN renewal is already completed');
-
-    }
-
-
-
     let cycle: RenewalCycleDocument | null = null;
     const cycleIdRaw = String(input.renewalCycleId ?? '').trim();
     if (cycleIdRaw) {
@@ -518,16 +510,22 @@ export class RenewalOrchestrationService {
       );
     }
 
+    const productRenewStatus = Number(anyProduct.productRenewStatus);
+    if (productRenewStatus === PRODUCT_RENEW_STATUS.RENEWED) {
+      if (!cycle || cycle.status !== RenewalCycleStatus.IN_PROGRESS) {
+        throw new BadRequestException('URN renewal is already completed');
+      }
+    }
+
     if (!cycle) {
-      cycle = await this.renewalCycleService.createCycle({
-        urnNo: trimmedUrn,
-        vendorId: ownership.vendorId,
-        manufacturerId: ownership.manufacturerId,
-        paymentId: input.paymentId,
-        urnStatusAtStart: anyProduct.urnStatus,
-        userId: userObjectId,
-        session: input.session,
-      });
+      cycle = await this.openNextRenewalCycle(
+        trimmedUrn,
+        ownership,
+        userObjectId,
+        anyProduct.urnStatus,
+        input.paymentId,
+        input.session,
+      );
     } else if (input.paymentId && !cycle.paymentId) {
       cycle.paymentId = input.paymentId;
       cycle.updatedAt = now;
@@ -569,6 +567,101 @@ export class RenewalOrchestrationService {
 
     );
 
+  }
+
+
+
+  /**
+   * Open the next renewal cycle for a URN (cycle 1 or N+1 after prior completion).
+   * Resets product renew state so payment / process tabs can run again.
+   */
+  private async openNextRenewalCycle(
+    urnNo: string,
+    ownership: { vendorId: Types.ObjectId; manufacturerId: Types.ObjectId },
+    userId: Types.ObjectId,
+    urnStatusAtStart: number | undefined,
+    paymentId: number | undefined,
+    session?: ClientSession,
+  ): Promise<RenewalCycleDocument> {
+    const trimmedUrn = urnNo.trim();
+    const now = new Date();
+
+    const cycle = await this.renewalCycleService.closeInProgressAndCreateNextCycle({
+      urnNo: trimmedUrn,
+      vendorId: ownership.vendorId,
+      manufacturerId: ownership.manufacturerId,
+      paymentId,
+      urnStatusAtStart: urnStatusAtStart ?? RENEWAL_URN_STATUS.PAYMENT_PENDING,
+      userId,
+      session,
+    });
+
+    await this.productModel.updateMany(
+      { urnNo: trimmedUrn, ...matchRenewEligibleProducts() },
+      {
+        $set: {
+          urnStatus: RENEWAL_URN_STATUS.PAYMENT_PENDING,
+          productRenewStatus: PRODUCT_RENEW_STATUS.NOT_RENEWED,
+          renewCycleNo: cycle.cycleNo,
+          updatedDate: now,
+        },
+        $unset: { renewedDate: '' },
+      },
+      session ? { session } : {},
+    );
+
+    return cycle;
+  }
+
+  /** Return active cycle or open the next one — used when creating renew payments. */
+  async resolveInProgressRenewalCycleForPayment(
+    urnNo: string,
+    userId: string | Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<RenewalCycleDocument> {
+    const trimmedUrn = urnNo.trim();
+    const active = await this.renewalCycleService.getActiveInProgressCycle(
+      trimmedUrn,
+      session,
+    );
+    if (active) {
+      return active;
+    }
+
+    const context = await resolveUrnRenewContext(this.productModel, trimmedUrn);
+    const ownership = renewOwnershipFields(context);
+    const userObjectId = toRenewObjectId(userId, 'userId');
+
+    const anyProduct = session
+      ? await this.productModel
+          .findOne({ urnNo: trimmedUrn, ...matchRenewEligibleProducts() })
+          .session(session)
+          .exec()
+      : await this.productModel
+          .findOne({ urnNo: trimmedUrn, ...matchRenewEligibleProducts() })
+          .exec();
+
+    if (!anyProduct) {
+      throw new NotFoundException(`No products found for URN ${trimmedUrn}`);
+    }
+
+    if (Number(anyProduct.productStatus) !== RENEW_ELIGIBLE_PRODUCT_STATUS) {
+      throw new BadRequestException('Only certified products can be renewed');
+    }
+
+    const productRenewStatus = Number(anyProduct.productRenewStatus);
+    if (productRenewStatus === PRODUCT_RENEW_STATUS.IN_PROGRESS) {
+      throw new BadRequestException('Renewal is already in progress');
+    }
+
+    return this.openNextRenewalCycle(
+      trimmedUrn,
+      ownership,
+      userObjectId,
+      RENEWAL_URN_STATUS.PAYMENT_PENDING,
+      undefined,
+      session,
+    );
   }
 
 
@@ -619,13 +712,19 @@ export class RenewalOrchestrationService {
 
 
 
-    if (Number(anyProduct.productRenewStatus) !== PRODUCT_RENEW_STATUS.NOT_RENEWED) {
-
-      throw new BadRequestException('Renewal is already in progress or completed');
-
+    const productRenewStatus = Number(anyProduct.productRenewStatus);
+    if (productRenewStatus === PRODUCT_RENEW_STATUS.IN_PROGRESS) {
+      throw new BadRequestException('Renewal is already in progress');
     }
 
-
+    const existingActive = await this.renewalCycleService.getActiveInProgressCycle(
+      trimmedUrn,
+    );
+    if (existingActive) {
+      throw new BadRequestException(
+        `An in-progress renewal cycle already exists for URN ${trimmedUrn}`,
+      );
+    }
 
     const session = await this.connection.startSession();
 
@@ -635,46 +734,13 @@ export class RenewalOrchestrationService {
 
     try {
 
-      const cycle = await this.renewalCycleService.createCycle({
-
-        urnNo: trimmedUrn,
-
-        vendorId: ownership.vendorId,
-
-        manufacturerId: ownership.manufacturerId,
-
+      const cycle = await this.openNextRenewalCycle(
+        trimmedUrn,
+        ownership,
+        userObjectId,
+        RENEWAL_URN_STATUS.PAYMENT_PENDING,
         paymentId,
-
-        urnStatusAtStart: anyProduct.urnStatus,
-
-        userId: userObjectId,
-
         session,
-
-      });
-
-
-
-      await this.productModel.updateMany(
-
-        { urnNo: trimmedUrn, ...matchRenewEligibleProducts() },
-
-        {
-
-          $set: {
-
-            urnStatus: RENEWAL_URN_STATUS.PAYMENT_PENDING,
-
-            renewCycleNo: cycle.cycleNo,
-
-            updatedDate: now,
-
-          },
-
-        },
-
-        { session },
-
       );
 
 

@@ -18,6 +18,10 @@ import {
   Category,
   CategorySchema,
 } from '../categories/schemas/category.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentSchema,
+} from '../product-design/schemas/all-product-document.schema';
 import { RenewalCycle, RenewalCycleSchema } from './schemas/renewal-cycle.schema';
 import {
   AllRenewProductDocument,
@@ -116,6 +120,7 @@ import { RenewAdminTestValidityService } from './services/renew-admin-test-valid
     MongooseModule.forFeature([
       { name: RenewalCycle.name, schema: RenewalCycleSchema },
       { name: AllRenewProductDocument.name, schema: AllRenewProductDocumentSchema },
+      { name: AllProductDocument.name, schema: AllProductDocumentSchema },
       { name: ProcessRenewComments.name, schema: ProcessRenewCommentsSchema },
       {
         name: ProcessRenewProductPerformance.name,

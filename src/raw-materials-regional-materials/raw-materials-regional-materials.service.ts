@@ -17,14 +17,21 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
-import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import {
+  deleteUploadedFileByDocumentLink,
+  uploadFile,
+} from '../utils/upload-file.util';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackUploadedProductDocument } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 import {
   assertUnitYearFieldsPositive,
   filterMeaningfulRows,
+  mapRawMaterialsStandardGridUnitForSave,
+  RAW_MATERIALS_STANDARD_GRID_NUMERIC_KEYS,
+  withRawMaterialsNumericFields,
 } from '../common/raw-materials/raw-materials-upload.util';
 
 const REGIONAL_UNIT_KEYS = [
@@ -59,6 +66,8 @@ export class RawMaterialsRegionalMaterialsService {
     private model: Model<RawMaterialsRegionalMaterialsDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -81,22 +90,139 @@ export class RawMaterialsRegionalMaterialsService {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-    fileType: string,
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
+  }
+
+  private async syncDocuments(params: {
+    urnNo: string;
+    vendorObjectId: Types.ObjectId;
+    formPrimaryId: number;
+    uploadFiles: Express.Multer.File[];
+    existingDocumentIds?: string[];
+  }): Promise<RegionalMaterialsProductDocumentRow[]> {
+    const { urnNo, vendorObjectId, formPrimaryId, uploadFiles, existingDocumentIds } =
+      params;
+    const now = new Date();
+    const existingDocs = await this.allProductDocumentModel.find({
+      vendorId: vendorObjectId,
+      urnNo,
+      documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
+      isDeleted: { $ne: true },
+    });
+
+    const keepRefs =
+      existingDocumentIds !== undefined ? existingDocumentIds : null;
+    const oldLinks: string[] = [];
+    const docsToDelete: AllProductDocumentDocument[] = [];
+
+    if (keepRefs !== null) {
+      for (const doc of existingDocs) {
+        const keep =
+          keepRefs.includes(String(doc.productDocumentId)) ||
+          keepRefs.includes(String(doc._id));
+        if (!keep) {
+          docsToDelete.push(doc);
+          if (doc.documentLink) {
+            oldLinks.push(doc.documentLink);
+          }
+          doc.isDeleted = true;
+          doc.deletedAt = now;
+          doc.deletedBy = vendorObjectId;
+          doc.updatedDate = now;
+          await doc.save();
+        }
+      }
+      if (docsToDelete.length) {
+        await trackProductDocumentDeleteBatch({
+          versioning: this.documentVersioningService,
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
+          userId: vendorObjectId,
+          docs: docsToDelete,
+          slotKeyMode: 'subsection',
+        });
+      }
+    }
+
+    const documents: RegionalMaterialsProductDocumentRow[] = [];
+    for (let i = 0; i < uploadFiles.length; i++) {
+      const file = uploadFiles[i];
+      const uploaded = await this.saveFileToUrnFolder(file, urnNo);
+      const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+      const masterDoc = await this.allProductDocumentModel.create({
+        productDocumentId,
+        vendorId: vendorObjectId,
+        urnNo,
+        eoiNo: '',
+        documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
+        documentFormSubsection: 'supporting_documents',
+        formPrimaryId: i === 0 ? formPrimaryId : productDocumentId,
+        documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
+        documentOriginalName: file.originalname,
+        documentLink: uploaded.fileUrl,
+        createdDate: now,
+        updatedDate: now,
+      });
+      documents.push(this.mapProductDocument(masterDoc));
+      await trackCertificationDocumentAfterCreate({
+        productModel: this.productModel,
+        versioning: this.documentVersioningService,
+        documentModel: this.allProductDocumentModel,
+        urnNo,
+        sectionKey: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
+        userId: vendorObjectId,
+        vendorId: vendorObjectId,
+        doc: masterDoc,
+        file,
+      });
+    }
+
+    for (const link of oldLinks) {
+      try {
+        await deleteUploadedFileByDocumentLink(link);
+      } catch {
+        // ignore storage cleanup failures
+      }
+    }
+
+    return documents;
+  }
+
+  private async listDocumentsForUrn(
+    urnNo: string,
+    vendorObjectId: Types.ObjectId,
+  ): Promise<RegionalMaterialsProductDocumentRow[]> {
+    const docRows = await this.allProductDocumentModel
+      .find({
+        urnNo: urnNo.trim(),
+        vendorId: vendorObjectId,
+        documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
+        $or: [{ isDeleted: { $ne: true } }, { isDeleted: { $exists: false } }],
+      })
+      .sort({ productDocumentId: -1 })
+      .exec();
+    return docRows.map((d) => this.mapProductDocument(d));
   }
 
   private toResponseUnit(row: Partial<RawMaterialsRegionalMaterials>) {
-    return {
-      rawMaterialsRegionalMaterialsId: row.rawMaterialsRegionalMaterialsId,
-      unitName: row.unitName,
-      year: row.year,
-      unit1: row.unit1,
-      yeardata1: row.yeardata1,
-      unit2: row.unit2,
-      yeardata2: row.yeardata2,
-      yeardata3: this.roundToTwo(Number(row.yeardata3 ?? 0)),
-    };
+    return withRawMaterialsNumericFields(
+      {
+        rawMaterialsRegionalMaterialsId: row.rawMaterialsRegionalMaterialsId,
+        unitName: row.unitName,
+        year: row.year,
+        unit1: row.unit1,
+        yeardata1: row.yeardata1,
+        unit2: row.unit2,
+        yeardata2: row.yeardata2,
+        yeardata3:
+          row.yeardata3 === undefined || row.yeardata3 === null
+            ? null
+            : this.roundToTwo(Number(row.yeardata3)),
+      },
+      RAW_MATERIALS_STANDARD_GRID_NUMERIC_KEYS,
+    );
   }
 
   private mapProductDocument(d: AllProductDocumentDocument): RegionalMaterialsProductDocumentRow {
@@ -121,7 +247,10 @@ export class RawMaterialsRegionalMaterialsService {
   async create(
     dto: CreateRawMaterialsRegionalMaterialsDto,
     vendorId: string,
-    regionalMaterialsFile?: Express.Multer.File,
+    options?: {
+      uploadFiles?: Express.Multer.File[];
+      existingDocumentIds?: string[];
+    },
   ): Promise<{
     urnNo: string;
     vendorId: string;
@@ -156,27 +285,13 @@ export class RawMaterialsRegionalMaterialsService {
       assertUnitYearFieldsPositive(meaningfulUnits);
 
       for (const unit of meaningfulUnits) {
-        // if (Number(unit.yeardata1 ?? 0) <= 0) {
-        //   throw new BadRequestException(
-        //     'yeardata1 must be greater than 0 for each unit',
-        //   );
-        // }
-        const yeardata1 = Number(unit.yeardata1 ?? 0);
-        const yeardata2 = Number(unit.yeardata2 ?? 0);
-        const yeardata3 =
-          yeardata1 > 0 ? (yeardata2 / yeardata1) * 100 : 0;
+        const mapped = mapRawMaterialsStandardGridUnitForSave(unit);
         const id = await this.sequenceHelper.getRawMaterialsRegionalMaterialsId();
         docsToCreate.push({
           rawMaterialsRegionalMaterialsId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: String(unit.unitName ?? '').trim(),
-          year: Number(unit.year ?? 0),
-          unit1: Number(unit.unit1 ?? 0),
-          yeardata1,
-          unit2: Number(unit.unit2 ?? 0),
-          yeardata2,
-          yeardata3,
+          ...mapped,
           createdDate: now,
           updatedDate: now,
         });
@@ -185,45 +300,22 @@ export class RawMaterialsRegionalMaterialsService {
       // Replace behavior: keep only the units coming in current request for this URN+vendor.
       await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
       const created = await this.model.insertMany(docsToCreate);
-      const documents: RegionalMaterialsProductDocumentRow[] = [];
 
-      if (regionalMaterialsFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          regionalMaterialsFile,
+      const uploadFiles = options?.uploadFiles ?? [];
+      if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+        const formPrimaryId =
+          created[0]?.rawMaterialsRegionalMaterialsId ??
+          (await this.sequenceHelper.getProductDocumentId());
+        await this.syncDocuments({
           urnNo,
-          'regional_materials_supporting_document',
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        const masterDoc = await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId:
-            created[0]?.rawMaterialsRegionalMaterialsId ?? productDocumentId,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: regionalMaterialsFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
-        });
-        documents.push(this.mapProductDocument(masterDoc));
-        await trackUploadedProductDocument(this.documentVersioningService, {
-          urnNo,
-          sectionKey: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
-          subsectionKey: 'supporting_documents',
-          userId: vendorObjectId,
-          documentId: masterDoc._id,
-          productDocumentId,
-          filePath: storedRelativePath,
-          originalName: regionalMaterialsFile.originalname,
-          storedName: path.basename(storedRelativePath),
-          file: regionalMaterialsFile,
-          action: 'added',
+          vendorObjectId,
+          formPrimaryId,
+          uploadFiles,
+          existingDocumentIds: options?.existingDocumentIds,
         });
       }
+
+      const documents = await this.listDocumentsForUrn(urnNo, vendorObjectId);
 
       return {
         urnNo,
@@ -256,21 +348,11 @@ export class RawMaterialsRegionalMaterialsService {
         .sort({ rawMaterialsRegionalMaterialsId: 1 })
         .exec();
 
-      const docRows = await this.allProductDocumentModel
-        .find({
-          urnNo: trimmedUrn,
-          vendorId: vendorObjectId,
-          documentForm: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
-          $or: [{ isDeleted: { $ne: true } }, { isDeleted: { $exists: false } }],
-        })
-        .sort({ productDocumentId: -1 })
-        .exec();
-
       return {
         urnNo: trimmedUrn,
         vendorId: vendorObjectId.toString(),
         units: rows.map((row) => this.toResponseUnit(row.toObject())),
-        documents: docRows.map((d) => this.mapProductDocument(d)),
+        documents: await this.listDocumentsForUrn(trimmedUrn, vendorObjectId),
       };
     } catch (error: any) {
       console.error('[Raw Materials Regional Materials] List error:', error);

@@ -21,10 +21,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackUploadedProductDocument } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 import {
   assertUnitYearFieldsPositive,
   filterMeaningfulRows,
+  mapRawMaterialsManufacturingUnitForSave,
+  RAW_MATERIALS_MANUFACTURING_UNIT_NUMERIC_KEYS,
+  withRawMaterialsNumericFields,
 } from '../common/raw-materials/raw-materials-upload.util';
 
 const RAW_MIX_UNIT_KEYS = [
@@ -58,6 +62,8 @@ export class RawMaterialsOptimizationOfRawMixService {
     private model: Model<RawMaterialsOptimizationOfRawMixDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -82,13 +88,28 @@ export class RawMaterialsOptimizationOfRawMixService {
   }
 
   private toResponseUnit(row: Partial<RawMaterialsOptimizationOfRawMix>) {
+    const numericNormalized = withRawMaterialsNumericFields(
+      {
+        year: row.year,
+        yeardata1: row.yeardata1,
+        yeardata2: row.yeardata2,
+        yeardata3: row.yeardata3,
+      } as Record<string, unknown>,
+      RAW_MATERIALS_MANUFACTURING_UNIT_NUMERIC_KEYS,
+    );
+    const asVendorDisplay = (value: unknown): number | string | null => {
+      if (value === null || value === undefined || value === '') return null;
+      const n = Number(value);
+      if (!Number.isFinite(n)) return null;
+      return n === 0 ? '0' : n;
+    };
     return {
       rawMaterialsOptimizationOfRawMixId: row.rawMaterialsOptimizationOfRawMixId,
       unitName: row.unitName,
-      year: row.year,
-      yeardata1: row.yeardata1,
-      yeardata2: row.yeardata2,
-      yeardata3: row.yeardata3,
+      year: asVendorDisplay(numericNormalized.year),
+      yeardata1: asVendorDisplay(numericNormalized.yeardata1),
+      yeardata2: asVendorDisplay(numericNormalized.yeardata2),
+      yeardata3: asVendorDisplay(numericNormalized.yeardata3),
     };
   }
 
@@ -121,10 +142,10 @@ export class RawMaterialsOptimizationOfRawMixService {
     units: Array<{
       rawMaterialsOptimizationOfRawMixId: number;
       unitName: string;
-      year: number;
-      yeardata1: number;
-      yeardata2: number;
-      yeardata3: number;
+      year: number | string | null;
+      yeardata1: number | string | null;
+      yeardata2: number | string | null;
+      yeardata3: number | string | null;
     }>;
     documents: RawMixProductDocumentRow[];
   }> {
@@ -153,15 +174,12 @@ export class RawMaterialsOptimizationOfRawMixService {
         //   );
         // }
         const id = await this.sequenceHelper.getRawMaterialsOptimizationOfRawMixId();
+        const mapped = mapRawMaterialsManufacturingUnitForSave(unit);
         docsToCreate.push({
           rawMaterialsOptimizationOfRawMixId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: String(unit.unitName ?? '').trim(),
-          year: Number(unit.year ?? 0),
-          yeardata1: Number(unit.yeardata1 ?? 0),
-          yeardata2: Number(unit.yeardata2 ?? 0),
-          yeardata3: Number(unit.yeardata3 ?? 0),
+          ...mapped,
           createdDate: now,
           updatedDate: now,
         });
@@ -195,18 +213,16 @@ export class RawMaterialsOptimizationOfRawMixService {
           updatedDate: now,
         });
         documents.push(this.mapProductDocument(masterDoc));
-        await trackUploadedProductDocument(this.documentVersioningService, {
+        await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
-          subsectionKey: 'supporting_documents',
           userId: vendorObjectId,
-          documentId: masterDoc._id,
-          productDocumentId,
-          filePath: storedRelativePath,
-          originalName: optimizationOfRawMixFile.originalname,
-          storedName: path.basename(storedRelativePath),
+          vendorId: vendorObjectId,
+          doc: masterDoc,
           file: optimizationOfRawMixFile,
-          action: 'added',
         });
       }
 

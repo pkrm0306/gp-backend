@@ -1,6 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import { Model, Types } from 'mongoose';
 import {
+  hasPartialRawMaterialsProductRow,
+  normalizeRawMaterialsProductRow,
+  pickTrimmedString,
+} from '../form-partial-field.util';
+import {
   assertSupportingDesignFileTypes,
   isAllowedSupportingDesignFile,
 } from '../../product-design/product-design-upload.util';
@@ -125,10 +130,7 @@ export function parseMultipartJsonArray(
   );
 }
 
-/**
- * Unit numeric fields where 0 is treated as empty for "at least one field" checks.
- * Saving with year/yeardata = 0 is allowed; strict year > 0 is deferred (see assertUnitYearFieldsPositive).
- */
+/** Unit grid numeric fields used for row validation and response normalization. */
 export const RAW_MATERIALS_UNIT_NUMERIC_KEYS = new Set([
   'year',
   'yeardata1',
@@ -150,6 +152,231 @@ export const RAW_MATERIALS_UNIT_NUMERIC_KEYS = new Set([
   'year3c',
 ]);
 
+export const RAW_MATERIALS_STANDARD_GRID_NUMERIC_KEYS = [
+  'year',
+  'unit1',
+  'unit2',
+  'yeardata1',
+  'yeardata2',
+  'yeardata3',
+] as const;
+
+export const RAW_MATERIALS_MANUFACTURING_UNIT_NUMERIC_KEYS = [
+  'year',
+  'yeardata1',
+  'yeardata2',
+  'yeardata3',
+] as const;
+
+export const RAW_MATERIALS_ADDITIVES_NUMERIC_KEYS = [
+  'year',
+  'year1',
+  'year1a',
+  'year1b',
+  'year1c',
+  'year2',
+  'year2a',
+  'year2b',
+  'year2c',
+  'year3',
+  'year3a',
+  'year3b',
+  'year3c',
+] as const;
+
+/** Coerce vendor numeric input when a fallback is required (e.g. computed totals). */
+export function coerceRawMaterialsNumeric(
+  value: unknown,
+  fallback = 0,
+): number {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Parse a unit-grid numeric field from vendor input.
+ * Empty / omitted → null (unset). Explicit 0 is stored as 0.
+ */
+export function parseRawMaterialsUnitNumericInput(
+  value: unknown,
+): number | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function computeRawMaterialsYeardata3(
+  yeardata1: number | null,
+  yeardata2: number | null,
+): number | null {
+  if (yeardata1 === null || yeardata2 === null) {
+    return null;
+  }
+  if (yeardata1 > 0) {
+    return Math.round((yeardata2 / yeardata1) * 10000) / 100;
+  }
+  return 0;
+}
+
+export function mapRawMaterialsStandardGridUnitForSave(
+  unit: Record<string, unknown>,
+): {
+  unitName: string;
+  year: number | null;
+  unit1: number | null;
+  unit2: number | null;
+  yeardata1: number | null;
+  yeardata2: number | null;
+  yeardata3: number | null;
+} {
+  const yeardata1 = parseRawMaterialsUnitNumericInput(unit.yeardata1);
+  const yeardata2 = parseRawMaterialsUnitNumericInput(unit.yeardata2);
+  return {
+    unitName: String(unit.unitName ?? '').trim(),
+    year: parseRawMaterialsUnitNumericInput(unit.year),
+    unit1: parseRawMaterialsUnitNumericInput(unit.unit1),
+    unit2: parseRawMaterialsUnitNumericInput(unit.unit2),
+    yeardata1,
+    yeardata2,
+    yeardata3: computeRawMaterialsYeardata3(yeardata1, yeardata2),
+  };
+}
+
+export function mapRawMaterialsManufacturingUnitForSave(
+  unit: Record<string, unknown>,
+): {
+  unitName: string;
+  year: number | null;
+  yeardata1: number | null;
+  yeardata2: number | null;
+  yeardata3: number | null;
+} {
+  return {
+    unitName: String(unit.unitName ?? '').trim(),
+    year: parseRawMaterialsUnitNumericInput(unit.year),
+    yeardata1: parseRawMaterialsUnitNumericInput(unit.yeardata1),
+    yeardata2: parseRawMaterialsUnitNumericInput(unit.yeardata2),
+    yeardata3: parseRawMaterialsUnitNumericInput(unit.yeardata3),
+  };
+}
+
+export function mapRawMaterialsAdditivesUnitForSave(
+  unit: Record<string, unknown>,
+): {
+  unitName: string;
+  year: number | null;
+  year1: number | null;
+  year1a: number | null;
+  year1b: number | null;
+  year1c: number | null;
+  year2: number | null;
+  year2a: number | null;
+  year2b: number | null;
+  year2c: number | null;
+  year3: number | null;
+  year3a: number | null;
+  year3b: number | null;
+  year3c: number | null;
+  psc: string;
+  coc: string;
+  percentcoc: string;
+} {
+  return {
+    unitName: String(unit.unitName ?? '').trim(),
+    year: parseRawMaterialsUnitNumericInput(unit.year),
+    year1: parseRawMaterialsUnitNumericInput(unit.year1),
+    year1a: parseRawMaterialsUnitNumericInput(unit.year1a),
+    year1b: parseRawMaterialsUnitNumericInput(unit.year1b),
+    year1c: parseRawMaterialsUnitNumericInput(unit.year1c),
+    year2: parseRawMaterialsUnitNumericInput(unit.year2),
+    year2a: parseRawMaterialsUnitNumericInput(unit.year2a),
+    year2b: parseRawMaterialsUnitNumericInput(unit.year2b),
+    year2c: parseRawMaterialsUnitNumericInput(unit.year2c),
+    year3: parseRawMaterialsUnitNumericInput(unit.year3),
+    year3a: parseRawMaterialsUnitNumericInput(unit.year3a),
+    year3b: parseRawMaterialsUnitNumericInput(unit.year3b),
+    year3c: parseRawMaterialsUnitNumericInput(unit.year3c),
+    psc: String(unit.psc ?? '').trim(),
+    coc: String(unit.coc ?? '').trim(),
+    percentcoc: String(unit.percentcoc ?? '').trim(),
+  };
+}
+
+/** Sum nullable operands; returns null when every operand is unset. */
+export function sumNullableRawMaterialsNumerics(
+  ...values: Array<number | null | undefined>
+): number | null {
+  if (values.every((value) => value === undefined || value === null)) {
+    return null;
+  }
+  return values.reduce<number>(
+    (sum, value) => sum + (value === null || value === undefined ? 0 : value),
+    0,
+  );
+}
+
+/** Serialize unit numerics: explicit 0 stays 0; unset/null fields return null. */
+export function withRawMaterialsNumericFields<
+  T extends Record<string, unknown>,
+>(row: T, numericKeys: readonly string[]): T {
+  const out = { ...row } as Record<string, unknown>;
+  for (const key of numericKeys) {
+    const value = out[key];
+    if (value === undefined || value === null) {
+      out[key] = null;
+      continue;
+    }
+    const n = Number(value);
+    if (Number.isFinite(n)) {
+      out[key] = n;
+    } else {
+      out[key] = null;
+    }
+  }
+  return out as T;
+}
+
+export function normalizeRawMaterialsStandardGridUnits<
+  T extends Record<string, unknown>,
+>(rows: T[] | null | undefined): T[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.map((row) =>
+    withRawMaterialsNumericFields(row, RAW_MATERIALS_STANDARD_GRID_NUMERIC_KEYS),
+  );
+}
+
+export function normalizeRawMaterialsManufacturingUnits<
+  T extends Record<string, unknown>,
+>(rows: T[] | null | undefined): T[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.map((row) =>
+    withRawMaterialsNumericFields(
+      row,
+      RAW_MATERIALS_MANUFACTURING_UNIT_NUMERIC_KEYS,
+    ),
+  );
+}
+
+export function normalizeRawMaterialsAdditivesUnits<
+  T extends Record<string, unknown>,
+>(rows: T[] | null | undefined): T[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.map((row) =>
+    withRawMaterialsNumericFields(row, RAW_MATERIALS_ADDITIVES_NUMERIC_KEYS),
+  );
+}
+
 export function isMeaningfulFieldValue(
   value: unknown,
   fieldKey?: string,
@@ -163,19 +390,12 @@ export function isMeaningfulFieldValue(
       return false;
     }
     if (fieldKey && RAW_MATERIALS_UNIT_NUMERIC_KEYS.has(fieldKey)) {
-      const n = Number(trimmed);
-      return Number.isFinite(n) && n > 0;
+      return Number.isFinite(Number(trimmed));
     }
     return true;
   }
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
-      return false;
-    }
-    if (fieldKey && RAW_MATERIALS_UNIT_NUMERIC_KEYS.has(fieldKey)) {
-      return value > 0;
-    }
-    return value !== 0;
+    return Number.isFinite(value);
   }
   if (typeof value === 'boolean') {
     return true;
@@ -242,6 +462,113 @@ export function hasAnyTrimmedText(
   return values.some((v) => String(v ?? '').trim() !== '');
 }
 
+function hasAnyPartialRawMaterialsProductRow(
+  rows?: Array<Record<string, unknown>>,
+): boolean {
+  if (!Array.isArray(rows)) {
+    return false;
+  }
+  return rows.some((row) =>
+    hasPartialRawMaterialsProductRow(
+      normalizeRawMaterialsProductRow(
+        row && typeof row === 'object' ? row : undefined,
+      ),
+    ),
+  );
+}
+
+export const RAW_MATERIALS_SAVE_METADATA_BODY_KEYS = new Set([
+  'urnNo',
+  'urn_no',
+  'vendorId',
+  'vendor_id',
+  'eoiNo',
+  'eoi_no',
+  'replaceTable',
+  'rowIndex',
+  'totalRows',
+  'existingDocumentIds',
+  'existing_document_ids',
+  'prohibitedFlameSolventsFileName',
+  'formaldehydeFileName',
+  'recycledContentFileName',
+  'regionalMaterialsFileName',
+  'utilizationRmcFileName',
+]);
+
+/** Resolve vendor product-table rows from multipart/JSON body (many alias shapes). */
+export function resolveRawMaterialsProductsPayload(
+  body: Record<string, unknown>,
+): Array<Record<string, unknown>> {
+  const candidates: unknown[] = [
+    body.products,
+    body.productRows,
+    body.product_rows,
+    body.rows,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      const rows = candidate.filter(
+        (row) => row && typeof row === 'object',
+      ) as Array<Record<string, unknown>>;
+      if (rows.length > 0) {
+        return rows;
+      }
+      continue;
+    }
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      const parsed = parseMultipartJsonArray(candidate, 'products');
+      if (parsed.length > 0) {
+        return parsed as Array<Record<string, unknown>>;
+      }
+    }
+  }
+
+  if (
+    body.product &&
+    typeof body.product === 'object' &&
+    !Array.isArray(body.product)
+  ) {
+    return [body.product as Record<string, unknown>];
+  }
+
+  if (hasPartialRawMaterialsProductRow(normalizeRawMaterialsProductRow(body))) {
+    return [body];
+  }
+
+  return [];
+}
+
+export function hasAnyMeaningfulRawMaterialsSavePayload(
+  body: Record<string, unknown>,
+): boolean {
+  if (hasAnyMeaningfulReduceEnvironmentalSavePayload(body)) {
+    return true;
+  }
+  if (
+    hasAnyPartialRawMaterialsProductRow(resolveRawMaterialsProductsPayload(body))
+  ) {
+    return true;
+  }
+  if (hasPartialRawMaterialsProductRow(normalizeRawMaterialsProductRow(body))) {
+    return true;
+  }
+  return hasAnyMeaningfulBodyField(
+    body,
+    new Set([
+      ...RAW_MATERIALS_SAVE_METADATA_BODY_KEYS,
+      'products',
+      'productRows',
+      'product_rows',
+      'rows',
+      'product',
+      'units',
+      'mines',
+    ]),
+  );
+}
+
 export function assertAtLeastOneRawMaterialsField(params: {
   files?: Express.Multer.File[];
   textValues?: Array<string | undefined | null>;
@@ -270,7 +597,25 @@ export function assertAtLeastOneRawMaterialsField(params: {
   if (hasAnyMeaningfulRow(params.rows, params.rowKeys)) {
     return;
   }
+  if (hasAnyPartialRawMaterialsProductRow(params.rows)) {
+    return;
+  }
+  if (
+    Array.isArray(params.rows) &&
+    params.rows.some((row) => hasPartialReduceEnvironmentalRow(row))
+  ) {
+    return;
+  }
   const body = params.body;
+  if (
+    body &&
+    hasPartialRawMaterialsProductRow(normalizeRawMaterialsProductRow(body))
+  ) {
+    return;
+  }
+  if (body && hasAnyMeaningfulRawMaterialsSavePayload(body)) {
+    return;
+  }
   const bodyKeys = params.bodyKeys ?? [];
   if (
     body &&
@@ -311,41 +656,71 @@ export function pickUploadFile(
   );
 }
 
+export const RAW_MATERIALS_REDUCE_ENVIRONMENTAL_ROW_KEYS = [
+  'location',
+  'enhancementOfMinesLife',
+  'topsoilConservation',
+  'waterTableManagement',
+  'restorationOfSpentMines',
+  'greenBeltDevelopmentAndBioDiversity',
+] as const;
+
 /** Normalize reduce-environmental row keys (vendor may send `locations` plural). */
 export function normalizeReduceEnvironmentalUnitRow(
   row: Record<string, unknown>,
 ): Record<string, string> {
   return {
-    location:
-      parseRawMaterialsFormString(row.location)?.trim() ??
-      parseRawMaterialsFormString(row.locations)?.trim() ??
-      '',
-    enhancementOfMinesLife:
-      parseRawMaterialsFormString(row.enhancementOfMinesLife)?.trim() ?? '',
-    topsoilConservation:
-      parseRawMaterialsFormString(row.topsoilConservation)?.trim() ?? '',
-    waterTableManagement:
-      parseRawMaterialsFormString(row.waterTableManagement)?.trim() ?? '',
-    restorationOfSpentMines:
-      parseRawMaterialsFormString(row.restorationOfSpentMines)?.trim() ?? '',
-    greenBeltDevelopmentAndBioDiversity:
-      parseRawMaterialsFormString(row.greenBeltDevelopmentAndBioDiversity)?.trim() ??
-      '',
+    location: pickTrimmedString(row, [
+      'location',
+      'locations',
+      'mineLocation',
+      'mine_location',
+    ]),
+    enhancementOfMinesLife: pickTrimmedString(row, [
+      'enhancementOfMinesLife',
+      'enhancement_of_mines_life',
+      'enhancementOfMineLife',
+      'minesLifeEnhancement',
+    ]),
+    topsoilConservation: pickTrimmedString(row, [
+      'topsoilConservation',
+      'topsoil_conservation',
+    ]),
+    waterTableManagement: pickTrimmedString(row, [
+      'waterTableManagement',
+      'water_table_management',
+    ]),
+    restorationOfSpentMines: pickTrimmedString(row, [
+      'restorationOfSpentMines',
+      'restoration_of_spent_mines',
+      'restorationOfSpentMine',
+    ]),
+    greenBeltDevelopmentAndBioDiversity: pickTrimmedString(row, [
+      'greenBeltDevelopmentAndBioDiversity',
+      'green_belt_development_and_bio_diversity',
+      'greenBeltDevelopmentAndBiodiversity',
+      'green_belt_development_and_biodiversity',
+      'greenBeltDevelopment',
+      'bioDiversity',
+    ]),
   };
+}
+
+export function hasPartialReduceEnvironmentalRow(
+  row: Record<string, unknown> | undefined,
+): boolean {
+  const normalized = normalizeReduceEnvironmentalUnitRow(
+    row && typeof row === 'object' ? row : {},
+  );
+  return RAW_MATERIALS_REDUCE_ENVIRONMENTAL_ROW_KEYS.some(
+    (key) => normalized[key].trim() !== '',
+  );
 }
 
 export function legacyReduceEnvironmentalRowFromDto(
   dto: Record<string, unknown>,
 ): Record<string, string> {
-  return normalizeReduceEnvironmentalUnitRow({
-    location: dto.location,
-    locations: dto.locations,
-    enhancementOfMinesLife: dto.enhancementOfMinesLife,
-    topsoilConservation: dto.topsoilConservation,
-    waterTableManagement: dto.waterTableManagement,
-    restorationOfSpentMines: dto.restorationOfSpentMines,
-    greenBeltDevelopmentAndBioDiversity: dto.greenBeltDevelopmentAndBioDiversity,
-  });
+  return normalizeReduceEnvironmentalUnitRow(dto);
 }
 
 /** True when client sent `units` or `mines` (including `[]` to clear all rows). */
@@ -375,10 +750,82 @@ export function resolveReduceEnvironmentalUnits(
         row && typeof row === 'object' ? (row as Record<string, unknown>) : {},
       ),
     );
-    return filterMeaningfulRows(fromArray, rowKeys) as Array<Record<string, string>>;
+    const meaningfulFromArray = filterMeaningfulRows(
+      fromArray,
+      rowKeys,
+    ) as Array<Record<string, string>>;
+    if (meaningfulFromArray.length > 0) {
+      return meaningfulFromArray;
+    }
   }
   const legacy = legacyReduceEnvironmentalRowFromDto(dto);
   return filterMeaningfulRows([legacy], rowKeys) as Array<Record<string, string>>;
+}
+
+export function hasAnyMeaningfulReduceEnvironmentalSavePayload(
+  body: Record<string, unknown>,
+  rowKeys: readonly string[] = RAW_MATERIALS_REDUCE_ENVIRONMENTAL_ROW_KEYS,
+): boolean {
+  if (
+    hasAnyTrimmedText(
+      parseRawMaterialsFormString(body.reduceEnvironmentalFileName),
+      parseRawMaterialsFormString(body.reduce_environmental_file_name),
+    )
+  ) {
+    return true;
+  }
+  return resolveReduceEnvironmentalUnits(body, [...rowKeys]).length > 0;
+}
+
+export function applyRawMaterialsUtilizationRmcAliases<
+  T extends Record<string, unknown>,
+>(row: T): T {
+  const out = { ...row } as Record<string, unknown>;
+  for (const mat of ['Iron', 'Steel', 'Copper', 'Recycled', 'Aggregate']) {
+    for (const yr of [1, 2, 3, 4]) {
+      const canonical = `percentYear${yr}Subsititution${mat}`;
+      const legacy = `percentYear${yr}Subsitution${mat}`;
+      if (out[legacy] === undefined && out[canonical] !== undefined) {
+        out[legacy] = out[canonical];
+      }
+    }
+  }
+  for (const yr of [1, 2, 3, 4]) {
+    const canonical = `plantYear${yr}PercentSubstitution`;
+    const legacy = `plantYear${yr}PercentSubsitution`;
+    if (out[legacy] === undefined && out[canonical] !== undefined) {
+      out[legacy] = out[canonical];
+    }
+  }
+  return out as T;
+}
+
+const RAW_MATERIALS_UTILIZATION_RMC_META_KEYS = new Set([
+  '_id',
+  'rawMaterialsUtilizationRmcId',
+  'urnNo',
+  'vendorId',
+  'createdDate',
+  'updatedDate',
+]);
+
+export function normalizeRawMaterialsUtilizationRmcRow<
+  T extends Record<string, unknown>,
+>(row: T): T {
+  const aliased = applyRawMaterialsUtilizationRmcAliases(row);
+  const numericKeys = Object.keys(aliased).filter(
+    (key) => !RAW_MATERIALS_UTILIZATION_RMC_META_KEYS.has(key),
+  );
+  return withRawMaterialsNumericFields(aliased, numericKeys);
+}
+
+export function normalizeRawMaterialsUtilizationRmcRows<
+  T extends Record<string, unknown>,
+>(rows: T[] | null | undefined): T[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.map((row) => normalizeRawMaterialsUtilizationRmcRow(row));
 }
 
 export {

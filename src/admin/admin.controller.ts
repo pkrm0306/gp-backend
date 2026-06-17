@@ -87,6 +87,10 @@ import {
 } from './utils/banner-image-upload.util';
 import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import {
+  isAllowedStandardDocumentFile,
+  STANDARD_DOCUMENT_VALIDATION_MESSAGE,
+} from '../common/upload/document-upload.validation';
+import {
   DashboardActivityQueryDto,
   DashboardMetricsQueryDto,
   DashboardRecentProductsQueryDto,
@@ -1917,14 +1921,12 @@ export class AdminController {
           return;
         }
         if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-          if (file.mimetype === 'application/pdf') {
+          if (isAllowedStandardDocumentFile(file)) {
             cb(null, true);
             return;
           }
           cb(
-            new BadRequestException(
-              'Only PDF files are allowed for file/pdf field',
-            ),
+            new BadRequestException(STANDARD_DOCUMENT_VALIDATION_MESSAGE),
             false,
           );
           return;
@@ -2058,14 +2060,12 @@ export class AdminController {
           return;
         }
         if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-          if (file.mimetype === 'application/pdf') {
+          if (isAllowedStandardDocumentFile(file)) {
             cb(null, true);
             return;
           }
           cb(
-            new BadRequestException(
-              'Only PDF files are allowed for file/pdf field',
-            ),
+            new BadRequestException(STANDARD_DOCUMENT_VALIDATION_MESSAGE),
             false,
           );
           return;

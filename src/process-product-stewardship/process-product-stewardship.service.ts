@@ -26,10 +26,12 @@ import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import {
-  trackProductDocumentBatch,
-  trackProductDocumentDeleteBatch,
-} from '../documents/helpers/product-document-version.integration';
+  isVendorResubmitCycle,
+  trackInsertedCertificationDocuments,
+} from '../documents/helpers/certification-document-version.util';
+import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 import { ProductStewardshipProgrammeDetailDto } from './dto/create-process-product-stewardship.dto';
 
 @Injectable()
@@ -41,6 +43,8 @@ export class ProcessProductStewardshipService implements OnModuleInit {
     private processPsStakeholderEduAwarnessModel: Model<ProcessPsStakeholderEduAwarnessDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
@@ -82,9 +86,9 @@ export class ProcessProductStewardshipService implements OnModuleInit {
   private async saveFileToUrnFolder(
     file: Express.Multer.File,
     urnNo: string,
-    fileType: 'sea_supporting' | 'qm_supporting' | 'epr_supporting',
-  ): Promise<string> {
-    return (await uploadFile(file, `urns/${urnNo}`)).fileUrl;
+  ): Promise<{ fileUrl: string; fileName: string }> {
+    const uploaded = await uploadFile(file, `urns/${urnNo}`);
+    return { fileUrl: uploaded.fileUrl, fileName: uploaded.fileName };
   }
 
   private normalizeProgrammeRows(
@@ -121,6 +125,11 @@ export class ProcessProductStewardshipService implements OnModuleInit {
     qmSupportingDocumentsFiles?: Express.Multer.File[],
     eprSupportingDocumentsFiles?: Express.Multer.File[],
   ): Promise<ProcessProductStewardshipDocument> {
+    await assertVendorCanEditUrn(
+      this.productModel,
+      vendorId,
+      createProcessProductStewardshipDto.urnNo,
+    );
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -153,96 +162,76 @@ export class ProcessProductStewardshipService implements OnModuleInit {
         ? eprSupportingDocumentsFiles
         : [];
 
+      const seaDisplayName =
+        createProcessProductStewardshipDto.seaSupportingDocumentsFileName?.trim() ||
+        '';
+      const qmDisplayName =
+        createProcessProductStewardshipDto.qmSupportingDocumentsFileName?.trim() ||
+        '';
+      const eprDisplayName =
+        createProcessProductStewardshipDto.eprSupportingDocumentsFileName?.trim() ||
+        '';
+
       // Handle file uploads and set flags
-      let seaSupportingDocuments = existingStewardship?.seaSupportingDocuments ?? 0;
+      let seaSupportingDocuments =
+        existingStewardship?.seaSupportingDocuments ?? null;
       const seaFilePaths: string[] = [];
+      const seaStoredNames: string[] = [];
 
       if (seaFiles.length > 0) {
         for (const seaSupportingDocumentsFile of seaFiles) {
-          const seaFilePath = await this.saveFileToUrnFolder(
+          const uploaded = await this.saveFileToUrnFolder(
             seaSupportingDocumentsFile,
             createProcessProductStewardshipDto.urnNo,
-            'sea_supporting',
           );
-          seaFilePaths.push(seaFilePath);
-          createdFileFullPaths.push(path.join('uploads', seaFilePath));
+          seaFilePaths.push(uploaded.fileUrl);
+          seaStoredNames.push(uploaded.fileName);
+          createdFileFullPaths.push(path.join('uploads', uploaded.fileUrl));
         }
         seaSupportingDocuments = 1;
       }
 
-      let qmSupportingDocuments = existingStewardship?.qmSupportingDocuments ?? 0;
+      let qmSupportingDocuments =
+        existingStewardship?.qmSupportingDocuments ?? null;
       const qmFilePaths: string[] = [];
+      const qmStoredNames: string[] = [];
 
       if (qmFiles.length > 0) {
         for (const qmSupportingDocumentsFile of qmFiles) {
-          const qmFilePath = await this.saveFileToUrnFolder(
+          const uploaded = await this.saveFileToUrnFolder(
             qmSupportingDocumentsFile,
             createProcessProductStewardshipDto.urnNo,
-            'qm_supporting',
           );
-          qmFilePaths.push(qmFilePath);
-          createdFileFullPaths.push(path.join('uploads', qmFilePath));
+          qmFilePaths.push(uploaded.fileUrl);
+          qmStoredNames.push(uploaded.fileName);
+          createdFileFullPaths.push(path.join('uploads', uploaded.fileUrl));
         }
         qmSupportingDocuments = 1;
       }
 
-      let eprSupportingDocuments = existingStewardship?.eprSupportingDocuments ?? 0;
+      let eprSupportingDocuments =
+        existingStewardship?.eprSupportingDocuments ?? null;
       const eprFilePaths: string[] = [];
+      const eprStoredNames: string[] = [];
 
       if (eprFiles.length > 0) {
         for (const eprSupportingDocumentsFile of eprFiles) {
-          const eprFilePath = await this.saveFileToUrnFolder(
+          const uploaded = await this.saveFileToUrnFolder(
             eprSupportingDocumentsFile,
             createProcessProductStewardshipDto.urnNo,
-            'epr_supporting',
           );
-          eprFilePaths.push(eprFilePath);
-          createdFileFullPaths.push(path.join('uploads', eprFilePath));
+          eprFilePaths.push(uploaded.fileUrl);
+          eprStoredNames.push(uploaded.fileName);
+          createdFileFullPaths.push(path.join('uploads', uploaded.fileUrl));
         }
         eprSupportingDocuments = 1;
       }
 
-      // Replace existing docs when any stewardship file is re-uploaded
-      if (
-        seaFiles.length > 0 ||
-        qmFiles.length > 0 ||
-        eprFiles.length > 0
-      ) {
-        const existingDocs = await this.allProductDocumentModel
-          .find({
-            urnNo: createProcessProductStewardshipDto.urnNo,
-            documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
-            isDeleted: { $ne: true },
-          })
-          .session(session);
-
-        oldFileLinksToDeleteAfterCommit = existingDocs
-          .map((d) => d.documentLink)
-          .filter(Boolean);
-
-        if (existingDocs.length) {
-          await this.allProductDocumentModel.updateMany(
-            { _id: { $in: existingDocs.map((d) => d._id) } },
-            {
-              $set: {
-                isDeleted: true,
-                deletedAt: now,
-                deletedBy: vendorObjectId,
-                updatedDate: now,
-              },
-            },
-            { session },
-          );
-          await trackProductDocumentDeleteBatch({
-            versioning: this.documentVersioningService,
-            urnNo: createProcessProductStewardshipDto.urnNo,
-            sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
-            userId: vendorObjectId,
-            docs: existingDocs,
-            session,
-          });
-        }
-      }
+      const isResubmitCycle = await isVendorResubmitCycle(
+        this.productModel,
+        createProcessProductStewardshipDto.urnNo,
+        session,
+      );
 
       const processProductStewardshipData = {
         vendorId: vendorObjectId,
@@ -332,7 +321,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             documentFormSubsection: 'sea_supporting_documents',
             formPrimaryId:
               savedProcessProductStewardship.processProductStewardshipId,
-            documentName: path.basename(seaFilePaths[i]),
+            documentName: seaDisplayName || seaStoredNames[i],
             documentOriginalName: seaFiles[i].originalname,
             documentLink: seaFilePaths[i],
             createdDate: now,
@@ -343,14 +332,17 @@ export class ProcessProductStewardshipService implements OnModuleInit {
           docsToInsert,
           { session },
         );
-        await trackProductDocumentBatch({
+        await trackInsertedCertificationDocuments({
           versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo: createProcessProductStewardshipDto.urnNo,
           sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
           userId: vendorObjectId,
-          docs: insertedSeaDocs,
-          action: 'added',
+          vendorId: vendorObjectId,
+          insertedDocs: insertedSeaDocs,
+          isResubmitCycle,
           session,
+          filesByIndex: seaFiles,
         });
       }
 
@@ -368,7 +360,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             documentFormSubsection: 'qm_supporting_documents',
             formPrimaryId:
               savedProcessProductStewardship.processProductStewardshipId,
-            documentName: path.basename(qmFilePaths[i]),
+            documentName: qmDisplayName || qmStoredNames[i],
             documentOriginalName: qmFiles[i].originalname,
             documentLink: qmFilePaths[i],
             createdDate: now,
@@ -379,14 +371,17 @@ export class ProcessProductStewardshipService implements OnModuleInit {
           docsToInsert,
           { session },
         );
-        await trackProductDocumentBatch({
+        await trackInsertedCertificationDocuments({
           versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo: createProcessProductStewardshipDto.urnNo,
           sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
           userId: vendorObjectId,
-          docs: insertedQmDocs,
-          action: 'added',
+          vendorId: vendorObjectId,
+          insertedDocs: insertedQmDocs,
+          isResubmitCycle,
           session,
+          filesByIndex: qmFiles,
         });
       }
 
@@ -404,7 +399,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             documentFormSubsection: 'epr_supporting_documents',
             formPrimaryId:
               savedProcessProductStewardship.processProductStewardshipId,
-            documentName: path.basename(eprFilePaths[i]),
+            documentName: eprDisplayName || eprStoredNames[i],
             documentOriginalName: eprFiles[i].originalname,
             documentLink: eprFilePaths[i],
             createdDate: now,
@@ -415,14 +410,17 @@ export class ProcessProductStewardshipService implements OnModuleInit {
           docsToInsert,
           { session },
         );
-        await trackProductDocumentBatch({
+        await trackInsertedCertificationDocuments({
           versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo: createProcessProductStewardshipDto.urnNo,
           sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
           userId: vendorObjectId,
-          docs: insertedEprDocs,
-          action: 'added',
+          vendorId: vendorObjectId,
+          insertedDocs: insertedEprDocs,
+          isResubmitCycle,
           session,
+          filesByIndex: eprFiles,
         });
       }
 

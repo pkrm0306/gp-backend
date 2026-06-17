@@ -14,6 +14,7 @@ import {
 import { EmailService } from '../../common/services/email.service';
 import { computeGraceEndDate } from '../../product-registration/helpers/certification-dates.util';
 import { PRODUCT_STATUS_DISCONTINUED } from '../../renew/constants/product-status.constants';
+import { PRODUCT_RENEW_STATUS } from '../../renew/constants/renewal-urn-status.constants';
 import {
   CronEmailLog,
   CronEmailLogDocument,
@@ -137,8 +138,15 @@ export class CertificationExpiryService {
           notifyDate,
         });
         if (already) {
-          result.skipped += 1;
-          continue;
+          const current = await this.productModel
+            .findOne({ productId: product.productId })
+            .select('productStatus')
+            .lean()
+            .exec();
+          if (Number(current?.productStatus) === PRODUCT_STATUS_DISCONTINUED) {
+            result.skipped += 1;
+            continue;
+          }
         }
 
         result.processed += 1;

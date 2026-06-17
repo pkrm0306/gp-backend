@@ -431,4 +431,138 @@ The GreenPro Team
 
     await this.sendEmail(email, subject, htmlBody, textBody);
   }
+
+  /** Notifies platform admin when a vendor registers a new team member (partner). */
+  async sendVendorTeamMemberRegisteredAdminEmail(
+    adminEmail: string,
+    params: {
+      manufacturerName?: string;
+      memberName: string;
+      memberEmail: string;
+      memberPhone?: string;
+      password: string;
+    },
+  ): Promise<void> {
+    const manufacturer = this.escapeHtml(
+      params.manufacturerName?.trim() || 'Vendor',
+    );
+    const memberName = this.escapeHtml(params.memberName.trim() || 'Team Member');
+    const memberEmail = this.escapeHtml(params.memberEmail.trim());
+    const memberPhone = this.escapeHtml(params.memberPhone?.trim() || '—');
+    const password = this.escapeHtml(params.password);
+
+    const subject = 'GreenPro Admin — New vendor team member registered';
+    const htmlBody = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>New vendor team member</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background-color: #166534; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+          <h1 style="margin: 0;">New team member</h1>
+        </div>
+        <div style="background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px;">
+          <p>A new team member was added from the <strong>vendor panel</strong>.</p>
+          <p><strong>Manufacturer:</strong> ${manufacturer}</p>
+          <div style="background-color: white; padding: 20px; border-left: 4px solid #16a34a; margin: 20px 0;">
+            <p style="margin: 5px 0;"><strong>Name:</strong> ${memberName}</p>
+            <p style="margin: 5px 0;"><strong>Email (username):</strong> ${memberEmail}</p>
+            <p style="margin: 5px 0;"><strong>Mobile:</strong> ${memberPhone}</p>
+            <p style="margin: 5px 0;"><strong>Password:</strong> ${password}</p>
+          </div>
+          <p style="margin-top: 20px;">The team member can sign in to the vendor portal with the email and password above.</p>
+          <p>Best regards,<br>The GreenPro System</p>
+        </div>
+      </body>
+      </html>
+    `;
+    const textBody = `
+A new team member was added from the vendor panel.
+
+Manufacturer: ${params.manufacturerName?.trim() || 'Vendor'}
+
+Name: ${params.memberName.trim()}
+Email (username): ${params.memberEmail.trim()}
+Mobile: ${params.memberPhone?.trim() || '—'}
+Password: ${params.password}
+
+The team member can sign in to the vendor portal with the email and password above.
+
+Best regards,
+The GreenPro System
+    `;
+
+    await this.sendEmail(adminEmail, subject, htmlBody, textBody);
+  }
+
+  /** Sends vendor portal login credentials to a newly added team member (partner). */
+  async sendVendorTeamMemberCredentialsEmail(
+    email: string,
+    params: {
+      memberName: string;
+      password: string;
+      manufacturerName?: string;
+      loginUrl?: string;
+    },
+  ): Promise<void> {
+    const safeName = this.escapeHtml(params.memberName.trim() || 'Team Member');
+    const safeEmail = this.escapeHtml(email.trim());
+    const safePassword = this.escapeHtml(params.password);
+    const manufacturer = this.escapeHtml(
+      params.manufacturerName?.trim() || 'your organization',
+    );
+    const loginUrl = params.loginUrl?.trim();
+    const loginLinkHtml = loginUrl
+      ? `<p><a href="${this.escapeHtml(loginUrl)}" style="color: #16a34a;">Sign in to the vendor portal</a></p>`
+      : '';
+    const loginLinkText = loginUrl
+      ? `\nSign in: ${loginUrl}\n`
+      : '';
+
+    const subject = 'GreenPro - Your vendor portal login credentials';
+    const htmlBody = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Vendor portal credentials</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background-color: #166534; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0;">
+          <h1 style="margin: 0;">Vendor portal access</h1>
+        </div>
+        <div style="background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px;">
+          <p>Hello ${safeName},</p>
+          <p>You have been added as a team member for <strong>${manufacturer}</strong> on GreenPro. Use the credentials below to sign in to the vendor portal:</p>
+          <div style="background-color: white; padding: 20px; border-left: 4px solid #16a34a; margin: 20px 0;">
+            <p style="margin: 5px 0;"><strong>Email:</strong> ${safeEmail}</p>
+            <p style="margin: 5px 0;"><strong>Password:</strong> ${safePassword}</p>
+          </div>
+          ${loginLinkHtml}
+          <p style="margin-top: 20px;">For security, please change your password after your first login.</p>
+          <p>Best regards,<br>The GreenPro Team</p>
+        </div>
+      </body>
+      </html>
+    `;
+    const textBody = `
+Hello ${params.memberName.trim() || 'Team Member'},
+
+You have been added as a team member for ${params.manufacturerName?.trim() || 'your organization'} on GreenPro. Use the credentials below to sign in to the vendor portal:
+
+Email: ${email.trim()}
+Password: ${params.password}
+${loginLinkText}
+For security, please change your password after your first login.
+
+Best regards,
+The GreenPro Team
+    `;
+
+    await this.sendEmail(email, subject, htmlBody, textBody);
+  }
 }

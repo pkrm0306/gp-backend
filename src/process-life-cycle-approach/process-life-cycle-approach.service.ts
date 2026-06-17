@@ -20,6 +20,14 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
+import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import {
+  isVendorResubmitCycle,
+  trackInsertedCertificationDocuments,
+} from '../documents/helpers/certification-document-version.util';
+import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 
 @Injectable()
 export class ProcessLifeCycleApproachService implements OnModuleInit {
@@ -28,8 +36,12 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
     private processLifeCycleApproachModel: Model<ProcessLifeCycleApproachDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
+    private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   async onModuleInit() {
@@ -81,6 +93,11 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
     lifeCycleAssesmentReportsFiles?: Express.Multer.File[],
     lifeCycleImplementationDocumentsFiles?: Express.Multer.File[],
   ): Promise<ProcessLifeCycleApproachDocument> {
+    await assertVendorCanEditUrn(
+      this.productModel,
+      vendorId,
+      createProcessLifeCycleApproachDto.urnNo,
+    );
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -116,7 +133,7 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
 
       // Handle file uploads and set flags
       let lifeCycleAssesmentReports =
-        existingLifeCycle?.lifeCycleAssesmentReports ?? 0;
+        existingLifeCycle?.lifeCycleAssesmentReports ?? null;
       const lcaReportsFilePaths: string[] = [];
       const lcaReportsStoredNames: string[] = [];
 
@@ -129,12 +146,15 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           );
           lcaReportsFilePaths.push(lcaReportsFilePath.fileUrl);
           lcaReportsStoredNames.push(lcaReportsFilePath.fileName);
+          createdFileFullPaths.push(
+            path.join('uploads', lcaReportsFilePath.fileUrl),
+          );
         }
         lifeCycleAssesmentReports = 1;
       }
 
       let lifeCycleImplementationDocuments =
-        existingLifeCycle?.lifeCycleImplementationDocuments ?? 0;
+        existingLifeCycle?.lifeCycleImplementationDocuments ?? null;
       const lcaImplementationFilePaths: string[] = [];
       const lcaImplementationStoredNames: string[] = [];
 
@@ -147,6 +167,9 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           );
           lcaImplementationFilePaths.push(lcaImplementationFilePath.fileUrl);
           lcaImplementationStoredNames.push(lcaImplementationFilePath.fileName);
+          createdFileFullPaths.push(
+            path.join('uploads', lcaImplementationFilePath.fileUrl),
+          );
         }
         lifeCycleImplementationDocuments = 1;
       }
@@ -218,11 +241,39 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
         });
       }
       if (docsToInsert.length) {
-        await this.allProductDocumentModel.insertMany(docsToInsert, { session });
+        const isResubmitCycle = await isVendorResubmitCycle(
+          this.productModel,
+          createProcessLifeCycleApproachDto.urnNo,
+          session,
+        );
+        const insertedDocs = await this.allProductDocumentModel.insertMany(
+          docsToInsert,
+          { session },
+        );
+        await trackInsertedCertificationDocuments({
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
+          urnNo: createProcessLifeCycleApproachDto.urnNo,
+          sectionKey: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
+          userId: vendorObjectId,
+          vendorId: vendorObjectId,
+          insertedDocs,
+          isResubmitCycle,
+          session,
+          filesByIndex: [...lcaReportsFiles, ...lcaImplementationFiles],
+        });
       }
 
       await session.commitTransaction();
       session.endSession();
+
+      if (docsToInsert.length > 0) {
+        this.documentUploadNotification.notifyAfterDocumentsUploaded(
+          vendorId,
+          docsToInsert.length,
+          createProcessLifeCycleApproachDto.urnNo,
+        );
+      }
 
       return savedProcessLifeCycleApproach;
     } catch (error: any) {

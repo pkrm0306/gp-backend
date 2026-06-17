@@ -37,10 +37,11 @@ import {
 } from '../product-registration/schemas/product.schema';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
 import {
-  trackProductDocumentBatch,
-  trackProductDocumentDeleteBatch,
-} from '../documents/helpers/product-document-version.integration';
+  isVendorResubmitCycle,
+  trackInsertedCertificationDocuments,
+} from '../documents/helpers/certification-document-version.util';
 
 export type SavedTestReportRow = {
   _id?: Types.ObjectId;
@@ -354,6 +355,7 @@ export class ProductPerformanceService implements OnModuleInit {
         sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
         userId: vendorObjectId,
         docs: docsToDelete,
+        slotKeyMode: 'subsection',
         session,
       });
     }
@@ -367,6 +369,11 @@ export class ProductPerformanceService implements OnModuleInit {
     }
 
     if (uploadedFiles.length) {
+      const isResubmitCycle = await isVendorResubmitCycle(
+        this.productModel,
+        urnNo,
+        session,
+      );
       const docsToInsert = [];
       for (let i = 0; i < uploadedFiles.length; i++) {
         const file = uploadedFiles[i];
@@ -394,14 +401,17 @@ export class ProductPerformanceService implements OnModuleInit {
         docsToInsert,
         { session },
       );
-      await trackProductDocumentBatch({
+      await trackInsertedCertificationDocuments({
         versioning: this.documentVersioningService,
+        documentModel: this.allProductDocumentModel,
         urnNo,
         sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
         userId: vendorObjectId,
-        docs: insertedDocs,
-        action: 'added',
+        vendorId: vendorObjectId,
+        insertedDocs,
+        isResubmitCycle,
         session,
+        filesByIndex: uploadedFiles,
       });
     }
 
@@ -563,7 +573,7 @@ export class ProductPerformanceService implements OnModuleInit {
       oldFileLinksToDeleteAfterCommit =
         documentSync.oldFileLinksToDeleteAfterCommit;
 
-      const renewalType = createProductPerformanceDto.renewalType ?? 0;
+      const renewalType = createProductPerformanceDto.renewalType ?? null;
       const productPerformanceStatus =
         createProductPerformanceDto.productPerformanceStatus ?? 0;
 

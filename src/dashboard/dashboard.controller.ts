@@ -13,6 +13,7 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { DashboardService } from './dashboard.service';
+import { VendorDashboardOverviewService } from './vendor-dashboard-overview.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ListVendorApplicationsQueryDto } from './dto/list-vendor-applications-query.dto';
@@ -22,7 +23,10 @@ import { ListVendorApplicationsQueryDto } from './dto/list-vendor-applications-q
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class DashboardController {
-  constructor(private readonly dashboardService: DashboardService) {}
+  constructor(
+    private readonly dashboardService: DashboardService,
+    private readonly dashboardOverview: VendorDashboardOverviewService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -167,6 +171,40 @@ export class DashboardController {
       manufacturerId,
       urn,
     );
+  }
+
+  @Get('overview')
+  @ApiOperation({
+    summary: 'Vendor dashboard overview (KPIs, charts, recent EOIs, activity)',
+    description:
+      'Single payload for the vendor panel home page: six KPI cards with trend %, ' +
+      'registration vs certification trend, product status donut, products by category bar chart, ' +
+      'recent EOIs table, and recent activity feed (last 7 days). Scoped to the authenticated vendor.',
+  })
+  @ApiResponse({ status: 200, description: 'Vendor dashboard overview retrieved' })
+  async getDashboardOverview(
+    @CurrentUser()
+    user: {
+      userId?: string;
+      vendorId?: string;
+      manufacturerId?: string;
+    },
+  ) {
+    if (!user?.userId) {
+      throw new UnauthorizedException('Unauthorized. Please login.');
+    }
+
+    const vendorObjectId =
+      await this.dashboardService.resolveVendorObjectIdForOverview(
+        user.userId,
+        user.vendorId || user.manufacturerId,
+      );
+
+    const data = await this.dashboardOverview.getOverview(vendorObjectId);
+    return {
+      message: 'Vendor dashboard overview retrieved successfully',
+      data,
+    };
   }
 
   @Get('applications-and-urns')

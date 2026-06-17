@@ -22,6 +22,14 @@ describe('raw-materials-hazardous-display.util', () => {
     ).toBe(true);
   });
 
+  it('includes row with only productsTestReportFileName alias', () => {
+    expect(
+      isHazardousProductRowForVendorDisplay({
+        productsTestReportFileName: 'report-a.pdf',
+      }),
+    ).toBe(true);
+  });
+
   it('excludes fully empty row', () => {
     expect(
       isHazardousProductRowForVendorDisplay({

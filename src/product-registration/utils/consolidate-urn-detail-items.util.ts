@@ -14,6 +14,7 @@ const SHARED_URN_OBJECT_KEYS = [
   'process_product_stewardship',
   'process_innovation',
   'process_comments',
+  'process_final_review',
 ] as const;
 
 const SHARED_URN_ARRAY_KEYS = [

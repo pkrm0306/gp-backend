@@ -5,6 +5,16 @@ import {
 } from '../../renew/constants/product-status.constants';
 
 describe('admin-add-product-to-urn.util', () => {
+  it('blocks when certification fee has been raised', () => {
+    const result = evaluateUrnAddProductEligibility({
+      urnStatus: 7,
+      siblingProductStatuses: [0, 1],
+      hasCertificationFee: true,
+    });
+    expect(result.canAddProduct).toBe(false);
+    expect(result.blockReason).toContain('certification fee');
+  });
+
   it('blocks when URN is in renewal', () => {
     const result = evaluateUrnAddProductEligibility({
       urnStatus: 15,

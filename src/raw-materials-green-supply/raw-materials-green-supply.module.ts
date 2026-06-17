@@ -10,6 +10,7 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { RawMaterialsGreenSupplyService } from './raw-materials-green-supply.service';
 import { RawMaterialsGreenSupplyController } from './raw-materials-green-supply.controller';
+import { Product, ProductSchema } from '../product-registration/schemas/product.schema';
 import { ProductRegistrationModule } from '../product-registration/product-registration.module';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
@@ -19,6 +20,7 @@ import { AuthModule } from '../auth/auth.module';
     MongooseModule.forFeature([
       { name: RawMaterialsGreenSupply.name, schema: RawMaterialsGreenSupplySchema },
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
+      { name: Product.name, schema: ProductSchema },
     ]),
     ProductRegistrationModule,
     PassportModule,

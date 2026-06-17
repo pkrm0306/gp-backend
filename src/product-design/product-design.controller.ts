@@ -26,6 +26,7 @@ import {
   parseMultipartJsonIdArray,
   parseMultipartNonNegativeInt,
 } from './product-design-upload.util';
+import { assertProductDesignStrategiesValid } from './product-design-strategies.validation';
 import { ProductDesignService } from './product-design.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -238,6 +239,8 @@ export class ProductDesignController {
       ) {
         throw new BadRequestException(PRODUCT_DESIGN_EMPTY_FORM_MESSAGE);
       }
+
+      assertProductDesignStrategiesValid(strategiesRaw);
 
       const result = await this.productDesignService.createProductDesign(
         createProductDesignDto,

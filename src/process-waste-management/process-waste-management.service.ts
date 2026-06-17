@@ -21,8 +21,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackProductDocumentBatch } from '../documents/helpers/product-document-version.integration';
+import {
+  isVendorResubmitCycle,
+  trackInsertedCertificationDocuments,
+} from '../documents/helpers/certification-document-version.util';
+import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 
 @Injectable()
 export class ProcessWasteManagementService implements OnModuleInit {
@@ -31,6 +36,8 @@ export class ProcessWasteManagementService implements OnModuleInit {
     private processWasteManagementModel: Model<ProcessWasteManagementDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
@@ -84,6 +91,11 @@ export class ProcessWasteManagementService implements OnModuleInit {
     vendorId: string,
     wmSupportingDocumentsFiles?: Express.Multer.File[],
   ): Promise<ProcessWasteManagementDocument> {
+    await assertVendorCanEditUrn(
+      this.productModel,
+      vendorId,
+      createProcessWasteManagementDto.urnNo,
+    );
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -107,7 +119,7 @@ export class ProcessWasteManagementService implements OnModuleInit {
 
       // Handle file upload and set flag
       let wmSupportingDocuments =
-        existingWasteManagement?.wmSupportingDocuments ?? 0;
+        existingWasteManagement?.wmSupportingDocuments ?? null;
       const wmSupportingDocumentsFilePaths: string[] = [];
 
       if (uploadedWmFiles.length > 0) {
@@ -153,6 +165,11 @@ export class ProcessWasteManagementService implements OnModuleInit {
 
       // Insert uploaded document into all_product_documents (master table)
       if (wmSupportingDocumentsFilePaths.length > 0) {
+        const isResubmitCycle = await isVendorResubmitCycle(
+          this.productModel,
+          createProcessWasteManagementDto.urnNo,
+          session,
+        );
         const docsToInsert = [];
         for (let i = 0; i < wmSupportingDocumentsFilePaths.length; i++) {
           const productDocumentId =
@@ -176,14 +193,17 @@ export class ProcessWasteManagementService implements OnModuleInit {
           docsToInsert,
           { session },
         );
-        await trackProductDocumentBatch({
+        await trackInsertedCertificationDocuments({
           versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo: createProcessWasteManagementDto.urnNo,
           sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
           userId: vendorObjectId,
-          docs: insertedDocs,
-          action: 'added',
+          vendorId: vendorObjectId,
+          insertedDocs,
+          isResubmitCycle,
           session,
+          filesByIndex: uploadedWmFiles,
         });
       }
 

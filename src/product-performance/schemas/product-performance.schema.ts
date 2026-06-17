@@ -14,9 +14,9 @@ export class ProductPerformance {
   @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })
   vendorId: Types.ObjectId;
 
-  @Prop({ required: true, type: Number, default: 0 })
+  @Prop({ required: false, type: Number, default: null })
   /** Count of uploaded test report files (0 = none on last save without files). */
-  testReportFiles: number;
+  testReportFiles?: number | null;
 
   @Prop({
     type: [
@@ -33,8 +33,8 @@ export class ProductPerformance {
     testReportFileName: string;
   }>;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  renewalType: number; // 0=Not Renewed, >0 = Renewed no of times
+  @Prop({ required: false, type: Number, default: null })
+  renewalType?: number | null; // 0=Not Renewed, >0 = Renewed no of times
 
   @Prop({ required: true, type: Number, default: 0 })
   productPerformanceStatus: number; // 0=Pending, 1=Completed

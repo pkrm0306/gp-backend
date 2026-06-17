@@ -15,6 +15,9 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import {
   assertUnitYearFieldsPositive,
   filterMeaningfulRows,
+  mapRawMaterialsManufacturingUnitForSave,
+  RAW_MATERIALS_MANUFACTURING_UNIT_NUMERIC_KEYS,
+  withRawMaterialsNumericFields,
 } from '../common/raw-materials/raw-materials-upload.util';
 
 const MANUFACTURING_UNIT_KEYS = [
@@ -44,13 +47,39 @@ export class RawMaterialsUtilizationManufacturingUnitsService {
     return new Types.ObjectId(id);
   }
 
+  private toResponseUnit(
+    row: Partial<RawMaterialsUtilizationManufacturingUnits>,
+  ) {
+    const plain =
+      typeof (row as RawMaterialsUtilizationManufacturingUnitsDocument)
+        .toObject === 'function'
+        ? (row as RawMaterialsUtilizationManufacturingUnitsDocument).toObject()
+        : row;
+    return withRawMaterialsNumericFields(
+      {
+        rawMaterialsUtilizationManufacturingUnitsId:
+          plain.rawMaterialsUtilizationManufacturingUnitsId,
+        urnNo: plain.urnNo,
+        vendorId: plain.vendorId,
+        unitName: plain.unitName,
+        year: plain.year,
+        yeardata1: plain.yeardata1,
+        yeardata2: plain.yeardata2,
+        yeardata3: plain.yeardata3,
+        createdDate: plain.createdDate,
+        updatedDate: plain.updatedDate,
+      },
+      RAW_MATERIALS_MANUFACTURING_UNIT_NUMERIC_KEYS,
+    );
+  }
+
   async create(
     dto: CreateRawMaterialsUtilizationManufacturingUnitsDto,
     vendorId: string,
   ): Promise<{
     urnNo: string;
     vendorId: string;
-    units: RawMaterialsUtilizationManufacturingUnitsDocument[];
+    units: Array<Record<string, unknown>>;
   }> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
@@ -78,15 +107,12 @@ export class RawMaterialsUtilizationManufacturingUnitsService {
         // }
         const id =
           await this.sequenceHelper.getRawMaterialsUtilizationManufacturingUnitsId();
+        const mapped = mapRawMaterialsManufacturingUnitForSave(unit);
         rowsToInsert.push({
           rawMaterialsUtilizationManufacturingUnitsId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: String(unit.unitName ?? '').trim(),
-          year: Number(unit.year ?? 0),
-          yeardata1: Number(unit.yeardata1 ?? 0),
-          yeardata2: Number(unit.yeardata2 ?? 0),
-          yeardata3: Number(unit.yeardata3 ?? 0),
+          ...mapped,
           createdDate: now,
           updatedDate: now,
         });
@@ -98,7 +124,7 @@ export class RawMaterialsUtilizationManufacturingUnitsService {
       return {
         urnNo,
         vendorId: vendorObjectId.toString(),
-        units: created,
+        units: created.map((row) => this.toResponseUnit(row)),
       };
     } catch (error: any) {
       console.error(
@@ -122,10 +148,10 @@ export class RawMaterialsUtilizationManufacturingUnitsService {
   async listByUrn(urnNo: string, vendorId: string) {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-      return await this.model
+      return (await this.model
         .find({ urnNo: urnNo.trim(), vendorId: vendorObjectId })
         .sort({ createdDate: 1 })
-        .exec();
+        .exec()).map((row) => this.toResponseUnit(row));
     } catch (error: any) {
       console.error(
         '[Raw Materials Utilization Manufacturing Units] List error:',

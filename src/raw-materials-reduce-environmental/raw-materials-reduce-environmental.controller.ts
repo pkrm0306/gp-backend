@@ -48,11 +48,26 @@ const QUARRYING_UNIT_ROW_KEYS = [
 
 const REDUCE_ENV_FILE_FIELDS = [
   'reduceEnvironmentalFile',
+  'reduceEnvironmentalFiles',
+  'reduceEnviromentalFile',
+  'reduceEnviromentalFiles',
   'file',
-  'supportingDocument',
-  'document',
   'files',
+  'supportingDocument',
+  'supportingDocuments',
+  'document',
+  'documents',
 ];
+
+function collectReduceEnvironmentalUploadFiles(
+  uploadedFiles?: Express.Multer.File[],
+): Express.Multer.File[] {
+  const all = collectAllUploadFiles(uploadedFiles);
+  const matched = all.filter((f) =>
+    REDUCE_ENV_FILE_FIELDS.includes(String(f.fieldname ?? '')),
+  );
+  return matched.length > 0 ? matched : all;
+}
 
 @ApiTags('Raw Materials Reduce Environmental')
 /** Vendor portal uses legacy typo `enviromental`; keep both paths. */
@@ -129,11 +144,12 @@ export class RawMaterialsReduceEnvironmentalController {
 
     const body = (req.body ?? {}) as Record<string, unknown>;
     const urnNo = parseRequiredRawMaterialsUrn(body);
-    const uploadedFiles = collectAllUploadFiles(
+    const uploadedFiles = collectReduceEnvironmentalUploadFiles(
       req.files as Express.Multer.File[] | undefined,
-    ).filter((f) =>
-      REDUCE_ENV_FILE_FIELDS.includes(String(f.fieldname ?? '')),
     );
+    const reduceEnvironmentalFileName =
+      parseRawMaterialsFormString(body.reduceEnvironmentalFileName) ??
+      parseRawMaterialsFormString(body.reduce_environmental_file_name);
 
     if (uploadedFiles.length > 0) {
       assertRawMaterialsDocumentTypes(uploadedFiles);
@@ -161,14 +177,16 @@ export class RawMaterialsReduceEnvironmentalController {
       files: uploadedFiles,
       rows: resolvedUnits,
       rowKeys: QUARRYING_UNIT_ROW_KEYS,
+      textValues: [reduceEnvironmentalFileName],
+      body,
+      multipartBody: body,
       persistedRecordCount,
     });
 
     const dto: CreateRawMaterialsReduceEnvironmentalDto = {
       urnNo,
       units: resolvedUnits,
-      reduceEnvironmentalFileName:
-        parseRawMaterialsFormString(body.reduceEnvironmentalFileName) ?? undefined,
+      reduceEnvironmentalFileName: reduceEnvironmentalFileName ?? undefined,
     };
 
     const data = await this.service.create(dto, user.vendorId, {

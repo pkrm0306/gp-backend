@@ -190,19 +190,29 @@ export class DashboardService {
     }
   }
 
+  async resolveVendorObjectIdForOverview(
+    authUserId: string,
+    tokenManufacturerId?: string,
+  ): Promise<Types.ObjectId> {
+    const vendorObjectId = await this.resolveVendorManufacturerObjectId(
+      authUserId,
+      tokenManufacturerId,
+    );
+    await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
+    return vendorObjectId;
+  }
+
   async getDashboardData(
     authUserId: string,
     tokenManufacturerId?: string,
     urnNo?: string,
   ) {
     try {
-      const vendorObjectId = await this.resolveVendorManufacturerObjectId(
+      const vendorObjectId = await this.resolveVendorObjectIdForOverview(
         authUserId,
         tokenManufacturerId,
       );
-      await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
 
-      // Execute all queries in parallel for better performance
       const [
         productCount,
         certifiedProductCount,

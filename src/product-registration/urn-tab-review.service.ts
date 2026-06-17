@@ -9,6 +9,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Product, ProductDocument } from './schemas/product.schema';
+import { matchActiveProducts } from './constants/active-product.filter';
 import { Category, CategoryDocument } from '../categories/schemas/category.schema';
 import {
   UrnProcessTabReview,
@@ -24,7 +25,6 @@ import {
   URN_TAB_REVIEW_STATUS,
   VENDOR_RESUBMIT_URN_STATUS,
 } from './constants/urn-tab-review.constants';
-import { matchActiveProducts } from './constants/active-product.filter';
 import {
   apiStepIdFromStored,
   buildRequiredReviewSlots,
@@ -32,8 +32,27 @@ import {
   normalizeReviewStepId,
   parseVisibleRawMaterialSteps,
 } from './helpers/urn-tab-review.util';
-import { isRenewalUrnStatus } from '../renew/constants/renewal-urn-status.constants';
+import { shouldUseRenewWorkflowForUrn } from '../renew/constants/renewal-urn-status.constants';
+import { buildVendorUrnTabAccess } from '../common/vendor/vendor-urn-tab-access.util';
 import { RenewUrnTabReviewService } from '../renew/services/renew-urn-tab-review.service';
+import {
+  ProcessComments,
+  ProcessCommentsDocument,
+} from '../process-comments/schemas/process-comments.schema';
+import {
+  parseSectionCommentPayload,
+  type ParsedSectionCommentPayload,
+} from '../process-comments/helpers/process-comments-payload.util';
+
+const TAB_KEY_TO_PROCESS_COMMENT_FIELD: Record<string, string> = {
+  'product-design': 'productDesign',
+  'product-performance': 'productPerformance',
+  'manufacturing-process': 'manfacturingProcess',
+  'waste-management': 'wasteManagement',
+  'life-cycle-approach': 'lifeCycleApproach',
+  'product-stewardship': 'productStewardship',
+  innovation: 'productInnovation',
+};
 @Injectable()
 export class UrnTabReviewService {
   constructor(
@@ -43,6 +62,8 @@ export class UrnTabReviewService {
     private readonly categoryModel: Model<CategoryDocument>,
     @InjectModel(UrnProcessTabReview.name)
     private readonly reviewModel: Model<UrnProcessTabReviewDocument>,
+    @InjectModel(ProcessComments.name)
+    private readonly processCommentsModel: Model<ProcessCommentsDocument>,
     @Inject(forwardRef(() => RenewUrnTabReviewService))
     private readonly renewUrnTabReviewService: RenewUrnTabReviewService,
   ) {}
@@ -94,7 +115,7 @@ export class UrnTabReviewService {
           vendorId: vendorObjectId,
         }),
       )
-      .select('urnNo urnStatus categoryId')
+      .select('urnNo urnStatus categoryId productRenewStatus')
       .lean()
       .exec();
 
@@ -105,12 +126,23 @@ export class UrnTabReviewService {
     }
 
     const urnStatus = Number(product.urnStatus ?? 0);
+    const productRenewStatus = Number(product.productRenewStatus ?? 0);
+    const tabAccess = buildVendorUrnTabAccess({
+      urnNo: trimmedUrn,
+      urnStatus,
+      productRenewStatus,
+    });
 
-    if (isRenewalUrnStatus(urnStatus)) {
-      return this.renewUrnTabReviewService.getVendorRenewTabReviewGuidance(
-        trimmedUrn,
-        vendorId,
-      );
+    if (shouldUseRenewWorkflowForUrn({ urnStatus, productRenewStatus })) {
+      const renewGuidance =
+        await this.renewUrnTabReviewService.getVendorRenewTabReviewGuidance(
+          trimmedUrn,
+          vendorId,
+        );
+      return {
+        ...renewGuidance,
+        tabAccess,
+      };
     }
 
     const restrictSaveAndNext = urnStatus === VENDOR_RESUBMIT_URN_STATUS;
@@ -124,6 +156,7 @@ export class UrnTabReviewService {
         processTabs: {} as Record<string, VendorUrnTabReviewSlotDto>,
         rawMaterialSteps: {} as Record<string, VendorUrnTabReviewSlotDto>,
         summary: null,
+        tabAccess,
       };
     }
 
@@ -168,12 +201,26 @@ export class UrnTabReviewService {
       processTabs,
       rawMaterialSteps,
       summary: adminState.summary,
+      tabAccess,
     };
+  }
+
+  async getVendorUrnTabAccess(urnNo: string, vendorId: string) {
+    const guidance = await this.getVendorUrnTabReviewGuidance(urnNo, vendorId);
+    return guidance.tabAccess ?? buildVendorUrnTabAccess({
+      urnNo: guidance.urnNo,
+      urnStatus: Number(guidance.urnStatus ?? 0),
+    });
   }
 
   async getUrnTabReviews(urnNo: string, renewalCycleId?: string) {
     const context = await this.loadUrnReviewContext(urnNo);
-    if (isRenewalUrnStatus(context.urnStatus)) {
+    if (
+      shouldUseRenewWorkflowForUrn({
+        urnStatus: context.urnStatus,
+        productRenewStatus: context.productRenewStatus,
+      })
+    ) {
       return this.renewUrnTabReviewService.getUrnTabReviews(urnNo, renewalCycleId);
     }
     await this.ensurePendingReviewsForUrn(urnNo);
@@ -184,13 +231,23 @@ export class UrnTabReviewService {
       .lean()
       .exec();
 
+    const sectionReviewByTabKey = await this.loadSectionReviewsByTabKey(
+      urnNo,
+      context.vendorId,
+    );
+
     const requiredSlots = buildRequiredReviewSlots(context.visibleRawMaterialSteps);
     const reviews = requiredSlots.map((slot) => {
       const stepIdStored = normalizeReviewStepId(slot.tabKey, slot.stepId);
       const row = stored.find(
         (r) => r.tabKey === slot.tabKey && r.stepId === stepIdStored,
       );
-      return this.formatReviewRow(slot.tabKey, stepIdStored, row);
+      const sectionReview =
+        slot.stepId == null ? sectionReviewByTabKey[slot.tabKey] ?? null : null;
+      return {
+        ...this.formatReviewRow(slot.tabKey, stepIdStored, row),
+        sectionReview,
+      };
     });
 
     const summary = this.buildSummary(reviews, requiredSlots.length);
@@ -202,6 +259,7 @@ export class UrnTabReviewService {
       visibleRawMaterialSteps: context.visibleRawMaterialSteps,
       requiredTabs: requiredSlots,
       reviews,
+      sectionReviews: sectionReviewByTabKey,
       summary,
       canReview: context.urnStatus === ADMIN_REVIEW_URN_STATUS,
     };
@@ -211,7 +269,12 @@ export class UrnTabReviewService {
     const urnNo = dto.urnNo.trim();
     const context = await this.loadUrnReviewContext(urnNo);
 
-    if (isRenewalUrnStatus(context.urnStatus)) {
+    if (
+      shouldUseRenewWorkflowForUrn({
+        urnStatus: context.urnStatus,
+        productRenewStatus: context.productRenewStatus,
+      })
+    ) {
       return this.renewUrnTabReviewService.patchUrnTabReview(dto, adminUserId);
     }
 
@@ -399,8 +462,9 @@ export class UrnTabReviewService {
     }
 
     const product = await this.productModel
-      .findOne({ urnNo: trimmed })
-      .select('urnNo urnStatus categoryId')
+      .findOne(matchActiveProducts({ urnNo: trimmed }))
+      .select('urnNo urnStatus categoryId vendorId productRenewStatus')
+      .sort({ createdDate: 1 })
       .lean()
       .exec();
 
@@ -423,8 +487,34 @@ export class UrnTabReviewService {
     return {
       urnNo: trimmed,
       urnStatus: Number(product.urnStatus ?? 0),
+      productRenewStatus: Number(product.productRenewStatus ?? 0),
+      vendorId: product.vendorId as Types.ObjectId,
       categoryRawMaterialForms,
       visibleRawMaterialSteps,
     };
+  }
+
+  private async loadSectionReviewsByTabKey(
+    urnNo: string,
+    vendorId: Types.ObjectId,
+  ): Promise<Record<string, ParsedSectionCommentPayload>> {
+    const comments = await this.processCommentsModel
+      .findOne({ urnNo, vendorId })
+      .lean()
+      .exec();
+
+    if (!comments) {
+      return {};
+    }
+
+    const row = comments as Record<string, unknown>;
+    const out: Record<string, ParsedSectionCommentPayload> = {};
+    for (const [tabKey, field] of Object.entries(TAB_KEY_TO_PROCESS_COMMENT_FIELD)) {
+      const packed = row[field];
+      if (typeof packed === 'string' && packed.trim() !== '') {
+        out[tabKey] = parseSectionCommentPayload(packed);
+      }
+    }
+    return out;
   }
 }

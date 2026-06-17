@@ -18,6 +18,7 @@ import {
 import { CreateProcessInnovationDto } from './dto/create-process-innovation.dto';
 import { PatchInnovationDocumentTagDto } from './dto/patch-innovation-document-tag.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import type { InnovationDocumentTag } from './utils/innovation-document-tag.util';
 import * as fs from 'fs';
@@ -25,7 +26,11 @@ import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackProductDocumentBatch } from '../documents/helpers/product-document-version.integration';
+import {
+  isVendorResubmitCycle,
+  trackInsertedCertificationDocuments,
+} from '../documents/helpers/certification-document-version.util';
+import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 
 @Injectable()
 export class ProcessInnovationService implements OnModuleInit {
@@ -34,6 +39,8 @@ export class ProcessInnovationService implements OnModuleInit {
     private processInnovationModel: Model<ProcessInnovationDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentUploadNotification: ProductDocumentUploadNotificationHelper,
@@ -88,6 +95,11 @@ export class ProcessInnovationService implements OnModuleInit {
     innovationImplementationDocumentsFiles?: Express.Multer.File[],
     innovationDocumentTags?: InnovationDocumentTag[],
   ): Promise<ProcessInnovationDocument> {
+    await assertVendorCanEditUrn(
+      this.productModel,
+      vendorId,
+      createProcessInnovationDto.urnNo,
+    );
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -134,8 +146,7 @@ export class ProcessInnovationService implements OnModuleInit {
         innovationImplementationDocuments = 1;
       }
 
-      // Append-only: do not soft-delete existing PROCESS_INNOVATION documents
-      // (same behaviour as process-manufacturing / process-waste-management).
+      const INNOVATION_DOCS_SUBSECTION = 'innovation_implementation_documents';
 
       // Create process innovation data
       const processInnovationData = {
@@ -163,7 +174,14 @@ export class ProcessInnovationService implements OnModuleInit {
       if (innovationImplementationDocumentsFilePaths.length > 0) {
         const tags = innovationDocumentTags ?? [];
         const docsToInsert = [];
+        const isResubmitCycle = await isVendorResubmitCycle(
+          this.productModel,
+          createProcessInnovationDto.urnNo,
+          session,
+        );
+
         for (let i = 0; i < innovationImplementationDocumentsFilePaths.length; i++) {
+          const tag = tags[i] ?? 'tech';
           const productDocumentId =
             await this.sequenceHelper.getProductDocumentId();
           docsToInsert.push({
@@ -172,30 +190,35 @@ export class ProcessInnovationService implements OnModuleInit {
             urnNo: createProcessInnovationDto.urnNo,
             eoiNo: '',
             documentForm: DocumentSectionKey.PROCESS_INNOVATION,
-            documentFormSubsection: 'innovation_implementation_documents',
+            documentFormSubsection: INNOVATION_DOCS_SUBSECTION,
             formPrimaryId: savedProcessInnovation.processInnovationId,
             documentName: path.basename(
               innovationImplementationDocumentsFilePaths[i],
             ),
             documentOriginalName: uploadedInnovationFiles[i].originalname,
             documentLink: innovationImplementationDocumentsFilePaths[i],
-            documentTag: tags[i] ?? 'tech',
+            documentTag: tag,
             createdDate: now,
             updatedDate: now,
           });
         }
+
         const insertedDocs = await this.allProductDocumentModel.insertMany(
           docsToInsert,
           { session },
         );
-        await trackProductDocumentBatch({
+
+        await trackInsertedCertificationDocuments({
           versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo: createProcessInnovationDto.urnNo,
           sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
           userId: vendorObjectId,
-          docs: insertedDocs,
-          action: 'added',
+          vendorId: vendorObjectId,
+          insertedDocs,
+          isResubmitCycle,
           session,
+          filesByIndex: uploadedInnovationFiles,
         });
       }
 

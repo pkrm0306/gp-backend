@@ -3,6 +3,11 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, ClientSession, Types } from 'mongoose';
 import { VendorUser, VendorUserDocument } from './schemas/vendor-user.schema';
 import * as bcrypt from 'bcryptjs';
+import {
+  isLikelyEmailDomainTypo,
+  normalizeLoginEmail,
+  splitLoginEmail,
+} from './utils/vendor-login-email.util';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -30,7 +35,7 @@ export class VendorUsersService {
   }
 
   async findByEmail(email: string): Promise<VendorUserDocument | null> {
-    const normalized = String(email ?? '').trim().toLowerCase();
+    const normalized = normalizeLoginEmail(email);
     if (!normalized) {
       return null;
     }
@@ -45,6 +50,48 @@ export class VendorUsersService {
         email: { $regex: new RegExp(`^${escapeRegex(normalized)}$`, 'i') },
       })
       .exec();
+  }
+
+  /**
+   * Login lookup: exact email first, then a single likely typo match (e.g. gmil.com → gmail.com).
+   */
+  async findLoginUserByEmail(email: string): Promise<VendorUserDocument | null> {
+    const normalized = normalizeLoginEmail(email);
+    if (!normalized) {
+      return null;
+    }
+
+    const exact = await this.findByEmail(normalized);
+    if (exact) {
+      return exact;
+    }
+
+    const parts = splitLoginEmail(normalized);
+    if (!parts) {
+      return null;
+    }
+
+    const candidates = await this.vendorUserModel
+      .find({
+        email: { $regex: new RegExp(`^${escapeRegex(parts.local)}@`, 'i') },
+        status: { $ne: 2 },
+      })
+      .limit(10)
+      .exec();
+
+    const typoMatches = candidates.filter((candidate) => {
+      const candidateDomain = splitLoginEmail(candidate.email)?.domain;
+      return (
+        candidateDomain &&
+        isLikelyEmailDomainTypo(parts.domain, candidateDomain)
+      );
+    });
+
+    if (typoMatches.length === 1) {
+      return typoMatches[0];
+    }
+
+    return null;
   }
 
   /**

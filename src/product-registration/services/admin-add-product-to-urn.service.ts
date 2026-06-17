@@ -63,9 +63,11 @@ export class AdminAddProductToUrnService {
   async getAddProductContext(urnNo: string) {
     const trimmedUrn = urnNo.trim();
     const bundle = await this.loadUrnBundle(trimmedUrn);
+    const hasCertificationFee = await this.hasCertificationFeeForUrn(trimmedUrn);
     const eligibility = evaluateUrnAddProductEligibility({
       urnStatus: bundle.urnStatus,
       siblingProductStatuses: bundle.siblings.map((s) => Number(s.productStatus)),
+      hasCertificationFee,
     });
     const suggestedPlants = await this.loadSuggestedPlants(
       bundle.siblings[0]._id as Types.ObjectId,
@@ -101,9 +103,11 @@ export class AdminAddProductToUrnService {
     }
 
     const bundle = await this.loadUrnBundle(trimmedUrn);
+    const hasCertificationFee = await this.hasCertificationFeeForUrn(trimmedUrn);
     const eligibility = evaluateUrnAddProductEligibility({
       urnStatus: bundle.urnStatus,
       siblingProductStatuses: bundle.siblings.map((s) => Number(s.productStatus)),
+      hasCertificationFee,
     });
 
     if (!eligibility.canAddProduct) {
@@ -224,6 +228,13 @@ export class AdminAddProductToUrnService {
       urnStatus: urnStatusBefore,
       message: 'Product added to URN.',
     };
+  }
+
+  private async hasCertificationFeeForUrn(urnNo: string): Promise<boolean> {
+    const count = await this.connection.db
+      .collection('payment_details')
+      .countDocuments({ urnNo, paymentType: 'certification' });
+    return count > 0;
   }
 
   private async loadUrnBundle(urnNo: string) {

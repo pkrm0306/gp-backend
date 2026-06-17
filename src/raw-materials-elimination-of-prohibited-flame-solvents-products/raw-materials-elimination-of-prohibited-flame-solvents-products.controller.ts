@@ -5,8 +5,10 @@ import {
   Post,
   Req,
   UseGuards,
+  UseInterceptors,
   BadRequestException,
 } from '@nestjs/common';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -14,8 +16,11 @@ import {
   ApiResponse,
   ApiBody,
   ApiParam,
+  ApiConsumes,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
+import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
@@ -27,10 +32,39 @@ import {
 import { RawMaterialsEliminationOfProhibitedFlameSolventsProductsService } from './raw-materials-elimination-of-prohibited-flame-solvents-products.service';
 import { CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto } from './dto/create-raw-materials-elimination-of-prohibited-flame-solvents-products.dto';
 import {
+  assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseMultipartJsonArray,
   parseRequiredRawMaterialsUrn,
+  resolveRawMaterialsProductsPayload,
   shouldReplaceRawMaterialsTableBeforeInsert,
 } from '../common/raw-materials/raw-materials-upload.util';
+
+const SOLVENTS_PRODUCT_FILE_FIELDS = [
+  'prohibitedFlameSolventsFile',
+  'prohibitedFlameSolventsProductsFile',
+  'productsTestReportFile',
+  'productsTestReportFiles',
+  'file',
+  'files',
+  'document',
+  'documents',
+];
+
+const SOLVENTS_PRODUCTS_DOCUMENT_FORMS = [
+  DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS_PRODUCTS,
+  DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+];
+
+function collectSolventsProductUploadFiles(
+  uploadedFiles?: Express.Multer.File[],
+): Express.Multer.File[] {
+  const all = collectAllUploadFiles(uploadedFiles);
+  const matched = all.filter((f) =>
+    SOLVENTS_PRODUCT_FILE_FIELDS.includes(String(f.fieldname ?? '')),
+  );
+  return matched.length > 0 ? matched : all;
+}
 
 @ApiTags('Raw Materials Elimination Of Prohibited Flame Solvents Products')
 @Controller('raw-materials-elimination-of-prohibited-flame-solvents-products')
@@ -47,8 +81,12 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
     summary:
       'Replace all prohibited flame solvents product rows for a URN (full snapshot)',
     description:
-      '**Full replace** of product rows. Send complete `products` JSON array. Empty `[]` clears all rows.',
+      '**Full replace** of product rows. Send complete `products` JSON array. Multiple supporting files allowed. `existingDocumentIds`: omit = keep all docs; `[]` = remove unlisted.',
   })
+  @UseInterceptors(
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
+  )
+  @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
     schema: {
       type: 'object',
@@ -56,14 +94,18 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
       properties: {
         urnNo: { type: 'string' },
         products: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              productsName: { type: 'string' },
-              productsTestReport: { type: 'string' },
+          oneOf: [
+            { type: 'array', items: { type: 'object' } },
+            {
+              type: 'string',
+              description: 'JSON stringified products array for multipart',
             },
-          },
+          ],
+        },
+        existingDocumentIds: { type: 'string' },
+        prohibitedFlameSolventsFile: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
         },
       },
     },
@@ -76,31 +118,45 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
 
     const body = (req.body ?? {}) as Record<string, unknown>;
     const urnNo = parseRequiredRawMaterialsUrn(body);
-    const productsJson = Array.isArray(body.products)
-      ? body.products
-      : parseMultipartJsonArray(body.products, 'products');
-
-    const meaningfulIncoming = (productsJson as Array<Record<string, unknown>>).filter(
-      (row) => hasPartialRawMaterialsProductRow(normalizeRawMaterialsProductRow(row)),
+    const productsJson = resolveRawMaterialsProductsPayload(body);
+    const meaningfulIncoming = productsJson.filter((row) =>
+      hasPartialRawMaterialsProductRow(normalizeRawMaterialsProductRow(row)),
     );
+    const uploadFiles = collectSolventsProductUploadFiles(
+      req.files as Express.Multer.File[] | undefined,
+    );
+
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
+    }
+
+    const persistedProductCount =
+      await this.service.countMeaningfulProductsByUrn(urnNo, user.vendorId);
 
     await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
-      documentForm:
-        DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS_PRODUCTS,
-      rows: meaningfulIncoming,
-      rowKeys: ['productName', 'testReportReference'],
-      persistedRecordCount: 0,
+      documentForm: SOLVENTS_PRODUCTS_DOCUMENT_FORMS,
+      files: uploadFiles,
+      rows:
+        meaningfulIncoming.length > 0
+          ? meaningfulIncoming
+          : hasPartialRawMaterialsProductRow(
+                normalizeRawMaterialsProductRow(body),
+              )
+            ? [normalizeRawMaterialsProductRow(body) as Record<string, unknown>]
+            : productsJson,
+      body,
+      multipartBody: body,
+      persistedRecordCount: persistedProductCount,
     });
 
     const data = await this.service.replaceByUrn({
       urnNo,
       vendorId: user.vendorId,
-      products: productsJson as Array<{
-        productsName?: string;
-        productsTestReport?: string;
-      }>,
+      products: productsJson,
+      uploadedFiles: uploadFiles,
+      existingDocumentIds: parseMultipartJsonIdArray(body.existingDocumentIds),
     });
 
     return {
@@ -115,8 +171,12 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
   @ApiOperation({
     summary: 'Save one solvents product row (legacy per-row POST)',
     description:
-      'Inserts one row unless `replaceTable=true` or `rowIndex=0`. Legacy single POST without handshake replaces the full table.',
+      'Inserts one row unless `replaceTable=true` or `rowIndex=0`. Supports optional supporting PDF/Excel uploads with text-only or file-only partial saves.',
   })
+  @UseInterceptors(
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
+  )
+  @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
     schema: {
       type: 'object',
@@ -125,6 +185,11 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
         urnNo: { type: 'string' },
         productsName: { type: 'string' },
         productsTestReport: { type: 'string' },
+        productsTestReportFileName: { type: 'string' },
+        prohibitedFlameSolventsFile: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
         replaceTable: { type: 'string' },
         rowIndex: { type: 'string' },
         totalRows: { type: 'string' },
@@ -139,9 +204,17 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
 
     const body = (req.body ?? {}) as Record<string, unknown>;
     const urnNo = parseRequiredRawMaterialsUrn(body);
+    const uploadFiles = collectSolventsProductUploadFiles(
+      req.files as Express.Multer.File[] | undefined,
+    );
     const productRow = normalizeRawMaterialsProductRow(body);
+    const hasProductText = hasPartialRawMaterialsProductRow(productRow);
     const replaceTableBeforeInsert =
       shouldReplaceRawMaterialsTableBeforeInsert(body);
+
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
+    }
 
     const meaningfulProductCount =
       await this.service.countMeaningfulProductsByUrn(urnNo, user.vendorId);
@@ -149,12 +222,26 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
     await this.stepGate.assertStepSubmitAllowed({
       vendorId: user.vendorId,
       urnNo,
-      documentForm:
-        DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS_PRODUCTS,
+      documentForm: SOLVENTS_PRODUCTS_DOCUMENT_FORMS,
+      files: uploadFiles,
       rows: [productRow as Record<string, unknown>],
-      rowKeys: ['productName', 'testReportReference'],
+      body,
       persistedRecordCount: replaceTableBeforeInsert ? 0 : meaningfulProductCount,
     });
+
+    if (!hasProductText && uploadFiles.length > 0) {
+      const data = await this.service.create(
+        { urnNo },
+        user.vendorId,
+        { uploadFiles },
+      );
+      return {
+        success: true,
+        message:
+          'Raw materials prohibited flame solvents products saved successfully',
+        data,
+      };
+    }
 
     const dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsProductsDto = {
       urnNo,
@@ -164,6 +251,7 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
 
     const data = await this.service.create(dto, user.vendorId, {
       replaceTableBeforeInsert,
+      uploadFiles,
     });
     return {
       success: true,
@@ -175,8 +263,7 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsProductsController 
 
   @Get(':urn_no')
   @ApiOperation({
-    summary:
-      'List prohibited flame solvents product rows by URN',
+    summary: 'List prohibited flame solvents product rows by URN',
   })
   @ApiParam({ name: 'urn_no', example: 'URN-20260305124230' })
   @ApiResponse({ status: 200, description: 'Retrieved successfully' })

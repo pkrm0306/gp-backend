@@ -20,9 +20,15 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as fs from 'fs';
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
-import { filterMeaningfulRows } from '../common/raw-materials/raw-materials-upload.util';
+import {
+  filterMeaningfulRows,
+  mapRawMaterialsAdditivesUnitForSave,
+  RAW_MATERIALS_ADDITIVES_NUMERIC_KEYS,
+  withRawMaterialsNumericFields,
+} from '../common/raw-materials/raw-materials-upload.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackUploadedProductDocument } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 
 const ADDITIVES_UNIT_KEYS = [
   'unitName',
@@ -68,6 +74,8 @@ export class RawMaterialsAdditivesService {
     private model: Model<RawMaterialsAdditivesDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -92,22 +100,46 @@ export class RawMaterialsAdditivesService {
   }
 
   private toResponseUnit(row: Partial<RawMaterialsAdditives>) {
+    const numericNormalized = withRawMaterialsNumericFields(
+      {
+        year: row.year,
+        year1: row.year1,
+        year1a: row.year1a,
+        year1b: row.year1b,
+        year1c: row.year1c,
+        year2: row.year2,
+        year2a: row.year2a,
+        year2b: row.year2b,
+        year2c: row.year2c,
+        year3: row.year3,
+        year3a: row.year3a,
+        year3b: row.year3b,
+        year3c: row.year3c,
+      } as Record<string, unknown>,
+      RAW_MATERIALS_ADDITIVES_NUMERIC_KEYS,
+    );
+    const asVendorDisplay = (value: unknown): number | string | null => {
+      if (value === null || value === undefined || value === '') return null;
+      const n = Number(value);
+      if (!Number.isFinite(n)) return null;
+      return n === 0 ? '0' : n;
+    };
     return {
       rawMaterialsAdditivesId: row.rawMaterialsAdditivesId,
       unitName: row.unitName,
-      year: row.year,
-      year1: row.year1,
-      year1a: row.year1a,
-      year1b: row.year1b,
-      year1c: row.year1c,
-      year2: row.year2,
-      year2a: row.year2a,
-      year2b: row.year2b,
-      year2c: row.year2c,
-      year3: row.year3,
-      year3a: row.year3a,
-      year3b: row.year3b,
-      year3c: row.year3c,
+      year: asVendorDisplay(numericNormalized.year),
+      year1: asVendorDisplay(numericNormalized.year1),
+      year1a: asVendorDisplay(numericNormalized.year1a),
+      year1b: asVendorDisplay(numericNormalized.year1b),
+      year1c: asVendorDisplay(numericNormalized.year1c),
+      year2: asVendorDisplay(numericNormalized.year2),
+      year2a: asVendorDisplay(numericNormalized.year2a),
+      year2b: asVendorDisplay(numericNormalized.year2b),
+      year2c: asVendorDisplay(numericNormalized.year2c),
+      year3: asVendorDisplay(numericNormalized.year3),
+      year3a: asVendorDisplay(numericNormalized.year3a),
+      year3b: asVendorDisplay(numericNormalized.year3b),
+      year3c: asVendorDisplay(numericNormalized.year3c),
       psc: row.psc,
       coc: row.coc,
       percentcoc: row.percentcoc,
@@ -143,19 +175,19 @@ export class RawMaterialsAdditivesService {
     units: Array<{
       rawMaterialsAdditivesId: number;
       unitName: string;
-      year?: number;
-      year1: number;
-      year1a: number;
-      year1b: number;
-      year1c: number;
-      year2: number;
-      year2a: number;
-      year2b: number;
-      year2c: number;
-      year3: number;
-      year3a: number;
-      year3b: number;
-      year3c: number;
+      year?: number | string | null;
+      year1: number | string | null;
+      year1a: number | string | null;
+      year1b: number | string | null;
+      year1c: number | string | null;
+      year2: number | string | null;
+      year2a: number | string | null;
+      year2b: number | string | null;
+      year2c: number | string | null;
+      year3: number | string | null;
+      year3a: number | string | null;
+      year3b: number | string | null;
+      year3c: number | string | null;
       psc: string;
       coc: string;
       percentcoc: string;
@@ -180,27 +212,12 @@ export class RawMaterialsAdditivesService {
 
       for (const unit of meaningfulUnits) {
         const id = await this.sequenceHelper.getRawMaterialsAdditivesId();
+        const mapped = mapRawMaterialsAdditivesUnitForSave(unit);
         docsToCreate.push({
           rawMaterialsAdditivesId: id,
           urnNo,
           vendorId: vendorObjectId,
-          unitName: String(unit.unitName ?? '').trim(),
-          year: Number(unit.year ?? 0),
-          year1: Number(unit.year1 ?? 0),
-          year1a: Number(unit.year1a ?? 0),
-          year1b: Number(unit.year1b ?? 0),
-          year1c: Number(unit.year1c ?? 0),
-          year2: Number(unit.year2 ?? 0),
-          year2a: Number(unit.year2a ?? 0),
-          year2b: Number(unit.year2b ?? 0),
-          year2c: Number(unit.year2c ?? 0),
-          year3: Number(unit.year3 ?? 0),
-          year3a: Number(unit.year3a ?? 0),
-          year3b: Number(unit.year3b ?? 0),
-          year3c: Number(unit.year3c ?? 0),
-          psc: String(unit.psc ?? '').trim(),
-          coc: String(unit.coc ?? '').trim(),
-          percentcoc: String(unit.percentcoc ?? '').trim(),
+          ...mapped,
           createdDate: now,
           updatedDate: now,
         });
@@ -234,18 +251,16 @@ export class RawMaterialsAdditivesService {
           updatedDate: now,
         });
         documents.push(this.mapProductDocument(masterDoc));
-        await trackUploadedProductDocument(this.documentVersioningService, {
+        await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
-          subsectionKey: 'supporting_documents',
           userId: vendorObjectId,
-          documentId: masterDoc._id,
-          productDocumentId,
-          filePath: storedRelativePath,
-          originalName: additivesFile.originalname,
-          storedName: path.basename(storedRelativePath),
+          vendorId: vendorObjectId,
+          doc: masterDoc,
           file: additivesFile,
-          action: 'added',
         });
       }
 

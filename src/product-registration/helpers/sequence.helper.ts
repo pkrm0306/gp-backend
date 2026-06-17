@@ -182,7 +182,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -216,7 +216,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -290,7 +290,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -324,7 +324,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -359,7 +359,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -394,7 +394,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -434,7 +434,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -476,7 +476,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -523,7 +523,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -563,7 +563,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -596,7 +596,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -631,7 +631,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -671,7 +671,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -709,7 +709,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -744,7 +744,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -779,7 +779,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -817,7 +817,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -855,7 +855,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -890,7 +890,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -930,7 +930,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -962,7 +962,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -996,7 +996,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -1028,7 +1028,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -1062,7 +1062,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -1096,7 +1096,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -1130,7 +1130,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -1162,7 +1162,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -1194,7 +1194,7 @@ export class SequenceHelper {
 
       await sequenceCollection.updateOne(
         { _id: sequenceName as any },
-        { $setOnInsert: { sequenceValue: 0 }, $max: { sequenceValue: maxId } },
+        { $max: { sequenceValue: maxId } },
         { upsert: true },
       );
 
@@ -1203,6 +1203,14 @@ export class SequenceHelper {
       console.error('Process comments ID sequence error:', error);
       return this.getNextSequenceValue('process_comments_id');
     }
+  }
+
+  async getProcessFinalReviewId(): Promise<number> {
+    return this.syncMaxAndNext(
+      'process_final_review_id',
+      'process_final_review',
+      'processFinalReviewId',
+    );
   }
 
   /** Per-user in-app notification numeric id (`user_notifications.id`). */

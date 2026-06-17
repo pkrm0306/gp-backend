@@ -21,10 +21,9 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import {
-  trackProductDocumentDeleteBatch,
-  trackUploadedProductDocument,
-} from '../documents/helpers/product-document-version.integration';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 
 @Injectable()
 export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
@@ -33,6 +32,8 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
     private model: Model<RawMaterialsEliminationOfProhibitedFlameSolventsDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -93,41 +94,6 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
       }
 
       if (prohibitedFlameSolventsFile) {
-        const existingDocs = await this.allProductDocumentModel.find({
-          vendorId: vendorObjectId,
-          urnNo,
-          documentForm:
-            DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
-          isDeleted: { $ne: true },
-        });
-        await this.allProductDocumentModel.updateMany(
-          {
-            vendorId: vendorObjectId,
-            urnNo,
-            documentForm:
-              DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
-            isDeleted: { $ne: true },
-          },
-          {
-            $set: {
-              isDeleted: true,
-              deletedAt: now,
-              deletedBy: vendorObjectId,
-              updatedDate: now,
-            },
-          },
-        );
-        if (existingDocs.length) {
-          await trackProductDocumentDeleteBatch({
-            versioning: this.documentVersioningService,
-            urnNo,
-            sectionKey:
-              DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
-            userId: vendorObjectId,
-            docs: existingDocs,
-            slotKeyMode: 'subsection',
-          });
-        }
         const storedRelativePath = await this.saveFileToUrnFolder(
           prohibitedFlameSolventsFile,
           urnNo,
@@ -148,20 +114,17 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
           createdDate: now,
           updatedDate: now,
         });
-        await trackUploadedProductDocument(this.documentVersioningService, {
+        await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo,
           sectionKey:
             DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
-          subsectionKey: 'supporting_documents',
           userId: vendorObjectId,
-          documentId: createdDoc._id,
-          productDocumentId,
-          filePath: storedRelativePath,
-          originalName: prohibitedFlameSolventsFile.originalname,
-          storedName: path.basename(storedRelativePath),
+          vendorId: vendorObjectId,
+          doc: createdDoc,
           file: prohibitedFlameSolventsFile,
-          action: 'replaced',
-          slotKeyMode: 'subsection',
         });
       }
 

@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { RM_PARTIAL_NUMBER } from '../../common/raw-materials/raw-materials-schema.props';
 
-// Partial-save: numeric grid fields use required: false, default: 0 (was required: true).
+// Partial-save: numeric grid fields use RM_PARTIAL_NUMBER (null when unset; explicit 0 preserved).
 
 export type RawMaterialsUtilizationRmcDocument = RawMaterialsUtilizationRmc &
   Document;
@@ -17,140 +18,140 @@ export class RawMaterialsUtilizationRmc {
   @Prop({ type: Types.ObjectId, ref: 'Vendor', required: true })
   vendorId: Types.ObjectId;
 
-  @Prop({ type: Number, required: false, default: 0 }) consumptionYear1: number;
-  @Prop({ type: Number, required: false, default: 0 }) consumptionYear2: number;
-  @Prop({ type: Number, required: false, default: 0 }) consumptionYear3: number;
-  @Prop({ type: Number, required: false, default: 0 }) cement1: number;
-  @Prop({ type: Number, required: false, default: 0 }) flyash1: number;
-  @Prop({ type: Number, required: false, default: 0 }) coarseAggregate1: number;
-  @Prop({ type: Number, required: false, default: 0 }) fineAggregate1: number;
-  @Prop({ type: Number, required: false, default: 0 }) admixture1: number;
-  @Prop({ type: Number, required: false, default: 0 }) alcofine1: number;
-  @Prop({ type: Number, required: false, default: 0 }) ggbs1: number;
-  @Prop({ type: Number, required: false, default: 0 }) anyOtherMaterial1: number;
-  @Prop({ type: Number, required: false, default: 0 }) total1: number;
-  @Prop({ type: Number, required: false, default: 0 }) cement2: number;
-  @Prop({ type: Number, required: false, default: 0 }) flyash2: number;
-  @Prop({ type: Number, required: false, default: 0 }) coarseAggregate2: number;
-  @Prop({ type: Number, required: false, default: 0 }) fineAggregate2: number;
-  @Prop({ type: Number, required: false, default: 0 }) admixture2: number;
-  @Prop({ type: Number, required: false, default: 0 }) alcofine2: number;
-  @Prop({ type: Number, required: false, default: 0 }) ggbs2: number;
-  @Prop({ type: Number, required: false, default: 0 }) anyOtherMaterial2: number;
-  @Prop({ type: Number, required: false, default: 0 }) total2: number;
-  @Prop({ type: Number, required: false, default: 0 }) cement3: number;
-  @Prop({ type: Number, required: false, default: 0 }) flyash3: number;
-  @Prop({ type: Number, required: false, default: 0 }) coarseAggregate3: number;
-  @Prop({ type: Number, required: false, default: 0 }) fineAggregate3: number;
-  @Prop({ type: Number, required: false, default: 0 }) admixture3: number;
-  @Prop({ type: Number, required: false, default: 0 }) alcofine3: number;
-  @Prop({ type: Number, required: false, default: 0 }) ggbs3: number;
-  @Prop({ type: Number, required: false, default: 0 }) anyOtherMaterial3: number;
-  @Prop({ type: Number, required: false, default: 0 }) total3: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear1: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear2: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear3: number;
-  @Prop({ type: Number, required: false, default: 0 }) brandConcreteWithHighScm: number;
-  @Prop({ type: Number, required: false, default: 0 }) brandHighStrengthConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) brandSelfCpmactingConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) brandLowDensityConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) brandClsmConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) brandAnyOtherTypes: number;
-  @Prop({ type: Number, required: false, default: 0 }) brandTotalConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER) consumptionYear1: number;
+  @Prop(RM_PARTIAL_NUMBER) consumptionYear2: number;
+  @Prop(RM_PARTIAL_NUMBER) consumptionYear3: number;
+  @Prop(RM_PARTIAL_NUMBER) cement1: number;
+  @Prop(RM_PARTIAL_NUMBER) flyash1: number;
+  @Prop(RM_PARTIAL_NUMBER) coarseAggregate1: number;
+  @Prop(RM_PARTIAL_NUMBER) fineAggregate1: number;
+  @Prop(RM_PARTIAL_NUMBER) admixture1: number;
+  @Prop(RM_PARTIAL_NUMBER) alcofine1: number;
+  @Prop(RM_PARTIAL_NUMBER) ggbs1: number;
+  @Prop(RM_PARTIAL_NUMBER) anyOtherMaterial1: number;
+  @Prop(RM_PARTIAL_NUMBER) total1: number;
+  @Prop(RM_PARTIAL_NUMBER) cement2: number;
+  @Prop(RM_PARTIAL_NUMBER) flyash2: number;
+  @Prop(RM_PARTIAL_NUMBER) coarseAggregate2: number;
+  @Prop(RM_PARTIAL_NUMBER) fineAggregate2: number;
+  @Prop(RM_PARTIAL_NUMBER) admixture2: number;
+  @Prop(RM_PARTIAL_NUMBER) alcofine2: number;
+  @Prop(RM_PARTIAL_NUMBER) ggbs2: number;
+  @Prop(RM_PARTIAL_NUMBER) anyOtherMaterial2: number;
+  @Prop(RM_PARTIAL_NUMBER) total2: number;
+  @Prop(RM_PARTIAL_NUMBER) cement3: number;
+  @Prop(RM_PARTIAL_NUMBER) flyash3: number;
+  @Prop(RM_PARTIAL_NUMBER) coarseAggregate3: number;
+  @Prop(RM_PARTIAL_NUMBER) fineAggregate3: number;
+  @Prop(RM_PARTIAL_NUMBER) admixture3: number;
+  @Prop(RM_PARTIAL_NUMBER) alcofine3: number;
+  @Prop(RM_PARTIAL_NUMBER) ggbs3: number;
+  @Prop(RM_PARTIAL_NUMBER) anyOtherMaterial3: number;
+  @Prop(RM_PARTIAL_NUMBER) total3: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear1: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear2: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear3: number;
+  @Prop(RM_PARTIAL_NUMBER) brandConcreteWithHighScm: number;
+  @Prop(RM_PARTIAL_NUMBER) brandHighStrengthConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER) brandSelfCpmactingConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER) brandLowDensityConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER) brandClsmConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER) brandAnyOtherTypes: number;
+  @Prop(RM_PARTIAL_NUMBER) brandTotalConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear1ConcreteWithHighScm: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear1HighStrengthConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear1SelfCpmactingConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear1LowDensityConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear1ClsmConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear1AnyOtherTypes: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear1TotalConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER) productionYear1ClsmConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear1AnyOtherTypes: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear1TotalConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear2ConcreteWithHighScm: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear2HighStrengthConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear2SelfCpmactingConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear2LowDensityConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear2ClsmConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear2AnyOtherTypes: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear2TotalConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER) productionYear2ClsmConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear2AnyOtherTypes: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear2TotalConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear3ConcreteWithHighScm: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear3HighStrengthConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear3SelfCpmactingConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   productionYear3LowDensityConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear3ClsmConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear3AnyOtherTypes: number;
-  @Prop({ type: Number, required: false, default: 0 }) productionYear3TotalConcrete: number;
-  @Prop({ type: Number, required: false, default: 0 }) totalYear: number;
-  @Prop({ type: Number, required: false, default: 0 }) totalQuantityOfOpcUsed: number;
-  @Prop({ type: Number, required: false, default: 0 }) totalQuantityOfSupplementary: number;
-  @Prop({ type: Number, required: false, default: 0 }) opcSubstitution: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear1Iron: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear2Iron: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear3Iron: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear4Iron: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear1Steel: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear2Steel: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear3Steel: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear4Steel: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear1Recycled: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear2Recycled: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear3Recycled: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear4Recycled: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear1SubsititutionIron: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear2SubsititutionIron: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear3SubsititutionIron: number;
-  @Prop({ type: Number, required: false, default: 0 }) percentYear4SubsititutionIron: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER) productionYear3ClsmConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear3AnyOtherTypes: number;
+  @Prop(RM_PARTIAL_NUMBER) productionYear3TotalConcrete: number;
+  @Prop(RM_PARTIAL_NUMBER) totalYear: number;
+  @Prop(RM_PARTIAL_NUMBER) totalQuantityOfOpcUsed: number;
+  @Prop(RM_PARTIAL_NUMBER) totalQuantityOfSupplementary: number;
+  @Prop(RM_PARTIAL_NUMBER) opcSubstitution: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear1Iron: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear2Iron: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear3Iron: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear4Iron: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear1Steel: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear2Steel: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear3Steel: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear4Steel: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear1Recycled: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear2Recycled: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear3Recycled: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear4Recycled: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear1SubsititutionIron: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear2SubsititutionIron: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear3SubsititutionIron: number;
+  @Prop(RM_PARTIAL_NUMBER) percentYear4SubsititutionIron: number;
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear1SubsititutionSteel: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear2SubsititutionSteel: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear3SubsititutionSteel: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear4SubsititutionSteel: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear1SubsititutionCopper: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear2SubsititutionCopper: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear3SubsititutionCopper: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear4SubsititutionCopper: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear1SubsititutionRecycled: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear2SubsititutionRecycled: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear3SubsititutionRecycled: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear4SubsititutionRecycled: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear1SubsititutionAggregate: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear2SubsititutionAggregate: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear3SubsititutionAggregate: number;
-  @Prop({ type: Number, required: false, default: 0 })
+  @Prop(RM_PARTIAL_NUMBER)
   percentYear4SubsititutionAggregate: number;
-  @Prop({ type: Number, required: false, default: 0 }) plant1: number;
-  @Prop({ type: Number, required: false, default: 0 }) plantYear1: number;
-  @Prop({ type: Number, required: false, default: 0 }) plantYear2: number;
-  @Prop({ type: Number, required: false, default: 0 }) plantYear3: number;
-  @Prop({ type: Number, required: false, default: 0 }) plantYear4: number;
-  @Prop({ type: Number, required: false, default: 0 }) plantYear1PercentSubstitution: number;
-  @Prop({ type: Number, required: false, default: 0 }) plantYear2PercentSubstitution: number;
-  @Prop({ type: Number, required: false, default: 0 }) plantYear3PercentSubstitution: number;
-  @Prop({ type: Number, required: false, default: 0 }) plantYear4PercentSubstitution: number;
+  @Prop(RM_PARTIAL_NUMBER) plant1: number;
+  @Prop(RM_PARTIAL_NUMBER) plantYear1: number;
+  @Prop(RM_PARTIAL_NUMBER) plantYear2: number;
+  @Prop(RM_PARTIAL_NUMBER) plantYear3: number;
+  @Prop(RM_PARTIAL_NUMBER) plantYear4: number;
+  @Prop(RM_PARTIAL_NUMBER) plantYear1PercentSubstitution: number;
+  @Prop(RM_PARTIAL_NUMBER) plantYear2PercentSubstitution: number;
+  @Prop(RM_PARTIAL_NUMBER) plantYear3PercentSubstitution: number;
+  @Prop(RM_PARTIAL_NUMBER) plantYear4PercentSubstitution: number;
 
   @Prop({ required: true })
   createdDate: Date;

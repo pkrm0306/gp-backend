@@ -28,10 +28,9 @@ import {
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import {
-  trackProductDocumentDeleteBatch,
-  trackUploadedProductDocument,
-} from '../documents/helpers/product-document-version.integration';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 
 @Injectable()
 export class RawMaterialsEliminationOfFormaldehydeService {
@@ -40,6 +39,8 @@ export class RawMaterialsEliminationOfFormaldehydeService {
     private model: Model<RawMaterialsEliminationOfFormaldehydeDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -147,6 +148,7 @@ export class RawMaterialsEliminationOfFormaldehydeService {
         sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
         userId: vendorObjectId,
         docs: docsToDelete,
+        slotKeyMode: 'subsection',
       });
     }
 
@@ -171,19 +173,17 @@ export class RawMaterialsEliminationOfFormaldehydeService {
         updatedDate: now,
       });
       documents.push(d);
-      await trackUploadedProductDocument(this.documentVersioningService, {
-        urnNo,
-        sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
-        subsectionKey: 'supporting_documents',
-        userId: vendorObjectId,
-        documentId: d._id,
-        productDocumentId,
-        filePath: uploaded.fileUrl,
-        originalName: file.originalname,
-        storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
-        file,
-        action: 'added',
-      });
+      await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+          userId: vendorObjectId,
+          vendorId: vendorObjectId,
+          doc: d,
+          file: file,
+        });
     }
 
     for (const link of oldLinks) {
@@ -229,19 +229,17 @@ export class RawMaterialsEliminationOfFormaldehydeService {
       createdDate: now,
       updatedDate: now,
     });
-    await trackUploadedProductDocument(this.documentVersioningService, {
-      urnNo,
-      sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
-      subsectionKey: 'supporting_documents',
-      userId: vendorObjectId,
-      documentId: doc._id,
-      productDocumentId,
-      filePath: uploaded.fileUrl,
-      originalName: file.originalname,
-      storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
-      file,
-      action: 'added',
-    });
+    await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+          userId: vendorObjectId,
+          vendorId: vendorObjectId,
+          doc: doc,
+          file: file,
+        });
     return { documentOnly: true as const, documents: [doc] };
   }
 
@@ -310,18 +308,16 @@ export class RawMaterialsEliminationOfFormaldehydeService {
           createdDate: now,
           updatedDate: now,
         });
-        await trackUploadedProductDocument(this.documentVersioningService, {
+        await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
-          subsectionKey: 'supporting_documents',
           userId: vendorObjectId,
-          documentId: createdDoc._id,
-          productDocumentId,
-          filePath: uploaded.fileUrl,
-          originalName: formaldehydeFile.originalname,
-          storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
+          vendorId: vendorObjectId,
+          doc: createdDoc,
           file: formaldehydeFile,
-          action: 'added',
         });
       }
 

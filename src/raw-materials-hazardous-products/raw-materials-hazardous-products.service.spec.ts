@@ -58,6 +58,7 @@ describe('RawMaterialsHazardousProductsService delete auditing', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       { record: auditRecord } as never,
     );
   }

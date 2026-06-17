@@ -7,6 +7,26 @@ import { CountriesService } from './countries.service';
 export class CountriesController {
   constructor(private readonly countriesService: CountriesService) {}
 
+  @Get('dropdown')
+  @ApiOperation({
+    summary: 'All countries for dropdown filters',
+    description:
+      'Returns every country in the database as `{ value, label }` pairs sorted A–Z. Not limited to countries that have products.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Dropdown options retrieved successfully',
+  })
+  async dropdown() {
+    const options = await this.countriesService.buildDropdownOptions();
+    return {
+      message: 'Countries dropdown options retrieved successfully',
+      data: options,
+      countries: options,
+      total: options.length,
+    };
+  }
+
   @Get()
   @ApiOperation({
     summary: 'Get all countries',

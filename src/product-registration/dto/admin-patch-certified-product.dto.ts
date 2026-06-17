@@ -5,7 +5,9 @@ import {
   IsDateString,
   IsMongoId,
   IsNotEmpty,
+  IsOptional,
   IsString,
+  ValidateIf,
 } from 'class-validator';
 
 function omitEmptyOptional(value: unknown): unknown {
@@ -42,10 +44,15 @@ export class AdminPatchCertifiedProductDto {
   @IsNotEmpty()
   eoiNo: string;
 
-  @ApiProperty({ description: 'Category MongoDB ObjectId' })
+  @ApiPropertyOptional({
+    description:
+      'Read-only on certified edit — omit or send the unchanged category id. Category cannot be modified for certified products.',
+  })
   @Transform(({ value }) => omitEmptyOptional(value))
+  @IsOptional()
+  @ValidateIf((_, value) => value !== undefined)
   @IsMongoId()
-  categoryId: string;
+  categoryId?: string;
 
   @ApiProperty({
     description: 'Valid till date (ISO 8601 date or datetime)',

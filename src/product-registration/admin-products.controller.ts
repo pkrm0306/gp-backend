@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   StreamableFile,
   UploadedFile,
@@ -28,6 +29,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ProductRegistrationService } from './product-registration.service';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
+import { resolveAdminListValidTillMonthYearFilter } from './helpers/admin-list-valid-till-filter.util';
 import { AdminListProductsFilterOptionsDto } from './dto/admin-list-products-filter-options.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
@@ -43,7 +45,10 @@ import {
   assessmentReportMemoryMulterOptions,
 } from '../common/upload/multer-universal.config';
 import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
+import { UpsertUrnFinalReviewDto } from './dto/upsert-urn-final-review.dto';
 import { RenewAdminTestValidityService } from '../renew/services/renew-admin-test-validity.service';
+import { ProcessFinalReviewService } from './services/process-final-review.service';
+import { ActivityLogService } from '../activity-log/activity-log.service';
 
 /**
  * Admin list filters EOIs by **product** `productStatus` (EOI lifecycle), not manufacturer/vendor status.
@@ -66,9 +71,43 @@ function resolveAdminListProductsBody(
   dto: AdminListProductsDto,
 ): AdminListProductsDto {
   const resolved = firstNonEmptyStatusArray(dto);
+  const categoryIds = [
+    ...(dto.categoryIds ?? dto.category_ids ?? []),
+    ...(dto.categoryId ? [dto.categoryId] : []),
+    ...(dto.category_id ? [dto.category_id] : []),
+  ]
+    .map((id) => String(id).trim())
+    .filter((id) => id.length > 0);
+  const uniqueCategoryIds = [...new Set(categoryIds)];
+
+  const sectorIds = [
+    ...(dto.sectorIds ??
+      dto.sector_ids ??
+      dto.buildingIds ??
+      dto.building_ids ??
+      dto.buildings ??
+      []),
+    ...(dto.sectorId != null ? [dto.sectorId] : []),
+    ...(dto.sector_id != null ? [dto.sector_id] : []),
+    ...(dto.buildingId != null ? [dto.buildingId] : []),
+    ...(dto.building_id != null ? [dto.building_id] : []),
+    ...(dto.building != null ? [dto.building] : []),
+  ]
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id));
+  const uniqueSectorIds = [...new Set(sectorIds)];
+
+  const validTillMonthYear = (() => {
+    const filter = resolveAdminListValidTillMonthYearFilter(dto);
+    return filter?.kind === 'single' ? filter.yearMonth : undefined;
+  })();
+
   return {
     ...dto,
     status: resolved ?? [0, 1],
+    ...(uniqueCategoryIds.length > 0 ? { categoryIds: uniqueCategoryIds } : {}),
+    ...(uniqueSectorIds.length > 0 ? { sectorIds: uniqueSectorIds } : {}),
+    ...(validTillMonthYear ? { validTillMonthYear } : {}),
   };
 }
 
@@ -81,6 +120,8 @@ export class AdminProductsController {
     private readonly productRegistrationService: ProductRegistrationService,
     private readonly urnTabReviewService: UrnTabReviewService,
     private readonly renewAdminTestValidityService: RenewAdminTestValidityService,
+    private readonly processFinalReviewService: ProcessFinalReviewService,
+    private readonly activityLogService: ActivityLogService,
   ) {}
 
   @Get('urn-tab-review/:urnNo')
@@ -155,25 +196,39 @@ export class AdminProductsController {
     const siteVisits =
       (data[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
     const first = (data[0] ?? {}) as Record<string, any>;
+    const visibleRawMaterialSteps =
+      first?.product_details?.visibleRawMaterialSteps ??
+      first?.category?.visibleRawMaterialSteps ??
+      [];
+    const processFinalReview =
+      first?.process_final_review ?? first?.processFinalReview ?? null;
     const vendorId =
       first?.vendorId ??
       first?.vendor?._id ??
       first?.manufacturer?.vendorId ??
       null;
     const manufacturerId = first?.manufacturerId ?? first?.manufacturer?._id ?? null;
+    const trimmedUrn = String(first?.urnNo ?? urn).trim();
+    const quickView =
+      await this.activityLogService.getQuickViewActivityForUrn(trimmedUrn);
     return {
       success: true,
       message: 'Product details fetched successfully',
       data,
       product_details_list: data,
       urnContext: {
-        urnNo: first?.urnNo ?? urn.trim(),
+        urnNo: trimmedUrn,
         urnStatus: first?.urnStatus ?? null,
         product_renew_status: first?.productRenewStatus ?? null,
         productRenewStatus: first?.productRenewStatus ?? null,
         vendorId,
         manufacturerId,
+        visibleRawMaterialSteps,
+        processFinalReview,
+        process_final_review: processFinalReview,
       },
+      currentActivity: quickView,
+      quickView,
       siteVisits,
       site_visits: siteVisits,
     };
@@ -252,6 +307,44 @@ export class AdminProductsController {
     };
   }
 
+  @Put('urn-final-review')
+  @Post('urn-final-review')
+  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Save URN technical/final review and credits (certified URN details)',
+    description:
+      'Persists `technicalReview`, `finalReview`, `minCredits`, and `maxCredits` for the URN in `process_final_review`. ' +
+      'Snake_case aliases (`technical_review`, `final_review`, `min_credits`, `max_credits`) are accepted.',
+  })
+  @ApiBody({ type: UpsertUrnFinalReviewDto })
+  @ApiResponse({ status: 200, description: 'URN final review saved' })
+  async upsertUrnFinalReview(@Body() dto: UpsertUrnFinalReviewDto) {
+    const data = await this.processFinalReviewService.upsertForUrn(dto);
+    return {
+      success: true,
+      message: 'URN final review saved successfully',
+      data,
+      process_final_review: data,
+    };
+  }
+
+  @Get('urn-final-review/:urnNo')
+  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @ApiOperation({
+    summary: 'Get URN technical/final review and credits',
+  })
+  @ApiParam({ name: 'urnNo', example: 'URN-20260527122016' })
+  async getUrnFinalReview(@Param('urnNo') urnNo: string) {
+    const data = await this.processFinalReviewService.getByUrn(urnNo.trim());
+    return {
+      success: true,
+      message: 'URN final review fetched successfully',
+      data,
+      process_final_review: data,
+    };
+  }
+
   @Patch('certified/:productId')
   @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
   @HttpCode(HttpStatus.OK)
@@ -262,7 +355,7 @@ export class AdminProductsController {
   @ApiOperation({
     summary: 'Edit certified product (admin)',
     description:
-      'PATCH only for products with **productStatus = 2** (certified). Updates product name, category, description, valid till date, and optional image. ' +
+      'PATCH only for products with **productStatus = 2** (certified). Updates product name, description, valid till date, and optional image. **Category is read-only** (`categoryEditable: false`) — send the existing category id or omit it. ' +
       'Body must include matching **urnNo** and **eoiNo**. Changes apply to listings after cache invalidation.',
   })
   @ApiParam({
@@ -277,7 +370,6 @@ export class AdminProductsController {
         'productDetails',
         'urnNo',
         'eoiNo',
-        'categoryId',
         'validtillDate',
       ],
       properties: {
@@ -285,7 +377,10 @@ export class AdminProductsController {
         productDetails: { type: 'string' },
         urnNo: { type: 'string' },
         eoiNo: { type: 'string' },
-        categoryId: { type: 'string' },
+        categoryId: {
+          type: 'string',
+          description: 'Read-only — omit or send unchanged category id',
+        },
         validtillDate: { type: 'string', format: 'date' },
         validTillDate: { type: 'string', format: 'date' },
         productImage: {
@@ -314,6 +409,8 @@ export class AdminProductsController {
             urnNo: { type: 'string' },
             eoiNo: { type: 'string' },
             categoryId: { type: 'string' },
+            categoryEditable: { type: 'boolean', example: false },
+            categoryChangeBlockReason: { type: 'string' },
             productImage: { type: 'string', nullable: true },
             productImageUrl: { type: 'string', nullable: true },
             productStatus: { type: 'number', example: 2 },
@@ -359,7 +456,7 @@ export class AdminProductsController {
   @ApiOperation({
     summary: 'Upload assessment report for certified URN (admin)',
     description:
-      'Multipart body: `urnNo` + `assessmentReportFile`. Allowed after certification is complete (urnStatus 11). Accepts any file except zip archives and folders.',
+      'Multipart body: `urnNo` + `assessmentReportFile`. Allowed after certification is complete (urnStatus 11). Only PDF, JPG, JPEG, PNG, DOC, and DOCX files are allowed.',
   })
   @ApiBody({
     schema: {
@@ -545,11 +642,12 @@ export class AdminProductsController {
   @Permissions(PERMISSIONS.PRODUCTS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Filter dropdown options for admin product list (certified, etc.)',
+    summary: 'Filter dropdown options for admin product list (certified, uncertified, etc.)',
     description:
-      'Returns active categories, manufacturers, and valid-till years for products matching `status` (default `[2]` certified). ' +
-      '**City** is a free-text filter on `POST /admin/products/list` (`city` query in body), not a dropdown here. ' +
-      'Use `GET /countries` and `GET /states?countryId=` for country/state dropdowns.',
+      'Returns active categories, manufacturers, valid-till years, and **all countries** (`data.countries[]` — every row in the countries collection, A–Z, not limited to countries with products). ' +
+      'For **certified** scope (`status: [2]`), `filterControls.validTillMonthYear` is a **month/year picker** (`YYYY-MM`); send `validTillMonthYear` / `valid_till` (or aliases) on the list body. ' +
+      'Send selected `countryId` on `POST /admin/products/list`. **State** and **city** are free-text filters (`state`, `city`), not dropdowns. Alternative: `GET /countries/dropdown`. ' +
+      '**Multi-select filters:** `categoryIds` / `category_ids` (Category), `sectorIds` / `sector_ids` / `buildingIds` / `building_ids` (Building), `manufacturerIds`, `manufacturerNames`. **Valid till (certified):** month+year picker, not `validTillYears` dropdown.',
   })
   @ApiBody({ type: AdminListProductsFilterOptionsDto })
   @ApiResponse({ status: 200, description: 'Filter options' })
@@ -566,7 +664,7 @@ export class AdminProductsController {
       'Search matches manufacturer name, URN, EOI, or product name; when a manufacturer qualifies, nested URNs/EOIs reflect filters (Option A). ' +
       'Legacy **groupBy: urn** returns flat URN groups. `total` counts top-level groups (manufacturers or URNs). ' +
       '**EOI status (`productStatus`):** filter with `status`, `productStatus`, or `product_status` (array of **0–4**). Omit or send empty → defaults to **[0, 1]** (Pending + Submitted). ' +
-      '**Multi-select filters:** `categoryIds`, `manufacturerIds`, `manufacturerNames`, `stateIds`, `stateNames`, `validTillYears`, plus `countryId` for plant country. **City:** send `city` as free text (partial match), not `cities` multiselect. Single-value aliases (`categoryId`, `stateId`, etc.) still work.',
+      '**Multi-select filters:** `categoryIds` / `category_ids` (Category), `sectorIds` / `sector_ids` / `buildingIds` / `building_ids` (Building), `manufacturerIds`, `manufacturerNames`. **Valid till (certified):** `validTillMonthYear` / `valid_till` month+year picker (`YYYY-MM`), optional range via `validTillFrom` + `validTillTo`. **Location:** `countryId` (dropdown), **`state` / `state_name` (free text)**, `city` (free text). Single-value aliases are merged into multiselect arrays.',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Products listed successfully' })

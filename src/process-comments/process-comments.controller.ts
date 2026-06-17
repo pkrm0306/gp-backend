@@ -1,12 +1,13 @@
 import {
+  BadRequestException,
   Controller,
-  Post,
   Get,
+  NotFoundException,
+  Post,
   Body,
   Param,
   Query,
   UseGuards,
-  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -14,9 +15,9 @@ import {
   Product,
   ProductDocument,
 } from '../product-registration/schemas/product.schema';
-import { isRenewalUrnStatus } from '../renew/constants/renewal-urn-status.constants';
+import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
+import { shouldUseRenewWorkflowForUrn } from '../renew/constants/renewal-urn-status.constants';
 import { ProcessRenewCommentsService } from '../renew/process-renew-comments/process-renew-comments.service';
-import { matchRenewEligibleProducts } from '../renew/helpers/renew-eligible-product.util';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -29,6 +30,7 @@ import { ProcessCommentsService } from './process-comments.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProcessCommentsDto } from './dto/create-process-comments.dto';
+import { formatProcessCommentsForApi } from './helpers/process-comments-payload.util';
 
 @ApiTags('Process Comments')
 @Controller('process-comments')
@@ -42,13 +44,23 @@ export class ProcessCommentsController {
     private readonly productModel: Model<ProductDocument>,
   ) {}
 
-  private async isRenewUrn(urnNo: string): Promise<boolean> {
-    const product = await this.productModel
-      .findOne({ urnNo: urnNo.trim(), ...matchRenewEligibleProducts() })
-      .select('urnStatus')
+  private async loadUrnProduct(urnNo: string) {
+    return this.productModel
+      .findOne(matchActiveProducts({ urnNo: urnNo.trim() }))
+      .select('urnNo urnStatus productRenewStatus vendorId')
       .lean()
       .exec();
-    return product != null && isRenewalUrnStatus(Number(product.urnStatus ?? 0));
+  }
+
+  private async shouldUseRenewWorkflow(urnNo: string): Promise<boolean> {
+    const product = await this.loadUrnProduct(urnNo);
+    if (!product) {
+      return false;
+    }
+    return shouldUseRenewWorkflowForUrn({
+      urnStatus: Number(product.urnStatus ?? 0),
+      productRenewStatus: Number(product.productRenewStatus ?? 0),
+    });
   }
 
   @Post()
@@ -65,44 +77,6 @@ export class ProcessCommentsController {
   @ApiResponse({
     status: 201,
     description: 'Process comments created or updated successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        success: { type: 'boolean', example: true },
-        data: {
-          type: 'object',
-          properties: {
-            _id: { type: 'string' },
-            processCommentsId: { type: 'number' },
-            urnNo: { type: 'string' },
-            vendorId: { type: 'string' },
-            productDesign: { type: 'string', nullable: true },
-            productPerformance: { type: 'string', nullable: true },
-            manfacturingProcess: { type: 'string', nullable: true },
-            wasteManagement: { type: 'string', nullable: true },
-            lifeCycleApproach: { type: 'string', nullable: true },
-            productStewardship: { type: 'string', nullable: true },
-            productInnovation: { type: 'string', nullable: true },
-            rawMaterials31: { type: 'string', nullable: true },
-            rawMaterials32: { type: 'string', nullable: true },
-            rawMaterials33: { type: 'string', nullable: true },
-            rawMaterials34: { type: 'string', nullable: true },
-            rawMaterials35: { type: 'string', nullable: true },
-            rawMaterials36: { type: 'string', nullable: true },
-            rawMaterials37: { type: 'string', nullable: true },
-            rawMaterials38: { type: 'string', nullable: true },
-            rawMaterials39: { type: 'string', nullable: true },
-            rawMaterials310: { type: 'string', nullable: true },
-            rawMaterials311: { type: 'string', nullable: true },
-            rawMaterials312: { type: 'string', nullable: true },
-            rawMaterials313: { type: 'string', nullable: true },
-            rawMaterials314: { type: 'string', nullable: true },
-            rawMaterials315: { type: 'string', nullable: true },
-            updatedDate: { type: 'string', format: 'date-time' },
-          },
-        },
-      },
-    },
   })
   @ApiResponse({ status: 400, description: 'Bad request - Invalid input data' })
   @ApiResponse({
@@ -114,9 +88,17 @@ export class ProcessCommentsController {
     @Body() createProcessCommentsDto: CreateProcessCommentsDto,
   ) {
     const urnNo = createProcessCommentsDto.urnNo.trim();
+    const product = await this.loadUrnProduct(urnNo);
+    if (!product) {
+      throw new NotFoundException(`No product found for URN: ${urnNo}`);
+    }
+
     const renew =
       Boolean(createProcessCommentsDto.renewalCycleId?.trim()) ||
-      (await this.isRenewUrn(urnNo));
+      shouldUseRenewWorkflowForUrn({
+        urnStatus: Number(product.urnStatus ?? 0),
+        productRenewStatus: Number(product.productRenewStatus ?? 0),
+      });
 
     if (renew) {
       if (!createProcessCommentsDto.renewalCycleId?.trim()) {
@@ -129,21 +111,22 @@ export class ProcessCommentsController {
         : await this.processRenewCommentsService.adminUpsert(
             createProcessCommentsDto,
           );
-      return { success: true, data };
+      return { success: true, data: formatProcessCommentsForApi(data?.toObject?.() ?? data) };
     }
 
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
+    const vendorId = String(user?.vendorId ?? product.vendorId ?? '').trim();
+    if (!vendorId) {
+      throw new BadRequestException('Vendor ID not found for this URN');
     }
 
     const data = await this.processCommentsService.upsertProcessComments(
       createProcessCommentsDto,
-      user.vendorId,
+      vendorId,
     );
 
     return {
       success: true,
-      data,
+      data: formatProcessCommentsForApi(data.toObject() as unknown as Record<string, unknown>),
     };
   }
 
@@ -151,7 +134,7 @@ export class ProcessCommentsController {
   @ApiOperation({
     summary: 'Get process comments by URN',
     description:
-      'Retrieves process comments for a specific URN and logged-in vendor. Returns null if no comments exist.',
+      'Retrieves process comments for a specific URN. Admin callers resolve vendor from the URN automatically.',
   })
   @ApiParam({
     name: 'urn_no',
@@ -162,45 +145,6 @@ export class ProcessCommentsController {
   @ApiResponse({
     status: 200,
     description: 'Process comments retrieved successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        success: { type: 'boolean', example: true },
-        data: {
-          type: 'object',
-          nullable: true,
-          properties: {
-            _id: { type: 'string' },
-            processCommentsId: { type: 'number' },
-            urnNo: { type: 'string' },
-            vendorId: { type: 'string' },
-            productDesign: { type: 'string', nullable: true },
-            productPerformance: { type: 'string', nullable: true },
-            manfacturingProcess: { type: 'string', nullable: true },
-            wasteManagement: { type: 'string', nullable: true },
-            lifeCycleApproach: { type: 'string', nullable: true },
-            productStewardship: { type: 'string', nullable: true },
-            productInnovation: { type: 'string', nullable: true },
-            rawMaterials31: { type: 'string', nullable: true },
-            rawMaterials32: { type: 'string', nullable: true },
-            rawMaterials33: { type: 'string', nullable: true },
-            rawMaterials34: { type: 'string', nullable: true },
-            rawMaterials35: { type: 'string', nullable: true },
-            rawMaterials36: { type: 'string', nullable: true },
-            rawMaterials37: { type: 'string', nullable: true },
-            rawMaterials38: { type: 'string', nullable: true },
-            rawMaterials39: { type: 'string', nullable: true },
-            rawMaterials310: { type: 'string', nullable: true },
-            rawMaterials311: { type: 'string', nullable: true },
-            rawMaterials312: { type: 'string', nullable: true },
-            rawMaterials313: { type: 'string', nullable: true },
-            rawMaterials314: { type: 'string', nullable: true },
-            rawMaterials315: { type: 'string', nullable: true },
-            updatedDate: { type: 'string', format: 'date-time' },
-          },
-        },
-      },
-    },
   })
   @ApiResponse({
     status: 400,
@@ -215,29 +159,46 @@ export class ProcessCommentsController {
     @Param('urn_no') urnNo: string,
     @Query('renewalCycleId') renewalCycleId?: string,
   ) {
+    const product = await this.loadUrnProduct(urnNo);
+    if (!product) {
+      throw new NotFoundException(`No product found for URN: ${urnNo}`);
+    }
+
     const renew =
-      Boolean(renewalCycleId?.trim()) || (await this.isRenewUrn(urnNo));
+      Boolean(renewalCycleId?.trim()) ||
+      shouldUseRenewWorkflowForUrn({
+        urnStatus: Number(product.urnStatus ?? 0),
+        productRenewStatus: Number(product.productRenewStatus ?? 0),
+      });
 
     if (renew) {
       const data = await this.processRenewCommentsService.getByUrnAndCycle(
         urnNo,
         renewalCycleId?.trim(),
       );
-      return { success: true, data };
+      return {
+        success: true,
+        data: formatProcessCommentsForApi(
+          (data?.toObject?.() ?? data) as unknown as Record<string, unknown> | null,
+        ),
+      };
     }
 
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
+    const vendorId = String(user?.vendorId ?? product.vendorId ?? '').trim();
+    if (!vendorId) {
+      throw new BadRequestException('Vendor ID not found for this URN');
     }
 
     const data = await this.processCommentsService.getByUrnAndVendor(
       urnNo,
-      user.vendorId,
+      vendorId,
     );
 
     return {
       success: true,
-      data,
+      data: formatProcessCommentsForApi(
+        (data?.toObject?.() ?? data) as Record<string, unknown> | null,
+      ),
     };
   }
 }

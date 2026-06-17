@@ -1,4 +1,6 @@
 import {
+  URN_MERGE_OWNERSHIP_MISMATCH_MESSAGE,
+  buildOwnershipMismatchBlocker,
   buildRenewalBlockers,
   findEoiCollisions,
   selectCertifiedProductsToMove,
@@ -16,8 +18,71 @@ describe('urn-merge-eligibility.util', () => {
   });
 
   it('detects EOI collision', () => {
-    const blockers = findEoiCollisions(new Set(['GP001']), [{ eoiNo: 'GP001' }]);
+    const blockers = findEoiCollisions(new Set(['GP001']), [
+      { eoiNo: 'GP001' },
+    ]);
     expect(blockers[0]?.code).toBe('EOI_COLLISION');
+  });
+
+  it('does not add ownership blocker when manufacturer and vendor match', () => {
+    const vendorId = new Types.ObjectId();
+    const manufacturerId = new Types.ObjectId();
+
+    expect(
+      buildOwnershipMismatchBlocker(
+        { vendorId, manufacturerId },
+        { vendorId, manufacturerId },
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('returns one consolidated blocker when vendor differs', () => {
+    const manufacturerId = new Types.ObjectId();
+    const blockers = buildOwnershipMismatchBlocker(
+      { vendorId: new Types.ObjectId(), manufacturerId },
+      { vendorId: new Types.ObjectId(), manufacturerId },
+    );
+
+    expect(blockers).toEqual([
+      {
+        code: 'VENDOR_MISMATCH',
+        message: URN_MERGE_OWNERSHIP_MISMATCH_MESSAGE,
+      },
+    ]);
+  });
+
+  it('returns one consolidated blocker when manufacturer differs', () => {
+    const vendorId = new Types.ObjectId();
+    const blockers = buildOwnershipMismatchBlocker(
+      { vendorId, manufacturerId: new Types.ObjectId() },
+      { vendorId, manufacturerId: new Types.ObjectId() },
+    );
+
+    expect(blockers).toEqual([
+      {
+        code: 'MANUFACTURER_MISMATCH',
+        message: URN_MERGE_OWNERSHIP_MISMATCH_MESSAGE,
+      },
+    ]);
+  });
+
+  it('returns one consolidated blocker when manufacturer and vendor differ', () => {
+    const blockers = buildOwnershipMismatchBlocker(
+      {
+        vendorId: new Types.ObjectId(),
+        manufacturerId: new Types.ObjectId(),
+      },
+      {
+        vendorId: new Types.ObjectId(),
+        manufacturerId: new Types.ObjectId(),
+      },
+    );
+
+    expect(blockers).toHaveLength(1);
+    expect(blockers[0]).toEqual({
+      code: 'VENDOR_MISMATCH',
+      message: URN_MERGE_OWNERSHIP_MISMATCH_MESSAGE,
+    });
   });
 
   it('selects certified subset by productIds', () => {

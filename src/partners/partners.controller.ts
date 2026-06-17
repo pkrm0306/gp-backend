@@ -4,7 +4,6 @@ import {
   Post,
   Put,
   Patch,
-  Delete,
   Body,
   Param,
   UseGuards,
@@ -58,9 +57,12 @@ export class PartnersController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Create a new partner',
+    summary: 'Create a new partner / vendor team member',
     description:
-      'Creates a new partner for the logged-in vendor. Validates unique email and phone within the same vendor. Password is hashed if provided.',
+      'Creates a team member for the logged-in vendor (type partner). ' +
+      'Requires name, email, password, confirmPassword, countryCode (for local mobile), and phone or mobile. ' +
+      'Phone is stored in E.164 form (e.g. +919848441332); countryCode is stored separately for the UI selector. ' +
+      'The team member receives vendor portal login credentials by email and can sign in immediately when status is active (1).',
   })
   @ApiBody({ type: CreatePartnerDto })
   @ApiResponse({ status: 201, description: 'Partner created successfully' })
@@ -114,9 +116,9 @@ export class PartnersController {
 
   @Patch('status')
   @ApiOperation({
-    summary: 'Toggle partner status',
+    summary: 'Toggle partner / team member status',
     description:
-      'Toggles partner status: if current status is 1, sets to 0; if 0, sets to 1',
+      'Toggles status: **1** (active, can log in) ↔ **0** (inactive, cannot log in). Delete is not supported — use inactive instead.',
   })
   @ApiBody({ type: UpdatePartnerStatusDto })
   @ApiResponse({
@@ -141,27 +143,6 @@ export class PartnersController {
     );
     return {
       message: 'Partner status updated successfully',
-      data: partner,
-    };
-  }
-
-  @Delete(':id')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Delete a partner (soft delete)',
-    description:
-      'Soft deletes a partner by setting status to 2 and updating updatedAt',
-  })
-  @ApiParam({ name: 'id', description: 'Partner ID' })
-  @ApiResponse({ status: 200, description: 'Partner deleted successfully' })
-  @ApiResponse({ status: 404, description: 'Partner not found' })
-  async remove(@CurrentUser() user: any, @Param('id') id: string) {
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
-    const partner = await this.partnersService.remove(id, user.vendorId);
-    return {
-      message: 'Partner deleted successfully',
       data: partner,
     };
   }

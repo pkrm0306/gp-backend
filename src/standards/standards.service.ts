@@ -161,7 +161,7 @@ export class StandardsService implements OnModuleInit {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('requires file buffer')) {
         throw new BadRequestException(
-          'Standard document could not be read. Use multipart field **file** (PDF, JPG, or PNG, max 10MB).',
+          'Standard document could not be read. Use multipart field **file** (PDF, JPG, JPEG, PNG, DOC, or DOCX, max 10MB).',
         );
       }
       throw e;

@@ -33,6 +33,31 @@ export function isRenewalUrnStatus(status: number): boolean {
   return status === RENEWAL_URN_STATUS.COMPLETED || (status >= 12 && status <= 17);
 }
 
+/**
+ * Certified complete (`urnStatus` 11, `productRenewStatus` 0) shares code 11 with renewal
+ * complete — route renew APIs only when the URN is actually in renewal workflow.
+ */
+export function shouldUseRenewWorkflowForUrn(params: {
+  urnStatus?: number | null;
+  productRenewStatus?: number | null;
+}): boolean {
+  const urnStatus = Number(params.urnStatus ?? 0);
+  const productRenewStatus = Number(params.productRenewStatus ?? 0);
+
+  if (urnStatus >= 12 && urnStatus <= 17) {
+    return true;
+  }
+
+  if (urnStatus === RENEWAL_URN_STATUS.COMPLETED) {
+    return (
+      productRenewStatus === PRODUCT_RENEW_STATUS.IN_PROGRESS ||
+      productRenewStatus === PRODUCT_RENEW_STATUS.RENEWED
+    );
+  }
+
+  return false;
+}
+
 /** Vendor cannot edit renew process tabs when URN is in these statuses. */
 export const RENEW_VENDOR_PROCESS_LOCK_STATUSES = new Set<number>([
   RENEWAL_URN_STATUS.CHECK_PROCESS_FORMS,

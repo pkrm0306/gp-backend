@@ -29,10 +29,9 @@ import {
 } from '../utils/upload-file.util';
 import * as path from 'path';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import {
-  trackProductDocumentDeleteBatch,
-  trackUploadedProductDocument,
-} from '../documents/helpers/product-document-version.integration';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AUDIT_ACTION } from '../audit-log/audit-actions';
 import { AUDIT_ACTION_TYPE, AUDIT_MODULE } from '../audit-log/audit-friendlies';
@@ -59,6 +58,8 @@ export class RawMaterialsHazardousProductsService {
     private model: Model<RawMaterialsHazardousProductsDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
@@ -404,20 +405,18 @@ export class RawMaterialsHazardousProductsService {
         { session },
       );
       documents.push(this.mapDocument(inserted[0]));
-      await trackUploadedProductDocument(this.documentVersioningService, {
-        urnNo,
-        sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
-        subsectionKey: 'products_test_report',
-        userId: vendorObjectId,
-        documentId: inserted[0]._id,
-        productDocumentId,
-        filePath: uploaded.fileUrl,
-        originalName: file.originalname,
-        storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
-        file,
-        action: 'added',
-        session,
-      });
+      await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+          userId: vendorObjectId,
+          vendorId: vendorObjectId,
+          doc: inserted[0],
+          file: file,
+          session,
+        });
     }
 
     return { documents, oldFileLinksToDeleteAfterCommit };
@@ -602,19 +601,17 @@ export class RawMaterialsHazardousProductsService {
       createdDate: now,
       updatedDate: now,
     });
-    await trackUploadedProductDocument(this.documentVersioningService, {
-      urnNo,
-      sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
-      subsectionKey: 'products_test_report',
-      userId: vendorObjectId,
-      documentId: doc._id,
-      productDocumentId,
-      filePath: uploaded.fileUrl,
-      originalName: file.originalname,
-      storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
-      file,
-      action: 'added',
-    });
+    await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
+          userId: vendorObjectId,
+          vendorId: vendorObjectId,
+          doc: doc,
+          file: file,
+        });
     return {
       documentOnly: true,
       documents: [this.mapDocument(doc)],
@@ -702,18 +699,16 @@ export class RawMaterialsHazardousProductsService {
           createdDate: now,
           updatedDate: now,
         });
-        await trackUploadedProductDocument(this.documentVersioningService, {
+        await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_HAZARDOUS_PRODUCTS,
-          subsectionKey: 'products_test_report',
           userId: vendorObjectId,
-          documentId: createdDoc._id,
-          productDocumentId,
-          filePath: storedRelativePath,
-          originalName: productsTestReportFile.originalname,
-          storedName: path.basename(storedRelativePath),
+          vendorId: vendorObjectId,
+          doc: createdDoc,
           file: productsTestReportFile,
-          action: 'added',
         });
       }
 

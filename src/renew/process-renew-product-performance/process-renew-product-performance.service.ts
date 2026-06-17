@@ -63,8 +63,9 @@ import {
   formatRenewProductPerformance,
 } from '../utils/renew-details-format.util';
 import * as path from 'path';
+import { PERFORMANCE_TEST_REPORT_SUBSECTION } from '../../product-performance/product-performance-upload.util';
 
-const RENEW_PERFORMANCE_DOC_SUBSECTION = 'product_performance';
+const RENEW_PERFORMANCE_DOC_SUBSECTION = PERFORMANCE_TEST_REPORT_SUBSECTION;
 
 export interface SaveRenewProductPerformanceInput {
   urnNo: string;
@@ -447,6 +448,7 @@ export class ProcessRenewProductPerformanceService {
         sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
         userId: vendorObjectId,
         docs: docsToDelete,
+        slotKeyMode: 'subsection',
         processType: 'renewal',
         renewalCycleId: renewalCycleObjectId,
         session,
@@ -490,6 +492,15 @@ export class ProcessRenewProductPerformanceService {
           updatedDate: now,
         });
       }
+      const existingInSlot = await this.renewDocumentModel
+        .countDocuments({
+          urnNo,
+          renewalCycleId: renewalCycleObjectId,
+          documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE,
+          documentFormSubsection: RENEW_PERFORMANCE_DOC_SUBSECTION,
+          isDeleted: { $ne: true },
+        })
+        .session(session);
       const inserted = await this.renewDocumentModel.insertMany(docsToInsert, {
         session,
       });
@@ -499,6 +510,8 @@ export class ProcessRenewProductPerformanceService {
         sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
         userId: vendorObjectId,
         docs: inserted,
+        action: existingInSlot > 0 ? 'replaced' : 'added',
+        slotKeyMode: 'subsection',
         processType: 'renewal',
         renewalCycleId: renewalCycleObjectId,
         session,

@@ -26,7 +26,7 @@ import {
   matchActiveProducts,
   matchActiveProductPlants,
 } from '../product-registration/constants/active-product.filter';
-import { ActivityLogService } from '../activity-log/activity-log.service';
+import { resolveSiteVisitUrnStatusAfterCreate } from './urn-site-visit-workflow.util';
 
 @Injectable()
 export class UrnSiteVisitsService {
@@ -37,7 +37,6 @@ export class UrnSiteVisitsService {
     private readonly productModel: Model<ProductDocument>,
     @InjectModel(ProductPlant.name)
     private readonly productPlantModel: Model<ProductPlantDocument>,
-    private readonly activityLogService: ActivityLogService,
   ) {}
 
   private normalizeUrnNo(urnNo: string): string {
@@ -107,7 +106,7 @@ export class UrnSiteVisitsService {
     };
   }
 
-  private async logSiteVisitActivity(
+  private logSiteVisitEvent(
     action:
       | 'urn_site_visit_created'
       | 'urn_site_visit_updated'
@@ -115,43 +114,45 @@ export class UrnSiteVisitsService {
     urnNo: string,
     siteVisitId: string,
     name: string,
-    vendorId: Types.ObjectId,
-    manufacturerId: Types.ObjectId,
     urnStatus: number,
     extra?: { fields?: string[] },
-  ): Promise<void> {
+  ): void {
     const labelByAction: Record<typeof action, string> = {
       urn_site_visit_created: `Admin added site visit '${name}' for URN ${urnNo}`,
       urn_site_visit_updated: `Admin updated site visit '${name}' for URN ${urnNo}`,
       urn_site_visit_deleted: `Admin deleted site visit '${name}' for URN ${urnNo}`,
     };
-    try {
-      await this.activityLogService.logActivity({
-        vendor_id: vendorId,
-        manufacturer_id: manufacturerId,
-        urn_no: urnNo,
-        activities_id: urnStatus,
-        activity: labelByAction[action],
-        activity_status: urnStatus,
-        responsibility: 'Admin',
-        next_responsibility: 'Admin',
-        status: 1,
-      });
-      console.info(`[URN Site Visit] ${action}`, {
-        urnNo,
-        siteVisitId,
-        name,
-        ...extra,
-      });
-    } catch (err) {
-      console.error('[URN Site Visit] Activity log failed:', err);
-    }
+    // Site visits are stored in urn_site_visits and audit_log — not activity_log,
+    // so Quick View workflow status is not overwritten by auxiliary admin events.
+    console.info(`[URN Site Visit] ${action}`, {
+      urnNo,
+      siteVisitId,
+      name,
+      urnStatus,
+      activity: labelByAction[action],
+      ...extra,
+    });
   }
 
   /**
    * Vendor dashboard `site_visit` is derived from products.urnStatus (see vendor-applications.util).
-   * Optional: when the first visit is created and urnStatus &lt; 5, move to site-visit-in-progress (5).
+   * When the first visit is created during process forms (status 3), move to site-visit-in-progress (5).
+   * Do not change workflow stage once the vendor has submitted for review (status >= 4).
    */
+  private async resolveMaxUrnWorkflowStatus(urnNo: string): Promise<number> {
+    const urnOptions = this.urnCandidates(urnNo);
+    const rows = await this.productModel
+      .find(matchActiveProducts({ urnNo: { $in: urnOptions } }))
+      .select('urnStatus')
+      .lean()
+      .exec();
+    let maxStatus = 0;
+    for (const row of rows) {
+      maxStatus = Math.max(maxStatus, Number(row.urnStatus ?? 0));
+    }
+    return maxStatus;
+  }
+
   private async syncUrnStatusAfterSiteVisitChange(
     urnNo: string,
     vendorId: Types.ObjectId,
@@ -161,23 +162,21 @@ export class UrnSiteVisitsService {
       urnNo: { $in: urnOptions },
       isDeleted: { $ne: true },
     });
-
-    const product = await this.productModel
-      .findOne(matchActiveProducts({ urnNo: { $in: urnOptions } }))
-      .select('urnStatus')
-      .lean()
-      .exec();
-    const currentStatus = Number(product?.urnStatus ?? 0);
-
-    if (activeCount > 0 && currentStatus < 5) {
-      await this.productModel.updateMany(
-        matchActiveProducts({ urnNo: { $in: urnOptions }, vendorId }),
-        { $set: { urnStatus: 5, updatedDate: new Date() } },
-      );
-      return 5;
+    if (activeCount === 0) {
+      return this.resolveMaxUrnWorkflowStatus(urnNo);
     }
 
-    return currentStatus;
+    const currentStatus = await this.resolveMaxUrnWorkflowStatus(urnNo);
+    const decision = resolveSiteVisitUrnStatusAfterCreate(currentStatus);
+
+    if (decision.shouldUpdate) {
+      await this.productModel.updateMany(
+        matchActiveProducts({ urnNo: { $in: urnOptions }, vendorId }),
+        { $set: { urnStatus: decision.nextStatus, updatedDate: new Date() } },
+      );
+    }
+
+    return decision.nextStatus;
   }
 
   private normalizePlantNameKey(name: string): string {
@@ -439,7 +438,7 @@ export class UrnSiteVisitsService {
       addressLine2: String(dto.addressLine2 ?? '').trim(),
       city: dto.city.trim(),
       state: dto.state.trim(),
-      postalCode: dto.postalCode.trim(),
+      postalCode: '',
       country: dto.country.trim(),
       auditType: dto.auditType?.trim() || null,
       auditConductedOn: this.parseOptionalDate(dto.auditConductedOn),
@@ -454,13 +453,11 @@ export class UrnSiteVisitsService {
       urnContext.vendorId,
     );
 
-    await this.logSiteVisitActivity(
+    this.logSiteVisitEvent(
       'urn_site_visit_created',
       urnContext.normalizedUrn,
       String(doc._id),
       doc.name,
-      urnContext.vendorId,
-      urnContext.manufacturerId,
       urnStatus,
     );
 
@@ -533,10 +530,6 @@ export class UrnSiteVisitsService {
       $set.state = dto.state.trim();
       updateFields.push('state');
     }
-    if (dto.postalCode !== undefined) {
-      $set.postalCode = dto.postalCode.trim();
-      updateFields.push('postalCode');
-    }
     if (dto.country !== undefined) {
       $set.country = dto.country.trim();
       updateFields.push('country');
@@ -571,14 +564,12 @@ export class UrnSiteVisitsService {
       throw new NotFoundException('Site visit not found after update');
     }
 
-    await this.logSiteVisitActivity(
+    this.logSiteVisitEvent(
       'urn_site_visit_updated',
       urnContext.normalizedUrn,
       String(updated._id),
       updated.name,
-      urnContext.vendorId,
-      urnContext.manufacturerId,
-      urnContext.urnStatus,
+      await this.resolveMaxUrnWorkflowStatus(urnContext.normalizedUrn),
       { fields: updateFields },
     );
 
@@ -602,14 +593,12 @@ export class UrnSiteVisitsService {
       $set: { isDeleted: true, updatedBy: actor },
     });
 
-    await this.logSiteVisitActivity(
+    this.logSiteVisitEvent(
       'urn_site_visit_deleted',
       urnContext.normalizedUrn,
       String(existing._id),
       existing.name,
-      urnContext.vendorId,
-      urnContext.manufacturerId,
-      urnContext.urnStatus,
+      await this.resolveMaxUrnWorkflowStatus(urnContext.normalizedUrn),
     );
   }
 }

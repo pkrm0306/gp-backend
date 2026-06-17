@@ -1,4 +1,5 @@
 import { resolveStoredUploadUrl } from '../../utils/upload-file.util';
+import { CATEGORY_CHANGE_CERTIFIED_MESSAGE } from '../constants/category-change.constants';
 
 /** Normalize valid-till from DB / Mongoose for admin PATCH responses. */
 export function normalizeValidTillForApiResponse(value: unknown): string | null {
@@ -28,6 +29,8 @@ export type AdminCertifiedProductPatchResponse = {
   validTillDate: string | null;
   valid_till_date: string | null;
   updatedDate: unknown;
+  categoryEditable: false;
+  categoryChangeBlockReason: string;
 };
 
 /** Flat PATCH payload aligned with admin list EOI rows (includes valid-till aliases). */
@@ -61,5 +64,7 @@ export function formatAdminCertifiedProductPatchResponse(
     validTillDate: validTillIso,
     valid_till_date: validTillIso,
     updatedDate: product.updatedDate ?? null,
+    categoryEditable: false,
+    categoryChangeBlockReason: CATEGORY_CHANGE_CERTIFIED_MESSAGE,
   };
 }

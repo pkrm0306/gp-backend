@@ -28,8 +28,8 @@ export class ProcessPsStakeholderEduAwarness {
   @Prop({ default: '' })
   seaNoOfPrograms: string;
 
-  @Prop({ type: Number, default: 0 })
-  seaSupportingDocuments: number;
+  @Prop({ type: Number, default: null, required: false })
+  seaSupportingDocuments?: number | null;
 
   @Prop({ type: Number, default: 0 })
   productStewardshipStatus: number;

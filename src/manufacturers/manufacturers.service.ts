@@ -136,6 +136,49 @@ export class ManufacturersService {
     return String(raw ?? '').trim().toLowerCase();
   }
 
+  private normalizeProfilePhone(raw: unknown): string {
+    return String(raw ?? '').trim();
+  }
+
+  /** True when the client sent a contact value that differs from any known current value. */
+  private isVendorEmailChanging(
+    incoming: string | undefined,
+    ...currentValues: Array<string | undefined | null>
+  ): boolean {
+    if (incoming === undefined) {
+      return false;
+    }
+    const normalizedIncoming = this.normalizeVendorEmail(incoming);
+    if (!normalizedIncoming) {
+      return false;
+    }
+    const currentSet = new Set(
+      currentValues
+        .map((value) => this.normalizeVendorEmail(value))
+        .filter((value) => value.length > 0),
+    );
+    return !currentSet.has(normalizedIncoming);
+  }
+
+  private isVendorPhoneChanging(
+    incoming: string | undefined,
+    ...currentValues: Array<string | undefined | null>
+  ): boolean {
+    if (incoming === undefined) {
+      return false;
+    }
+    const normalizedIncoming = this.normalizeProfilePhone(incoming);
+    if (!normalizedIncoming) {
+      return false;
+    }
+    const currentSet = new Set(
+      currentValues
+        .map((value) => this.normalizeProfilePhone(value))
+        .filter((value) => value.length > 0),
+    );
+    return !currentSet.has(normalizedIncoming);
+  }
+
   private vendorEmailDuplicateMessage(): string {
     return 'This email id is already registered';
   }
@@ -1191,20 +1234,22 @@ export class ManufacturersService {
         await this.resolveManufacturerForVendorProfile(authUser);
 
       if (resolvedManufacturer) {
+        const emailChanging = this.isVendorEmailChanging(
+          updateDto.email,
+          resolvedManufacturer.vendor_email,
+          vendorUser?.email,
+        );
+        const phoneChanging = this.isVendorPhoneChanging(
+          updateDto.mobile,
+          resolvedManufacturer.vendor_phone,
+          vendorUser?.phone,
+        );
         const profileContactConflicts =
           await this.collectManufacturerContactConflicts(
             resolvedManufacturer._id.toString(),
             {
-              email:
-                updateDto.email !== undefined &&
-                String(updateDto.email).trim()
-                  ? updateDto.email
-                  : undefined,
-              phone:
-                updateDto.mobile !== undefined &&
-                String(updateDto.mobile).trim()
-                  ? updateDto.mobile
-                  : undefined,
+              email: emailChanging ? updateDto.email : undefined,
+              phone: phoneChanging ? updateDto.mobile : undefined,
             },
             { excludeUserId: userId, session },
           );
@@ -1226,7 +1271,9 @@ export class ManufacturersService {
         if (updateDto.designation !== undefined) {
           vendorUserUpdate.designation = updateDto.designation;
         }
-        if (updateDto.email !== undefined && String(updateDto.email).trim()) {
+        if (
+          this.isVendorEmailChanging(updateDto.email, vendorUser?.email)
+        ) {
           const newEmail = this.normalizeVendorEmail(updateDto.email);
           await this.assertVendorEmailAvailableForUserId(
             newEmail,
@@ -1235,13 +1282,14 @@ export class ManufacturersService {
           );
           vendorUserUpdate.email = newEmail;
         }
-        if (updateDto.mobile !== undefined && String(updateDto.mobile).trim()) {
+        if (this.isVendorPhoneChanging(updateDto.mobile, vendorUser?.phone)) {
+          const newPhone = this.normalizeProfilePhone(updateDto.mobile);
           await this.assertVendorPhoneAvailableForUserId(
-            String(updateDto.mobile).trim(),
+            newPhone,
             userId,
             session,
           );
-          vendorUserUpdate.phone = String(updateDto.mobile).trim();
+          vendorUserUpdate.phone = newPhone;
         }
 
         if (Object.keys(vendorUserUpdate).length > 0) {
@@ -1551,19 +1599,6 @@ export class ManufacturersService {
     try {
       const manufacturerId = new Types.ObjectId(id);
 
-      if (dto.vendor_email !== undefined || dto.vendor_phone !== undefined) {
-        const contactConflicts = await this.collectManufacturerContactConflicts(
-          id,
-          {
-            email: dto.vendor_email,
-            phone: dto.vendor_phone,
-          },
-        );
-        if (contactConflicts.length > 0) {
-          throw new ConflictException(contactConflicts);
-        }
-      }
-
       const manufacturer = await this.manufacturerIdGeneration.withTransaction(
         async (session) => {
           const existing = await this.manufacturerModel
@@ -1572,6 +1607,29 @@ export class ManufacturersService {
             .exec();
           if (!existing) {
             throw new NotFoundException('Manufacturer not found');
+          }
+
+          if (dto.vendor_email !== undefined || dto.vendor_phone !== undefined) {
+            const emailChanging = this.isVendorEmailChanging(
+              dto.vendor_email,
+              existing.vendor_email,
+            );
+            const phoneChanging = this.isVendorPhoneChanging(
+              dto.vendor_phone,
+              existing.vendor_phone,
+            );
+            const contactConflicts =
+              await this.collectManufacturerContactConflicts(
+                id,
+                {
+                  email: emailChanging ? dto.vendor_email : undefined,
+                  phone: phoneChanging ? dto.vendor_phone : undefined,
+                },
+                { session },
+              );
+            if (contactConflicts.length > 0) {
+              throw new ConflictException(contactConflicts);
+            }
           }
 
           const isUnverified = (existing.manufacturerStatus ?? 0) !== 1;

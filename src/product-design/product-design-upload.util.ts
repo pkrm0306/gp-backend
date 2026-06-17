@@ -1,5 +1,10 @@
-import { BadRequestException } from '@nestjs/common';
-import { extname } from 'path';
+import {
+  assertStandardDocumentFileTypes,
+  isAllowedStandardDocumentFile,
+  STANDARD_DOCUMENT_EXTENSIONS,
+  STANDARD_DOCUMENT_MIMES,
+  STANDARD_DOCUMENT_VALIDATION_MESSAGE,
+} from '../common/upload/document-upload.validation';
 import {
   hasPartialMeasureBenefitRow,
   normalizeMeasureBenefitRow,
@@ -28,40 +33,24 @@ export const PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES = new Set([
 export const ECO_VISION_SUBSECTION = 'eco_vision_upload';
 export const SUPPORTING_SUBSECTION = 'supporting_documents';
 
-/** Supporting design uploads: PDF and Excel only (matches vendor UI). */
-export const SUPPORTING_DESIGN_ALLOWED_EXTENSIONS = new Set([
-  '.pdf',
-  '.xls',
-  '.xlsx',
-]);
+/** Supporting design uploads: standard document types (PDF, images, Word). */
+export const SUPPORTING_DESIGN_ALLOWED_EXTENSIONS = STANDARD_DOCUMENT_EXTENSIONS;
 
-export const SUPPORTING_DESIGN_ALLOWED_MIMES = new Set([
-  'application/pdf',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-]);
+export const SUPPORTING_DESIGN_ALLOWED_MIMES = STANDARD_DOCUMENT_MIMES;
 
 export function isAllowedSupportingDesignFile(
   file: Express.Multer.File,
 ): boolean {
-  const ext = extname(String(file.originalname ?? '')).toLowerCase();
-  return (
-    SUPPORTING_DESIGN_ALLOWED_EXTENSIONS.has(ext) ||
-    SUPPORTING_DESIGN_ALLOWED_MIMES.has(file.mimetype)
-  );
+  return isAllowedStandardDocumentFile(file);
 }
 
 export function assertSupportingDesignFileTypes(
   files: Express.Multer.File[],
 ): void {
-  for (const file of files) {
-    if (!isAllowedSupportingDesignFile(file)) {
-      throw new BadRequestException(
-        'Invalid supporting document type. Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed.',
-      );
-    }
-  }
+  assertStandardDocumentFileTypes(files);
 }
+
+export { STANDARD_DOCUMENT_VALIDATION_MESSAGE as SUPPORTING_DESIGN_VALIDATION_MESSAGE };
 
 /** Exact copy for vendor toast / API 400 (productDesignFormFilled.ts). */
 export const PRODUCT_DESIGN_EMPTY_FORM_MESSAGE =

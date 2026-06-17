@@ -11,6 +11,8 @@ import {
   StandardFonts,
   rgb,
 } from 'pdf-lib';
+import archiver from 'archiver';
+import { PassThrough } from 'stream';
 import { Model, Types } from 'mongoose';
 import { Product, ProductDocument } from '../schemas/product.schema';
 import {
@@ -25,7 +27,14 @@ import {
   AllProductDocument,
   AllProductDocumentDocument,
 } from '../../product-design/schemas/all-product-document.schema';
-import { matchActiveProducts } from '../constants/active-product.filter';
+import {
+  matchActiveProductPlants,
+  matchActiveProducts,
+} from '../constants/active-product.filter';
+import {
+  ProductPlant,
+  ProductPlantDocument,
+} from '../schemas/product-plant.schema';
 import { readUploadedFileBuffer } from '../../utils/upload-file-read.util';
 
 const CERTIFIED_PRODUCT_STATUS = 2;
@@ -52,6 +61,36 @@ type ProductWithRelations = ProductDocument & {
   manufacturer?: ManufacturerLean | null;
 };
 
+type PlantWithGeo = {
+  id: string;
+  productPlantId: number;
+  plantName?: string;
+  plantLocation?: string;
+  city?: string;
+  stateName?: string | null;
+};
+
+export type EoiPlantCertificateItem = {
+  plantId: string;
+  productPlantId: number;
+  plantName: string;
+  location: string;
+  order: number;
+  downloadPath: string;
+};
+
+export type EoiPlantCertificateList = {
+  productId: string;
+  eoiNo: string;
+  productName: string;
+  plantCount: number;
+  plants: EoiPlantCertificateItem[];
+  downloads: {
+    mergedPdfPath: string;
+    zipPath: string;
+  };
+};
+
 @Injectable()
 export class VendorCertificateService {
   constructor(
@@ -63,17 +102,101 @@ export class VendorCertificateService {
     private readonly manufacturerModel: Model<ManufacturerDocument>,
     @InjectModel(AllProductDocument.name)
     private readonly allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(ProductPlant.name)
+    private readonly productPlantModel: Model<ProductPlantDocument>,
   ) {}
 
   async downloadEoiCertificate(
     vendorId: string,
     productId: string,
+    format: 'merged' | 'zip' = 'merged',
   ): Promise<CertificateDownloadFile> {
     const product = await this.loadCertifiedProductForVendor(vendorId, productId);
-    const buffer = await this.resolveCertificateBuffer(product);
+    const plants = await this.loadPlantsForProduct(product);
+
+    if (!plants.length) {
+      throw new NotFoundException(
+        `No manufacturing plants found for EOI ${product.eoiNo}. Certificates require plant records.`,
+      );
+    }
+
+    if (format === 'zip') {
+      return this.downloadEoiCertificateZip(product, plants);
+    }
+
+    if (plants.length <= 1) {
+      const locationOverride =
+        plants.length === 1 ? this.derivePlantLocation(plants[0]) : undefined;
+      const buffer = await this.resolveCertificateBuffer(
+        product,
+        locationOverride,
+      );
+      return {
+        buffer,
+        fileName: this.buildCertificateFileName(product.eoiNo),
+        contentType: 'application/pdf',
+      };
+    }
+
+    const buffer = await this.mergePlantCertificateBuffers(
+      product,
+      plants,
+      `No certificate files are available for EOI ${product.eoiNo}`,
+    );
     return {
       buffer,
       fileName: this.buildCertificateFileName(product.eoiNo),
+      contentType: 'application/pdf',
+    };
+  }
+
+  async listEoiPlantCertificates(
+    vendorId: string,
+    productId: string,
+  ): Promise<EoiPlantCertificateList> {
+    const product = await this.loadCertifiedProductForVendor(vendorId, productId);
+    const plants = await this.loadPlantsForProduct(product);
+    const trimmedProductId = String(product._id);
+
+    return {
+      productId: trimmedProductId,
+      eoiNo: String(product.eoiNo ?? ''),
+      productName: String(product.productName ?? ''),
+      plantCount: Math.max(plants.length, Number(product.plantCount ?? 0)),
+      plants: plants.map((plant, index) => ({
+        plantId: plant.id,
+        productPlantId: plant.productPlantId,
+        plantName: String(plant.plantName ?? `Plant ${index + 1}`),
+        location: this.derivePlantLocation(plant),
+        order: index + 1,
+        downloadPath: this.buildPlantCertificatePath(trimmedProductId, plant.id),
+      })),
+      downloads: {
+        mergedPdfPath: this.buildEoiCertificatePath(trimmedProductId, 'merged'),
+        zipPath: this.buildEoiCertificatePath(trimmedProductId, 'zip'),
+      },
+    };
+  }
+
+  async downloadEoiPlantCertificate(
+    vendorId: string,
+    productId: string,
+    plantId: string,
+  ): Promise<CertificateDownloadFile> {
+    const product = await this.loadCertifiedProductForVendor(vendorId, productId);
+    const plant = await this.loadPlantForProduct(product, plantId);
+    const buffer = await this.generateCertificatePdf(
+      product,
+      this.derivePlantLocation(plant),
+    );
+
+    return {
+      buffer,
+      fileName: this.buildPlantCertificateFileName(
+        product.eoiNo,
+        plant.plantName,
+        plant.productPlantId,
+      ),
       contentType: 'application/pdf',
     };
   }
@@ -114,7 +237,27 @@ export class VendorCertificateService {
 
     for (const product of hydrated) {
       try {
-        const buffer = await this.resolveCertificateBuffer(product);
+        const plants = await this.loadPlantsForProduct(product);
+        if (plants.length > 1) {
+          const plantBuffer = await this.mergePlantCertificateBuffers(
+            product,
+            plants,
+          );
+          const src = await PDFLibDocument.load(plantBuffer);
+          const pages = await mergedPdf.copyPages(src, src.getPageIndices());
+          for (const p of pages) {
+            mergedPdf.addPage(p);
+          }
+          addedPages += pages.length;
+          continue;
+        }
+
+        const locationOverride =
+          plants.length === 1 ? this.derivePlantLocation(plants[0]) : undefined;
+        const buffer = await this.resolveCertificateBuffer(
+          product,
+          locationOverride,
+        );
         const src = await PDFLibDocument.load(buffer);
         const pages = await mergedPdf.copyPages(src, src.getPageIndices());
         for (const p of pages) {
@@ -193,12 +336,199 @@ export class VendorCertificateService {
     });
   }
 
+  private async loadPlantsForProduct(
+    product: ProductWithRelations,
+  ): Promise<PlantWithGeo[]> {
+    const rows = await this.productPlantModel
+      .aggregate([
+        {
+          $match: matchActiveProductPlants({
+            productId: product._id,
+            eoiNo: String(product.eoiNo ?? '').trim(),
+          }),
+        },
+        {
+          $lookup: {
+            from: 'states',
+            localField: 'stateId',
+            foreignField: '_id',
+            as: 'state',
+          },
+        },
+        { $sort: { createdDate: 1 } },
+      ])
+      .exec();
+
+    return rows.map((row) => {
+      const stateDoc = Array.isArray(row.state)
+        ? (row.state[0] as Record<string, unknown> | undefined)
+        : undefined;
+      return {
+        id: String(row._id),
+        productPlantId: Number(row.productPlantId ?? 0),
+        plantName: row.plantName,
+        plantLocation: row.plantLocation,
+        city: row.city,
+        stateName:
+          (stateDoc?.stateName as string | undefined) ??
+          (stateDoc?.name as string | undefined) ??
+          null,
+      };
+    });
+  }
+
+  private async loadPlantForProduct(
+    product: ProductWithRelations,
+    plantId: string,
+  ): Promise<PlantWithGeo> {
+    const trimmedPlantId = String(plantId ?? '').trim();
+    if (!Types.ObjectId.isValid(trimmedPlantId)) {
+      throw new BadRequestException('Invalid plant id');
+    }
+
+    const rows = await this.productPlantModel
+      .aggregate([
+        {
+          $match: matchActiveProductPlants({
+            _id: new Types.ObjectId(trimmedPlantId),
+            productId: product._id,
+            eoiNo: String(product.eoiNo ?? '').trim(),
+          }),
+        },
+        {
+          $lookup: {
+            from: 'states',
+            localField: 'stateId',
+            foreignField: '_id',
+            as: 'state',
+          },
+        },
+        { $limit: 1 },
+      ])
+      .exec();
+
+    const row = rows[0];
+    if (!row) {
+      throw new NotFoundException('Plant not found for this certified EOI');
+    }
+
+    const stateDoc = Array.isArray(row.state)
+      ? (row.state[0] as Record<string, unknown> | undefined)
+      : undefined;
+
+    return {
+      id: String(row._id),
+      productPlantId: Number(row.productPlantId ?? 0),
+      plantName: row.plantName,
+      plantLocation: row.plantLocation,
+      city: row.city,
+      stateName:
+        (stateDoc?.stateName as string | undefined) ??
+        (stateDoc?.name as string | undefined) ??
+        null,
+    };
+  }
+
+  private async downloadEoiCertificateZip(
+    product: ProductWithRelations,
+    plants: PlantWithGeo[],
+  ): Promise<CertificateDownloadFile> {
+    const files: Array<{ name: string; buffer: Buffer }> = [];
+
+    for (const [index, plant] of plants.entries()) {
+      try {
+        const buffer = await this.generateCertificatePdf(
+          product,
+          this.derivePlantLocation(plant),
+        );
+        files.push({
+          name: this.buildPlantCertificateFileName(
+            product.eoiNo,
+            plant.plantName,
+            plant.productPlantId || index + 1,
+          ),
+          buffer,
+        });
+      } catch {
+        /* skip invalid plant certificate rows */
+      }
+    }
+
+    if (!files.length) {
+      throw new NotFoundException(
+        `No certificate files are available for EOI ${product.eoiNo}`,
+      );
+    }
+
+    const zipBuffer = await this.buildZipBuffer(files);
+    return {
+      buffer: zipBuffer,
+      fileName: this.buildCertificateZipFileName(product.eoiNo),
+      contentType: 'application/zip',
+    };
+  }
+
+  private async buildZipBuffer(
+    files: Array<{ name: string; buffer: Buffer }>,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      const stream = new PassThrough();
+      const chunks: Buffer[] = [];
+
+      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      stream.on('end', () => resolve(Buffer.concat(chunks)));
+      stream.on('error', reject);
+      archive.on('error', reject);
+      archive.pipe(stream);
+
+      for (const file of files) {
+        archive.append(file.buffer, { name: file.name });
+      }
+
+      void archive.finalize();
+    });
+  }
+
+  private async mergePlantCertificateBuffers(
+    product: ProductWithRelations,
+    plants: PlantWithGeo[],
+    emptyMessage?: string,
+  ): Promise<Buffer> {
+    const mergedPdf = await PDFLibDocument.create();
+    let addedPages = 0;
+
+    for (const plant of plants) {
+      try {
+        const location = this.derivePlantLocation(plant);
+        const buffer = await this.generateCertificatePdf(product, location);
+        const src = await PDFLibDocument.load(buffer);
+        const pages = await mergedPdf.copyPages(src, src.getPageIndices());
+        for (const p of pages) {
+          mergedPdf.addPage(p);
+        }
+        addedPages += pages.length;
+      } catch {
+        /* skip invalid plant certificate rows */
+      }
+    }
+
+    if (addedPages === 0) {
+      throw new NotFoundException(
+        emptyMessage ?? 'No certificate files are available for this EOI',
+      );
+    }
+
+    return Buffer.from(await mergedPdf.save());
+  }
+
   private async resolveCertificateBuffer(
     product: ProductWithRelations,
+    locationOverride?: string,
   ): Promise<Buffer> {
     const fromDocument = await this.readCertificateFromDocuments(product);
     if (fromDocument) {
-      return this.ensurePdfBuffer(product, fromDocument);
+      return this.ensurePdfBuffer(product, fromDocument, locationOverride);
     }
 
     if (product.assessmentReportUrl) {
@@ -206,28 +536,33 @@ export class VendorCertificateService {
         product.assessmentReportUrl,
       );
       if (fromAssessment?.length) {
-        return this.ensurePdfBuffer(product, fromAssessment);
+        return this.ensurePdfBuffer(
+          product,
+          fromAssessment,
+          locationOverride,
+        );
       }
     }
 
     for (const relativePath of this.buildCertificatePathCandidates(product)) {
       const buffer = await readUploadedFileBuffer(relativePath);
       if (buffer?.length) {
-        return this.ensurePdfBuffer(product, buffer);
+        return this.ensurePdfBuffer(product, buffer, locationOverride);
       }
     }
 
-    return this.generateCertificatePdf(product);
+    return this.generateCertificatePdf(product, locationOverride);
   }
 
   private ensurePdfBuffer(
     product: ProductWithRelations,
     buffer: Buffer,
+    locationOverride?: string,
   ): Buffer | Promise<Buffer> {
     if (buffer.length >= 5 && buffer.subarray(0, 5).toString() === '%PDF-') {
       return buffer;
     }
-    return this.generateCertificatePdf(product);
+    return this.generateCertificatePdf(product, locationOverride);
   }
 
   private async readCertificateFromDocuments(
@@ -288,12 +623,17 @@ export class VendorCertificateService {
 
   private generateCertificatePdf(
     product: ProductWithRelations,
+    locationOverride?: string,
   ): Promise<Buffer> {
-    return this.generateCertificatePdfWithTemplateLayout(product);
+    return this.generateCertificatePdfWithTemplateLayout(
+      product,
+      locationOverride,
+    );
   }
 
   private async generateCertificatePdfWithTemplateLayout(
     product: ProductWithRelations,
+    locationOverride?: string,
   ): Promise<Buffer> {
     const pdfDoc = await PDFLibDocument.create();
     const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
@@ -322,7 +662,9 @@ export class VendorCertificateService {
         product.manufacturer as { manufacturerName?: string } | null
       )?.manufacturerName || 'N/A',
     );
-    const location = this.safeLatinText(this.deriveLocation(product));
+    const location = this.safeLatinText(
+      locationOverride?.trim() || this.deriveLocation(product),
+    );
     const validDate = this.safeLatinText(
       this.formatValidityMonthYear(product.validtillDate) || 'N/A',
     );
@@ -439,6 +781,15 @@ export class VendorCertificateService {
     return c || s || '';
   }
 
+  private derivePlantLocation(plant: PlantWithGeo): string {
+    const city = String(plant.city ?? '').trim();
+    const state = String(plant.stateName ?? '').trim();
+    if (city && state) {
+      return `${city}, ${state}`;
+    }
+    return city || state || String(plant.plantLocation ?? '').trim();
+  }
+
   private formatValidityMonthYear(value?: Date | string | null): string | null {
     if (!value) {
       return null;
@@ -459,6 +810,39 @@ export class VendorCertificateService {
       .trim()
       .replace(/[^a-zA-Z0-9._-]/g, '_');
     return `GreenPro_Certificate_${safe || 'certificate'}.pdf`;
+  }
+
+  private buildCertificateZipFileName(eoiNo?: string | null): string {
+    const safe = String(eoiNo ?? 'certificate')
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]/g, '_');
+    return `GreenPro_Certificates_${safe || 'certificate'}.zip`;
+  }
+
+  private buildPlantCertificateFileName(
+    eoiNo?: string | null,
+    plantName?: string | null,
+    plantKey?: string | number | null,
+  ): string {
+    const safeEoi = String(eoiNo ?? 'certificate')
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]/g, '_');
+    const safePlant = String(plantName ?? plantKey ?? 'plant')
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]/g, '_');
+    return `GreenPro_Certificate_${safeEoi}_${safePlant}.pdf`;
+  }
+
+  private buildEoiCertificatePath(
+    productId: string,
+    format: 'merged' | 'zip',
+  ): string {
+    const suffix = format === 'zip' ? '?format=zip' : '';
+    return `/products/certificates/eoi/${productId}${suffix}`;
+  }
+
+  private buildPlantCertificatePath(productId: string, plantId: string): string {
+    return `/products/certificates/eoi/${productId}/plants/${plantId}`;
   }
 
   private formatDate(value?: Date | string | null): string | null {

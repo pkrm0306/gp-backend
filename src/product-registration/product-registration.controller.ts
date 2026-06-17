@@ -44,7 +44,8 @@ export class ProductRegistrationController {
   @ApiOperation({
     summary: 'Vendor uncertified EOI list — filter options',
     description:
-      'Returns **countries** for a dropdown. **State** and **city** are free-text filters on `GET /product-registration/list` (not returned as dropdowns).',
+      'Returns **all countries** for a dropdown (`data.countries[]`, sorted A–Z). Not limited to countries with products. ' +
+      'Alternative: `GET /countries/dropdown`. **State** and **city** are free-text filters on `GET /product-registration/list`.',
   })
   @ApiResponse({
     status: 200,
@@ -74,8 +75,8 @@ export class ProductRegistrationController {
     name: 'limit',
     required: false,
     type: Number,
-    description: 'Number of items per page (default: 10)',
-    example: 10,
+    description: 'Number of items per page (default: 20)',
+    example: 20,
   })
   @ApiQuery({
     name: 'search',
@@ -425,6 +426,8 @@ export class ProductRegistrationController {
       'Updates the existing product row only — URN and EOI are never regenerated. ' +
       'Requires productName, productDetails, urnNo, and eoiNo; urnNo/eoiNo must match the product for {id} (400 on mismatch). ' +
       'Optional categoryId updates the product and all active product plants for that product. ' +
+      'Category change resets all raw materials data for the URN and invalidates admin/vendor product list caches (`listRefreshRequired` in response). ' +
+      'Category change is blocked when productStatus is certified (2), urnStatus >= 6 (after final review submission), or URN is in renewal (12–17). ' +
       'Other fields remain optional.',
   })
   @ApiParam({

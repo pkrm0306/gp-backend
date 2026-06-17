@@ -86,7 +86,7 @@ export class AdminRejectedRestoreService {
 
     const allowedTargets = gate.hasCertifiedOnUrn
       ? (['certified'] as const)
-      : (['uncertified', 'certified'] as const);
+      : (['uncertified'] as const);
 
     return {
       success: true,
@@ -354,6 +354,11 @@ export class AdminRejectedRestoreService {
     targetStatus: RejectedRestoreTargetStatus,
     gate: UrnCertifiedGate,
   ): void {
+    if (targetStatus === PRODUCT_STATUS_CERTIFIED && !gate.hasCertifiedOnUrn) {
+      throw new BadRequestException(
+        'This URN has no certified products. Restore to Un-certified Products only.',
+      );
+    }
     if (targetStatus === PRODUCT_STATUS_PENDING && gate.hasCertifiedOnUrn) {
       throw new BadRequestException(
         'This URN already has certified products. Restore to Certified only.',

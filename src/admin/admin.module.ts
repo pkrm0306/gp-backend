@@ -1,8 +1,14 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdminController } from './admin.controller';
+import { AdminVendorUserController } from './admin-vendor-user.controller';
 import { AdminDashboardController } from './dashboard/admin-dashboard.controller';
 import { AdminDashboardStatsService } from './dashboard/admin-dashboard-stats.service';
+import { AdminDashboardKpiService } from './dashboard/admin-dashboard-kpi.service';
+import { AdminDashboardWidgetsService } from './dashboard/admin-dashboard-widgets.service';
+import { AdminDashboardCertificationTimingService } from './dashboard/admin-dashboard-certification-timing.service';
+import { AdminDashboardSustainabilityService } from './dashboard/admin-dashboard-sustainability.service';
+import { AdminDashboardVisitorAnalyticsService } from './dashboard/admin-dashboard-visitor-analytics.service';
 import { AdminRevenueDashboardService } from './dashboard/admin-revenue-dashboard.service';
 import { AdminService } from './admin.service';
 import {
@@ -61,6 +67,30 @@ import {
   PaymentDetails,
   PaymentDetailsSchema,
 } from '../payments/schemas/payment-details.schema';
+import {
+  VendorProductChangeRequest,
+  VendorProductChangeRequestSchema,
+} from '../product-registration/schemas/vendor-product-change-request.schema';
+import {
+  ProcessMpManufacturingUnit,
+  ProcessMpManufacturingUnitSchema,
+} from '../process-mp-manufacturing-units/schemas/process-mp-manufacturing-unit.schema';
+import {
+  RawMaterialsRecycledContent,
+  RawMaterialsRecycledContentSchema,
+} from '../raw-materials-recycled-content/schemas/raw-materials-recycled-content.schema';
+import {
+  RawMaterialsRecovery,
+  RawMaterialsRecoverySchema,
+} from '../raw-materials-recovery/schemas/raw-materials-recovery.schema';
+import {
+  RawMaterialsRapidlyRenewableMaterials,
+  RawMaterialsRapidlyRenewableMaterialsSchema,
+} from '../raw-materials-rapidly-renewable-materials/schemas/raw-materials-rapidly-renewable-materials.schema';
+import {
+  RawMaterialsUtilizationRmc,
+  RawMaterialsUtilizationRmcSchema,
+} from '../raw-materials-utilization-rmc/schemas/raw-materials-utilization-rmc.schema';
 
 @Module({
   imports: [
@@ -89,12 +119,33 @@ import {
       { name: EventIdCounter.name, schema: EventIdCounterSchema },
       { name: Article.name, schema: ArticleSchema },
       { name: PaymentDetails.name, schema: PaymentDetailsSchema },
+      {
+        name: VendorProductChangeRequest.name,
+        schema: VendorProductChangeRequestSchema,
+      },
+      { name: ProcessMpManufacturingUnit.name, schema: ProcessMpManufacturingUnitSchema },
+      { name: RawMaterialsRecycledContent.name, schema: RawMaterialsRecycledContentSchema },
+      { name: RawMaterialsRecovery.name, schema: RawMaterialsRecoverySchema },
+      {
+        name: RawMaterialsRapidlyRenewableMaterials.name,
+        schema: RawMaterialsRapidlyRenewableMaterialsSchema,
+      },
+      { name: RawMaterialsUtilizationRmc.name, schema: RawMaterialsUtilizationRmcSchema },
     ]),
   ],
-  controllers: [AdminController, AdminDashboardController],
+  controllers: [
+    AdminController,
+    AdminVendorUserController,
+    AdminDashboardController,
+  ],
   providers: [
     AdminService,
     AdminDashboardStatsService,
+    AdminDashboardKpiService,
+    AdminDashboardWidgetsService,
+    AdminDashboardCertificationTimingService,
+    AdminDashboardSustainabilityService,
+    AdminDashboardVisitorAnalyticsService,
     AdminRevenueDashboardService,
     EmailService,
     PermissionsGuard,

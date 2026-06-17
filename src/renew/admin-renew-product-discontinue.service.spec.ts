@@ -92,6 +92,7 @@ describe('AdminRenewProductDiscontinueService', () => {
       _id: String(productId),
       eoiNo: 'EOI-1',
       productStatus: 2,
+      productStatusLabel: 'Certified',
     });
   });
 
@@ -116,6 +117,9 @@ describe('AdminRenewProductDiscontinueService', () => {
       productId: String(productId),
       eoiNo: 'GPPMI003004',
       productStatus: 2,
+      productStatusLabel: 'Certified',
+      discontinueStatus: 'discontinued',
+      discontinueStatusLabel: 'Discontinued',
       isDeleted: true,
     });
     expect(updateOne).toHaveBeenCalledWith(
@@ -131,9 +135,7 @@ describe('AdminRenewProductDiscontinueService', () => {
       expect.objectContaining({ session: expect.anything() }),
     );
     expect(resequenceForManufacturerInSession).toHaveBeenCalled();
-    expect(updateOne.mock.calls[0][1].$set).not.toHaveProperty(
-      'productStatus',
-    );
+    expect(updateOne.mock.calls[0][1].$set).not.toHaveProperty('productStatus');
     expect(auditCreate).toHaveBeenCalledWith(
       [
         expect.objectContaining({
@@ -143,6 +145,16 @@ describe('AdminRenewProductDiscontinueService', () => {
         }),
       ],
       expect.objectContaining({ session: expect.anything() }),
+    );
+    expect(auditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        new_values: expect.objectContaining({
+          productStatus: 2,
+          productStatusLabel: 'Certified',
+          discontinueStatus: 'discontinued',
+          discontinueStatusLabel: 'Discontinued',
+        }),
+      }),
     );
   });
 

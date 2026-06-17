@@ -1,10 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
-import {
-  Product,
-  ProductDocument,
-} from '../schemas/product.schema';
+import { Product, ProductDocument } from '../schemas/product.schema';
 import {
   ProductPlant,
   ProductPlantDocument,
@@ -40,11 +37,11 @@ import {
 import {
   UrnMergeBlocker,
   UrnMergeProductRow,
+  buildOwnershipMismatchBlocker,
   buildRenewalBlockers,
   categoryIdKey,
   findEoiCollisions,
   normalizeUrnMergeNo,
-  objectIdKey,
   selectCertifiedProductsToMove,
 } from './helpers/urn-merge-eligibility.util';
 
@@ -117,11 +114,12 @@ export class UrnMergeService {
       targetUrnNo,
       options,
     );
-    const { urnLevelConflicts, urnLevelMoves } = await this.planUrnLevelSections(
-      context.sourceUrnNo,
-      context.targetUrnNo,
-      context.vendorId,
-    );
+    const { urnLevelConflicts, urnLevelMoves } =
+      await this.planUrnLevelSections(
+        context.sourceUrnNo,
+        context.targetUrnNo,
+        context.vendorId,
+      );
 
     return {
       success: true,
@@ -147,7 +145,9 @@ export class UrnMergeService {
     dto: UrnMergeExecuteDto,
     adminUserId: string,
   ): Promise<UrnMergeExecuteResult> {
-    const strategy = String(dto.urnLevelStrategy ?? URN_MERGE_STRATEGY_FILL_GAPS);
+    const strategy = String(
+      dto.urnLevelStrategy ?? URN_MERGE_STRATEGY_FILL_GAPS,
+    );
     if (strategy !== URN_MERGE_STRATEGY_FILL_GAPS) {
       throw new BadRequestException(
         `Unsupported urnLevelStrategy: ${strategy}`,
@@ -160,9 +160,9 @@ export class UrnMergeService {
     });
 
     if (!preview.canMerge) {
-      const codes = preview.blockers.map((b) => b.code).join(', ');
+      const firstBlockerMessage = String(preview.blockers?.[0]?.message ?? '').trim();
       throw new BadRequestException(
-        `URN merge blocked: ${codes || 'validation failed'}`,
+        firstBlockerMessage || 'Merge cannot be completed due to validation rules.',
       );
     }
 
@@ -375,7 +375,10 @@ export class UrnMergeService {
     }
 
     for (const collection of URN_MERGE_MULTI_ROW_COLLECTIONS) {
-      const sourceCount = await this.countCollectionRows(collection, sourceUrnNo);
+      const sourceCount = await this.countCollectionRows(
+        collection,
+        sourceUrnNo,
+      );
       if (sourceCount > 0) {
         urnLevelMoves.push({
           collection,
@@ -430,7 +433,10 @@ export class UrnMergeService {
     }
 
     for (const collection of URN_MERGE_MULTI_ROW_COLLECTIONS) {
-      const sourceCount = await this.countCollectionRows(collection, sourceUrnNo);
+      const sourceCount = await this.countCollectionRows(
+        collection,
+        sourceUrnNo,
+      );
       if (sourceCount === 0) {
         continue;
       }
@@ -523,27 +529,16 @@ export class UrnMergeService {
     const targetRep = targetCertified[0] ?? targetProducts[0];
 
     if (sourceRep && targetRep) {
-      if (categoryIdKey(sourceRep.categoryId) !== categoryIdKey(targetRep.categoryId)) {
+      if (
+        categoryIdKey(sourceRep.categoryId) !==
+        categoryIdKey(targetRep.categoryId)
+      ) {
         blockers.push({
           code: 'CATEGORY_MISMATCH',
           message: 'Source and target must belong to the same category',
         });
       }
-      if (objectIdKey(sourceRep.vendorId) !== objectIdKey(targetRep.vendorId)) {
-        blockers.push({
-          code: 'VENDOR_MISMATCH',
-          message: 'Source and target must belong to the same vendor',
-        });
-      }
-      if (
-        objectIdKey(sourceRep.manufacturerId) !==
-        objectIdKey(targetRep.manufacturerId)
-      ) {
-        blockers.push({
-          code: 'MANUFACTURER_MISMATCH',
-          message: 'Source and target must belong to the same manufacturer',
-        });
-      }
+      blockers.push(...buildOwnershipMismatchBlocker(sourceRep, targetRep));
     }
 
     blockers.push(

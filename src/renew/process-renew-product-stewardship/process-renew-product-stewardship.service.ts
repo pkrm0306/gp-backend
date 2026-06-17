@@ -44,7 +44,7 @@ import { uploadFile } from '../../utils/upload-file.util';
 
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
 
-import { trackProductDocumentBatch } from '../../documents/helpers/product-document-version.integration';
+import { insertRenewSectionDocuments } from '../helpers/renew-section-documents.util';
 
 import {
 
@@ -146,6 +146,8 @@ export class ProcessRenewProductStewardshipService {
 
       const trimmedUrn = ownership.urnNo;
 
+      const renewalCycleObjectId = cycle._id;
+
 
 
       const existing = await this.renewStewardshipModel
@@ -170,7 +172,13 @@ export class ProcessRenewProductStewardshipService {
 
 
 
-      const docsToInsert: Array<Record<string, unknown>> = [];
+      const newDocRows: Array<{
+        productDocumentId: number;
+        documentFormSubsection: string;
+        documentName: string;
+        documentOriginalName: string;
+        documentLink: string;
+      }> = [];
 
 
 
@@ -200,31 +208,17 @@ export class ProcessRenewProductStewardshipService {
 
           const uploaded = await uploadFile(file, renewUploadPath(trimmedUrn));
 
-          docsToInsert.push({
+          newDocRows.push({
 
             productDocumentId: await this.sequenceHelper.getRenewProductDocumentId(),
 
-            vendorId: ownership.vendorId,
-
-            manufacturerId: ownership.manufacturerId,
-
-            urnNo: trimmedUrn,
-
-            documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
-
             documentFormSubsection: group.subsection,
-
-            formPrimaryId: processRenewProductStewardshipId,
 
             documentName: path.basename(uploaded.fileUrl),
 
             documentOriginalName: file.originalname,
 
             documentLink: uploaded.fileUrl,
-
-            createdDate: now,
-
-            updatedDate: now,
 
           });
 
@@ -284,35 +278,33 @@ export class ProcessRenewProductStewardshipService {
 
 
 
-      if (docsToInsert.length > 0) {
+      await insertRenewSectionDocuments({
 
-        const inserted = await this.renewDocumentModel.insertMany(docsToInsert, {
+        renewDocumentModel: this.renewDocumentModel,
 
-          session,
+        documentVersioningService: this.documentVersioningService,
 
-        });
+        urnNo: trimmedUrn,
 
-        await trackProductDocumentBatch({
+        vendorObjectId: ownership.vendorId,
 
-          versioning: this.documentVersioningService,
+        manufacturerObjectId: ownership.manufacturerId,
 
-          urnNo: trimmedUrn,
+        renewalCycleObjectId,
 
-          sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+        sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
 
-          userId: ownership.vendorId,
+        formPrimaryId: processRenewProductStewardshipId,
 
-          docs: inserted,
+        now,
 
-          processType: 'renewal',
+        session,
 
-          renewalCycleId: cycle._id,
+        rows: newDocRows,
 
-          session,
+        slotKeyMode: 'subsection',
 
-        });
-
-      }
+      });
 
 
 

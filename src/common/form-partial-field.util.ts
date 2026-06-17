@@ -88,8 +88,18 @@ export function normalizeRawMaterialsProductRow(
     testReportReference: pickTrimmedString(row, [
       'testReportReference',
       'productsTestReport',
+      'productsTestReportFileName',
+      'products_test_report',
+      'products_test_report_file_name',
       'testReport',
       'testReportFileName',
+      'test_report_file_name',
+      'fileNameOfTheTestReport',
+      'fileNameOfTestReport',
+      'fileName',
+      'file_name',
+      'prohibitedFlameSolventsFileName',
+      'prohibited_flame_solvents_file_name',
     ]),
   };
 }

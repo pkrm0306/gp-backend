@@ -40,6 +40,10 @@ export class VendorUser {
   @Prop({ required: true })
   phone: string;
 
+  /** Dial code stored for vendor team members (e.g. +91). */
+  @Prop()
+  countryCode?: string;
+
   @Prop()
   designation?: string;
 

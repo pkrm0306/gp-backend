@@ -21,7 +21,8 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackUploadedProductDocument } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 
 @Injectable()
 export class RawMaterialsGreenSupplyService {
@@ -30,6 +31,8 @@ export class RawMaterialsGreenSupplyService {
     private model: Model<RawMaterialsGreenSupplyDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -109,18 +112,16 @@ export class RawMaterialsGreenSupplyService {
           createdDate: now,
           updatedDate: now,
         });
-        await trackUploadedProductDocument(this.documentVersioningService, {
+        await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
           urnNo,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_GREEN_SUPPLY,
-          subsectionKey: 'supporting_documents',
           userId: vendorObjectId,
-          documentId: createdDoc._id,
-          productDocumentId,
-          filePath: storedRelativePath,
-          originalName: greenSupplyFile.originalname,
-          storedName: path.basename(storedRelativePath),
+          vendorId: vendorObjectId,
+          doc: createdDoc,
           file: greenSupplyFile,
-          action: 'added',
         });
       }
 

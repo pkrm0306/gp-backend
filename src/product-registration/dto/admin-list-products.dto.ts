@@ -3,11 +3,13 @@ import { Transform, Type } from 'class-transformer';
 import {
   Allow,
   IsArray,
+  IsDateString,
   IsIn,
   IsInt,
   IsMongoId,
   IsOptional,
   IsString,
+  Matches,
   Max,
   Min,
 } from 'class-validator';
@@ -47,6 +49,21 @@ export function normalizeOptionalString(value: unknown): string | undefined {
   }
   const v = String(value).trim();
   return v === '' ? undefined : v;
+}
+
+/** Certified valid-till filter: `YYYY-MM` (month + year only). */
+export const ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN =
+  /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export function normalizeAdminListValidTillMonthYearString(
+  value: unknown,
+): string | undefined {
+  const v = normalizeOptionalString(value);
+  if (!v) {
+    return undefined;
+  }
+  const match = /^(\d{4}-(0[1-9]|1[0-2]))/.exec(v);
+  return match ? match[1] : v;
 }
 
 function normalizeOptionalNumber(value: unknown): number | undefined {
@@ -127,6 +144,15 @@ export class AdminListProductsDto {
   categoryId?: string;
 
   @ApiPropertyOptional({
+    description: 'Snake_case alias of `categoryId` (single category filter).',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsMongoId()
+  category_id?: string;
+
+  @ApiPropertyOptional({
     description:
       'Multi-select category filter (Mongo category `_id` values). Takes precedence over `categoryId` when non-empty.',
     type: [String],
@@ -156,6 +182,15 @@ export class AdminListProductsDto {
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsMongoId()
   manufacturerId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `manufacturerId`.',
+    example: '507f1f77bcf86cd799439012',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsMongoId()
+  manufacturer_id?: string;
 
   @ApiPropertyOptional({
     description:
@@ -242,6 +277,42 @@ export class AdminListProductsDto {
   validTillYear?: number;
 
   @ApiPropertyOptional({
+    description: 'Snake_case alias of `validTillYear`.',
+    example: 2026,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalNumber(value))
+  @IsInt()
+  valid_till_year?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Certified products: month (1–12) for valid-till filter. Pair with `validTillYear` when the UI uses separate month/year pickers.',
+    example: 12,
+    minimum: 1,
+    maximum: 12,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalNumber(value))
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  validTillMonth?: number;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `validTillMonth`.',
+    example: 12,
+    minimum: 1,
+    maximum: 12,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalNumber(value))
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  valid_till_month?: number;
+
+  @ApiPropertyOptional({
     description:
       'Multi-select valid-till year filter. Takes precedence over `validTillYear` when non-empty.',
     type: [Number],
@@ -265,7 +336,120 @@ export class AdminListProductsDto {
 
   @ApiPropertyOptional({
     description:
-      'Plant country Mongo `_id`. Use with `stateIds` / state multiselect (states from `GET /states?countryId=`).',
+      'Certified products: filter by **valid till month + year** (`YYYY-MM`). Use a month/year picker in the UI (no day).',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  validTillMonthYear?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `validTillMonthYear`.',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  valid_till_month_year?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Alias of `validTillMonthYear` (legacy name; value must be `YYYY-MM`, not a full date).',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  validTillDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of `validTillMonthYear`.',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  validTill?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `validTillMonthYear` (`valid_till`).',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  valid_till?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `validTillMonthYear` (`valid_till_date`).',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  valid_till_date?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'DB-style camelCase alias of `validTillMonthYear` (`validtillDate` — lowercase `t` in till).',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  validtillDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'DB-style snake_case alias of `validTillMonthYear` (`validtill_date`).',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  validtill_date?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional valid-till range start (inclusive, `YYYY-MM`). Use with `validTillTo` for a month/year range.',
+    example: '2026-01',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  validTillFrom?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional valid-till range end (inclusive, `YYYY-MM`). Use with `validTillFrom` for a month/year range.',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  validTillTo?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `validTillFrom`.',
+    example: '2026-01',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  valid_till_from?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `validTillTo`.',
+    example: '2026-12',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeAdminListValidTillMonthYearString(value))
+  @Matches(ADMIN_LIST_VALID_TILL_MONTH_YEAR_PATTERN)
+  valid_till_to?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Plant country Mongo `_id`. Pair with free-text `state` / `city` filters on the list body.',
     example: '507f1f77bcf86cd799439010',
   })
   @IsOptional()
@@ -293,8 +477,8 @@ export class AdminListProductsDto {
 
   @ApiPropertyOptional({
     description:
-      'Alias for `stateId` when value is a **24-char hex** Mongo ObjectId. Otherwise treated as a **state name** substring filter on plant `stateName` (see `state_name`).',
-    example: '507f1f77bcf86cd799439013',
+      'Plant **state name** (free text, case-insensitive partial match on any plant for the EOI). Use a text input in the UI, not a dropdown. `state_name` is a snake_case alias.',
+    example: 'Telangana',
   })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalString(value))
@@ -303,7 +487,7 @@ export class AdminListProductsDto {
 
   @ApiPropertyOptional({
     description:
-      'Filter plants by **state name** (case-insensitive partial match on plant `stateName`). Takes precedence over non-ObjectId `state` as a name filter.',
+      'Snake_case alias of `state` — free-text state name search (partial match).',
     example: 'Telangana',
   })
   @IsOptional()
@@ -418,7 +602,7 @@ export class AdminListProductsDto {
   sectorIds?: number[];
 
   @ApiPropertyOptional({
-    description: 'Snake_case alias of `sectorIds`.',
+    description: 'Snake_case alias of `sectorIds` (Building / sector multiselect).',
     type: [Number],
     example: [1, 2],
   })
@@ -427,6 +611,67 @@ export class AdminListProductsDto {
   @IsArray()
   @IsInt({ each: true })
   sector_ids?: number[];
+
+  @ApiPropertyOptional({
+    description:
+      'UI alias of `sectorIds` — **Building** sector multiselect (numeric sector ids from `GET /api/sectors`).',
+    type: [Number],
+    example: [1],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  buildingIds?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `buildingIds`.',
+    type: [Number],
+    example: [1],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  building_ids?: number[];
+
+  @ApiPropertyOptional({
+    description: 'UI alias of `buildingIds` / `sectorIds`.',
+    type: [Number],
+    example: [1, 2],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeNumberArray(value))
+  @IsArray()
+  @IsInt({ each: true })
+  buildings?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Single Building / sector id (alias of `sectorId`).',
+    example: 1,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalNumber(value))
+  @IsInt()
+  buildingId?: number;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `buildingId`.',
+    example: 1,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalNumber(value))
+  @IsInt()
+  building_id?: number;
+
+  @ApiPropertyOptional({
+    description: 'Single Building / sector id (alias of `sectorId`).',
+    example: 1,
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalNumber(value))
+  @IsInt()
+  building?: number;
 
   @ApiPropertyOptional({
     description:

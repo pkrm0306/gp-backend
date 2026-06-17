@@ -21,7 +21,7 @@ import {
 import { normalizeDocumentSectionKey } from '../../common/constants/document-section-key.constants';
 import { deleteUploadedFileByDocumentLink } from '../../utils/upload-file.util';
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
-import { slotKeyFromProductDocumentId } from '../../documents/helpers/document-version.helper';
+import { certificationStreamSlotKeyForDocument } from '../../documents/helpers/certification-document-version.util';
 import {
   resolveUrnRenewContext,
   toRenewObjectId,
@@ -160,7 +160,12 @@ export class RenewDocumentsService {
       urnNo: document.urnNo,
       sectionKey: document.documentForm,
       subsectionKey: document.documentFormSubsection ?? null,
-      slotKey: slotKeyFromProductDocumentId(document.productDocumentId),
+      slotKey: certificationStreamSlotKeyForDocument({
+        documentForm: String(document.documentForm),
+        documentFormSubsection: document.documentFormSubsection ?? null,
+        documentTag: document.documentTag ?? null,
+        productDocumentId: document.productDocumentId,
+      }),
       action: 'deleted',
       documentId: document._id as Types.ObjectId,
       productDocumentId: document.productDocumentId,

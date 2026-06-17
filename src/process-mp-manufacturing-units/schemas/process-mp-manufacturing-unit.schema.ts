@@ -174,8 +174,8 @@ export class ProcessMpManufacturingUnit {
   @Prop({ required: false, type: Number })
   reOthers?: number;
 
-  @Prop({ required: true, type: Number, default: 0 })
-  offsiteRenewablePower: number;
+  @Prop({ required: false, type: Number, default: null })
+  offsiteRenewablePower?: number | null;
 
   @Prop({ required: false, type: Number, default: 0 })
   processMpManufacturingUnitStatus?: number; // 0=Pending, 1=Completed

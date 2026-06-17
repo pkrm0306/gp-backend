@@ -15,14 +15,14 @@ export class ProcessLifeCycleApproach {
   @Prop({ required: true })
   urnNo: string;
 
-  @Prop({ required: false, type: Number, default: 0 })
-  lifeCycleAssesmentReports?: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  lifeCycleAssesmentReports?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: false })
   lifeCycleImplementationDetails?: string;
 
-  @Prop({ required: false, type: Number, default: 0 })
-  lifeCycleImplementationDocuments?: number; // 0=No File Available, 1=File Available
+  @Prop({ required: false, type: Number, default: null })
+  lifeCycleImplementationDocuments?: number | null; // 0=No File Available, 1=File Available
 
   @Prop({ required: true, type: Number, default: 0 })
   processLifeCycleApproachStatus: number; // 0=Pending, 1=Completed

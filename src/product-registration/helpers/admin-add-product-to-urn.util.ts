@@ -16,6 +16,7 @@ export type UrnAddProductEligibility = {
 export function evaluateUrnAddProductEligibility(input: {
   urnStatus: number;
   siblingProductStatuses: number[];
+  hasCertificationFee?: boolean;
 }): UrnAddProductEligibility {
   const statuses = input.siblingProductStatuses.map((s) => Number(s));
 
@@ -23,6 +24,15 @@ export function evaluateUrnAddProductEligibility(input: {
     return {
       canAddProduct: false,
       blockReason: 'Cannot add products while renewal is in progress',
+      defaultProductStatus: PRODUCT_STATUS_PENDING,
+    };
+  }
+
+  if (input.hasCertificationFee) {
+    return {
+      canAddProduct: false,
+      blockReason:
+        'Cannot add products after a certification fee has been raised for this URN',
       defaultProductStatus: PRODUCT_STATUS_PENDING,
     };
   }

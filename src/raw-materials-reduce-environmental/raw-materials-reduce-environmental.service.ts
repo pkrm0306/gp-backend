@@ -21,10 +21,9 @@ import * as path from 'path';
 import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
 import { filterMeaningfulRows } from '../common/raw-materials/raw-materials-upload.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import {
-  trackProductDocumentDeleteBatch,
-  trackUploadedProductDocument,
-} from '../documents/helpers/product-document-version.integration';
+import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
+import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
+import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 
 const QUARRYING_UNIT_KEYS = [
   'location',
@@ -56,6 +55,8 @@ export class RawMaterialsReduceEnvironmentalService {
     private model: Model<RawMaterialsReduceEnvironmentalDocument>,
     @InjectModel(AllProductDocument.name)
     private allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(Product.name)
+    private productModel: Model<ProductDocument>,
     private sequenceHelper: SequenceHelper,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
@@ -122,6 +123,7 @@ export class RawMaterialsReduceEnvironmentalService {
           sectionKey: DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
           userId: vendorObjectId,
           docs: docsToDelete,
+          slotKeyMode: 'subsection',
         });
       }
     }
@@ -146,19 +148,17 @@ export class RawMaterialsReduceEnvironmentalService {
         updatedDate: now,
       });
       documents.push(d);
-      await trackUploadedProductDocument(this.documentVersioningService, {
-        urnNo,
-        sectionKey: DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
-        subsectionKey: 'supporting_documents',
-        userId: vendorObjectId,
-        documentId: d._id,
-        productDocumentId,
-        filePath: uploaded.fileUrl,
-        originalName: file.originalname,
-        storedName: uploaded.fileName || path.basename(uploaded.fileUrl),
-        file,
-        action: 'added',
-      });
+      await trackCertificationDocumentAfterCreate({
+          productModel: this.productModel,
+          versioning: this.documentVersioningService,
+          documentModel: this.allProductDocumentModel,
+          urnNo,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_REDUCE_ENVIROMENTAL,
+          userId: vendorObjectId,
+          vendorId: vendorObjectId,
+          doc: d,
+          file: file,
+        });
     }
 
     for (const link of oldLinks) {
