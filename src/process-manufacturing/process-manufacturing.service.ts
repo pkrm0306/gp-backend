@@ -94,6 +94,23 @@ export class ProcessManufacturingService implements OnModuleInit {
     }
   }
 
+  async countRetainedProcessManufacturingDocuments(
+    urnNo: string,
+    vendorId: string,
+  ): Promise<number> {
+    if (!Types.ObjectId.isValid(vendorId)) {
+      return 0;
+    }
+    return this.allProductDocumentModel
+      .countDocuments({
+        vendorId: new Types.ObjectId(vendorId),
+        urnNo,
+        documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
+        isDeleted: { $ne: true },
+      })
+      .exec();
+  }
+
   /**
    * Create process manufacturing with file uploads
    */

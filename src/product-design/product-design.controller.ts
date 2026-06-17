@@ -233,6 +233,7 @@ export class ProductDesignController {
           measuresAndBenefits,
           ecoVisionFiles,
           supportingDocumentFiles,
+          allUploadFiles: files,
           retainedEcoVisionDocumentCount: retained.ecoVision,
           retainedSupportingDocumentCount: retained.supporting,
         })

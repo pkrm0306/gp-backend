@@ -23,6 +23,10 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProcessManufacturingDto } from './dto/create-process-manufacturing.dto';
 import { parseOptionalDecimalNumber } from '../common/utils/parse-optional-number.util';
+import {
+  assertAtLeastOneProcessManufacturingField,
+  collectProcessManufacturingUploadFiles,
+} from './process-manufacturing-upload.util';
 
 @ApiTags('Process Manufacturing')
 @Controller('process-manufacturing')
@@ -168,13 +172,8 @@ export class ProcessManufacturingController {
     };
 
     // Extract files by fieldname from the files array
-    // AnyFilesInterceptor captures all files and stores them with their fieldname
-    const energyConservationFiles = (files || []).filter(
-      (f) => f.fieldname === 'energyConservationSupportingDocumentsFile',
-    );
-    const energyConsumptionFiles = (files || []).filter(
-      (f) => f.fieldname === 'energyConsumptionDocumentsFile',
-    );
+    const { energyConservationFiles, energyConsumptionFiles } =
+      collectProcessManufacturingUploadFiles(files);
 
     // Validate file names if files are uploaded
     if (
@@ -205,6 +204,27 @@ export class ProcessManufacturingController {
         'Total energy consumption cannot be negative',
       );
     }
+
+    const urnNo = String(dto.urnNo ?? '').trim();
+    if (!urnNo) {
+      throw new BadRequestException('URN number is required');
+    }
+
+    const retainedDocumentCount =
+      await this.processManufacturingService.countRetainedProcessManufacturingDocuments(
+        urnNo,
+        user.vendorId,
+      );
+
+    assertAtLeastOneProcessManufacturingField({
+      portableWaterDemand: dto.portableWaterDemand,
+      rainWaterHarvesting: dto.rainWaterHarvesting,
+      beyondTheFenceInitiatives: dto.beyondTheFenceInitiatives,
+      totalEnergyConsumption: dto.totalEnergyConsumption,
+      energyConservationFiles,
+      energyConsumptionFiles,
+      retainedDocumentCount,
+    });
 
     const data =
       await this.processManufacturingService.createProcessManufacturing(

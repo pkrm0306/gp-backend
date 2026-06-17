@@ -17,6 +17,15 @@ export const PRODUCT_DESIGN_ECO_VISION_FIELD_NAMES = new Set([
   'eco_vision',
   'ecoVision',
   'eco_vision_upload',
+  'ecoVisionUpload',
+  'ecoVisionDocument',
+  'ecoVisionDocuments',
+  'document',
+  'documents',
+  'documentFile',
+  'documentFiles',
+  'file',
+  'upload',
 ]);
 
 /** Multipart field names for product design supporting document uploads. */
@@ -28,6 +37,8 @@ export const PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES = new Set([
   'productDesignSupportingDocument',
   'supporting_document',
   'supporting_documents',
+  'supportingDesignDocuments',
+  'supportingDesignDocument',
 ]);
 
 export const ECO_VISION_SUBSECTION = 'eco_vision_upload';
@@ -56,6 +67,10 @@ export { STANDARD_DOCUMENT_VALIDATION_MESSAGE as SUPPORTING_DESIGN_VALIDATION_ME
 export const PRODUCT_DESIGN_EMPTY_FORM_MESSAGE =
   'Please fill in at least one field in the form before continuing.';
 
+function hasAnyValidMultipartUpload(files?: Express.Multer.File[]): boolean {
+  return (files ?? []).some((file) => isValidUploadPart(file));
+}
+
 export function hasAtLeastOneProductDesignFieldFilled(params: {
   strategies?: string;
   measuresAndBenefits?: Array<{
@@ -64,7 +79,12 @@ export function hasAtLeastOneProductDesignFieldFilled(params: {
   }>;
   ecoVisionFiles: Express.Multer.File[];
   supportingDocumentFiles: Express.Multer.File[];
+  /** Any multipart file part — document-only saves must not fail when field names differ. */
+  allUploadFiles?: Express.Multer.File[];
 }): boolean {
+  if (hasAnyValidMultipartUpload(params.allUploadFiles)) {
+    return true;
+  }
   if (params.ecoVisionFiles.length > 0) {
     return true;
   }
@@ -93,6 +113,7 @@ export function hasAtLeastOneProductDesignContent(params: {
   }>;
   ecoVisionFiles: Express.Multer.File[];
   supportingDocumentFiles: Express.Multer.File[];
+  allUploadFiles?: Express.Multer.File[];
   retainedEcoVisionDocumentCount?: number;
   retainedSupportingDocumentCount?: number;
 }): boolean {
@@ -102,6 +123,7 @@ export function hasAtLeastOneProductDesignContent(params: {
       measuresAndBenefits: params.measuresAndBenefits,
       ecoVisionFiles: params.ecoVisionFiles,
       supportingDocumentFiles: params.supportingDocumentFiles,
+      allUploadFiles: params.allUploadFiles,
     })
   ) {
     return true;
