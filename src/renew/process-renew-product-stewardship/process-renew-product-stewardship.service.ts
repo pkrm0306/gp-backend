@@ -26,6 +26,8 @@ import {
 
   RenewalCycleDocument,
 
+  RenewalCycleStatus,
+
 } from '../schemas/renewal-cycle.schema';
 
 import {
@@ -56,6 +58,8 @@ import {
 
 } from '../helpers/renew-common.util';
 
+import { buildRenewProcessHeaderFilter } from '../helpers/renew-cycle-scope.util';
+
 import * as path from 'path';
 
 
@@ -63,6 +67,8 @@ import * as path from 'path';
 export interface UpsertRenewStewardshipInput {
 
   urnNo: string;
+
+  renewalCycleId?: string;
 
   qualityManagementDetails?: string;
 
@@ -128,6 +134,8 @@ export class ProcessRenewProductStewardshipService {
 
       input.urnNo,
 
+      input.renewalCycleId,
+
     );
 
     const ownership = renewOwnershipFields(context);
@@ -148,11 +156,13 @@ export class ProcessRenewProductStewardshipService {
 
       const renewalCycleObjectId = cycle._id;
 
+      const headerFilter = buildRenewProcessHeaderFilter(trimmedUrn, cycle);
+
 
 
       const existing = await this.renewStewardshipModel
 
-        .findOne({ urnNo: trimmedUrn })
+        .findOne(headerFilter)
 
         .session(session);
 
@@ -232,7 +242,7 @@ export class ProcessRenewProductStewardshipService {
 
         .findOneAndUpdate(
 
-          { urnNo: trimmedUrn },
+          headerFilter,
 
           {
 
@@ -241,6 +251,8 @@ export class ProcessRenewProductStewardshipService {
               vendorId: ownership.vendorId,
 
               manufacturerId: ownership.manufacturerId,
+
+              renewalCycleId: renewalCycleObjectId,
 
               qualityManagementDetails: input.qualityManagementDetails ?? '',
 
@@ -263,6 +275,8 @@ export class ProcessRenewProductStewardshipService {
             $setOnInsert: {
 
               processRenewProductStewardshipId,
+
+              urnNo: trimmedUrn,
 
               createdDate: now,
 
@@ -332,29 +346,43 @@ export class ProcessRenewProductStewardshipService {
 
 
 
-  async getByUrn(urnNo: string) {
+  async getByUrn(urnNo: string, renewalCycleId?: string) {
 
     const trimmedUrn = urnNo.trim();
 
+    const cycle = renewalCycleId?.trim()
+      ? await this.renewalCycleModel.findById(renewalCycleId.trim()).exec()
+      : await this.renewalCycleModel
+          .findOne({ urnNo: trimmedUrn, status: RenewalCycleStatus.IN_PROGRESS })
+          .sort({ cycleNo: -1 })
+          .exec();
+
+    const headerFilter = buildRenewProcessHeaderFilter(trimmedUrn, cycle);
+
     const header = await this.renewStewardshipModel
 
-      .findOne({ urnNo: trimmedUrn })
+      .findOne(headerFilter)
 
       .lean()
 
       .exec();
 
+    const documentFilter = cycle?._id
+      ? {
+          urnNo: trimmedUrn,
+          renewalCycleId: cycle._id,
+          documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+          isDeleted: { $ne: true },
+        }
+      : {
+          urnNo: trimmedUrn,
+          documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+          isDeleted: { $ne: true },
+        };
+
     const documents = await this.renewDocumentModel
 
-      .find({
-
-        urnNo: trimmedUrn,
-
-        documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
-
-        isDeleted: { $ne: true },
-
-      })
+      .find(documentFilter)
 
       .lean()
 

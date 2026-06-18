@@ -21,6 +21,9 @@ export class ProcessRenewMpManufacturingUnit {
   @Prop({ required: true, index: true })
   urnNo: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'RenewalCycle', index: true })
+  renewalCycleId?: Types.ObjectId;
+
   @Prop({ required: false })
   unitName?: string;
 
@@ -213,3 +216,7 @@ export class ProcessRenewMpManufacturingUnit {
 
 export const ProcessRenewMpManufacturingUnitSchema =
   SchemaFactory.createForClass(ProcessRenewMpManufacturingUnit);
+ProcessRenewMpManufacturingUnitSchema.index(
+  { urnNo: 1, renewalCycleId: 1 },
+  { name: 'idx_renew_mp_units_urn_cycle' },
+);

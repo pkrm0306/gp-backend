@@ -367,59 +367,34 @@ export class RenewalOrchestrationService {
 
 
     await seedHeaderIfMissing(
-
       () =>
-
         this.renewStewardshipModel
-
-          .findOne({ urnNo: trimmedUrn })
-
+          .findOne(headerFilter)
           .session(session)
-
           .exec(),
-
       async () => {
-
         const processRenewProductStewardshipId =
-
           await this.sequenceHelper.getProcessRenewProductStewardshipId();
-
-        await this.renewStewardshipModel.create(
-
-          [
-
-            {
-
+        await this.renewStewardshipModel.findOneAndUpdate(
+          headerFilter,
+          {
+            $setOnInsert: {
               processRenewProductStewardshipId,
-
               urnNo: trimmedUrn,
-
+              ...(cycleId ? { renewalCycleId: cycleId } : {}),
               vendorId: ownership.vendorId,
-
               manufacturerId: ownership.manufacturerId,
-
               seaSupportingDocuments: 0,
-
               qmSupportingDocuments: 0,
-
               eprSupportingDocuments: 0,
-
               productStewardshipStatus: 0,
-
               createdDate: now,
-
               updatedDate: now,
-
             },
-
-          ],
-
-          { session },
-
+          },
+          { upsert: true, session, new: true },
         );
-
       },
-
     );
 
 

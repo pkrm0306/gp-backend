@@ -18,6 +18,9 @@ export class ProcessRenewProductStewardship {
   @Prop({ required: true })
   urnNo: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'RenewalCycle', index: true })
+  renewalCycleId?: Types.ObjectId;
+
   @Prop({ required: true, type: Number, default: 0 })
   seaSupportingDocuments: number;
 
@@ -50,6 +53,6 @@ export const ProcessRenewProductStewardshipSchema = SchemaFactory.createForClass
   ProcessRenewProductStewardship,
 );
 ProcessRenewProductStewardshipSchema.index(
-  { urnNo: 1 },
-  { unique: true, name: 'uniq_process_renew_product_stewardship_urn' },
+  { urnNo: 1, renewalCycleId: 1 },
+  { unique: true, name: 'uniq_process_renew_product_stewardship_urn_cycle' },
 );

@@ -56,7 +56,10 @@ import {
   resolveUrnRenewContext,
   toRenewObjectId,
 } from '../helpers/renew-common.util';
-import { buildRenewProcessHeaderFilter } from '../helpers/renew-cycle-scope.util';
+import {
+  buildRenewPaymentFindFilter,
+  buildRenewProcessHeaderFilter,
+} from '../helpers/renew-cycle-scope.util';
 import {
   RenewalOrchestrationService,
   RenewCompletionResult,
@@ -167,8 +170,7 @@ export class RenewUrnStatusService {
 
     const renewPayment = await this.paymentModel
       .findOne({
-        urnNo,
-        paymentType: 'renew',
+        ...buildRenewPaymentFindFilter(urnNo, cycle),
         paymentStatus: 2,
       })
       .sort({ paymentId: -1 })
@@ -449,7 +451,7 @@ export class RenewUrnStatusService {
       currentStatus === RENEWAL_URN_STATUS.PAYMENT_SUBMITTED
     ) {
       const renewPayment = await this.paymentModel
-        .findOne({ urnNo: trimmedUrn, paymentType: 'renew' })
+        .findOne(buildRenewPaymentFindFilter(trimmedUrn, cycle))
         .sort({ paymentId: -1 })
         .exec();
       const paymentId = cycle.paymentId ?? renewPayment?.paymentId;

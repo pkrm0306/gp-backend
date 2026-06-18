@@ -611,10 +611,22 @@ export class PaymentsController {
     description: 'Unauthorized - Invalid or missing token',
   })
   @ApiResponse({ status: 404, description: 'Payment not found' })
+  @ApiQuery({
+    name: 'renewalCycleId',
+    required: false,
+    description: 'Renew payment cycle scope (fallback when body omits renewalCycleId)',
+  })
+  @ApiQuery({
+    name: 'renewal_cycle_id',
+    required: false,
+    description: 'Snake-case alias for renewalCycleId query param',
+  })
   async updatePayment(
     @CurrentUser() user: any,
     @Param('urnNo') urnNoParam: string,
     @Body() body: any,
+    @Query('renewalCycleId') renewalCycleIdQuery?: string,
+    @Query('renewal_cycle_id') renewalCycleIdSnakeQuery?: string,
     @UploadedFiles()
     files?: {
       cheque_or_dd_file?: Express.Multer.File[];
@@ -674,7 +686,11 @@ export class PaymentsController {
           body.urnStatus !== undefined
             ? parseInt(body.urnStatus, 10)
             : undefined,
-        renewalCycleId: body.renewalCycleId,
+        renewalCycleId:
+          body.renewalCycleId ??
+          body.renewal_cycle_id ??
+          renewalCycleIdQuery ??
+          renewalCycleIdSnakeQuery,
       };
 
       const chequeOrDdFile = files?.cheque_or_dd_file?.[0];

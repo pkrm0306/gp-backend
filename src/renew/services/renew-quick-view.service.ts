@@ -234,7 +234,7 @@ export class RenewQuickViewService {
       strictCycle && !manufacturingHeader
         ? []
         : await this.renewMpUnitModel
-            .find({ urnNo: trimmedUrn })
+            .find(cycleDoc ? mpHeaderFilter : { urnNo: trimmedUrn })
             .select(
               'processRenewMpManufacturingUnitId unitName processMpManufacturingUnitStatus',
             )

@@ -23,7 +23,18 @@ import {
   assertRenewProcessEditable,
   renewOwnershipFields,
 } from '../helpers/renew-common.util';
+import {
+  buildRenewProcessHeaderFilter,
+  resolveRenewCycleForQuery,
+} from '../helpers/renew-cycle-scope.util';
 import { formatRenewMpManufacturingUnitForDetails } from '../utils/renew-details-format.util';
+
+function readRenewalCycleId(dto: CreateProcessMpManufacturingUnitDto): string | undefined {
+  const raw = (dto as { renewalCycleId?: string; renewal_cycle_id?: string })
+    .renewalCycleId ?? (dto as { renewal_cycle_id?: string }).renewal_cycle_id;
+  const trimmed = String(raw ?? '').trim();
+  return trimmed || undefined;
+}
 
 @Injectable()
 export class ProcessRenewMpManufacturingUnitsService {
@@ -146,12 +157,16 @@ export class ProcessRenewMpManufacturingUnitsService {
 
   async upsert(dto: CreateProcessMpManufacturingUnitDto) {
     try {
-      const { context } = await assertRenewProcessEditable(
+      const cycleIdHint = readRenewalCycleId(dto);
+      const { cycle, context } = await assertRenewProcessEditable(
         this.productModel,
         this.renewalCycleModel,
         dto.urnNo,
+        cycleIdHint,
       );
       const ownership = renewOwnershipFields(context);
+      const cycleFilter = buildRenewProcessHeaderFilter(ownership.urnNo, cycle);
+      const renewalCycleObjectId = cycle._id;
       const now = new Date();
       const urnNo = ownership.urnNo;
       const incomingPayload = this.buildUnitPayload(dto, urnNo);
@@ -182,7 +197,7 @@ export class ProcessRenewMpManufacturingUnitsService {
       const id = await this.sequenceHelper.getProcessRenewMpManufacturingUnitId();
       const incomingSignature = this.unitSignature(incomingPayload);
       const existingRows = await this.model
-        .find({ urnNo, vendorId: ownership.vendorId })
+        .find({ ...cycleFilter, vendorId: ownership.vendorId })
         .exec();
       const duplicateRow = existingRows.find(
         (row) =>
@@ -199,6 +214,7 @@ export class ProcessRenewMpManufacturingUnitsService {
         processRenewMpManufacturingUnitId: id,
         vendorId: ownership.vendorId,
         manufacturerId: ownership.manufacturerId,
+        renewalCycleId: renewalCycleObjectId,
         ...incomingPayload,
         createdDate: now,
         updatedDate: now,
@@ -220,10 +236,16 @@ export class ProcessRenewMpManufacturingUnitsService {
     }
   }
 
-  async listByUrn(urnNo: string) {
+  async listByUrn(urnNo: string, renewalCycleId?: string) {
     const trimmedUrn = urnNo.trim();
+    const cycle = await resolveRenewCycleForQuery(
+      this.renewalCycleModel,
+      trimmedUrn,
+      renewalCycleId,
+    );
+    const filter = buildRenewProcessHeaderFilter(trimmedUrn, cycle);
     const rows = await this.model
-      .find({ urnNo: trimmedUrn })
+      .find(filter)
       .sort({ processRenewMpManufacturingUnitId: 1 })
       .lean()
       .exec();

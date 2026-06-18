@@ -21,6 +21,9 @@ export class ProcessRenewWmManufacturingUnit {
   @Prop({ required: true, index: true })
   urnNo: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'RenewalCycle', index: true })
+  renewalCycleId?: Types.ObjectId;
+
   @Prop({ required: false, type: Number })
   processRenewWasteManagementId?: number;
 
@@ -117,3 +120,7 @@ export class ProcessRenewWmManufacturingUnit {
 
 export const ProcessRenewWmManufacturingUnitSchema =
   SchemaFactory.createForClass(ProcessRenewWmManufacturingUnit);
+ProcessRenewWmManufacturingUnitSchema.index(
+  { urnNo: 1, renewalCycleId: 1 },
+  { name: 'idx_renew_wm_units_urn_cycle' },
+);

@@ -125,6 +125,32 @@ export function buildRenewProcessHeaderFilter(
   };
 }
 
+/** Resolve renewal cycle for read APIs (list units, quick-view) without payment-edit guards. */
+export async function resolveRenewCycleForQuery(
+  cycleModel: Model<RenewalCycleDocument>,
+  urnNo: string,
+  renewalCycleId?: string,
+): Promise<RenewalCycleDocument> {
+  const trimmed = urnNo.trim();
+  const cycleIdHint = String(renewalCycleId ?? '').trim();
+  if (cycleIdHint) {
+    const cycle = await cycleModel.findById(cycleIdHint).exec();
+    if (!cycle || cycle.urnNo !== trimmed) {
+      throw new BadRequestException('renewalCycleId does not match this URN');
+    }
+    return cycle;
+  }
+  const active = await cycleModel
+    .findOne({ urnNo: trimmed, status: RenewalCycleStatus.IN_PROGRESS })
+    .exec();
+  if (!active) {
+    throw new BadRequestException(
+      'renewalCycleId is required to load renewal data for this URN',
+    );
+  }
+  return active;
+}
+
 export function buildRenewPaymentFindFilter(
   urnNo: string,
   cycle: RenewalCycleDocument,
@@ -247,4 +273,24 @@ export function formatCycleScopedPaymentRecords(
   rows: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
   return formatPaymentRecords(rows) as Array<Record<string, unknown>>;
+}
+
+/** Resolve renewal cycle document for reads/writes (explicit id or active in-progress). */
+export async function resolveRenewCycleDocument(
+  cycleModel: Model<RenewalCycleDocument>,
+  urnNo: string,
+  renewalCycleId?: string,
+): Promise<RenewalCycleDocument | null> {
+  const trimmedUrn = urnNo.trim();
+  if (renewalCycleId?.trim()) {
+    const cycle = await cycleModel.findById(renewalCycleId.trim()).exec();
+    if (!cycle || cycle.urnNo !== trimmedUrn) {
+      throw new BadRequestException('renewalCycleId does not match this URN');
+    }
+    return cycle;
+  }
+  return cycleModel
+    .findOne({ urnNo: trimmedUrn, status: RenewalCycleStatus.IN_PROGRESS })
+    .sort({ cycleNo: -1 })
+    .exec();
 }

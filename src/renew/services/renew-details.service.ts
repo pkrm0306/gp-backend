@@ -290,7 +290,7 @@ export class RenewDetailsService {
       this.renewManufacturingModel.findOne(headerFilter).lean().exec(),
       this.renewInnovationModel.findOne(headerFilter).lean().exec(),
       this.renewWasteModel.findOne(headerFilter).lean().exec(),
-      this.renewStewardshipModel.findOne({ urnNo }).lean().exec(),
+      this.renewStewardshipModel.findOne(headerFilter).lean().exec(),
       this.renewStakeholderModel
         .find({ urnNo, isDeleted: { $ne: true } })
         .lean()
@@ -329,14 +329,15 @@ export class RenewDetailsService {
         .exec(),
     ]);
 
+    const unitFilter = buildRenewProcessHeaderFilter(urnNo, cycle);
     const mpUnits =
       strictDocs && !manufacturing
         ? []
-        : await this.renewMpUnitModel.find({ urnNo }).lean().exec();
+        : await this.renewMpUnitModel.find(unitFilter).lean().exec();
     const wmUnits =
       strictDocs && !waste
         ? []
-        : await this.renewWmUnitModel.find({ urnNo }).lean().exec();
+        : await this.renewWmUnitModel.find(unitFilter).lean().exec();
 
     const documentRows = allDocuments as Array<Record<string, unknown>>;
     const manufacturingSection = buildManufacturingSection(
@@ -731,8 +732,8 @@ export class RenewDetailsService {
     };
   }
 
-  async getStewardshipByUrn(urnNo: string) {
-    const bundle = await this.loadRenewBundle(urnNo.trim());
+  async getStewardshipByUrn(urnNo: string, renewalCycleId?: string) {
+    const bundle = await this.loadRenewBundle(urnNo.trim(), renewalCycleId);
     return {
       process_product_stewardship:
         bundle.processSections.process_product_stewardship,

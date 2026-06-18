@@ -80,18 +80,24 @@ export class ProcessRenewWmManufacturingUnitsController {
   }
 
   @Get(':urnNo')
-  @ApiOperation({ summary: 'List renewal WM manufacturing units by URN' })
+  @ApiOperation({ summary: 'List renewal WM manufacturing units by URN and cycle' })
   @ApiParam({ name: 'urnNo', example: 'URN-20260305124230' })
+  @ApiQuery({
+    name: 'renewalCycleId',
+    required: false,
+    description: 'Renewal cycle scope (required when multiple cycles exist)',
+  })
   @ApiResponse({ status: 200, description: 'Retrieved successfully' })
   async listByUrn(
     @CurrentUser() user: { vendorId?: string; manufacturerId?: string },
     @Param('urnNo') urnNo: string,
+    @Query('renewalCycleId') renewalCycleId?: string,
   ) {
     if (!urnNo?.trim()) {
       throw new BadRequestException('URN number is required');
     }
     await assertRenewProcessActorForUrn(this.productModel, user, urnNo);
-    const data = await this.service.listByUrn(urnNo.trim());
+    const data = await this.service.listByUrn(urnNo.trim(), renewalCycleId);
     return { success: true, message: 'Renew WM manufacturing units fetched successfully', data };
   }
 
