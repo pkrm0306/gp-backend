@@ -62,7 +62,7 @@ export class RenewDocumentsController {
     }
 
     const data = await this.renewDocumentsService.softDeleteDocument(
-      documentId,
+      String(documentId),
       { urnNo, sectionKey, renewalCycleId },
       deletedBy,
     );

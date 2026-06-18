@@ -44,7 +44,7 @@ export class ProcessManufacturingController {
   @ApiOperation({
     summary: 'Create process manufacturing data',
     description:
-      'Creates process manufacturing data with file uploads (energy conservation supporting documents and energy consumption documents). Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Supports multiple file types: PNG, JPEG, PDF, Word, and Excel files. Document metadata is stored in the master all_product_documents table.',
+      'Creates process manufacturing data with file uploads. Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Only PDF and Excel (.pdf, .xls, .xlsx) uploads are allowed.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

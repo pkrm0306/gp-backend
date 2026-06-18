@@ -42,7 +42,7 @@ export class ProcessProductStewardshipController {
   @ApiOperation({
     summary: 'Create process product stewardship data',
     description:
-      'Creates process product stewardship data with file uploads (SEA supporting documents, Quality Management supporting documents, and EPR supporting documents). Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Supports multiple file types: PNG, JPEG, PDF, Word, and Excel files. Document metadata is stored in the master all_product_documents table.',
+      'Creates process product stewardship data with file uploads. Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Only PDF and Excel (.pdf, .xls, .xlsx) uploads are allowed.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

@@ -289,9 +289,10 @@ export class RenewalOrchestrationService {
       async () => {
         const processRenewManufacturingId =
           await this.sequenceHelper.getProcessRenewManufacturingId();
-        await this.renewManufacturingModel.create(
-          [
-            {
+        await this.renewManufacturingModel.findOneAndUpdate(
+          headerFilter,
+          {
+            $setOnInsert: {
               processRenewManufacturingId,
               urnNo: trimmedUrn,
               ...(cycleId ? { renewalCycleId: cycleId } : {}),
@@ -303,8 +304,8 @@ export class RenewalOrchestrationService {
               createdDate: now,
               updatedDate: now,
             },
-          ],
-          { session },
+          },
+          { upsert: true, session, new: true },
         );
       },
     );
@@ -317,9 +318,10 @@ export class RenewalOrchestrationService {
       async () => {
         const processRenewWasteManagementId =
           await this.sequenceHelper.getProcessRenewWasteManagementId();
-        await this.renewWasteModel.create(
-          [
-            {
+        await this.renewWasteModel.findOneAndUpdate(
+          headerFilter,
+          {
+            $setOnInsert: {
               processRenewWasteManagementId,
               urnNo: trimmedUrn,
               ...(cycleId ? { renewalCycleId: cycleId } : {}),
@@ -330,8 +332,8 @@ export class RenewalOrchestrationService {
               createdDate: now,
               updatedDate: now,
             },
-          ],
-          { session },
+          },
+          { upsert: true, session, new: true },
         );
       },
     );
@@ -342,9 +344,10 @@ export class RenewalOrchestrationService {
       async () => {
         const processRenewInnovationId =
           await this.sequenceHelper.getProcessRenewInnovationId();
-        await this.renewInnovationModel.create(
-          [
-            {
+        await this.renewInnovationModel.findOneAndUpdate(
+          headerFilter,
+          {
+            $setOnInsert: {
               processRenewInnovationId,
               urnNo: trimmedUrn,
               ...(cycleId ? { renewalCycleId: cycleId } : {}),
@@ -355,8 +358,8 @@ export class RenewalOrchestrationService {
               createdDate: now,
               updatedDate: now,
             },
-          ],
-          { session },
+          },
+          { upsert: true, session, new: true },
         );
       },
     );
@@ -436,9 +439,10 @@ export class RenewalOrchestrationService {
       async () => {
         const processRenewProductPerformanceId =
           await this.sequenceHelper.getProcessRenewProductPerformanceId();
-        await this.renewPerformanceModel.create(
-          [
-            {
+        await this.renewPerformanceModel.findOneAndUpdate(
+          headerFilter,
+          {
+            $setOnInsert: {
               processRenewProductPerformanceId,
               urnNo: trimmedUrn,
               renewalCycleId: cycleId,
@@ -450,8 +454,8 @@ export class RenewalOrchestrationService {
               createdDate: now,
               updatedDate: now,
             },
-          ],
-          { session },
+          },
+          { upsert: true, session, new: true },
         );
       },
     );

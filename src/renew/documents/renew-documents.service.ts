@@ -27,6 +27,7 @@ import {
   toRenewObjectId,
 } from '../helpers/renew-common.util';
 import { assertRenewDocumentMatchesCycle } from '../helpers/renew-section-documents.util';
+import { buildAllProductDocumentLookupFilter } from '../../documents/helpers/resolve-all-product-document.util';
 
 export interface DeleteRenewDocumentQuery {
   urnNo: string;
@@ -78,7 +79,7 @@ export class RenewDocumentsService {
   }
 
   async softDeleteDocument(
-    documentId: number,
+    documentIdParam: string,
     query: DeleteRenewDocumentQuery,
     deletedByUserId: string | Types.ObjectId,
   ): Promise<{ documentId: number; urnNo: string; sectionKey: string }> {
@@ -101,9 +102,12 @@ export class RenewDocumentsService {
     const cycle = await this.resolveCycle(context.urnNo, query.renewalCycleId);
     const cycleObjectId = cycle._id as Types.ObjectId;
 
-    const document = await this.renewDocumentModel
-      .findOne({ productDocumentId: documentId })
-      .exec();
+    const lookupFilter = buildAllProductDocumentLookupFilter(documentIdParam);
+    if (!lookupFilter) {
+      throw new NotFoundException('Document not found');
+    }
+
+    const document = await this.renewDocumentModel.findOne(lookupFilter).exec();
 
     if (!document || document.isDeleted) {
       throw new NotFoundException('Document not found');

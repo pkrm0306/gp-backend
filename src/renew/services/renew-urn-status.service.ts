@@ -56,6 +56,7 @@ import {
   resolveUrnRenewContext,
   toRenewObjectId,
 } from '../helpers/renew-common.util';
+import { buildRenewProcessHeaderFilter } from '../helpers/renew-cycle-scope.util';
 import {
   RenewalOrchestrationService,
   RenewCompletionResult,
@@ -180,10 +181,12 @@ export class RenewUrnStatusService {
       );
     }
 
+    const headerFilter = buildRenewProcessHeaderFilter(urnNo, cycle);
+
     const [manufacturing, waste, innovation, performance] = await Promise.all([
-      this.renewManufacturingModel.findOne({ urnNo }).lean().exec(),
-      this.renewWasteModel.findOne({ urnNo }).lean().exec(),
-      this.renewInnovationModel.findOne({ urnNo }).lean().exec(),
+      this.renewManufacturingModel.findOne(headerFilter).lean().exec(),
+      this.renewWasteModel.findOne(headerFilter).lean().exec(),
+      this.renewInnovationModel.findOne(headerFilter).lean().exec(),
       this.renewPerformanceModel
         .findOne({ urnNo, renewalCycleId: cycle._id })
         .lean()

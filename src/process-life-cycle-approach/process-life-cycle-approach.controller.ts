@@ -39,7 +39,7 @@ export class ProcessLifeCycleApproachController {
   @ApiOperation({
     summary: 'Create process life cycle approach data',
     description:
-      'Creates process life cycle approach data with file uploads (life cycle assessment reports and life cycle implementation documents). Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Supports multiple file types: PNG, JPEG, PDF, Word, and Excel files. Document metadata is stored in the master all_product_documents table.',
+      'Creates process life cycle approach data with file uploads. Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Only PDF and Excel (.pdf, .xls, .xlsx) uploads are allowed.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

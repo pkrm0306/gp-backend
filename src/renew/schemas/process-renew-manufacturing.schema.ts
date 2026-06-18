@@ -53,6 +53,6 @@ export const ProcessRenewManufacturingSchema = SchemaFactory.createForClass(
   ProcessRenewManufacturing,
 );
 ProcessRenewManufacturingSchema.index(
-  { urnNo: 1 },
-  { unique: true, name: 'uniq_process_renew_manufacturing_urn' },
+  { urnNo: 1, renewalCycleId: 1 },
+  { unique: true, name: 'uniq_process_renew_manufacturing_urn_cycle' },
 );

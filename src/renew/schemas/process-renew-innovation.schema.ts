@@ -40,6 +40,6 @@ export const ProcessRenewInnovationSchema = SchemaFactory.createForClass(
   ProcessRenewInnovation,
 );
 ProcessRenewInnovationSchema.index(
-  { urnNo: 1 },
-  { unique: true, name: 'uniq_process_renew_innovation_urn' },
+  { urnNo: 1, renewalCycleId: 1 },
+  { unique: true, name: 'uniq_process_renew_innovation_urn_cycle' },
 );

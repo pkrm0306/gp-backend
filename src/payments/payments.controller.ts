@@ -188,7 +188,7 @@ export class PaymentsController {
   @ApiOperation({
     summary: 'Create payment details',
     description:
-      'Creates payment details with proposal document upload. Supports PNG, Word, and Excel files.',
+      'Creates payment details with proposal document upload. Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -274,7 +274,7 @@ export class PaymentsController {
         proposal_file: {
           type: 'string',
           format: 'binary',
-          description: 'Proposal document (PNG, Word, Excel)',
+          description: 'Proposal document (PDF or Excel: .pdf, .xls, .xlsx)',
         },
       },
     },

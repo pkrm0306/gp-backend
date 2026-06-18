@@ -38,7 +38,7 @@ export class ProcessWasteManagementController {
   @ApiOperation({
     summary: 'Create process waste management data',
     description:
-      'Creates or updates process waste management data with supporting documents. Files are stored under uploads/urns/{urn_no}/. New uploads add rows in all_product_documents; existing documents for this URN are not removed automatically (same incremental behaviour as process manufacturing documents).',
+      'Creates process waste management data with supporting documents. Files are stored under uploads/urns/{urn_no}/. Only PDF and Excel (.pdf, .xls, .xlsx) uploads are allowed.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

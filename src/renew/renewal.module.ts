@@ -114,6 +114,7 @@ import {
 import { RenewUrnTabReviewService } from './services/renew-urn-tab-review.service';
 import { RenewDocumentPromotionService } from './services/renew-document-promotion.service';
 import { RenewAdminTestValidityService } from './services/renew-admin-test-validity.service';
+import { RenewProcessHeaderIndexesService } from './services/renew-process-header-indexes.service';
 
 @Module({
   imports: [
@@ -206,6 +207,7 @@ import { RenewAdminTestValidityService } from './services/renew-admin-test-valid
     ProcessRenewWmManufacturingUnitsService,
     RenewUrnStatusService,
     RenewUrnTabReviewService,
+    RenewProcessHeaderIndexesService,
     PermissionsGuard,
   ],
   exports: [

@@ -1,9 +1,6 @@
-import { BadRequestException } from '@nestjs/common';
 import {
+  assertStandardDocumentFileTypes,
   isAllowedStandardDocumentFile,
-  standardDocumentExtension,
-  STANDARD_DOCUMENT_EXTENSIONS,
-  STANDARD_DOCUMENT_MIMES,
   STANDARD_DOCUMENT_VALIDATION_MESSAGE,
 } from '../common/upload/document-upload.validation';
 import {
@@ -45,43 +42,23 @@ export const PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES = new Set([
 export const ECO_VISION_SUBSECTION = 'eco_vision_upload';
 export const SUPPORTING_SUBSECTION = 'supporting_documents';
 
-/** Supporting design uploads: standard documents plus Excel spreadsheets. */
+/** Vendor certification uploads: PDF and Excel only. */
 export const SUPPORTING_DESIGN_ALLOWED_EXTENSIONS = new Set([
-  ...STANDARD_DOCUMENT_EXTENSIONS,
+  '.pdf',
   '.xls',
   '.xlsx',
-]);
-
-export const SUPPORTING_DESIGN_ALLOWED_MIMES = new Set([
-  ...STANDARD_DOCUMENT_MIMES,
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ]);
 
 export function isAllowedSupportingDesignFile(
   file: Express.Multer.File,
 ): boolean {
-  if (isAllowedStandardDocumentFile(file)) {
-    return true;
-  }
-  const ext = standardDocumentExtension(file.originalname);
-  const mime = String(file.mimetype ?? '').toLowerCase();
-  return (
-    SUPPORTING_DESIGN_ALLOWED_EXTENSIONS.has(ext) ||
-    SUPPORTING_DESIGN_ALLOWED_MIMES.has(mime)
-  );
+  return isAllowedStandardDocumentFile(file);
 }
 
 export function assertSupportingDesignFileTypes(
   files: Express.Multer.File[],
 ): void {
-  for (const file of files) {
-    if (!isAllowedSupportingDesignFile(file)) {
-      throw new BadRequestException(
-        'Invalid supporting document type. Allowed: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, and XLSX.',
-      );
-    }
-  }
+  assertStandardDocumentFileTypes(files);
 }
 
 export { STANDARD_DOCUMENT_VALIDATION_MESSAGE as SUPPORTING_DESIGN_VALIDATION_MESSAGE };

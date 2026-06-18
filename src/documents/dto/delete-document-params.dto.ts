@@ -1,14 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsInt, Min } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 export class DeleteDocumentParamsDto {
   @ApiProperty({
-    description: 'Product document numeric identifier',
-    example: 1001,
+    description:
+      'Product document id (`productDocumentId` number) or MongoDB `_id` (24-char hex)',
+    example: '1001',
   })
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  documentId: number;
+  @IsString()
+  @IsNotEmpty()
+  documentId: string;
 }

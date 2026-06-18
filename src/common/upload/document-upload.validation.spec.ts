@@ -14,17 +14,14 @@ function file(
 describe('document-upload.validation', () => {
   it('uses the standardized validation message', () => {
     expect(STANDARD_DOCUMENT_VALIDATION_MESSAGE).toBe(
-      'Only PDF, JPG, JPEG, PNG, DOC, and DOCX files are allowed',
+      'Only PDF and Excel (.pdf, .xls, .xlsx) files are allowed',
     );
   });
 
   it.each([
     ['report.pdf', 'application/pdf'],
-    ['photo.jpg', 'image/jpeg'],
-    ['photo.jpeg', 'image/jpeg'],
-    ['photo.png', 'image/png'],
-    ['proposal.doc', 'application/msword'],
-    ['proposal.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['sheet.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['sheet.xls', 'application/vnd.ms-excel'],
   ])('allows %s with %s', (originalname, mimetype) => {
     expect(isAllowedStandardDocumentFile(file(originalname, mimetype))).toBe(
       true,
@@ -35,11 +32,16 @@ describe('document-upload.validation', () => {
     expect(
       isAllowedStandardDocumentFile(file('scan.pdf', 'application/octet-stream')),
     ).toBe(true);
+    expect(
+      isAllowedStandardDocumentFile(file('data.xlsx', 'application/octet-stream')),
+    ).toBe(true);
   });
 
   it.each([
-    ['sheet.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-    ['sheet.xls', 'application/vnd.ms-excel'],
+    ['photo.jpg', 'image/jpeg'],
+    ['photo.png', 'image/png'],
+    ['proposal.doc', 'application/msword'],
+    ['proposal.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
     ['data.csv', 'text/csv'],
     ['archive.zip', 'application/zip'],
     ['archive.rar', 'application/vnd.rar'],

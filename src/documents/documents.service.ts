@@ -4,8 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import {
   AllProductDocument,
   AllProductDocumentDocument,
@@ -15,12 +15,17 @@ import { deleteUploadedFileByDocumentLink } from '../utils/upload-file.util';
 import { DocumentVersioningService } from './document-versioning.service';
 import { buildAllProductDocumentTrackInput } from './helpers/document-version.helper';
 import { certificationStreamSlotKeyForDocument } from './helpers/certification-document-version.util';
+import { findAllProductDocumentByIdParam } from './helpers/resolve-all-product-document.util';
+import { syncProcessSectionDocumentFlags } from './helpers/sync-process-section-document-flags.util';
+
+type ResolvedProductDocument = AllProductDocument & { _id: Types.ObjectId };
 
 @Injectable()
 export class DocumentsService {
   constructor(
     @InjectModel(AllProductDocument.name)
     private readonly allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectConnection() private readonly connection: Connection,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
@@ -55,28 +60,71 @@ export class DocumentsService {
     }
   }
 
-  async softDeleteDocument(
-    documentId: number,
+  private assertDocumentAccess(
+    document: ResolvedProductDocument,
     vendorId: string,
-    query: DeleteDocumentQueryDto,
-  ): Promise<{ documentId: number; urnNo: string; sectionKey: string }> {
+    urnNo: string,
+  ): void {
     const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-
-    const document = await this.allProductDocumentModel
-      .findOne({ productDocumentId: documentId })
-      .exec();
-
-    if (!document || document.isDeleted) {
-      throw new NotFoundException('Document not found');
-    }
 
     if (document.vendorId.toString() !== vendorObjectId.toString()) {
       throw new ForbiddenException('You are not allowed to delete this document');
     }
 
-    if (document.urnNo !== query.urnNo) {
+    if (document.urnNo !== urnNo) {
       throw new NotFoundException('Document not found for provided urnNo');
     }
+  }
+
+  private async syncSectionFlagsForDocument(
+    document: Pick<
+      AllProductDocument,
+      'urnNo' | 'documentForm' | 'documentFormSubsection'
+    >,
+  ): Promise<void> {
+    await syncProcessSectionDocumentFlags({
+      documentModel: this.allProductDocumentModel,
+      connection: this.connection,
+      urnNo: document.urnNo,
+      documentForm: document.documentForm,
+      documentFormSubsection: document.documentFormSubsection,
+    });
+  }
+
+  private buildDeleteResult(document: ResolvedProductDocument): {
+    documentId: number;
+    urnNo: string;
+    sectionKey: string;
+  } {
+    return {
+      documentId: document.productDocumentId,
+      urnNo: document.urnNo,
+      sectionKey: document.documentForm,
+    };
+  }
+
+  async softDeleteDocument(
+    documentIdParam: string,
+    vendorId: string,
+    query: DeleteDocumentQueryDto,
+  ): Promise<{ documentId: number; urnNo: string; sectionKey: string }> {
+    const document = (await findAllProductDocumentByIdParam(
+      this.allProductDocumentModel,
+      documentIdParam,
+    )) as ResolvedProductDocument | null;
+
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    this.assertDocumentAccess(document, vendorId, query.urnNo);
+
+    if (document.isDeleted) {
+      await this.syncSectionFlagsForDocument(document);
+      return this.buildDeleteResult(document);
+    }
+
+    const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 
     await this.tryDeleteFile(document.documentLink);
 
@@ -105,16 +153,14 @@ export class DocumentsService {
           productDocumentId: document.productDocumentId,
         }),
         action: 'deleted',
-        documentId: document._id as Types.ObjectId,
+        documentId: document._id,
         productDocumentId: document.productDocumentId,
         userId: vendorObjectId,
       }),
     );
 
-    return {
-      documentId: document.productDocumentId,
-      urnNo: document.urnNo,
-      sectionKey: document.documentForm,
-    };
+    await this.syncSectionFlagsForDocument(document);
+
+    return this.buildDeleteResult(document);
   }
 }

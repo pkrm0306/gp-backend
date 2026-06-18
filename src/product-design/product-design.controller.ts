@@ -90,7 +90,7 @@ export class ProductDesignController {
           type: 'array',
           items: { type: 'string', format: 'binary' },
           description:
-            'Eco vision file(s), optional. Repeat per file → eco_vision_upload (max 20).',
+            'Eco vision file(s), optional. PDF/Excel only (.pdf, .xls, .xlsx). Max 20.',
         },
         supportingDesignFile: {
           type: 'array',

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
+import { getConnectionToken, getModelToken } from '@nestjs/mongoose';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { DocumentsService } from './documents.service';
@@ -11,6 +11,8 @@ describe('DocumentsService', () => {
   let service: DocumentsService;
   const findOneMock = jest.fn();
   const updateOneMock = jest.fn();
+  const countDocumentsMock = jest.fn();
+  const collectionUpdateOneMock = jest.fn();
 
   const vendorA = new Types.ObjectId().toString();
   const vendorB = new Types.ObjectId().toString();
@@ -26,9 +28,21 @@ describe('DocumentsService', () => {
     ...overrides,
   });
 
+  const mockFindOneResult = (doc: unknown) => {
+    findOneMock.mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(doc),
+      }),
+    });
+  };
+
   beforeEach(async () => {
     findOneMock.mockReset();
     updateOneMock.mockReset();
+    countDocumentsMock.mockReset();
+    collectionUpdateOneMock.mockReset();
+    countDocumentsMock.mockResolvedValue(0);
+    collectionUpdateOneMock.mockResolvedValue({ acknowledged: true });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -38,6 +52,15 @@ describe('DocumentsService', () => {
           useValue: {
             findOne: findOneMock,
             updateOne: updateOneMock,
+            countDocuments: countDocumentsMock,
+          },
+        },
+        {
+          provide: getConnectionToken(),
+          useValue: {
+            collection: jest.fn().mockReturnValue({
+              updateOne: collectionUpdateOneMock,
+            }),
           },
         },
         {
@@ -58,10 +81,10 @@ describe('DocumentsService', () => {
 
   it('soft deletes document on happy path', async () => {
     const doc = buildDoc();
-    findOneMock.mockReturnValue({ exec: jest.fn().mockResolvedValue(doc) });
+    mockFindOneResult(doc);
     updateOneMock.mockResolvedValue({ acknowledged: true, modifiedCount: 1 });
 
-    const result = await service.softDeleteDocument(123, vendorA, {
+    const result = await service.softDeleteDocument('123', vendorA, {
       urnNo: 'URN-1',
       sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
     });
@@ -76,12 +99,10 @@ describe('DocumentsService', () => {
   });
 
   it('throws 403 for wrong vendor ownership', async () => {
-    findOneMock.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(buildDoc({ vendorId: new Types.ObjectId(vendorB) })),
-    });
+    mockFindOneResult(buildDoc({ vendorId: new Types.ObjectId(vendorB) }));
 
     await expect(
-      service.softDeleteDocument(123, vendorA, {
+      service.softDeleteDocument('123', vendorA, {
         urnNo: 'URN-1',
         sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
       }),
@@ -92,10 +113,10 @@ describe('DocumentsService', () => {
 
   it('soft deletes when sectionKey does not match stored documentForm', async () => {
     const doc = buildDoc({ documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE });
-    findOneMock.mockReturnValue({ exec: jest.fn().mockResolvedValue(doc) });
+    mockFindOneResult(doc);
     updateOneMock.mockResolvedValue({ acknowledged: true, modifiedCount: 1 });
 
-    const result = await service.softDeleteDocument(123, vendorA, {
+    const result = await service.softDeleteDocument('123', vendorA, {
       urnNo: 'URN-1',
       sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
     });
@@ -105,12 +126,10 @@ describe('DocumentsService', () => {
   });
 
   it('throws 404 for wrong URN', async () => {
-    findOneMock.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(buildDoc({ urnNo: 'URN-2' })),
-    });
+    mockFindOneResult(buildDoc({ urnNo: 'URN-2' }));
 
     await expect(
-      service.softDeleteDocument(123, vendorA, {
+      service.softDeleteDocument('123', vendorA, {
         urnNo: 'URN-1',
         sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
       }),
@@ -119,16 +138,66 @@ describe('DocumentsService', () => {
     expect(updateOneMock).not.toHaveBeenCalled();
   });
 
-  it('throws 404 when document is already deleted', async () => {
-    findOneMock.mockReturnValue({
-      exec: jest.fn().mockResolvedValue(buildDoc({ isDeleted: true })),
+  it('returns success when document is already deleted (idempotent)', async () => {
+    mockFindOneResult(
+      buildDoc({
+        isDeleted: true,
+        documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+        documentFormSubsection: 'wm_supporting_documents',
+      }),
+    );
+
+    const result = await service.softDeleteDocument('123', vendorA, {
+      urnNo: 'URN-1',
+      sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
     });
 
-    await expect(
-      service.softDeleteDocument(123, vendorA, {
-        urnNo: 'URN-1',
-        sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
+    expect(updateOneMock).not.toHaveBeenCalled();
+    expect(collectionUpdateOneMock).toHaveBeenCalledWith(
+      { urnNo: 'URN-1' },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          wmSupportingDocuments: null,
+        }),
       }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    );
+    expect(result.documentId).toBe(123);
+  });
+
+  it('clears waste management supporting-doc flag when last file is removed', async () => {
+    const doc = buildDoc({
+      documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+      documentFormSubsection: 'wm_supporting_documents',
+    });
+    mockFindOneResult(doc);
+    updateOneMock.mockResolvedValue({ acknowledged: true, modifiedCount: 1 });
+
+    await service.softDeleteDocument('123', vendorA, {
+      urnNo: 'URN-1',
+      sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+    });
+
+    expect(collectionUpdateOneMock).toHaveBeenCalledWith(
+      { urnNo: 'URN-1' },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          wmSupportingDocuments: null,
+        }),
+      }),
+    );
+  });
+
+  it('resolves document by MongoDB _id string', async () => {
+    const objectId = new Types.ObjectId();
+    const doc = buildDoc({ _id: objectId });
+    mockFindOneResult(doc);
+    updateOneMock.mockResolvedValue({ acknowledged: true, modifiedCount: 1 });
+
+    await service.softDeleteDocument(objectId.toString(), vendorA, {
+      urnNo: 'URN-1',
+      sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
+    });
+
+    expect(findOneMock).toHaveBeenCalledWith({ _id: objectId });
   });
 });
