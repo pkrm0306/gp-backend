@@ -1,6 +1,7 @@
+import { BadRequestException } from '@nestjs/common';
 import {
-  assertStandardDocumentFileTypes,
   isAllowedStandardDocumentFile,
+  standardDocumentExtension,
   STANDARD_DOCUMENT_EXTENSIONS,
   STANDARD_DOCUMENT_MIMES,
   STANDARD_DOCUMENT_VALIDATION_MESSAGE,
@@ -44,21 +45,43 @@ export const PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES = new Set([
 export const ECO_VISION_SUBSECTION = 'eco_vision_upload';
 export const SUPPORTING_SUBSECTION = 'supporting_documents';
 
-/** Supporting design uploads: standard document types (PDF, images, Word). */
-export const SUPPORTING_DESIGN_ALLOWED_EXTENSIONS = STANDARD_DOCUMENT_EXTENSIONS;
+/** Supporting design uploads: standard documents plus Excel spreadsheets. */
+export const SUPPORTING_DESIGN_ALLOWED_EXTENSIONS = new Set([
+  ...STANDARD_DOCUMENT_EXTENSIONS,
+  '.xls',
+  '.xlsx',
+]);
 
-export const SUPPORTING_DESIGN_ALLOWED_MIMES = STANDARD_DOCUMENT_MIMES;
+export const SUPPORTING_DESIGN_ALLOWED_MIMES = new Set([
+  ...STANDARD_DOCUMENT_MIMES,
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
 
 export function isAllowedSupportingDesignFile(
   file: Express.Multer.File,
 ): boolean {
-  return isAllowedStandardDocumentFile(file);
+  if (isAllowedStandardDocumentFile(file)) {
+    return true;
+  }
+  const ext = standardDocumentExtension(file.originalname);
+  const mime = String(file.mimetype ?? '').toLowerCase();
+  return (
+    SUPPORTING_DESIGN_ALLOWED_EXTENSIONS.has(ext) ||
+    SUPPORTING_DESIGN_ALLOWED_MIMES.has(mime)
+  );
 }
 
 export function assertSupportingDesignFileTypes(
   files: Express.Multer.File[],
 ): void {
-  assertStandardDocumentFileTypes(files);
+  for (const file of files) {
+    if (!isAllowedSupportingDesignFile(file)) {
+      throw new BadRequestException(
+        'Invalid supporting document type. Allowed: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, and XLSX.',
+      );
+    }
+  }
 }
 
 export { STANDARD_DOCUMENT_VALIDATION_MESSAGE as SUPPORTING_DESIGN_VALIDATION_MESSAGE };
@@ -69,6 +92,39 @@ export const PRODUCT_DESIGN_EMPTY_FORM_MESSAGE =
 
 function hasAnyValidMultipartUpload(files?: Express.Multer.File[]): boolean {
   return (files ?? []).some((file) => isValidUploadPart(file));
+}
+
+export function normalizeMultipartFieldName(fieldname: unknown): string {
+  return String(fieldname ?? 'files')
+    .replace(/\[\d*\]$/g, '')
+    .replace(/\[\]$/g, '')
+    .trim();
+}
+
+/** True when the save is driven by an eco/supporting upload (new or already on the URN). */
+export function hasProductDesignDocumentUpload(params: {
+  ecoVisionFiles?: Express.Multer.File[];
+  supportingDocumentFiles?: Express.Multer.File[];
+  allUploadFiles?: Express.Multer.File[];
+  retainedEcoVisionDocumentCount?: number;
+  retainedSupportingDocumentCount?: number;
+}): boolean {
+  if (hasAnyValidMultipartUpload(params.allUploadFiles)) {
+    return true;
+  }
+  if ((params.ecoVisionFiles ?? []).length > 0) {
+    return true;
+  }
+  if ((params.supportingDocumentFiles ?? []).length > 0) {
+    return true;
+  }
+  if ((params.retainedEcoVisionDocumentCount ?? 0) > 0) {
+    return true;
+  }
+  if ((params.retainedSupportingDocumentCount ?? 0) > 0) {
+    return true;
+  }
+  return false;
 }
 
 export function hasAtLeastOneProductDesignFieldFilled(params: {
@@ -205,16 +261,19 @@ export function collectProductDesignUploadFiles(
   const ecoVisionFiles: Express.Multer.File[] = [];
   const supportingDocumentFiles: Express.Multer.File[] = [];
   const legacyFiles: Express.Multer.File[] = [];
+  const uncategorizedFiles: Express.Multer.File[] = [];
 
   for (const file of files ?? []) {
     if (!isValidUploadPart(file)) continue;
-    const field = String(file.fieldname ?? 'files');
+    const field = normalizeMultipartFieldName(file.fieldname);
     if (PRODUCT_DESIGN_ECO_VISION_FIELD_NAMES.has(field)) {
       ecoVisionFiles.push(file);
     } else if (PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES.has(field)) {
       supportingDocumentFiles.push(file);
     } else if (field === 'files') {
       legacyFiles.push(file);
+    } else {
+      uncategorizedFiles.push(file);
     }
   }
 
@@ -232,6 +291,10 @@ export function collectProductDesignUploadFiles(
     } else {
       ecoVisionFiles.push(...legacyFiles);
     }
+  }
+
+  if (uncategorizedFiles.length > 0) {
+    ecoVisionFiles.push(...uncategorizedFiles);
   }
 
   return { ecoVisionFiles, supportingDocumentFiles };

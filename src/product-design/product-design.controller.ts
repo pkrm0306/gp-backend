@@ -21,6 +21,7 @@ import {
   assertSupportingDesignFileTypes,
   collectProductDesignUploadFiles,
   hasAtLeastOneProductDesignContent,
+  hasProductDesignDocumentUpload,
   normalizeMeasureBenefitRows,
   PRODUCT_DESIGN_EMPTY_FORM_MESSAGE,
   parseMultipartJsonIdArray,
@@ -241,7 +242,17 @@ export class ProductDesignController {
         throw new BadRequestException(PRODUCT_DESIGN_EMPTY_FORM_MESSAGE);
       }
 
-      assertProductDesignStrategiesValid(strategiesRaw);
+      const hasDocumentUpload = hasProductDesignDocumentUpload({
+        ecoVisionFiles,
+        supportingDocumentFiles,
+        allUploadFiles: files,
+        retainedEcoVisionDocumentCount: retained.ecoVision,
+        retainedSupportingDocumentCount: retained.supporting,
+      });
+
+      if (!hasDocumentUpload) {
+        assertProductDesignStrategiesValid(strategiesRaw);
+      }
 
       const result = await this.productDesignService.createProductDesign(
         createProductDesignDto,

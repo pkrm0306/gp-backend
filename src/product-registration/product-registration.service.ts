@@ -47,6 +47,12 @@ import {
 import { formatAdminCertifiedProductPatchResponse } from './helpers/format-admin-certified-product-patch.util';
 import { formatProcessFinalReviewPayload } from './helpers/format-process-final-review.util';
 import { formatProcessCommentsForApi } from '../process-comments/helpers/process-comments-payload.util';
+import {
+  buildAdminProductsExportCsv,
+  buildAdminProductsExportXlsxBuffer,
+  mapAdminProductsExportEoiRow,
+  writeAdminProductsEoiWorksheetHeaders,
+} from './helpers/admin-products-export.util';
 import { EoiNumberService } from './services/eoi-number.service';
 import {
   matchActiveProductPlants,
@@ -1738,6 +1744,79 @@ export class ProductRegistrationService {
         this.exportJobs.delete(jobId);
       }
     }
+  }
+
+  private normalizeAdminExportIncludeSheets(
+    includeSheets?: Array<'urn_summary' | 'eoi_details'>,
+  ): Array<'urn_summary' | 'eoi_details'> {
+    const allowed = new Set(['urn_summary', 'eoi_details']);
+    const normalized = (includeSheets ?? []).filter((sheet) =>
+      allowed.has(sheet),
+    ) as Array<'urn_summary' | 'eoi_details'>;
+    return normalized.length > 0 ? normalized : ['urn_summary', 'eoi_details'];
+  }
+
+  private writeAdminUrnSummaryWorksheetHeaders(ws: ExcelJS.Worksheet): void {
+    const headers = [
+      'S.No',
+      'Manufacturer Name',
+      'Email',
+      'Phone',
+      'URN',
+      'Created Date',
+      'URN Status',
+      'Total EOI',
+    ];
+    const keys = [
+      'sno',
+      'manufacturerName',
+      'email',
+      'phone',
+      'urnNo',
+      'createdDate',
+      'urnStatus',
+      'totalEoi',
+    ];
+    const widths = [8, 28, 28, 18, 28, 24, 16, 12];
+
+    ws.columns = keys.map((key, index) => ({
+      header: headers[index],
+      key,
+      width: widths[index],
+    }));
+    const headerRow = ws.getRow(1);
+    headerRow.values = [...headers];
+    headerRow.font = { bold: true };
+    headerRow.commit();
+    ws.views = [{ state: 'frozen', ySplit: 1, activeCell: 'A2' }];
+  }
+
+  private async collectAdminListRowsForExport(
+    dto: AdminListProductsDto,
+  ): Promise<any[]> {
+    const batchSize = 500;
+    let page = 1;
+    let totalGroups = 0;
+    const listRows: any[] = [];
+
+    while (true) {
+      const batch = await this.adminListProducts({
+        ...dto,
+        page,
+        limit: batchSize,
+      } as AdminListProductsDto);
+
+      if (totalGroups === 0) {
+        totalGroups = batch.total ?? 0;
+      }
+      listRows.push(...(batch.data ?? []));
+      if (listRows.length >= totalGroups || (batch.data ?? []).length === 0) {
+        break;
+      }
+      page += 1;
+    }
+
+    return listRows;
   }
 
   /** Set a date field only when a non-empty ISO value was provided. */
@@ -8501,54 +8580,49 @@ export class ProductRegistrationService {
     };
   }
 
-  async exportAdminProductsXlsx(
-    dto: AdminListProductsDto,
-  ): Promise<{ buffer: Buffer; fileName: string }> {
-    const batchSize = 500;
-    let page = 1;
-    let totalGroups = 0;
-    const listRows: any[] = [];
+  async exportAdminProductsFile(
+    dto: AdminProductsExportDto,
+  ): Promise<{
+    buffer: Buffer;
+    fileName: string;
+    contentType: string;
+    rowCount: number;
+  }> {
+    const listRows = await this.collectAdminListRowsForExport(dto);
+    const { eoiRows } = this.flattenAdminListForExport(listRows);
+    const format = dto.format ?? 'xlsx';
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
 
-    while (true) {
-      const batch = await this.adminListProducts({
-        ...dto,
-        page,
-        limit: batchSize,
-      } as AdminListProductsDto);
-
-      if (totalGroups === 0) {
-        totalGroups = batch.total ?? 0;
-      }
-      listRows.push(...(batch.data ?? []));
-      if (listRows.length >= totalGroups || (batch.data ?? []).length === 0) {
-        break;
-      }
-      page += 1;
+    if (format === 'csv') {
+      const csv = buildAdminProductsExportCsv(eoiRows);
+      return {
+        buffer: Buffer.from(csv, 'utf-8'),
+        fileName: `admin-products-export-${stamp}.csv`,
+        contentType: 'text/csv; charset=utf-8',
+        rowCount: eoiRows.length,
+      };
     }
 
-    const { eoiRows } = this.flattenAdminListForExport(listRows);
-
-    const workbook = new ExcelJS.Workbook();
-    const ws = workbook.addWorksheet('Products Export');
-    ws.columns = [
-      { header: 'Manufacturer Name', key: 'manufacturerName', width: 30 },
-      { header: 'Email', key: 'email', width: 28 },
-      { header: 'Phone', key: 'phone', width: 18 },
-      { header: 'URN No', key: 'urnNo', width: 28 },
-      { header: 'EOI No', key: 'eoiNo', width: 24 },
-      { header: 'Product Name', key: 'productName', width: 32 },
-      { header: 'Category Name', key: 'categoryName', width: 24 },
-      { header: 'Product Status Label', key: 'statusLabel', width: 20 },
-      { header: 'Created Date', key: 'createdDate', width: 24 },
-    ];
-    eoiRows.forEach((r) => ws.addRow(r));
-
-    const raw = await workbook.xlsx.writeBuffer();
-    const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer);
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const buffer = await buildAdminProductsExportXlsxBuffer(eoiRows);
     return {
       buffer,
       fileName: `admin-products-export-${stamp}.xlsx`,
+      contentType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      rowCount: eoiRows.length,
+    };
+  }
+
+  async exportAdminProductsXlsx(
+    dto: AdminListProductsDto,
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    const result = await this.exportAdminProductsFile({
+      ...dto,
+      format: 'xlsx',
+    });
+    return {
+      buffer: result.buffer,
+      fileName: result.fileName,
     };
   }
 
@@ -8559,11 +8633,9 @@ export class ProductRegistrationService {
     this.cleanupExpiredExportJobs();
 
     const format = dto.format ?? 'xlsx';
-    const includeSheets = dto.includeSheets?.length
-      ? dto.includeSheets
-      : (['urn_summary', 'eoi_details'] as Array<
-          'urn_summary' | 'eoi_details'
-        >);
+    const includeSheets = this.normalizeAdminExportIncludeSheets(
+      dto.includeSheets as Array<'urn_summary' | 'eoi_details'> | undefined,
+    );
 
     const filtersForHash = {
       ...dto,
@@ -8635,6 +8707,9 @@ export class ProductRegistrationService {
       job.status = 'processing';
       job.progress = 5;
       job.updatedAt = new Date();
+      job.includeSheets = this.normalizeAdminExportIncludeSheets(
+        job.includeSheets,
+      );
 
       const pageSize = 500;
       let page = 1;
@@ -8677,59 +8752,18 @@ export class ProductRegistrationService {
       const filePath = join(this.exportDir, fileName);
 
       if (job.format === 'csv') {
-        const esc = (v: unknown) => {
-          const s = v === null || v === undefined ? '' : String(v);
-          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-        };
-        const header = [
-          'Manufacturer Name',
-          'Email',
-          'Phone',
-          'URN',
-          'EOI Number',
-          'Product ID',
-          'Product Name',
-          'Category Name',
-          'Product Status',
-          'Status Label',
-          'Created Date',
-        ];
-        const lines = [header.join(',')];
-        for (const row of eoiRows) {
-          lines.push(
-            [
-              row.manufacturerName,
-              row.email ?? row.vendor_email ?? '',
-              row.phone ?? row.vendor_phone ?? '',
-              row.urnNo,
-              row.eoiNo,
-              row.productId,
-              row.productName,
-              row.categoryName,
-              row.productStatus,
-              row.statusLabel,
-              row.createdDate,
-            ]
-              .map(esc)
-              .join(','),
-          );
-        }
-        writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
+        writeFileSync(
+          filePath,
+          buildAdminProductsExportCsv(eoiRows),
+          'utf-8',
+        );
       } else {
         const workbook = new ExcelJS.Workbook();
+        let wroteWorksheet = false;
 
         if (job.includeSheets.includes('urn_summary')) {
           const ws1 = workbook.addWorksheet('URN Summary');
-          ws1.columns = [
-            { header: 'S.No', key: 'sno', width: 8 },
-            { header: 'Manufacturer Name', key: 'manufacturerName', width: 28 },
-            { header: 'Email', key: 'email', width: 28 },
-            { header: 'Phone', key: 'phone', width: 18 },
-            { header: 'URN', key: 'urnNo', width: 28 },
-            { header: 'Created Date', key: 'createdDate', width: 24 },
-            { header: 'URN Status', key: 'urnStatus', width: 16 },
-            { header: 'Total EOI', key: 'totalEoi', width: 12 },
-          ];
+          this.writeAdminUrnSummaryWorksheetHeaders(ws1);
           urnRows.forEach((u, idx) => {
             ws1.addRow({
               sno: idx + 1,
@@ -8742,24 +8776,21 @@ export class ProductRegistrationService {
               totalEoi: u.totalEoi ?? u.total_eoi,
             });
           });
+          wroteWorksheet = true;
         }
 
         if (job.includeSheets.includes('eoi_details')) {
           const ws2 = workbook.addWorksheet('EOI Details');
-          ws2.columns = [
-            { header: 'Manufacturer Name', key: 'manufacturerName', width: 28 },
-            { header: 'Email', key: 'email', width: 28 },
-            { header: 'Phone', key: 'phone', width: 18 },
-            { header: 'URN', key: 'urnNo', width: 28 },
-            { header: 'EOI Number', key: 'eoiNo', width: 20 },
-            { header: 'Product ID', key: 'productId', width: 12 },
-            { header: 'Product Name', key: 'productName', width: 30 },
-            { header: 'Category Name', key: 'categoryName', width: 24 },
-            { header: 'Product Status', key: 'productStatus', width: 14 },
-            { header: 'Status Label', key: 'statusLabel', width: 14 },
-            { header: 'Created Date', key: 'createdDate', width: 24 },
-          ];
-          eoiRows.forEach((row) => ws2.addRow(row));
+          writeAdminProductsEoiWorksheetHeaders(ws2, 28);
+          eoiRows.forEach((row) => {
+            ws2.addRow(mapAdminProductsExportEoiRow(row));
+          });
+          wroteWorksheet = true;
+        }
+
+        if (!wroteWorksheet) {
+          const ws = workbook.addWorksheet('Products Export');
+          writeAdminProductsEoiWorksheetHeaders(ws);
         }
 
         await workbook.xlsx.writeFile(filePath);

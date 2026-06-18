@@ -5,6 +5,11 @@ import {
   standardDocumentMulterFileFilter,
   STANDARD_DOCUMENT_VALIDATION_MESSAGE,
 } from './document-upload.validation';
+import {
+  isAllowedSupportingDesignFile,
+  normalizeMultipartFieldName,
+  PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES,
+} from '../../product-design/product-design-upload.util';
 
 const TEN_MB = 10 * 1024 * 1024;
 const FIVE_MB = 5 * 1024 * 1024;
@@ -123,14 +128,40 @@ export function rawMaterialsMultipartMemoryMulterOptions(
   };
 }
 
-/** Product design — eco vision + supporting documents, max 40 parts. */
+/** Product design — eco vision (standard docs) + supporting (standard docs + Excel), max 40 parts. */
+function productDesignMultipartFileFilter(
+  _req: unknown,
+  file: Express.Multer.File,
+  cb: (error: Error | null, acceptFile: boolean) => void,
+): void {
+  if (!file) {
+    cb(null, true);
+    return;
+  }
+  const field = normalizeMultipartFieldName(file.fieldname);
+  if (PRODUCT_DESIGN_SUPPORTING_FIELD_NAMES.has(field)) {
+    if (isAllowedSupportingDesignFile(file)) {
+      cb(null, true);
+      return;
+    }
+    cb(
+      new BadRequestException(
+        'Invalid supporting document type. Allowed: PDF, JPG, JPEG, PNG, DOC, DOCX, XLS, and XLSX.',
+      ) as unknown as null,
+      false,
+    );
+    return;
+  }
+  standardDocumentMulterFileFilter(_req, file, cb);
+}
+
 export function productDesignMultipartMemoryMulterOptions(
   maxFiles = 40,
 ): Options {
   return {
     storage: memoryStorage(),
     limits: { fileSize: TEN_MB, files: maxFiles },
-    fileFilter: standardDocumentMulterFileFilter,
+    fileFilter: productDesignMultipartFileFilter,
   };
 }
 

@@ -10,6 +10,7 @@ import {
   Post,
   Put,
   Query,
+  Res,
   StreamableFile,
   UploadedFile,
   UseGuards,
@@ -29,6 +30,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ProductRegistrationService } from './product-registration.service';
 import { AdminListProductsDto } from './dto/admin-list-products.dto';
+import { AdminProductsExportDto } from './dto/admin-products-export.dto';
 import { resolveAdminListValidTillMonthYearFilter } from './helpers/admin-list-valid-till-filter.util';
 import { AdminListProductsFilterOptionsDto } from './dto/admin-list-products-filter-options.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
@@ -49,6 +51,7 @@ import { UpsertUrnFinalReviewDto } from './dto/upsert-urn-final-review.dto';
 import { RenewAdminTestValidityService } from '../renew/services/renew-admin-test-validity.service';
 import { ProcessFinalReviewService } from './services/process-final-review.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import type { Response } from 'express';
 
 /**
  * Admin list filters EOIs by **product** `productStatus` (EOI lifecycle), not manufacturer/vendor status.
@@ -680,19 +683,29 @@ export class AdminProductsController {
   @HttpCode(HttpStatus.OK)
   @ApiConsumes('application/json')
   @ApiOperation({
-    summary: 'Export admin products (Excel)',
+    summary: 'Export admin products (Excel or CSV)',
     description:
-      'Same filters as list. Flat Excel with Manufacturer, URN, and EOI columns (one row per EOI).',
+      'Same filters as list. Returns a file download even when filters match zero rows (headers only). Optional body `format`: `xlsx` (default) or `csv`.',
   })
-  @ApiBody({ type: AdminListProductsDto })
-  @ApiResponse({ status: 200, description: 'Excel file download' })
-  async export(@Body() dto: AdminListProductsDto): Promise<StreamableFile> {
-    const file =
-      await this.productRegistrationService.exportAdminProductsXlsx(
-        resolveAdminListProductsBody(dto),
-      );
+  @ApiBody({ type: AdminProductsExportDto })
+  @ApiResponse({ status: 200, description: 'File download (may contain headers only)' })
+  async export(
+    @Body() dto: AdminProductsExportDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const file = await this.productRegistrationService.exportAdminProductsFile(
+      resolveAdminListProductsBody(dto) as AdminProductsExportDto,
+    );
+
+    res.setHeader('X-Export-Row-Count', String(file.rowCount));
+    res.setHeader('X-Export-Has-Data', file.rowCount > 0 ? 'true' : 'false');
+    res.setHeader(
+      'Access-Control-Expose-Headers',
+      'Content-Disposition, X-Export-Row-Count, X-Export-Has-Data',
+    );
+
     return new StreamableFile(file.buffer, {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      type: file.contentType,
       disposition: `attachment; filename="${file.fileName}"`,
     });
   }
