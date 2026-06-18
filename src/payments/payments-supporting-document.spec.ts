@@ -119,6 +119,8 @@ describe('Payments supporting document validation', () => {
         paymentMode: 'neft_or_rtgs',
         paymentReferenceNo: 'REF-1',
       },
+      undefined,
+      undefined,
       {
         supporting_document: [supportingDocument],
       },
