@@ -32,7 +32,7 @@ import {
   PRODUCT_STATUS_PENDING,
   PRODUCT_STATUS_SUBMITTED,
 } from '../../renew/constants/product-status.constants';
-import { EoiNumberService } from './eoi-number.service';
+import { EoiNumberService, buildEoiNoFromManufacturerProfile } from './eoi-number.service';
 import { invalidateProductListingsCache as invalidateAllProductListingsCache } from '../helpers/invalidate-product-listings-cache.util';
 
 export type SoftDeleteProductResult = {
@@ -45,7 +45,8 @@ export type SoftDeleteProductResult = {
 };
 
 const MAX_TRANSACTION_RETRIES = 5;
-const MANUFACTURER_LOCK_TTL_MS = 60_000;
+const MANUFACTURER_LOCK_TTL_MS = 180_000;
+const TXN_MAX_COMMIT_MS = 120_000;
 
 @Injectable()
 export class ProductSoftDeleteService {
@@ -148,7 +149,7 @@ export class ProductSoftDeleteService {
     deletedByUserId: string,
   ): Promise<SoftDeleteProductResult> {
     const session = await this.connection.startSession();
-    session.startTransaction();
+    session.startTransaction({ maxCommitTimeMS: TXN_MAX_COMMIT_MS });
 
     try {
       const now = new Date();
@@ -271,44 +272,71 @@ export class ProductSoftDeleteService {
       );
     }
 
-    const now = new Date();
+    const manufacturerProfile =
+      await this.eoiNumberService.loadManufacturerEoiProfile(manufacturerId);
+
     let updatedSequenceCount = 0;
+    const productBulkOps: Array<{
+      updateOne: {
+        filter: { _id: Types.ObjectId };
+        update: { $set: Record<string, unknown> };
+      };
+    }> = [];
+    const plantBulkOps: Array<{
+      updateMany: {
+        filter: Record<string, unknown>;
+        update: { $set: { eoiNo: string } };
+      };
+    }> = [];
+
+    const now = new Date();
 
     for (let index = 0; index < sorted.length; index++) {
       const sequenceNumber = index + 1;
-      const newEoiNo = await this.eoiNumberService.buildEoiNo(
-        manufacturerId,
+      const newEoiNo = buildEoiNoFromManufacturerProfile(
+        manufacturerProfile,
         sequenceNumber,
-        session,
       );
 
       if (sorted[index].eoiNo === newEoiNo) {
         continue;
       }
 
-      await this.productModel
-        .updateOne(
-          { _id: sorted[index]._id },
-          {
+      productBulkOps.push({
+        updateOne: {
+          filter: { _id: sorted[index]._id as Types.ObjectId },
+          update: {
             $set: {
               eoiNo: newEoiNo,
               eoiSequence: sequenceNumber,
               updatedDate: now,
             },
           },
-          { session },
-        )
-        .exec();
+        },
+      });
 
-      const plantUpdate = await this.productPlantModel
-        .updateMany(
-          matchActiveProductPlants({ productId: sorted[index]._id }),
-          { $set: { eoiNo: newEoiNo } },
-          { session },
-        )
-        .exec();
+      plantBulkOps.push({
+        updateMany: {
+          filter: matchActiveProductPlants({ productId: sorted[index]._id }),
+          update: { $set: { eoiNo: newEoiNo } },
+        },
+      });
+    }
 
-      updatedSequenceCount += 1 + (plantUpdate.modifiedCount ?? 0);
+    if (productBulkOps.length > 0) {
+      const productResult = await this.productModel.bulkWrite(productBulkOps, {
+        session,
+        ordered: false,
+      });
+      updatedSequenceCount += productResult.modifiedCount ?? 0;
+    }
+
+    if (plantBulkOps.length > 0) {
+      const plantResult = await this.productPlantModel.bulkWrite(plantBulkOps, {
+        session,
+        ordered: false,
+      });
+      updatedSequenceCount += plantResult.modifiedCount ?? 0;
     }
 
     return updatedSequenceCount;

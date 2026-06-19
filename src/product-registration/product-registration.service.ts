@@ -53,7 +53,7 @@ import {
   mapAdminProductsExportEoiRow,
   writeAdminProductsEoiWorksheetHeaders,
 } from './helpers/admin-products-export.util';
-import { EoiNumberService } from './services/eoi-number.service';
+import { EoiNumberService, buildEoiNoFromManufacturerProfile } from './services/eoi-number.service';
 import {
   matchActiveProductPlants,
   matchActiveProducts,
@@ -2289,6 +2289,7 @@ export class ProductRegistrationService {
    * Register multiple products (bulk)
    * - ONE URN for all products in the bulk upload
    * - Individual EOI per product based on manufacturer-specific count
+   * - Commits in chunks to avoid MongoDB transaction time limits on large uploads
    */
   async registerBulkProducts(
     bulkRegisterProductDto: BulkRegisterProductDto,
@@ -2296,10 +2297,20 @@ export class ProductRegistrationService {
   ) {
     const maxRetries = 3;
     let retryCount = 0;
+    const BULK_REGISTRATION_CHUNK_SIZE = 20;
+    const BULK_TXN_MAX_COMMIT_MS = 120_000;
 
     while (retryCount < maxRetries) {
-      const session = await this.connection.startSession();
-      session.startTransaction();
+      const manufacturerObjectId = this.toObjectId(
+        manufacturerId,
+        'manufacturerId',
+      );
+      const vendorObjectId = this.toObjectId(
+        manufacturerId,
+        'manufacturerId',
+      );
+      const urnNo = this.generateURN();
+      let committedAny = false;
 
       try {
         console.log(
@@ -2312,26 +2323,9 @@ export class ProductRegistrationService {
           manufacturerId,
         );
         console.log(
-          '[Bulk Product Registration] Auth manufacturer ID:',
-          manufacturerId,
-        );
-        console.log(
           '[Bulk Product Registration] Number of products:',
           bulkRegisterProductDto.products.length,
         );
-
-        // Validate manufacturer ID
-        const manufacturerObjectId = this.toObjectId(
-          manufacturerId,
-          'manufacturerId',
-        );
-        const vendorObjectId = this.toObjectId(
-          manufacturerId,
-          'manufacturerId',
-        );
-
-        // Generate ONE URN for all products in bulk
-        const urnNo = this.generateURN();
         console.log(
           '[Bulk Product Registration] Generated single URN for all products:',
           urnNo,
@@ -2340,7 +2334,6 @@ export class ProductRegistrationService {
         const initialMaxActiveSequence =
           await this.eoiNumberService.getMaxActiveSequenceSuffix(
             manufacturerObjectId,
-            session,
           );
 
         console.log(
@@ -2348,109 +2341,36 @@ export class ProductRegistrationService {
           initialMaxActiveSequence,
         );
 
+        const manufacturerProfile =
+          await this.eoiNumberService.loadManufacturerEoiProfile(manufacturerId);
+
         const results = [];
+        const products = bulkRegisterProductDto.products;
 
-        // Process each product in the bulk upload
-        for (let i = 0; i < bulkRegisterProductDto.products.length; i++) {
-          const registerProductDto = bulkRegisterProductDto.products[i];
-
-          const manufacturerProductCount = initialMaxActiveSequence + i + 1;
-
-          // Generate EOI: Individual EOI per product using manufacturer-specific count
-          const eoiNo = await this.generateEOIWithCount(
+        for (
+          let chunkStart = 0;
+          chunkStart < products.length;
+          chunkStart += BULK_REGISTRATION_CHUNK_SIZE
+        ) {
+          const chunk = products.slice(
+            chunkStart,
+            chunkStart + BULK_REGISTRATION_CHUNK_SIZE,
+          );
+          const chunkResults = await this.registerBulkProductChunk({
+            chunk,
+            chunkStartIndex: chunkStart,
+            totalProducts: products.length,
+            initialMaxActiveSequence,
+            manufacturerProfile,
             manufacturerId,
-            manufacturerProductCount,
-            session,
-          );
-          console.log(
-            `[Bulk Product Registration] Product ${i + 1}/${bulkRegisterProductDto.products.length} - EOI: ${eoiNo}, Manufacturer Product Count: ${manufacturerProductCount}`,
-          );
-
-          // Get next product ID
-          const productId = await this.sequenceHelper.getProductId();
-
-          // Get current date
-          const now = new Date();
-
-          // Validate and convert category ID
-          const categoryObjectId = this.toObjectId(
-            registerProductDto.categoryId,
-            'categoryId',
-          );
-
-          // Create product data with URN and EOI
-          const productData = {
-            productId,
-            categoryId: categoryObjectId,
-            vendorId: vendorObjectId,
-            manufacturerId: manufacturerObjectId,
-            eoiNo,
+            manufacturerObjectId,
+            vendorObjectId,
             urnNo,
-            productName: registerProductDto.productName,
-            productImage: registerProductDto.productImage,
-            plantCount: registerProductDto.plants.length,
-            productDetails: registerProductDto.productDetails,
-            productType: registerProductDto.productType || 0,
-            productStatus: 0,
-            productRenewStatus: 0,
-            urnStatus: 0,
-            createdDate: now,
-            updatedDate: now,
-          };
-
-          const product = new this.productModel(productData);
-          const savedProduct = await product.save({ session });
-
-          // Insert plants
-          const plants = [];
-          for (const plantDto of registerProductDto.plants) {
-            const productPlantId =
-              await this.sequenceHelper.getProductPlantId();
-
-            // Validate and convert plant country ID
-            const plantCountryObjectId = this.toObjectId(
-              plantDto.countryId,
-              'countryId',
-            );
-            await this.validateCountry(plantDto.countryId);
-
-            // Validate and convert plant state ID
-            const plantStateObjectId = this.toObjectId(
-              plantDto.stateId,
-              'stateId',
-            );
-            await this.validateState(plantDto.stateId, plantDto.countryId);
-
-            const plantData = {
-              productPlantId,
-              productId: savedProduct._id,
-              vendorId: vendorObjectId,
-              categoryId: categoryObjectId,
-              manufacturerId: manufacturerObjectId,
-              countryId: plantCountryObjectId,
-              stateId: plantStateObjectId,
-              urnNo,
-              eoiNo,
-              plantName: plantDto.plantName,
-              plantLocation: plantDto.plantLocation,
-              city: plantDto.city,
-              plantStatus: 1,
-              createdDate: now,
-            };
-
-            const plant = new this.productPlantModel(plantData);
-            const savedPlant = await plant.save({ session });
-            plants.push(savedPlant);
-          }
-
-          results.push({
-            ...savedProduct.toObject(),
-            plants: plants.map((p) => p.toObject()),
+            maxCommitTimeMS: BULK_TXN_MAX_COMMIT_MS,
           });
+          results.push(...chunkResults);
+          committedAny = true;
         }
-
-        await session.commitTransaction();
-        session.endSession();
 
         // Log activity after successful bulk product registration
         // urnStatus is 0 (Product Registration), next step is 1 (Product Approve/Reject)
@@ -2484,8 +2404,19 @@ export class ProductRegistrationService {
         await this.invalidateProductListingsCache();
         return results;
       } catch (error: any) {
-        await session.abortTransaction();
-        session.endSession();
+        if (committedAny) {
+          try {
+            await this.rollbackBulkRegistrationByUrn(
+              urnNo,
+              manufacturerObjectId,
+            );
+          } catch (rollbackError: any) {
+            console.error(
+              '[Bulk Product Registration] Failed to roll back partial bulk registration:',
+              rollbackError,
+            );
+          }
+        }
 
         // For validation errors, throw immediately
         if (
@@ -2553,6 +2484,138 @@ export class ProductRegistrationService {
     throw new InternalServerErrorException(
       'Failed to register bulk products after all retry attempts.',
     );
+  }
+
+  private async rollbackBulkRegistrationByUrn(
+    urnNo: string,
+    manufacturerObjectId: Types.ObjectId,
+  ): Promise<void> {
+    await this.productPlantModel
+      .deleteMany({ urnNo, manufacturerId: manufacturerObjectId })
+      .exec();
+    await this.productModel
+      .deleteMany({ urnNo, manufacturerId: manufacturerObjectId })
+      .exec();
+  }
+
+  private async registerBulkProductChunk(params: {
+    chunk: BulkRegisterProductDto['products'];
+    chunkStartIndex: number;
+    totalProducts: number;
+    initialMaxActiveSequence: number;
+    manufacturerProfile: {
+      manufacturerInitial: string;
+      gpInternalId: string;
+    };
+    manufacturerId: string;
+    manufacturerObjectId: Types.ObjectId;
+    vendorObjectId: Types.ObjectId;
+    urnNo: string;
+    maxCommitTimeMS: number;
+  }): Promise<
+    Array<Record<string, unknown> & { plants: Record<string, unknown>[] }>
+  > {
+    const session = await this.connection.startSession();
+    session.startTransaction({ maxCommitTimeMS: params.maxCommitTimeMS });
+
+    try {
+      const results: Array<
+        Record<string, unknown> & { plants: Record<string, unknown>[] }
+      > = [];
+
+      for (let i = 0; i < params.chunk.length; i++) {
+        const registerProductDto = params.chunk[i];
+        const globalIndex = params.chunkStartIndex + i;
+        const manufacturerProductCount =
+          params.initialMaxActiveSequence + globalIndex + 1;
+
+        const eoiNo = buildEoiNoFromManufacturerProfile(
+          params.manufacturerProfile,
+          manufacturerProductCount,
+        );
+        console.log(
+          `[Bulk Product Registration] Product ${globalIndex + 1}/${params.totalProducts} - EOI: ${eoiNo}, Manufacturer Product Count: ${manufacturerProductCount}`,
+        );
+
+        const productId = await this.sequenceHelper.getProductId();
+        const now = new Date();
+        const categoryObjectId = this.toObjectId(
+          registerProductDto.categoryId,
+          'categoryId',
+        );
+
+        const productData = {
+          productId,
+          categoryId: categoryObjectId,
+          vendorId: params.vendorObjectId,
+          manufacturerId: params.manufacturerObjectId,
+          eoiNo,
+          urnNo: params.urnNo,
+          productName: registerProductDto.productName,
+          productImage: registerProductDto.productImage,
+          plantCount: registerProductDto.plants.length,
+          productDetails: registerProductDto.productDetails,
+          productType: registerProductDto.productType || 0,
+          productStatus: 0,
+          productRenewStatus: 0,
+          urnStatus: 0,
+          createdDate: now,
+          updatedDate: now,
+        };
+
+        const product = new this.productModel(productData);
+        const savedProduct = await product.save({ session });
+
+        const plants = [];
+        for (const plantDto of registerProductDto.plants) {
+          const productPlantId = await this.sequenceHelper.getProductPlantId();
+          const plantCountryObjectId = this.toObjectId(
+            plantDto.countryId,
+            'countryId',
+          );
+          await this.validateCountry(plantDto.countryId);
+          const plantStateObjectId = this.toObjectId(
+            plantDto.stateId,
+            'stateId',
+          );
+          await this.validateState(plantDto.stateId, plantDto.countryId);
+
+          const plantData = {
+            productPlantId,
+            productId: savedProduct._id,
+            vendorId: params.vendorObjectId,
+            categoryId: categoryObjectId,
+            manufacturerId: params.manufacturerObjectId,
+            countryId: plantCountryObjectId,
+            stateId: plantStateObjectId,
+            urnNo: params.urnNo,
+            eoiNo,
+            plantName: plantDto.plantName,
+            plantLocation: plantDto.plantLocation,
+            city: plantDto.city,
+            plantStatus: 1,
+            createdDate: now,
+          };
+
+          const plant = new this.productPlantModel(plantData);
+          const savedPlant = await plant.save({ session });
+          plants.push(savedPlant);
+        }
+
+        results.push({
+          ...savedProduct.toObject(),
+          plants: plants.map((p) => p.toObject()),
+        });
+      }
+
+      await session.commitTransaction();
+      return results;
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
   }
 
   /**

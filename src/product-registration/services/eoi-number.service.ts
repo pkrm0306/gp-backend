@@ -21,6 +21,44 @@ export type NextActiveEoiAssignment = {
   previousEoiNo?: string;
 };
 
+export type EoiManufacturerProfile = {
+  manufacturerInitial: string;
+  gpInternalId: string;
+};
+
+/** Build EOI synchronously when manufacturer profile is already loaded (bulk / resequence). */
+export function buildEoiNoFromManufacturerProfile(
+  profile: EoiManufacturerProfile,
+  manufacturerProductCount: number,
+): string {
+  if (
+    !Number.isFinite(manufacturerProductCount) ||
+    manufacturerProductCount < 1 ||
+    manufacturerProductCount > 999
+  ) {
+    throw new BadRequestException(
+      'Manufacturer product sequence must be between 1 and 999',
+    );
+  }
+
+  const manufacturerInitial = profile.manufacturerInitial?.trim();
+  if (!manufacturerInitial) {
+    throw new BadRequestException('Manufacturer does not have manufacturerInitial set.');
+  }
+
+  const gpInternalId = profile.gpInternalId?.trim();
+  if (!gpInternalId) {
+    throw new BadRequestException('Manufacturer does not have gpInternalId set.');
+  }
+
+  const internalIdMatch = gpInternalId.match(/-(\d+)$/);
+  const internalId = internalIdMatch
+    ? internalIdMatch[1].padStart(3, '0')
+    : '000';
+  const paddedCount = manufacturerProductCount.toString().padStart(3, '0');
+  return `GP${manufacturerInitial}${internalId}${paddedCount}`;
+}
+
 /**
  * Manufacturer-scoped EOI assignment.
  * Active pool = productStatus 0/1/2 and not soft-deleted.
@@ -79,6 +117,34 @@ export class EoiNumberService {
     return maxSuffix;
   }
 
+  /** Load manufacturer fields needed to build EOIs (call once per bulk/resequence batch). */
+  async loadManufacturerEoiProfile(
+    manufacturerId: string,
+  ): Promise<EoiManufacturerProfile> {
+    const manufacturer = await this.manufacturersService.findById(manufacturerId);
+    if (!manufacturer) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+
+    const manufacturerInitial = String(
+      manufacturer.manufacturerInitial ?? '',
+    ).trim();
+    if (!manufacturerInitial) {
+      throw new BadRequestException(
+        `Manufacturer ${manufacturerId} does not have manufacturerInitial set.`,
+      );
+    }
+
+    const gpInternalId = String(manufacturer.gpInternalId ?? '').trim();
+    if (!gpInternalId) {
+      throw new BadRequestException(
+        `Manufacturer ${manufacturerId} does not have gpInternalId set.`,
+      );
+    }
+
+    return { manufacturerInitial, gpInternalId };
+  }
+
   /**
    * Build EOI for the given manufacturer and 1-based manufacturer product sequence.
    */
@@ -87,45 +153,8 @@ export class EoiNumberService {
     manufacturerProductCount: number,
     _session?: ClientSession,
   ): Promise<string> {
-    if (
-      !Number.isFinite(manufacturerProductCount) ||
-      manufacturerProductCount < 1 ||
-      manufacturerProductCount > 999
-    ) {
-      throw new BadRequestException(
-        'Manufacturer product sequence must be between 1 and 999',
-      );
-    }
-
-    const manufacturer = await this.manufacturersService.findById(manufacturerId);
-    if (!manufacturer) {
-      throw new NotFoundException('Manufacturer not found');
-    }
-
-    const manufacturerInitial = manufacturer.manufacturerInitial;
-    if (!manufacturerInitial?.trim()) {
-      throw new BadRequestException(
-        `Manufacturer ${manufacturerId} does not have manufacturerInitial set.`,
-      );
-    }
-
-    const gpInternalId = manufacturer.gpInternalId;
-    if (!gpInternalId?.trim()) {
-      throw new BadRequestException(
-        `Manufacturer ${manufacturerId} does not have gpInternalId set.`,
-      );
-    }
-
-    const internalIdMatch = gpInternalId.match(/-(\d+)$/);
-    let internalId: string;
-    if (internalIdMatch) {
-      internalId = internalIdMatch[1].padStart(3, '0');
-    } else {
-      internalId = '000';
-    }
-
-    const paddedCount = manufacturerProductCount.toString().padStart(3, '0');
-    return `GP${manufacturerInitial}${internalId}${paddedCount}`;
+    const profile = await this.loadManufacturerEoiProfile(manufacturerId);
+    return buildEoiNoFromManufacturerProfile(profile, manufacturerProductCount);
   }
 
   /**
