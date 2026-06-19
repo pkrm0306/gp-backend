@@ -24,7 +24,7 @@ import { Model } from 'mongoose';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
-import { CreateProcessWmManufacturingUnitDto } from '../../process-wm-manufacturing-units/dto/create-process-wm-manufacturing-unit.dto';
+import { CreateProcessRenewWmManufacturingUnitDto } from './dto/create-process-renew-wm-manufacturing-unit.dto';
 import { DeleteProcessWmManufacturingUnitDto } from '../../process-wm-manufacturing-units/dto/delete-process-wm-manufacturing-unit.dto';
 import { assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
 import { ProcessRenewWmManufacturingUnitsService } from './process-renew-wm-manufacturing-units.service';
@@ -44,11 +44,11 @@ export class ProcessRenewWmManufacturingUnitsController {
   @ApiOperation({
     summary: 'Create or update renewal WM manufacturing unit (per URN)',
   })
-  @ApiBody({ type: CreateProcessWmManufacturingUnitDto })
+  @ApiBody({ type: CreateProcessRenewWmManufacturingUnitDto })
   @ApiResponse({ status: 201, description: 'Saved successfully' })
   async create(
     @CurrentUser() user: { vendorId?: string; manufacturerId?: string },
-    @Body() dto: CreateProcessWmManufacturingUnitDto,
+    @Body() dto: CreateProcessRenewWmManufacturingUnitDto,
   ) {
     if (!dto?.urnNo?.trim()) {
       throw new BadRequestException('URN number is required');

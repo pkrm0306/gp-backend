@@ -24,7 +24,7 @@ import { Model } from 'mongoose';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
-import { CreateProcessMpManufacturingUnitDto } from '../../process-mp-manufacturing-units/dto/create-process-mp-manufacturing-unit.dto';
+import { CreateProcessRenewMpManufacturingUnitDto } from './dto/create-process-renew-mp-manufacturing-unit.dto';
 import { assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
 import { ProcessRenewMpManufacturingUnitsService } from './process-renew-mp-manufacturing-units.service';
 
@@ -43,11 +43,11 @@ export class ProcessRenewMpManufacturingUnitsController {
   @ApiOperation({
     summary: 'Create or update renewal MP manufacturing unit (per URN)',
   })
-  @ApiBody({ type: CreateProcessMpManufacturingUnitDto })
+  @ApiBody({ type: CreateProcessRenewMpManufacturingUnitDto })
   @ApiResponse({ status: 201, description: 'Saved successfully' })
   async create(
     @CurrentUser() user: { vendorId?: string; manufacturerId?: string },
-    @Body() dto: CreateProcessMpManufacturingUnitDto,
+    @Body() dto: CreateProcessRenewMpManufacturingUnitDto,
   ) {
     if (!dto?.urnNo?.trim()) {
       throw new BadRequestException('URN number is required');
