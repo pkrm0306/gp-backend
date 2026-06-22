@@ -78,6 +78,37 @@ describe('AuditHttpInterceptor integration', () => {
     expect(res.setHeader).not.toHaveBeenCalled();
   });
 
+  it('does not record listing requests', async () => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const interceptor = new AuditHttpInterceptor(
+      { record } as never,
+      new Reflector(),
+      auditEntryFactory(),
+    );
+    const req = {
+      method: 'POST',
+      originalUrl: '/api/admin/products/list',
+      url: '/api/admin/products/list',
+      body: { page: 1, limit: 20 },
+      headers: {},
+      ip: '127.0.0.1',
+      socket: {},
+    };
+    const res = {
+      statusCode: 200,
+      setHeader: jest.fn(),
+    };
+
+    await lastValueFrom(
+      interceptor.intercept(httpContext(req, res), {
+        handle: () => of({ success: true, data: [] }),
+      }),
+    );
+
+    expect(record).not.toHaveBeenCalled();
+    expect(res.setHeader).not.toHaveBeenCalled();
+  });
+
   it('skips non-final rows in legacy raw-materials bulk uploads', async () => {
     const record = jest.fn().mockResolvedValue(undefined);
     const interceptor = new AuditHttpInterceptor(

@@ -412,6 +412,17 @@ describe('AuditEntryFactory', () => {
     expect(factory.shouldAudit('POST', '/payments')).toBe(true);
     expect(factory.shouldAudit('DELETE', '/categories/1')).toBe(true);
   });
+
+  it('skips listing, search, export, and audit-log read routes', () => {
+    expect(factory.shouldAudit('POST', '/api/admin/products/list')).toBe(false);
+    expect(
+      factory.shouldAudit('POST', '/api/admin/products/list/filter-options'),
+    ).toBe(false);
+    expect(factory.shouldAudit('GET', '/admin/audit-log')).toBe(false);
+    expect(factory.shouldAudit('GET', '/admin/banner/list')).toBe(false);
+    expect(factory.shouldAudit('GET', '/api/sectors/export')).toBe(false);
+    expect(factory.shouldAudit('PATCH', '/payments/urn-1')).toBe(true);
+  });
 });
 
 function request(params: {

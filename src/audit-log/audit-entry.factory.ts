@@ -6,6 +6,7 @@ import { AuditRouteMetadata } from './decorators/audit.decorator';
 import { CreateAuditLogDto } from './dto/create-audit-log.dto';
 import { AuditRouteMapper, buildPerformedBy } from './audit-route-map';
 import { AUDIT_ACTION_TYPE, AUDIT_MODULE } from './audit-friendlies';
+import { isListingAuditPath } from './audit-listing-routes.util';
 import {
   AuditPrimitiveSnapshot,
   AuditValueTransformer,
@@ -240,6 +241,9 @@ export class AuditEntryFactory {
   }
 
   private shouldSkipAuditRoute(method: string, pathNorm: string): boolean {
+    if (isListingAuditPath(pathNorm)) {
+      return true;
+    }
     const m = method.toUpperCase();
     const routes: Array<{ method: string; regex: RegExp }> = [
       { method: 'POST', regex: /^\/auth\/refresh$/i },
