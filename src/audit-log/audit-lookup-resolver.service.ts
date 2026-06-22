@@ -25,6 +25,7 @@ import {
   VendorUser,
   VendorUserDocument,
 } from '../vendor-users/schemas/vendor-user.schema';
+import { parseProductsToBeCertified } from '../product-registration/helpers/parse-products-to-be-certified.util';
 import { AuditStatusResolver } from './audit-status-resolver.service';
 
 type LookupModelName =
@@ -65,6 +66,8 @@ const LOOKUP_FIELD_MODEL: Record<string, LookupModelName> = {
   product_id: 'product',
   productids: 'product',
   product_ids: 'product',
+  productstobecertified: 'product',
+  products_to_be_certified: 'product',
   productsid: 'product',
   products_id: 'product',
   productsids: 'product',
@@ -80,6 +83,9 @@ const LOOKUP_FIELD_MODEL: Record<string, LookupModelName> = {
   deletedby: 'user',
   deleted_by: 'user',
 };
+
+/** Payment certification field stores JSON productId array as a string. */
+const PRODUCT_ID_LIST_FIELDS = new Set(['productstobecertified']);
 
 @Injectable()
 export class AuditLookupResolver {
@@ -183,7 +189,13 @@ export class AuditLookupResolver {
     value: unknown,
   ): string | undefined {
     const modelName = LOOKUP_FIELD_MODEL[this.statusResolver.normalizeKey(key)];
-    if (!modelName || !this.canLookupValue(value)) {
+    if (!modelName) {
+      return undefined;
+    }
+    if (this.isProductIdListField(key)) {
+      return this.resolveProductIdListLabel(labels, value);
+    }
+    if (!this.canLookupValue(value)) {
       return undefined;
     }
     return (
@@ -211,7 +223,7 @@ export class AuditLookupResolver {
       const modelName =
         LOOKUP_FIELD_MODEL[this.statusResolver.normalizeKey(key)];
       if (modelName) {
-        const lookupValues = this.lookupValues(value);
+        const lookupValues = this.lookupValues(key, value);
         if (!lookupValues.length) {
           this.collectRecordValues(value, valuesByModel);
           continue;
@@ -280,7 +292,75 @@ export class AuditLookupResolver {
     );
   }
 
-  private lookupValues(value: unknown): Array<string | number> {
+  private isProductIdListField(key: string): boolean {
+    return PRODUCT_ID_LIST_FIELDS.has(this.statusResolver.normalizeKey(key));
+  }
+
+  private productIdsFromListValue(value: unknown): {
+    productIds: number[];
+    mongoIds: string[];
+  } {
+    if (typeof value === 'string') {
+      const parsed = parseProductsToBeCertified(value);
+      return {
+        productIds: parsed.productIds,
+        mongoIds: parsed.mongoIds.map((id) => String(id)),
+      };
+    }
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return { productIds: [Math.trunc(value)], mongoIds: [] };
+    }
+    if (Array.isArray(value)) {
+      const productIds: number[] = [];
+      const mongoIds: string[] = [];
+      for (const item of value) {
+        if (typeof item === 'number' && Number.isFinite(item) && item > 0) {
+          productIds.push(Math.trunc(item));
+          continue;
+        }
+        if (typeof item === 'string' && item.trim()) {
+          const nested = parseProductsToBeCertified(item);
+          productIds.push(...nested.productIds);
+          mongoIds.push(...nested.mongoIds.map((id) => String(id)));
+        }
+      }
+      return {
+        productIds: [...new Set(productIds)],
+        mongoIds: [...new Set(mongoIds)],
+      };
+    }
+    return { productIds: [], mongoIds: [] };
+  }
+
+  private resolveProductIdListLabel(
+    labels: Map<string, string>,
+    value: unknown,
+  ): string | undefined {
+    const { productIds, mongoIds } = this.productIdsFromListValue(value);
+    const lookupKeys = [
+      ...productIds.map((id) => String(id)),
+      ...mongoIds,
+    ];
+    if (!lookupKeys.length) {
+      return undefined;
+    }
+    const names = lookupKeys.map(
+      (id) =>
+        labels.get(this.lookupCacheKey('product', id)) ??
+        this.fallbackLabel('product', id) ??
+        id,
+    );
+    return names.join(', ');
+  }
+
+  private lookupValues(
+    key: string,
+    value: unknown,
+  ): Array<string | number> {
+    if (this.isProductIdListField(key)) {
+      const { productIds, mongoIds } = this.productIdsFromListValue(value);
+      return [...productIds, ...mongoIds];
+    }
     if (this.canLookupValue(value)) {
       return [value];
     }

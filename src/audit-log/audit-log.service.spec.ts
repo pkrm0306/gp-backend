@@ -556,6 +556,53 @@ describe('AuditLogService', () => {
     });
   });
 
+  it('resolves productsToBeCertified JSON productIds to product names in list output', async () => {
+    auditFindExecMock.mockResolvedValueOnce([
+      {
+        action: AUDIT_ACTION.PAYMENT_UPDATED,
+        outcome: 'success',
+        module: 'payment',
+        old_values: {
+          paymentType: 'certification',
+          productsToBeCertified: '[101]',
+        },
+        new_values: {
+          paymentType: 'certification',
+          paymentStatus: 2,
+          productsToBeCertified: '[101,102]',
+        },
+        changes: {
+          paymentStatus: { before: 1, after: 2 },
+          productsToBeCertified: { before: '[101]', after: '[101,102]' },
+        },
+      },
+    ]);
+    lookupFindExecMock.mockResolvedValueOnce([
+      { productId: 101, productName: 'Eco Paint' },
+      { productId: 102, productName: 'Green Adhesive' },
+    ]);
+    execMock.mockResolvedValueOnce(1);
+
+    const result = await service.list({});
+
+    expect(result.items[0].old_values).toEqual({
+      paymentType: 'Certification',
+      productsToBeCertified: 'Eco Paint',
+    });
+    expect(result.items[0].new_values).toEqual({
+      paymentType: 'Certification',
+      paymentStatus: 'Payment Approve',
+      productsToBeCertified: 'Eco Paint, Green Adhesive',
+    });
+    expect(result.items[0].changes).toEqual({
+      paymentStatus: { before: 'Paid', after: 'Payment Approve' },
+      productsToBeCertified: {
+        before: 'Eco Paint',
+        after: 'Eco Paint, Green Adhesive',
+      },
+    });
+  });
+
   it('returns detail snapshots from the audit record without current entity lookup', async () => {
     const id = '507f1f77bcf86cd799439011';
     auditFindByIdExecMock.mockResolvedValueOnce({
