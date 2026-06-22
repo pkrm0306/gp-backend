@@ -553,7 +553,7 @@ export class AdminProductsController {
   @ApiOperation({
     summary: 'Save passport for certified product (admin)',
     description:
-      'Stores passport content for certified products only (productStatus = 2). Maximum 5000 characters excluding whitespace.',
+      'Stores passport content for certified products only (productStatus = 2). Passport is optional; empty content clears the stored passport. Maximum 5000 characters excluding whitespace when provided.',
   })
   @ApiParam({
     name: 'productId',
@@ -564,7 +564,7 @@ export class AdminProductsController {
   @ApiResponse({
     status: 400,
     description:
-      'Validation error (including whitespace-only or >5000 characters excluding whitespace)',
+      'Validation error (including >5000 characters excluding whitespace)',
   })
   @ApiResponse({ status: 404, description: 'Certified product not found' })
   async patchCertifiedProductPassport(

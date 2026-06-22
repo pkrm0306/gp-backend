@@ -29,7 +29,11 @@ import {
   mapSummitToPublicListItem,
   normalizeSummitAssetUrl,
 } from './utils/summit-mapper.util';
-import { isValidSummitSlug, slugifySummitInput } from './utils/summit-slug.util';
+import {
+  buildSummitSlug,
+  isValidSummitSlug,
+  slugifySummitInput,
+} from './utils/summit-slug.util';
 import { sanitizeSummitHtml } from './utils/summit-sanitize.util';
 import {
   normalizeSpeakerKeyPoint,
@@ -293,7 +297,8 @@ export class SummitsService {
 
   async create(dto: CreateSummitDto) {
     const title = dto.title.trim();
-    const slug = slugifySummitInput(title);
+    const year = dto.year.trim();
+    const slug = await this.resolveUniqueSummitSlug(buildSummitSlug(title, year));
     if (!isValidSummitSlug(slug)) {
       throw new BadRequestException({
         message: 'Invalid title',
@@ -303,8 +308,6 @@ export class SummitsService {
         },
       });
     }
-    const year = dto.year.trim();
-    await this.assertSlugUnique(slug);
     await this.assertYearUnique(year);
 
     const doc = await this.summitModel.create({
@@ -340,8 +343,12 @@ export class SummitsService {
     this.applyFullPayload(doc, payload);
     await this.validateForActiveIfNeeded(doc);
     const basicPatch = normalizeSummitBasicInput(payload);
-    if (basicPatch?.title !== undefined) {
-      await this.assertSlugUnique(doc.slug, doc._id);
+    if (
+      basicPatch?.title !== undefined ||
+      basicPatch?.year !== undefined
+    ) {
+      doc.slug = await this.resolveUniqueSummitSlug(doc.slug, doc._id);
+      doc.markModified('slug');
     }
     if (basicPatch?.year !== undefined) {
       await this.assertYearUnique(doc.year, doc._id);
@@ -363,8 +370,12 @@ export class SummitsService {
         const basicPatch = normalizeSummitBasicInput(body);
         if (basicPatch) {
           this.applyBasic(doc, basicPatch);
-          if (basicPatch.title !== undefined) {
-            await this.assertSlugUnique(doc.slug, doc._id);
+          if (
+            basicPatch.title !== undefined ||
+            basicPatch.year !== undefined
+          ) {
+            doc.slug = await this.resolveUniqueSummitSlug(doc.slug, doc._id);
+            doc.markModified('slug');
           }
           if (basicPatch.year !== undefined) {
             await this.assertYearUnique(doc.year, doc._id);
@@ -437,6 +448,7 @@ export class SummitsService {
     doc.status = normalizeSummitStatus(status);
     if (doc.status === 'active') {
       this.assertActivatable(doc);
+      await this.refreshSummitSlug(doc);
     }
     await doc.save();
     return buildSummitViewPayload(mapSummitToApi(doc));
@@ -520,26 +532,6 @@ export class SummitsService {
       throw new NotFoundException('Summit not found');
     }
     return doc;
-  }
-
-  private async assertSlugUnique(slug: string, excludeId?: Types.ObjectId) {
-    const filter: FilterQuery<SummitDocument> = {
-      slug,
-      deletedAt: null,
-    };
-    if (excludeId) {
-      filter._id = { $ne: excludeId };
-    }
-    const existing = await this.summitModel.findOne(filter).select('_id').lean().exec();
-    if (existing) {
-      throw new ConflictException({
-        message: 'Slug already exists',
-        errors: {
-          'basic.title':
-            'A summit with a similar title already exists. Use a different title.',
-        },
-      });
-    }
   }
 
   /** One summit per calendar year (non-deleted documents). */
@@ -627,19 +619,11 @@ export class SummitsService {
       doc.markModified('year');
     }
     if (basic.title !== undefined) {
-      const title = String(basic.title).trim();
-      doc.title = title;
-      const slug = slugifySummitInput(title);
-      if (!isValidSummitSlug(slug)) {
-        throw new BadRequestException({
-          message: 'Invalid title',
-          errors: {
-            'basic.title':
-              'Title must produce a valid URL identifier (use letters and numbers)',
-          },
-        });
-      }
-      doc.slug = slug;
+      doc.title = String(basic.title).trim();
+      doc.markModified('title');
+    }
+    if (basic.title !== undefined || basic.year !== undefined) {
+      this.assignSummitSlugFromTitleYear(doc);
     }
     if (basic.date !== undefined) doc.date = basic.date;
     if (basic.location !== undefined) doc.location = basic.location;
@@ -649,6 +633,69 @@ export class SummitsService {
         this.assertActivatable(doc);
       }
     }
+  }
+
+  private assignSummitSlugFromTitleYear(doc: SummitDocument): void {
+    const title = String(doc.title ?? '').trim();
+    const slug = buildSummitSlug(title, doc.year);
+    if (!isValidSummitSlug(slug)) {
+      throw new BadRequestException({
+        message: 'Invalid title',
+        errors: {
+          'basic.title':
+            'Title must produce a valid URL identifier (use letters and numbers)',
+        },
+      });
+    }
+    doc.slug = slug;
+    doc.markModified('slug');
+  }
+
+  private async refreshSummitSlug(doc: SummitDocument): Promise<void> {
+    this.assignSummitSlugFromTitleYear(doc);
+    doc.slug = await this.resolveUniqueSummitSlug(doc.slug, doc._id);
+    doc.markModified('slug');
+  }
+
+  private async resolveUniqueSummitSlug(
+    preferredSlug: string,
+    excludeId?: Types.ObjectId,
+  ): Promise<string> {
+    let candidate = preferredSlug;
+    let suffix = 2;
+    while (!(await this.isSlugAvailable(candidate, excludeId))) {
+      candidate = `${preferredSlug}-${suffix}`;
+      suffix += 1;
+      if (suffix > 50) {
+        throw new ConflictException({
+          message: 'Summit URL already exists',
+          errors: {
+            'basic.title':
+              'Unable to generate a unique summit URL. Change the title or year and try again.',
+          },
+        });
+      }
+    }
+    return candidate;
+  }
+
+  private async isSlugAvailable(
+    slug: string,
+    excludeId?: Types.ObjectId,
+  ): Promise<boolean> {
+    const filter: FilterQuery<SummitDocument> = {
+      slug,
+      deletedAt: null,
+    };
+    if (excludeId) {
+      filter._id = { $ne: excludeId };
+    }
+    const existing = await this.summitModel
+      .findOne(filter)
+      .select('_id')
+      .lean()
+      .exec();
+    return !existing;
   }
 
   private normalizeBanners(raw: unknown) {
@@ -761,6 +808,7 @@ export class SummitsService {
   private async validateForActiveIfNeeded(doc: SummitDocument) {
     if (isSummitActiveStatus(doc.status)) {
       this.assertActivatable(doc);
+      await this.refreshSummitSlug(doc);
     }
   }
 

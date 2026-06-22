@@ -33,4 +33,10 @@ export class CreateSummitDto {
   @Transform(({ value }) => normalizeSummitStatus(value))
   @IsIn([...SUMMIT_STATUSES])
   status?: 'active' | 'inactive';
+
+  /** Ignored — slug is server-generated from title + year */
+  @ApiPropertyOptional({ deprecated: true })
+  @IsOptional()
+  @IsString()
+  slug?: string;
 }

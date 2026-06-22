@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   HttpException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -22,6 +23,7 @@ import {
 import { RegisterVendorDto } from './dto/register-vendor.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import * as crypto from 'crypto';
@@ -35,6 +37,13 @@ import type { VendorUserDocument } from '../vendor-users/schemas/vendor-user.sch
 import type { ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
 import { ZohoLeadsService } from '../zoho/services/zoho-leads.service';
 import { normalizeLoginEmail } from '../vendor-users/utils/vendor-login-email.util';
+import {
+  generateVendorRegistrationOtp,
+  OTP_RESEND_COOLDOWN_SECONDS,
+  OTP_RESEND_MAX_PER_WINDOW,
+  OTP_RESEND_WINDOW_SECONDS,
+  VENDOR_REGISTRATION_OTP_EXPIRES_MINUTES,
+} from './utils/otp.util';
 
 @Injectable()
 export class AuthService {
@@ -432,7 +441,7 @@ export class AuthService {
         session,
       );
 
-      const otp = '123456';
+      const otp = generateVendorRegistrationOtp(this.configService);
       const vendorUser = await this.vendorUsersService.create(
         {
           manufacturerId: manufacturer._id,
@@ -548,10 +557,6 @@ export class AuthService {
   }
 
   async verifyOtp(verifyOtpDto: VerifyOtpDto) {
-    if (verifyOtpDto.otp !== '123456') {
-      throw new BadRequestException('Invalid OTP');
-    }
-
     const user = await this.vendorUsersService.verifyOtp(
       verifyOtpDto.email,
       verifyOtpDto.otp,
@@ -603,6 +608,110 @@ export class AuthService {
       message: 'Email verified successfully',
       gpInternalId,
       manufacturerInitial,
+    };
+  }
+
+  private otpResendCooldownKey(email: string): string {
+    return this.redisService.buildKey('auth', 'otp-resend', 'cooldown', email);
+  }
+
+  private otpResendCountKey(email: string): string {
+    return this.redisService.buildKey('auth', 'otp-resend', 'count', email);
+  }
+
+  private async assertOtpResendRateLimit(email: string): Promise<void> {
+    const cooldownKey = this.otpResendCooldownKey(email);
+    const cooldownActive = await this.redisService.get(cooldownKey);
+    if (cooldownActive) {
+      throw new HttpException(
+        {
+          message: `Please wait ${OTP_RESEND_COOLDOWN_SECONDS} seconds before requesting another OTP.`,
+          retryAfterSeconds: OTP_RESEND_COOLDOWN_SECONDS,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const countRaw = await this.redisService.get<number | string>(
+      this.otpResendCountKey(email),
+    );
+    const count = Number(countRaw ?? 0);
+    if (Number.isFinite(count) && count >= OTP_RESEND_MAX_PER_WINDOW) {
+      throw new HttpException(
+        {
+          message:
+            'Too many OTP resend attempts. Please try again in a few minutes.',
+          retryAfterSeconds: OTP_RESEND_WINDOW_SECONDS,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  private async recordOtpResendAttempt(email: string): Promise<void> {
+    await this.redisService.set(
+      this.otpResendCooldownKey(email),
+      '1',
+      OTP_RESEND_COOLDOWN_SECONDS,
+    );
+
+    const countKey = this.otpResendCountKey(email);
+    const countRaw = await this.redisService.get<number | string>(countKey);
+    const nextCount = Number(countRaw ?? 0) + 1;
+    await this.redisService.set(countKey, nextCount, OTP_RESEND_WINDOW_SECONDS);
+  }
+
+  async resendOtp(resendOtpDto: ResendOtpDto): Promise<{ message: string }> {
+    const email = normalizeLoginEmail(resendOtpDto.email);
+    if (!email) {
+      throw new BadRequestException('email must be a valid email address');
+    }
+
+    await this.assertOtpResendRateLimit(email);
+
+    const user = await this.vendorUsersService.findByEmail(email);
+    if (!user) {
+      throw new BadRequestException('Email not registered');
+    }
+
+    if (user.isVerified) {
+      throw new BadRequestException(
+        'Email is already verified. Please sign in.',
+      );
+    }
+
+    if (user.type !== 'vendor' && user.type !== 'partner') {
+      throw new BadRequestException(
+        'OTP resend is only available for vendor registration',
+      );
+    }
+
+    const otp = generateVendorRegistrationOtp(this.configService);
+    await this.vendorUsersService.update(user._id.toString(), { otp });
+
+    try {
+      await this.lifecycleNotification.notifyVendorOtpResent({
+        userId: user._id.toString(),
+        email,
+        name: user.name,
+        otp,
+        expiresInMinutes: VENDOR_REGISTRATION_OTP_EXPIRES_MINUTES,
+      });
+    } catch (notifyError: any) {
+      this.logger.warn(
+        `[resendOtp] OTP email failed for ${email}: ${
+          notifyError?.message || notifyError
+        }`,
+      );
+      throw new BadRequestException(
+        'Failed to send OTP email. Please try again later.',
+      );
+    }
+
+    await this.recordOtpResendAttempt(email);
+
+    return {
+      message: 'Verification OTP sent to your email.',
     };
   }
 

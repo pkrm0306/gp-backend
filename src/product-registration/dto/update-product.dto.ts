@@ -106,6 +106,49 @@ export class UpdateProductDto {
   @Allow()
   newCategoryId?: string;
 
+  /**
+   * Read-only echoes from admin category-change preview / list row — ignored.
+   * Server computes raw-material step purge/retain from old vs new category in DB.
+   */
+  @Allow()
+  purgedRawMaterialStepIds?: unknown;
+
+  @Allow()
+  purgedSteps?: unknown;
+
+  @Allow()
+  retainedRawMaterialStepIds?: unknown;
+
+  @Allow()
+  retainedRawMaterialSteps?: unknown;
+
+  @Allow()
+  addedRawMaterialStepIds?: unknown;
+
+  @Allow()
+  addedRawMaterialSteps?: unknown;
+
+  @Allow()
+  visibleRawMaterialStepIds?: unknown;
+
+  @Allow()
+  visibleRawMaterialSteps?: unknown;
+
+  @Allow()
+  categoryChange?: unknown;
+
+  @Allow()
+  categoryEditable?: unknown;
+
+  @Allow()
+  categoryChangeBlockReason?: unknown;
+
+  @Allow()
+  vendorMustRefillRawMaterials?: unknown;
+
+  @Allow()
+  listRefreshRequired?: unknown;
+
   @ApiPropertyOptional({ description: 'Product image URL' })
   @Transform(({ value }) => omitEmptyOptional(value))
   @IsOptional()

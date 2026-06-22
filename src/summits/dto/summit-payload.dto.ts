@@ -43,6 +43,11 @@ class SummitBasicDto {
   )
   @IsIn([...SUMMIT_STATUSES])
   status?: 'active' | 'inactive';
+
+  /** Ignored — slug is server-generated from title + year; accepted for legacy clients */
+  @IsOptional()
+  @IsString()
+  slug?: string;
 }
 
 class SummitBannerDto {
@@ -210,4 +215,10 @@ export class UpdateSummitPayloadDto {
   @ValidateNested({ each: true })
   @Type(() => SummitSponsorDto)
   sponsors?: SummitSponsorDto[];
+
+  /** Ignored — slug is server-generated from title + year */
+  @ApiPropertyOptional({ deprecated: true })
+  @IsOptional()
+  @IsString()
+  slug?: string;
 }

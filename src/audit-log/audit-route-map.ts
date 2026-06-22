@@ -240,6 +240,15 @@ export function mapFriendlyAudit(
     };
   }
 
+  if (m === 'POST' && pathNorm.endsWith('/auth/resend-otp')) {
+    return {
+      module: AUDIT_MODULE.AUTH,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'Registration OTP resent',
+      entity_name: firstStringField(body, ['email']),
+    };
+  }
+
   if (m === 'POST' && pathNorm.endsWith('/auth/forgot-password')) {
     return {
       module: AUDIT_MODULE.AUTH,

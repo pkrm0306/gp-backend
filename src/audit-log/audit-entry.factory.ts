@@ -218,6 +218,9 @@ export class AuditEntryFactory {
     if (m === 'POST' && pathNorm.endsWith('/auth/verify-otp')) {
       return AUDIT_ACTION.AUTH_VERIFY_OTP;
     }
+    if (m === 'POST' && pathNorm.endsWith('/auth/resend-otp')) {
+      return AUDIT_ACTION.AUTH_RESEND_OTP;
+    }
     if (m === 'POST' && pathNorm.endsWith('/auth/forgot-password')) {
       return AUDIT_ACTION.AUTH_FORGOT_PASSWORD;
     }

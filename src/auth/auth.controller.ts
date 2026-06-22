@@ -13,6 +13,7 @@ import { AuthService } from './auth.service';
 import { RegisterVendorDto } from './dto/register-vendor.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { VerifyRecaptchaDto } from './dto/verify-recaptcha.dto';
@@ -56,6 +57,19 @@ export class AuthController {
   })
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
     return this.authService.verifyOtp(verifyOtpDto);
+  }
+
+  @Post('resend-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resend vendor registration email verification OTP',
+    description:
+      'Sends a new 6-digit OTP to the registered email. Only for **unverified** vendor/partner accounts. ' +
+      'Rate limited: 60s cooldown between requests; max 5 resends per 15 minutes per email. ' +
+      'In development/staging the OTP is **123456** unless `VENDOR_REGISTRATION_OTP_FIXED` is set.',
+  })
+  async resendOtp(@Body() resendOtpDto: ResendOtpDto) {
+    return this.authService.resendOtp(resendOtpDto);
   }
 
   @Post('login')

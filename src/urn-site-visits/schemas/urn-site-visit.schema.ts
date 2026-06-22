@@ -26,8 +26,9 @@ export class UrnSiteVisit {
   @Prop({ required: true, default: '' })
   state: string;
 
-  @Prop({ required: true, default: '' })
-  postalCode: string;
+  /** @deprecated Not collected — kept for legacy DB rows only; omitted from API responses. */
+  @Prop({ default: '' })
+  postalCode?: string;
 
   /** Country name (free text; align with admin country dropdown labels). */
   @Prop({ required: true, default: '' })

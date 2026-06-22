@@ -3296,12 +3296,6 @@ export class ProductRegistrationService {
     const passport = String(dto.passport ?? '');
     const nonWhitespaceLength = passport.replace(/\s+/g, '').length;
 
-    if (nonWhitespaceLength === 0) {
-      throw new BadRequestException(
-        'Passport content is required (whitespace-only content is not allowed)',
-      );
-    }
-
     const updated = await this.productModel
       .findOneAndUpdate(
         matchActiveProducts({

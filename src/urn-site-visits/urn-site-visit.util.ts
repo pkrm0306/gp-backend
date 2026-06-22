@@ -14,8 +14,15 @@ export function formatSiteVisitRecord(
   const urnNo = plain.urnNo != null ? String(plain.urnNo) : undefined;
   const auditConductedOn = plain.auditConductedOn ?? null;
 
+  const {
+    postalCode: _postalCode,
+    postal_code: _postal_code,
+    __v: _v,
+    ...rest
+  } = plain as Record<string, unknown>;
+
   return {
-    ...plain,
+    ...rest,
     _id: id,
     urnNo,
     urn_no: urnNo,

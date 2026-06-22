@@ -168,6 +168,42 @@ export class LifecycleNotificationService {
 
 
 
+  /** Resend registration email verification OTP (vendor portal). */
+  async notifyVendorOtpResent(params: {
+    userId: string;
+    email: string;
+    name: string;
+    otp: string;
+    expiresInMinutes: number;
+  }): Promise<void> {
+    const notifyResult = await this.notificationHelper.send({
+      type: [NotificationChannel.EMAIL],
+      template: NotificationTemplateCode.OTP_VERIFICATION,
+      userId: params.userId,
+      email: params.email,
+      payload: {
+        name: params.name,
+        otp: params.otp,
+        expiresInMinutes: params.expiresInMinutes,
+      },
+    });
+
+    for (const r of notifyResult.results) {
+      if (r.success) {
+        this.logger.log(
+          `[notifyVendorOtpResent] ${r.channel} ok for ${params.email}`,
+        );
+      } else if (!r.skipped) {
+        this.logger.warn(
+          `[notifyVendorOtpResent] ${r.channel} failed for ${params.email}: ${r.error}`,
+        );
+        throw new Error(r.error || 'OTP email send failed');
+      }
+    }
+  }
+
+
+
   async notifyVendorRegistrationComplete(
 
     userId: string,
