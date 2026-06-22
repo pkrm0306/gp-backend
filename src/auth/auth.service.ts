@@ -80,8 +80,7 @@ export class AuthService {
    * Includes flat **designation**, **mobile** (from `phone`) and nested **vendorUser** for clients that merge either shape.
    */
   /**
-   * Vendor/partner accounts always authenticate against the vendor portal even when
-   * clients send admin portal hints (e.g. shared `x-admin-portal` header).
+   * Response shaping only — which user payload to return. Does not override portal access rules.
    */
   private resolveEffectiveLoginPortal(
     user: VendorUserDocument | null | undefined,
@@ -681,16 +680,17 @@ export class AuthService {
     }
 
     const effectivePortal = this.resolveEffectiveLoginPortal(user, portal);
+    const requestedPortal = portal;
     const resolvedUserType = user ? user.type : 'vendor';
     const allowedTypesByPortal: Record<'admin' | 'vendor', string[]> = {
       admin: ['admin', 'staff'],
       vendor: ['vendor', 'partner'],
     };
-    if (effectivePortal) {
-      const allowedTypes = allowedTypesByPortal[effectivePortal];
+    if (requestedPortal) {
+      const allowedTypes = allowedTypesByPortal[requestedPortal];
       if (!allowedTypes.includes(resolvedUserType)) {
         const message =
-          effectivePortal === 'admin'
+          requestedPortal === 'admin'
             ? 'Admin portal allows only admin or staff users'
             : 'Vendor portal allows only vendor or partner users';
         throw new UnauthorizedException(message);
