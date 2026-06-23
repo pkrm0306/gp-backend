@@ -26,7 +26,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
 import { CreateProcessRenewWmManufacturingUnitDto } from './dto/create-process-renew-wm-manufacturing-unit.dto';
 import { DeleteProcessWmManufacturingUnitDto } from '../../process-wm-manufacturing-units/dto/delete-process-wm-manufacturing-unit.dto';
-import { assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
+import { assertRenewProcessActorCanReadUrn, assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
 import { ProcessRenewWmManufacturingUnitsService } from './process-renew-wm-manufacturing-units.service';
 
 @ApiTags('Renew - WM Manufacturing Units')
@@ -96,7 +96,7 @@ export class ProcessRenewWmManufacturingUnitsController {
     if (!urnNo?.trim()) {
       throw new BadRequestException('URN number is required');
     }
-    await assertRenewProcessActorForUrn(this.productModel, user, urnNo);
+    await assertRenewProcessActorCanReadUrn(this.productModel, user, urnNo);
     const data = await this.service.listByUrn(urnNo.trim(), renewalCycleId);
     return { success: true, message: 'Renew WM manufacturing units fetched successfully', data };
   }

@@ -56,7 +56,7 @@ import { Model } from 'mongoose';
 
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
 
-import { assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
+import { assertRenewProcessActorCanReadUrn, assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
 
 import {
 
@@ -352,7 +352,7 @@ export class ProcessRenewProductPerformanceController {
 
   ) {
 
-    await assertRenewProcessActorForUrn(this.productModel, user, urnNo);
+    await assertRenewProcessActorCanReadUrn(this.productModel, user, urnNo);
 
     const data =
       await this.processRenewProductPerformanceService.getFormPayloadByUrn(

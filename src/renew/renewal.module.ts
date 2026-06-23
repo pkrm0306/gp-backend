@@ -215,8 +215,10 @@ import { RenewProcessHeaderIndexesService } from './services/renew-process-heade
     RenewalCycleService,
     RenewAdminTestValidityService,
     RenewUrnTabReviewService,
+    RenewDetailsService,
     ProcessRenewCommentsService,
     RenewDocumentsService,
+    ProcessRenewProductPerformanceService,
   ],
 })
 export class RenewalModule {}

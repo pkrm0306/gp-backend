@@ -31,6 +31,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { VendorPatchCertifiedProductDto } from './dto/vendor-patch-certified-product.dto';
 import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import { VendorCertificateService } from './services/vendor-certificate.service';
+import { ProcessRenewProductPerformanceService } from '../renew/process-renew-product-performance/process-renew-product-performance.service';
+import { RenewDetailsService } from '../renew/services/renew-details.service';
+import { mergeAllRenewProcessDocumentsOntoDetailRows, finalizeUrnProcessDocumentFieldsOnDetailRows } from './utils/urn-renew-process-documents.util';
+import { mergeRenewProductPerformanceDocumentsOntoDetailRows } from './utils/urn-product-performance-documents.util';
 
 @ApiTags('Products')
 @Controller('products')
@@ -41,6 +45,8 @@ export class ProductsController {
     private readonly productRegistrationService: ProductRegistrationService,
     private readonly urnTabReviewService: UrnTabReviewService,
     private readonly vendorCertificateService: VendorCertificateService,
+    private readonly processRenewProductPerformanceService: ProcessRenewProductPerformanceService,
+    private readonly renewDetailsService: RenewDetailsService,
   ) {}
 
   @Get('renew-list')
@@ -445,14 +451,49 @@ export class ProductsController {
         throw new BadRequestException('URN number is required');
       }
 
+      const trimmedUrn = urnNo.trim();
+
       const data = await this.productRegistrationService.getProductDetailsByUrn(
-        urnNo.trim(),
+        trimmedUrn,
         { excludeExpired: true },
       );
 
+      let resolvedData = data as Array<Record<string, unknown>>;
+      let renewProcessDocuments: Record<string, unknown> | null = null;
+      try {
+        const renewPerformance =
+          await this.processRenewProductPerformanceService.loadRenewProductPerformanceReadPayload(
+            trimmedUrn,
+          );
+        resolvedData = mergeRenewProductPerformanceDocumentsOntoDetailRows(
+          resolvedData,
+          renewPerformance as Record<string, unknown>,
+        );
+      } catch {
+        /* renew performance merge is best-effort for certified vendor browse */
+      }
+
+      try {
+        renewProcessDocuments =
+          await this.renewDetailsService.loadRenewProcessDocumentsReadPayload(
+            trimmedUrn,
+          );
+        resolvedData = mergeAllRenewProcessDocumentsOntoDetailRows(
+          resolvedData,
+          renewProcessDocuments,
+        );
+      } catch {
+        /* renew process document merge is best-effort for certified vendor browse */
+      }
+
+      resolvedData = finalizeUrnProcessDocumentFieldsOnDetailRows(
+        resolvedData,
+        renewProcessDocuments ? [renewProcessDocuments] : [],
+      );
+
       const siteVisits =
-        (data[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
-      const firstDetails = data[0] as
+        (resolvedData[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
+      const firstDetails = resolvedData[0] as
         | {
             urnStatus?: number;
             productRenewStatus?: number;
@@ -480,7 +521,6 @@ export class ProductsController {
           firstDetails?.product_details?.productRenewStatus ??
           0,
       );
-      const trimmedUrn = urnNo.trim();
       const tabAccess =
         user?.manufacturerId != null
           ? await this.urnTabReviewService.getVendorUrnTabAccess(
@@ -491,7 +531,7 @@ export class ProductsController {
 
       return {
         success: true,
-        data,
+        data: resolvedData,
         siteVisits,
         site_visits: siteVisits,
         visibleRawMaterialSteps,

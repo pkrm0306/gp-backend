@@ -85,7 +85,7 @@ import {
 } from '../../product-registration/schemas/product.schema';
 import { RenewUrnTabReviewService } from './renew-urn-tab-review.service';
 import { ProcessRenewCommentsService } from '../process-renew-comments/process-renew-comments.service';
-import { assertRenewActorCanEditUrn } from '../helpers/renew-common.util';
+import { assertRenewActorCanReadUrn } from '../helpers/renew-common.util';
 import { RenewDetailsIncludeMode } from '../utils/renew-details-response.util';
 import { RENEWAL_URN_STATUS } from '../constants/renewal-urn-status.constants';
 
@@ -421,7 +421,7 @@ export class RenewDetailsService {
 
     const include = options?.include ?? 'summary';
     if (options?.role === 'vendor' && options.actorVendorOrManufacturerId) {
-      await assertRenewActorCanEditUrn(
+      await assertRenewActorCanReadUrn(
         this.productModel,
         trimmedUrn,
         options.actorVendorOrManufacturerId,
@@ -692,6 +692,71 @@ export class RenewDetailsService {
     return {
       ...baseResult,
       ...fullExtras,
+    };
+  }
+
+  /** Renew MP/WM/Innovation document buckets for certified vendor URN details merge. */
+  async loadRenewProcessDocumentsReadPayload(
+    urnNo: string,
+    renewalCycleId?: string,
+  ): Promise<Record<string, unknown>> {
+    const trimmedUrn = urnNo.trim();
+    const emptyPayload = {
+      process_manufacturing_documents: [] as Array<Record<string, unknown>>,
+      process_waste_management_documents: [] as Array<Record<string, unknown>>,
+      process_innovation_documents: [] as Array<Record<string, unknown>>,
+      all_renew_product_documents: [] as Array<Record<string, unknown>>,
+    };
+
+    let cycle: RenewalCycleDocument;
+    try {
+      cycle =
+        await this.processRenewProductPerformanceService.resolveRenewalCycleForRead(
+          trimmedUrn,
+          renewalCycleId,
+        );
+    } catch {
+      return emptyPayload;
+    }
+
+    const strictDocs = Number(cycle.cycleNo ?? 1) > 1;
+    const documentRows = (await this.renewDocumentModel
+      .find(
+        buildRenewDocumentsQueryFilter(trimmedUrn, cycle._id, {
+          strictCycleOnly: strictDocs,
+        }),
+      )
+      .sort({ productDocumentId: -1 })
+      .lean()
+      .exec()) as Array<Record<string, unknown>>;
+
+    const manufacturingSection = buildManufacturingSection(null, documentRows);
+    const wasteSection = buildWasteSection(null, documentRows);
+    const innovationSection = buildInnovationSection(null, documentRows);
+
+    const certifiedEoiNos = await fetchRenewCertifiedEoiSet(
+      this.productModel,
+      trimmedUrn,
+    );
+    const scopedRenewDocuments = filterRenewRowsByCertifiedEoi(
+      documentRows,
+      certifiedEoiNos,
+    );
+
+    return {
+      process_manufacturing_documents:
+        (manufacturingSection.process_manufacturing_documents as Array<
+          Record<string, unknown>
+        >) ?? [],
+      process_waste_management_documents:
+        (wasteSection.process_waste_management_documents as Array<
+          Record<string, unknown>
+        >) ?? [],
+      process_innovation_documents:
+        (innovationSection.process_innovation_documents as Array<
+          Record<string, unknown>
+        >) ?? [],
+      all_renew_product_documents: scopedRenewDocuments,
     };
   }
 

@@ -75,6 +75,13 @@ import {
 import { formatPaymentRecordsForUrnDetails } from '../payments/payment-response.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { enrichUrnDetailRowsWithSharedProcessData } from './utils/consolidate-urn-detail-items.util';
+import { collectUrnScopedProductPerformanceDocuments } from './utils/urn-product-performance-documents.util';
+import {
+  collectUrnScopedInnovationProcessDocuments,
+  collectUrnScopedManufacturingProcessDocuments,
+  collectUrnScopedWasteManagementProcessDocuments,
+  formatUrnProcessDocumentForResponse,
+} from './utils/urn-renew-process-documents.util';
 import {
   filterFormaldehydeStyleProductsForVendorDisplay,
   filterHazardousProductsForVendorDisplay,
@@ -6847,8 +6854,8 @@ export class ProductRegistrationService {
             Record<string, unknown>
           >,
         ),
-        product_performance_documents: (
-          product.product_performance_documents || []
+        product_performance_documents: collectUrnScopedProductPerformanceDocuments(
+          product as Record<string, unknown>,
         ).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
@@ -7239,23 +7246,9 @@ export class ProductRegistrationService {
               updatedDate: product.process_manufacturing.updatedDate,
             }
           : null,
-        process_manufacturing_documents: (
-          product.process_manufacturing_documents || []
-        ).map((d) => ({
-          _id: d._id,
-          productDocumentId: d.productDocumentId,
-          vendorId: d.vendorId,
-          urnNo: d.urnNo,
-          eoiNo: d.eoiNo,
-          documentForm: d.documentForm,
-          documentFormSubsection: d.documentFormSubsection,
-          formPrimaryId: d.formPrimaryId,
-          documentName: d.documentName,
-          documentOriginalName: d.documentOriginalName,
-          documentLink: d.documentLink,
-          createdDate: d.createdDate,
-          updatedDate: d.updatedDate,
-        })),
+        process_manufacturing_documents: collectUrnScopedManufacturingProcessDocuments(
+          product as Record<string, unknown>,
+        ).map((d) => formatUrnProcessDocumentForResponse(d)),
         process_mp_manufacturing_units: (
           product.process_mp_manufacturing_units || []
         ).map((u) =>
@@ -7351,23 +7344,9 @@ export class ProductRegistrationService {
               updatedDate: product.process_waste_management.updatedDate,
             }
           : null,
-        process_waste_management_documents: (
-          product.process_waste_management_documents || []
-        ).map((d) => ({
-          _id: d._id,
-          productDocumentId: d.productDocumentId,
-          vendorId: d.vendorId,
-          urnNo: d.urnNo,
-          eoiNo: d.eoiNo,
-          documentForm: d.documentForm,
-          documentFormSubsection: d.documentFormSubsection,
-          formPrimaryId: d.formPrimaryId,
-          documentName: d.documentName,
-          documentOriginalName: d.documentOriginalName,
-          documentLink: d.documentLink,
-          createdDate: d.createdDate,
-          updatedDate: d.updatedDate,
-        })),
+        process_waste_management_documents: collectUrnScopedWasteManagementProcessDocuments(
+          product as Record<string, unknown>,
+        ).map((d) => formatUrnProcessDocumentForResponse(d)),
         process_wm_manufacturing_units: (
           product.process_wm_manufacturing_units || []
         ).map((u) =>
@@ -7538,24 +7517,9 @@ export class ProductRegistrationService {
               updatedDate: product.process_innovation.updatedDate,
             }
           : null,
-        process_innovation_documents: (
-          product.process_innovation_documents || []
-        ).map((d) => ({
-          _id: d._id,
-          productDocumentId: d.productDocumentId,
-          vendorId: d.vendorId,
-          urnNo: d.urnNo,
-          eoiNo: d.eoiNo,
-          documentForm: d.documentForm,
-          documentFormSubsection: d.documentFormSubsection,
-          formPrimaryId: d.formPrimaryId,
-          documentName: d.documentName,
-          documentOriginalName: d.documentOriginalName,
-          documentLink: d.documentLink,
-          documentTag: d.documentTag,
-          createdDate: d.createdDate,
-          updatedDate: d.updatedDate,
-        })),
+        process_innovation_documents: collectUrnScopedInnovationProcessDocuments(
+          product as Record<string, unknown>,
+        ).map((d) => formatUrnProcessDocumentForResponse(d)),
         all_urn_product_documents: (product.all_urn_product_documents || []).map(
           (d) => ({
             _id: d._id,

@@ -88,6 +88,27 @@ export function renewOwnershipFields(context: RenewUrnContext): {
 }
 
 /** Optional vendor JWT check; returns URN ownership context for reads/writes. */
+export async function assertRenewActorCanReadUrn(
+  productModel: Model<ProductDocument>,
+  urnNo: string,
+  actorVendorOrManufacturerId?: string | null,
+): Promise<RenewUrnContext> {
+  const context = await resolveUrnRenewContext(productModel, urnNo);
+  const actorId = actorVendorOrManufacturerId
+    ? String(actorVendorOrManufacturerId).trim()
+    : '';
+  if (actorId) {
+    const ownsUrn =
+      String(context.vendorId) === actorId ||
+      String(context.manufacturerId) === actorId;
+    if (!ownsUrn) {
+      throw new ForbiddenException('Authenticated user does not own this URN');
+    }
+  }
+  return context;
+}
+
+/** Optional vendor JWT check; returns URN ownership context for reads/writes. */
 export async function assertRenewActorCanEditUrn(
   productModel: Model<ProductDocument>,
   urnNo: string,
