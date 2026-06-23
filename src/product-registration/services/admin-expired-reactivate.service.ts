@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -12,9 +13,15 @@ import {
   AUDIT_ACTION_TYPE,
   AUDIT_MODULE,
 } from '../../audit-log/audit-friendlies';
+import { RedisService } from '../../common/redis/redis.service';
 import { Product, ProductDocument } from '../schemas/product.schema';
 import { matchActiveProducts } from '../constants/active-product.filter';
+import {
+  isExpiredProduct,
+  matchExpiredProducts,
+} from '../constants/expired-product.filter';
 import { computeNotifyDates } from '../helpers/certification-dates.util';
+import { invalidateProductListingsCache } from '../helpers/invalidate-product-listings-cache.util';
 import {
   ProductStatusAudit,
   ProductStatusAuditDocument,
@@ -39,12 +46,15 @@ type ReactivationUpdate = {
 
 @Injectable()
 export class AdminExpiredReactivateService {
+  private readonly logger = new Logger(AdminExpiredReactivateService.name);
+
   constructor(
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
     @InjectModel(ProductStatusAudit.name)
     private readonly productStatusAuditModel: Model<ProductStatusAuditDocument>,
     private readonly auditLogService: AuditLogService,
+    private readonly redisService: RedisService,
   ) {}
 
   async reactivateProduct(
@@ -73,11 +83,12 @@ export class AdminExpiredReactivateService {
       throw new NotFoundException('Product not found');
     }
 
-    if (Number(product.productStatus) !== PRODUCT_STATUS_DISCONTINUED) {
+    const now = new Date();
+    const fromStatus = Number(product.productStatus);
+    if (!isExpiredProduct(fromStatus, product.validtillDate, now)) {
       throw new ConflictException('Product is not expired');
     }
 
-    const now = new Date();
     const adminObjectId = new Types.ObjectId(adminUserId);
     const { update, validityExtended } = this.buildReactivationUpdate(
       product.validtillDate,
@@ -100,17 +111,20 @@ export class AdminExpiredReactivateService {
       adminObjectId,
       now,
       validtillDate: update.validtillDate,
+      fromStatus,
       route: '/api/admin/products/expired-reactivate/product',
       auditAction: AUDIT_ACTION.EXPIRED_REACTIVATE_PRODUCT,
       description,
     });
+
+    await invalidateProductListingsCache(this.redisService, this.logger);
 
     return {
       success: true,
       urnNo: trimmedUrn,
       productId: String(product._id),
       eoiNo: String(product.eoiNo),
-      fromStatus: PRODUCT_STATUS_DISCONTINUED,
+      fromStatus,
       toStatus: PRODUCT_STATUS_CERTIFIED,
       validtillDate: update.validtillDate.toISOString(),
       message: validityExtended
@@ -136,13 +150,14 @@ export class AdminExpiredReactivateService {
       throw new BadRequestException('urnNo is required');
     }
 
+    const now = new Date();
     const products = await this.productModel
       .find({
         urnNo: trimmedUrn,
-        productStatus: PRODUCT_STATUS_DISCONTINUED,
+        ...matchExpiredProducts(now),
         ...matchActiveProducts(),
       })
-      .select('_id eoiNo validtillDate')
+      .select('_id eoiNo validtillDate productStatus')
       .lean()
       .exec();
 
@@ -150,7 +165,6 @@ export class AdminExpiredReactivateService {
       throw new NotFoundException('No expired products on this URN');
     }
 
-    const now = new Date();
     const adminObjectId = new Types.ObjectId(adminUserId);
     let extendedAny = false;
 
@@ -172,11 +186,14 @@ export class AdminExpiredReactivateService {
         adminObjectId,
         now,
         validtillDate: update.validtillDate,
+        fromStatus: Number(product.productStatus),
         route: '/api/admin/products/expired-reactivate/urn',
         auditAction: AUDIT_ACTION.EXPIRED_REACTIVATE_URN,
         description: 'Reactivated expired product to certified via URN bulk action',
       });
     }
+
+    await invalidateProductListingsCache(this.redisService, this.logger);
 
     return {
       success: true,
@@ -264,6 +281,7 @@ export class AdminExpiredReactivateService {
     adminObjectId: Types.ObjectId;
     now: Date;
     validtillDate: Date;
+    fromStatus: number;
     route: string;
     auditAction: string;
     description: string;
@@ -271,7 +289,7 @@ export class AdminExpiredReactivateService {
     await this.productStatusAuditModel.create({
       productId: input.productObjectId,
       urnNo: input.urnNo,
-      fromStatus: PRODUCT_STATUS_DISCONTINUED,
+      fromStatus: input.fromStatus,
       toStatus: PRODUCT_STATUS_CERTIFIED,
       reason: input.description,
       changedBy: input.adminObjectId,
@@ -287,7 +305,7 @@ export class AdminExpiredReactivateService {
       entity_name: input.eoiNo,
       description: input.description,
       performed_by: { user_id: input.adminUserId },
-      old_values: { productStatus: PRODUCT_STATUS_DISCONTINUED },
+      old_values: { productStatus: input.fromStatus },
       new_values: {
         productStatus: PRODUCT_STATUS_CERTIFIED,
         validtillDate: input.validtillDate.toISOString(),

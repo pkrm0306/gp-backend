@@ -457,10 +457,10 @@ export class ManufacturersService {
     return stored || userName;
   }
 
-  private async loadPrimaryVendorNamesByManufacturerIds(
+  private async loadPrimaryVendorUsersByManufacturerIds(
     ids: Types.ObjectId[],
-  ): Promise<Map<string, string>> {
-    const map = new Map<string, string>();
+  ): Promise<Map<string, { name: string; userId: string }>> {
+    const map = new Map<string, { name: string; userId: string }>();
     if (!ids.length) return map;
 
     const users = await this.vendorUserModel
@@ -481,7 +481,10 @@ export class ManufacturersService {
         row.manufacturerId?.toString() || row.vendorId?.toString() || '';
       if (!mid || map.has(mid)) continue;
       const name = String(row.name ?? '').trim();
-      if (name) map.set(mid, name);
+      const userId = String(row._id ?? '').trim();
+      if (name || userId) {
+        map.set(mid, { name, userId });
+      }
     }
     return map;
   }
@@ -503,6 +506,7 @@ export class ManufacturersService {
     },
     options: {
       primaryVendorUserName?: string;
+      primaryVendorUserId?: string;
       manufacturer_product_count?: number;
       manufacturer_vendor_count?: number;
     } = {},
@@ -532,6 +536,7 @@ export class ManufacturersService {
       vendor_name: vendorDisplay,
       /** Primary contact name — not the company name. */
       vendorName: vendorDisplay,
+      vendorUserId: options.primaryVendorUserId ?? null,
       vendor_email: m.vendor_email ?? '',
       vendor_phone: m.vendor_phone ?? '',
       vendor_status: vSt,
@@ -548,12 +553,14 @@ export class ManufacturersService {
     const manufacturer = await this.findById(id);
     if (!manufacturer) return null;
 
-    const names = await this.loadPrimaryVendorNamesByManufacturerIds([
+    const primaryVendors = await this.loadPrimaryVendorUsersByManufacturerIds([
       manufacturer._id,
     ]);
+    const primaryVendor = primaryVendors.get(manufacturer._id.toString());
     const counts = await this.countForManufacturer(manufacturer._id);
     return this.formatManufacturerApiRow(manufacturer, {
-      primaryVendorUserName: names.get(manufacturer._id.toString()),
+      primaryVendorUserName: primaryVendor?.name,
+      primaryVendorUserId: primaryVendor?.userId,
       manufacturer_product_count: counts.manufacturer_product_count,
       manufacturer_vendor_count: counts.manufacturer_vendor_count,
     });
@@ -2160,8 +2167,8 @@ export class ManufacturersService {
     const manufacturerIds = rawRows.map(
       (raw) => new Types.ObjectId(String(raw._id)),
     );
-    const vendorNamesByMfgId =
-      await this.loadPrimaryVendorNamesByManufacturerIds(manufacturerIds);
+    const vendorUsersByMfgId =
+      await this.loadPrimaryVendorUsersByManufacturerIds(manufacturerIds);
 
     return Promise.all(
       rawRows.map(async (raw) => {
@@ -2175,7 +2182,7 @@ export class ManufacturersService {
             vendor_name: raw.vendor_name as string | undefined,
             manufacturerName: raw.manufacturerName as string | undefined,
           },
-          vendorNamesByMfgId.get(mid.toString()),
+          vendorUsersByMfgId.get(mid.toString())?.name,
         );
         return {
           _id: String(raw._id),
@@ -2356,15 +2363,17 @@ export class ManufacturersService {
     ]);
 
     const manufacturerIds = rows.map((m) => new Types.ObjectId(String(m._id)));
-    const vendorNamesByMfgId =
-      await this.loadPrimaryVendorNamesByManufacturerIds(manufacturerIds);
+    const vendorUsersByMfgId =
+      await this.loadPrimaryVendorUsersByManufacturerIds(manufacturerIds);
 
     const data = await Promise.all(
       rows.map(async (m) => {
         const mid = new Types.ObjectId(String(m._id));
         const counts = await this.countForManufacturer(mid);
+        const primaryVendor = vendorUsersByMfgId.get(mid.toString());
         return this.formatManufacturerApiRow(m, {
-          primaryVendorUserName: vendorNamesByMfgId.get(mid.toString()),
+          primaryVendorUserName: primaryVendor?.name,
+          primaryVendorUserId: primaryVendor?.userId,
           manufacturer_product_count: counts.manufacturer_product_count,
           manufacturer_vendor_count: counts.manufacturer_vendor_count,
         });

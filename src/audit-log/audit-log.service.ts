@@ -11,6 +11,10 @@ import { AuditLookupResolver } from './audit-lookup-resolver.service';
 import { AuditValueTransformer } from './audit-value-transformer.service';
 import { auditModuleDisplayName } from './audit-friendlies';
 import { buildAuditActorUserFilter } from './audit-log-user-filter.util';
+import {
+  omitSuppressedAuditResponseChanges,
+  omitSuppressedAuditResponseFields,
+} from './audit-response-suppressed-fields';
 
 type AuditLogRow = AuditLog & {
   old_values?: Record<string, unknown>;
@@ -166,10 +170,28 @@ export class AuditLogService {
               {
                 $project: {
                   user_id: {
-                    $ifNull: [
-                      '$performed_by.user_id',
-                      '$actor.user_id',
-                    ],
+                    $let: {
+                      vars: {
+                        raw: {
+                          $ifNull: [
+                            '$performed_by.user_id',
+                            '$actor.user_id',
+                          ],
+                        },
+                      },
+                      in: {
+                        $cond: [
+                          {
+                            $in: [
+                              { $type: '$$raw' },
+                              ['string', 'objectId', 'int', 'long', 'double', 'decimal'],
+                            ],
+                          },
+                          { $toString: '$$raw' },
+                          '',
+                        ],
+                      },
+                    },
                   },
                   user_label: {
                     $ifNull: [
@@ -178,10 +200,28 @@ export class AuditLogService {
                         $ifNull: [
                           '$performed_by.email',
                           {
-                            $ifNull: [
-                              '$performed_by.user_id',
-                              '$actor.user_id',
-                            ],
+                            $let: {
+                              vars: {
+                                raw: {
+                                  $ifNull: [
+                                    '$performed_by.user_id',
+                                    '$actor.user_id',
+                                  ],
+                                },
+                              },
+                              in: {
+                                $cond: [
+                                  {
+                                    $in: [
+                                      { $type: '$$raw' },
+                                      ['string', 'objectId', 'int', 'long', 'double', 'decimal'],
+                                    ],
+                                  },
+                                  { $toString: '$$raw' },
+                                  '',
+                                ],
+                              },
+                            },
                           },
                         ],
                       },
@@ -297,13 +337,18 @@ export class AuditLogService {
   }
 
   private toUserFilterOptions(
-    rows: Array<{ _id: string; label?: string; count: number }>,
+    rows: Array<{ _id: unknown; label?: string; count: number }>,
   ): AuditFilterOption[] {
     return rows
-      .filter((row) => typeof row._id === 'string' && row._id.trim() !== '')
       .map((row) => ({
-        value: row._id,
-        label: String(row.label ?? row._id).trim() || row._id,
+        value: String(row._id ?? '').trim(),
+        label: String(row.label ?? row._id ?? '').trim(),
+        count: row.count,
+      }))
+      .filter((row) => row.value !== '')
+      .map((row) => ({
+        value: row.value,
+        label: row.label || row.value,
         count: row.count,
       }));
   }
@@ -330,12 +375,22 @@ export class AuditLogService {
       ]),
     );
     const labels = await this.lookupResolver.resolveLookupLabels(valuesByModel);
-    return rows.map((row) => ({
+    return rows.map((row) => this.stripResponseSuppressedFields({
       ...row,
       old_values: this.enrichValues(row.old_values, labels),
       new_values: this.enrichValues(row.new_values, labels),
       changes: this.enrichChanges(row.changes, labels),
     }));
+  }
+
+  /** Hide internal process-tab status flags from API output only. */
+  private stripResponseSuppressedFields(row: AuditLogRow): AuditLogRow {
+    return {
+      ...row,
+      old_values: omitSuppressedAuditResponseFields(row.old_values),
+      new_values: omitSuppressedAuditResponseFields(row.new_values),
+      changes: omitSuppressedAuditResponseChanges(row.changes),
+    };
   }
 
   private enrichValues(
@@ -361,7 +416,7 @@ export class AuditLogService {
     row: AuditLogRow,
     labels: Map<string, string>,
   ): AuditLogRow {
-    return {
+    return this.stripResponseSuppressedFields({
       ...row,
       old_values: this.valueTransformer.transformDisplayValues(
         row.old_values,
@@ -375,7 +430,7 @@ export class AuditLogService {
         row.changes,
         (key, value) => this.lookupResolver.resolveLabel(labels, key, value),
       ),
-    };
+    });
   }
 
   private changeValueSnapshots(

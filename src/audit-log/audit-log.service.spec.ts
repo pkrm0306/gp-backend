@@ -407,6 +407,8 @@ describe('AuditLogService', () => {
         $or: expect.arrayContaining([
           { 'actor.user_id': 'user-1' },
           { 'performed_by.user_id': 'user-1' },
+          { 'actor.vendor_id': 'user-1' },
+          { 'actor.manufacturer_id': 'user-1' },
           { 'performed_by.email': /^user-1$/i },
           { 'performed_by.name': /^user-1$/i },
         ]),
@@ -483,7 +485,6 @@ describe('AuditLogService', () => {
       productStatus: 'Submitted',
       productRenewStatus: 'Not Renewed',
       reviewStatus: 'Pending',
-      processManufacturingStatus: 'In Progress',
     });
     expect(result.items[0].new_values).toEqual({
       category_id: 'Adhesives',
@@ -493,7 +494,6 @@ describe('AuditLogService', () => {
       productStatus: 'Certified',
       productRenewStatus: 'Renewal In Progress',
       reviewStatus: 'Approved',
-      processManufacturingStatus: 'Completed',
     });
     expect(result.items[0].changes).toEqual({
       category_id: { before: 'Paints', after: 'Adhesives' },
@@ -510,11 +510,16 @@ describe('AuditLogService', () => {
         after: 'Renewal In Progress',
       },
       reviewStatus: { before: 'Pending', after: 'Approved' },
-      processManufacturingStatus: {
-        before: 'In Progress',
-        after: 'Completed',
-      },
     });
+    expect(result.items[0].old_values).not.toHaveProperty(
+      'processManufacturingStatus',
+    );
+    expect(result.items[0].new_values).not.toHaveProperty(
+      'processManufacturingStatus',
+    );
+    expect(result.items[0].changes).not.toHaveProperty(
+      'processManufacturingStatus',
+    );
   });
 
   it('filters audit list rows by actor user id, email, or display name', async () => {

@@ -4,9 +4,17 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const ACTOR_ID_FIELDS = [
+  'actor.user_id',
+  'performed_by.user_id',
+  'actor.vendor_id',
+  'actor.manufacturer_id',
+] as const;
+
 /**
- * Matches audit rows for a selected user id, email, or display name.
- * Filter dropdowns may send vendorUserId, while some rows only captured name/email.
+ * Matches audit rows for a selected user id, email, display name, or vendor org id.
+ * Filter dropdowns may send vendorUserId or manufacturer _id, while some rows only
+ * captured name/email.
  */
 export function buildAuditActorUserFilter(
   raw: string,
@@ -16,18 +24,22 @@ export function buildAuditActorUserFilter(
     return undefined;
   }
 
-  const clauses: Record<string, unknown>[] = [
-    { 'actor.user_id': trimmed },
-    { 'performed_by.user_id': trimmed },
-  ];
+  const clauses: Record<string, unknown>[] = [];
 
-  if (Types.ObjectId.isValid(trimmed)) {
-    const objectId = new Types.ObjectId(trimmed);
-    clauses.push(
-      { 'actor.user_id': objectId },
-      { 'performed_by.user_id': objectId },
-    );
+  for (const field of ACTOR_ID_FIELDS) {
+    clauses.push({ [field]: trimmed });
+    if (Types.ObjectId.isValid(trimmed)) {
+      clauses.push({ [field]: new Types.ObjectId(trimmed) });
+    }
   }
+
+  clauses.push({
+    $expr: {
+      $or: ACTOR_ID_FIELDS.map((field) => ({
+        $eq: [{ $toString: `$${field}` }, trimmed],
+      })),
+    },
+  });
 
   const exactCi = new RegExp(`^${escapeRegex(trimmed)}$`, 'i');
   clauses.push(

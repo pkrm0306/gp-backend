@@ -1,4 +1,8 @@
 import { auditModuleDisplayName } from '../audit-friendlies';
+import {
+  omitSuppressedAuditResponseChanges,
+  omitSuppressedAuditResponseFields,
+} from '../audit-response-suppressed-fields';
 
 export type AuditJsonObject = Record<string, unknown>;
 
@@ -35,6 +39,15 @@ export function toAuditLogResponseDto(
   const actor = objectOrNull(row['actor']);
   const actionType = stringOrNull(row['action_type']);
   const module = stringOrNull(row['module']);
+  const oldValues = omitSuppressedAuditResponseFields(
+    objectOrNull(row['old_values']) ?? undefined,
+  );
+  const newValues = omitSuppressedAuditResponseFields(
+    objectOrNull(row['new_values']) ?? undefined,
+  );
+  const changes = omitSuppressedAuditResponseChanges(
+    objectOrNull(row['changes']) ?? undefined,
+  );
   const dto: AuditLogResponseDto = {
     ...row,
     id: idString(row['_id']),
@@ -48,8 +61,8 @@ export function toAuditLogResponseDto(
     entity_name: stringOrNull(row['entity_name']),
     description: stringOrNull(row['description']),
     performed_by: performedBy,
-    old_values: objectOrNull(row['old_values']),
-    new_values: objectOrNull(row['new_values']),
+    old_values: oldValues ?? null,
+    new_values: newValues ?? null,
     http_method: stringOrNull(row['http_method']),
     route: stringOrNull(row['route']),
     status_code:
@@ -57,7 +70,7 @@ export function toAuditLogResponseDto(
     actor,
     resource: objectOrNull(row['resource']),
     request: objectOrNull(row['request']),
-    changes: objectOrNull(row['changes']),
+    changes: changes ?? null,
     metadata: objectOrNull(row['metadata']),
     user_display: userDisplay(performedBy, actor),
   };

@@ -42,6 +42,11 @@ describe('AdminExpiredReactivateService', () => {
       productModel as never,
       { create: productStatusAuditCreate } as never,
       { record: auditRecord } as never,
+      {
+        del: jest.fn(),
+        deleteByPattern: jest.fn().mockResolvedValue(0),
+        buildKey: jest.fn((...parts: string[]) => parts.join(':')),
+      } as never,
     );
   });
 
@@ -97,11 +102,31 @@ describe('AdminExpiredReactivateService', () => {
       _id: productObjectId,
       eoiNo: 'GPPMI003026',
       productStatus: PRODUCT_STATUS_CERTIFIED,
+      validtillDate: new Date('2028-01-01T00:00:00.000Z'),
     });
 
     await expect(
       service.reactivateProduct(urnNo, productObjectId.toHexString(), adminUserId),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('reactivates certified product that is past validtillDate', async () => {
+    findOneExec.mockResolvedValue({
+      _id: productObjectId,
+      eoiNo: 'GPPMI003026',
+      productStatus: PRODUCT_STATUS_CERTIFIED,
+      validtillDate: new Date('2020-01-01T00:00:00.000Z'),
+    });
+
+    const result = await service.reactivateProduct(
+      urnNo,
+      productObjectId.toHexString(),
+      adminUserId,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.fromStatus).toBe(PRODUCT_STATUS_CERTIFIED);
+    expect(updateOne).toHaveBeenCalled();
   });
 
   it('throws 404 when product is missing', async () => {
@@ -119,11 +144,13 @@ describe('AdminExpiredReactivateService', () => {
         _id: productObjectId,
         eoiNo: 'GPPMI003026',
         validtillDate: new Date('2026-04-28T00:00:00.000Z'),
+        productStatus: PRODUCT_STATUS_DISCONTINUED,
       },
       {
         _id: secondId,
         eoiNo: 'GPPMI003027',
-        validtillDate: new Date('2026-04-28T00:00:00.000Z'),
+        validtillDate: new Date('2020-01-01T00:00:00.000Z'),
+        productStatus: PRODUCT_STATUS_CERTIFIED,
       },
     ]);
 
