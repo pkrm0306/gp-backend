@@ -4,6 +4,10 @@ import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { DocStream, DocStreamDocument } from './schemas/doc-stream.schema';
 import { DocVersion, DocVersionDocument } from './schemas/doc-version.schema';
 import {
+  AllRenewProductDocument,
+  AllRenewProductDocumentDocument,
+} from '../renew/schemas/all-renew-product-document.schema';
+import {
   buildAllProductDocumentTrackInput,
   buildPaymentDocumentTrackInput,
   buildStreamIdentityFilter,
@@ -12,6 +16,10 @@ import {
   normalizeRenewalCycleId,
   toObjectId,
 } from './helpers/document-version.helper';
+import {
+  certificationSlotKey,
+  usesRenewPerDocumentVersionSlot,
+} from './helpers/certification-document-version.util';
 import {
   DocumentStreamQueryInput,
   TrackAllProductDocumentInput,
@@ -29,6 +37,8 @@ export class DocumentVersioningService {
     private readonly docStreamModel: Model<DocStreamDocument>,
     @InjectModel(DocVersion.name)
     private readonly docVersionModel: Model<DocVersionDocument>,
+    @InjectModel(AllRenewProductDocument.name)
+    private readonly renewDocumentModel: Model<AllRenewProductDocumentDocument>,
   ) {}
 
   async trackDocumentVersionChange(
@@ -207,7 +217,7 @@ export class DocumentVersioningService {
   }
 
   async getDocumentHistory(query: DocumentStreamQueryInput) {
-    const stream = await this.findStreamOrThrow(query);
+    const stream = await this.resolveHistoryStream(query);
 
     if (stream.isDeleted) {
       return {
@@ -222,9 +232,14 @@ export class DocumentVersioningService {
       .lean()
       .exec();
 
+    const filtered = await this.filterRenewHistoryVersions(
+      query,
+      versions as Array<Record<string, unknown>>,
+    );
+
     return {
       stream: this.mapStream(stream),
-      versions: versions.map((version) => this.mapVersion(version)),
+      versions: filtered.map((version) => this.mapVersion(version)),
     };
   }
 
@@ -252,14 +267,128 @@ export class DocumentVersioningService {
   private async findStreamOrThrow(
     query: DocumentStreamQueryInput,
   ): Promise<DocStreamDocument> {
-    const filter = buildStreamIdentityFilter(query);
-    const stream = await this.docStreamModel.findOne(filter).exec();
+    const stream = await this.resolveHistoryStream(query);
 
     if (!stream) {
       throw new NotFoundException('Document stream not found');
     }
 
     return stream;
+  }
+
+  private async resolveHistoryStream(
+    query: DocumentStreamQueryInput,
+  ): Promise<DocStreamDocument | null> {
+    const filter = buildStreamIdentityFilter(query);
+    let stream = await this.docStreamModel.findOne(filter).exec();
+
+    if (
+      !stream &&
+      query.anchorProductDocumentId &&
+      normalizeProcessType(query.processType) === 'renewal' &&
+      usesRenewPerDocumentVersionSlot(query.sectionKey)
+    ) {
+      const legacySlot = certificationSlotKey(
+        query.sectionKey,
+        query.subsectionKey ?? null,
+      );
+      stream = await this.docStreamModel
+        .findOne({
+          ...filter,
+          slotKey: legacySlot,
+        })
+        .exec();
+    }
+
+    return stream;
+  }
+
+  private normalizeDocPath(value: string): string {
+    return value.trim().replace(/\\/g, '/').toLowerCase();
+  }
+
+  private async filterRenewHistoryVersions(
+    query: DocumentStreamQueryInput,
+    versions: Array<Record<string, unknown>>,
+  ): Promise<Array<Record<string, unknown>>> {
+    if (normalizeProcessType(query.processType) !== 'renewal') {
+      return versions;
+    }
+
+    const urnNo = query.urnNo.trim();
+    const sectionKey = query.sectionKey;
+    const cycleId =
+      query.renewalCycleId && Types.ObjectId.isValid(query.renewalCycleId)
+        ? new Types.ObjectId(query.renewalCycleId)
+        : null;
+
+    const deletedFilter: Record<string, unknown> = {
+      urnNo,
+      documentForm: sectionKey,
+      isDeleted: true,
+    };
+    if (cycleId) {
+      deletedFilter.$or = [
+        { renewalCycleId: cycleId },
+        { renewalCycleId: null },
+        { renewalCycleId: { $exists: false } },
+      ];
+    }
+
+    const deletedDocs = await this.renewDocumentModel
+      .find(deletedFilter)
+      .select('documentLink productDocumentId')
+      .lean()
+      .exec();
+    const deletedPaths = new Set(
+      deletedDocs
+        .map((doc) => this.normalizeDocPath(String(doc.documentLink ?? '')))
+        .filter(Boolean),
+    );
+
+    let filtered = versions.filter((version) => {
+      const path = this.normalizeDocPath(String(version.filePath ?? ''));
+      return !path || !deletedPaths.has(path);
+    });
+
+    const anchorId = query.anchorProductDocumentId;
+    if (!anchorId || !usesRenewPerDocumentVersionSlot(sectionKey)) {
+      return filtered;
+    }
+
+    const docFilter: Record<string, unknown> = {
+      urnNo,
+      documentForm: sectionKey,
+      productDocumentId: anchorId,
+    };
+    if (cycleId) {
+      docFilter.renewalCycleId = cycleId;
+    }
+
+    const docRows = await this.renewDocumentModel
+      .find(docFilter)
+      .select('documentLink isDeleted')
+      .lean()
+      .exec();
+    const active = docRows.find((doc) => doc.isDeleted !== true);
+    if (!active) {
+      return [];
+    }
+
+    const activePath = this.normalizeDocPath(String(active.documentLink ?? ''));
+    const deletedPathsForAnchor = new Set(
+      docRows
+        .filter((doc) => doc.isDeleted === true)
+        .map((doc) => this.normalizeDocPath(String(doc.documentLink ?? '')))
+        .filter(Boolean),
+    );
+
+    return filtered.filter((version) => {
+      const path = this.normalizeDocPath(String(version.filePath ?? ''));
+      if (!path) return false;
+      if (deletedPathsForAnchor.has(path)) return false;
+      return !activePath || path === activePath;
+    });
   }
 
   private mapStream(stream: DocStreamDocument | Record<string, unknown>) {

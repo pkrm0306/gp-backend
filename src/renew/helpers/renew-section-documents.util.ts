@@ -7,6 +7,10 @@ import {
 } from '../schemas/all-renew-product-document.schema';
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
 import {
+  isRenewVendorResubmitCycle,
+  resolveRenewDocumentVersionAction,
+} from '../../documents/helpers/certification-document-version.util';
+import {
   trackProductDocumentBatch,
   trackProductDocumentDeleteBatch,
   trackUploadedProductDocument,
@@ -90,6 +94,21 @@ export function assertRenewDocumentMatchesCycle(
   }
 }
 
+export function renewSectionDocumentSlotKeyMode(
+  sectionKey: DocumentSectionKey,
+): 'productDocumentId' | 'subsection' | 'subsectionTag' {
+  if (sectionKey === DocumentSectionKey.PROCESS_INNOVATION) {
+    return 'subsectionTag';
+  }
+  if (
+    sectionKey === DocumentSectionKey.PROCESS_MANUFACTURING ||
+    sectionKey === DocumentSectionKey.PROCESS_WASTE_MANAGEMENT
+  ) {
+    return 'productDocumentId';
+  }
+  return 'subsection';
+}
+
 export async function applyRenewSectionDocumentKeepList(params: {
   renewDocumentModel: Model<AllRenewProductDocumentDocument>;
   documentVersioningService: DocumentVersioningService;
@@ -99,6 +118,7 @@ export async function applyRenewSectionDocumentKeepList(params: {
   cycleNo: number;
   sectionKey: DocumentSectionKey;
   existingDocumentIds?: string[];
+  urnStatus: number;
   now: Date;
   session: ClientSession;
 }): Promise<string[]> {
@@ -111,6 +131,7 @@ export async function applyRenewSectionDocumentKeepList(params: {
     cycleNo,
     sectionKey,
     existingDocumentIds,
+    urnStatus,
     now,
     session,
   } = params;
@@ -166,17 +187,19 @@ export async function applyRenewSectionDocumentKeepList(params: {
       },
       { session },
     );
-    await trackProductDocumentDeleteBatch({
-      versioning: documentVersioningService,
-      urnNo,
-      sectionKey,
-      userId: vendorObjectId,
-      docs: docsToDelete,
-      slotKeyMode: 'subsection',
-      processType: 'renewal',
-      renewalCycleId: renewalCycleObjectId,
-      session,
-    });
+    if (isRenewVendorResubmitCycle(urnStatus)) {
+      await trackProductDocumentDeleteBatch({
+        versioning: documentVersioningService,
+        urnNo,
+        sectionKey,
+        userId: vendorObjectId,
+        docs: docsToDelete,
+        slotKeyMode: renewSectionDocumentSlotKeyMode(sectionKey),
+        processType: 'renewal',
+        renewalCycleId: renewalCycleObjectId,
+        session,
+      });
+    }
   }
 
   return oldFileLinksToDeleteAfterCommit;
@@ -191,6 +214,7 @@ export async function insertRenewSectionDocuments(params: {
   renewalCycleObjectId: Types.ObjectId;
   sectionKey: DocumentSectionKey;
   formPrimaryId: number;
+  urnStatus: number;
   now: Date;
   session: ClientSession;
   rows: Array<{
@@ -214,6 +238,7 @@ export async function insertRenewSectionDocuments(params: {
     renewalCycleObjectId,
     sectionKey,
     formPrimaryId,
+    urnStatus,
     now,
     session,
     rows,
@@ -224,8 +249,9 @@ export async function insertRenewSectionDocuments(params: {
     return;
   }
 
-  const versionActions: Array<'added' | 'replaced'> = [];
-  if (slotKeyMode === 'subsection' || slotKeyMode === 'subsectionTag') {
+  const trackVersions = isRenewVendorResubmitCycle(urnStatus);
+  const versionActions: Array<'added' | 'replaced' | null> = [];
+  if (trackVersions && (slotKeyMode === 'subsection' || slotKeyMode === 'subsectionTag')) {
     for (const row of rows) {
       const slotFilter: Record<string, unknown> = {
         urnNo,
@@ -240,7 +266,9 @@ export async function insertRenewSectionDocuments(params: {
       const existingInSlot = await renewDocumentModel
         .countDocuments(slotFilter)
         .session(session);
-      versionActions.push(existingInSlot > 0 ? 'replaced' : 'added');
+      versionActions.push(
+        resolveRenewDocumentVersionAction(existingInSlot, urnStatus),
+      );
     }
   }
 
@@ -264,9 +292,11 @@ export async function insertRenewSectionDocuments(params: {
 
   const inserted = await renewDocumentModel.insertMany(docsToInsert, { session });
 
-  if (slotKeyMode === 'subsection' || slotKeyMode === 'subsectionTag') {
+  if (trackVersions && (slotKeyMode === 'subsection' || slotKeyMode === 'subsectionTag')) {
     for (let i = 0; i < inserted.length; i++) {
       const doc = inserted[i];
+      const action = versionActions[i];
+      if (!action) continue;
       await trackUploadedProductDocument(documentVersioningService, {
         urnNo,
         sectionKey,
@@ -280,7 +310,7 @@ export async function insertRenewSectionDocuments(params: {
         filePath: doc.documentLink,
         originalName: doc.documentOriginalName,
         storedName: doc.documentName,
-        action: versionActions[i] ?? 'added',
+        action,
         slotKeyMode,
         processType: 'renewal',
         renewalCycleId: renewalCycleObjectId,
@@ -290,14 +320,16 @@ export async function insertRenewSectionDocuments(params: {
     return;
   }
 
-  await trackProductDocumentBatch({
-    versioning: documentVersioningService,
-    urnNo,
-    sectionKey,
-    userId: vendorObjectId,
-    docs: inserted,
-    processType: 'renewal',
-    renewalCycleId: renewalCycleObjectId,
-    session,
-  });
+  if (trackVersions && slotKeyMode === 'productDocumentId') {
+    await trackProductDocumentBatch({
+      versioning: documentVersioningService,
+      urnNo,
+      sectionKey,
+      userId: vendorObjectId,
+      docs: inserted,
+      processType: 'renewal',
+      renewalCycleId: renewalCycleObjectId,
+      session,
+    });
+  }
 }

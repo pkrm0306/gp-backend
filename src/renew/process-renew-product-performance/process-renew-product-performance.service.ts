@@ -39,6 +39,9 @@ import {
   trackProductDocumentDeleteBatch,
 } from '../../documents/helpers/product-document-version.integration';
 import {
+  isRenewVendorResubmitCycle,
+} from '../../documents/helpers/certification-document-version.util';
+import {
   assertRenewProcessEditable,
   renewOwnershipFields,
   renewUploadPath,
@@ -372,6 +375,7 @@ export class ProcessRenewProductPerformanceService {
     vendorObjectId: Types.ObjectId;
     manufacturerObjectId: Types.ObjectId;
     renewalCycleObjectId: Types.ObjectId;
+    urnStatus: number;
     eoiNo?: string;
     formPrimaryId: number;
     now: Date;
@@ -388,6 +392,7 @@ export class ProcessRenewProductPerformanceService {
       vendorObjectId,
       manufacturerObjectId,
       renewalCycleObjectId,
+      urnStatus,
       eoiNo,
       formPrimaryId,
       now,
@@ -442,17 +447,19 @@ export class ProcessRenewProductPerformanceService {
         },
         { session },
       );
-      await trackProductDocumentDeleteBatch({
-        versioning: this.documentVersioningService,
-        urnNo,
-        sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
-        userId: vendorObjectId,
-        docs: docsToDelete,
-        slotKeyMode: 'subsection',
-        processType: 'renewal',
-        renewalCycleId: renewalCycleObjectId,
-        session,
-      });
+      if (isRenewVendorResubmitCycle(urnStatus)) {
+        await trackProductDocumentDeleteBatch({
+          versioning: this.documentVersioningService,
+          urnNo,
+          sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
+          userId: vendorObjectId,
+          docs: docsToDelete,
+          slotKeyMode: 'productDocumentId',
+          processType: 'renewal',
+          renewalCycleId: renewalCycleObjectId,
+          session,
+        });
+      }
     }
 
     if (retainIds.length) {
@@ -492,30 +499,22 @@ export class ProcessRenewProductPerformanceService {
           updatedDate: now,
         });
       }
-      const existingInSlot = await this.renewDocumentModel
-        .countDocuments({
-          urnNo,
-          renewalCycleId: renewalCycleObjectId,
-          documentForm: DocumentSectionKey.PRODUCT_PERFORMANCE,
-          documentFormSubsection: RENEW_PERFORMANCE_DOC_SUBSECTION,
-          isDeleted: { $ne: true },
-        })
-        .session(session);
       const inserted = await this.renewDocumentModel.insertMany(docsToInsert, {
         session,
       });
-      await trackProductDocumentBatch({
-        versioning: this.documentVersioningService,
-        urnNo,
-        sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
-        userId: vendorObjectId,
-        docs: inserted,
-        action: existingInSlot > 0 ? 'replaced' : 'added',
-        slotKeyMode: 'subsection',
-        processType: 'renewal',
-        renewalCycleId: renewalCycleObjectId,
-        session,
-      });
+      if (isRenewVendorResubmitCycle(urnStatus)) {
+        await trackProductDocumentBatch({
+          versioning: this.documentVersioningService,
+          urnNo,
+          sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
+          userId: vendorObjectId,
+          docs: inserted,
+          slotKeyMode: 'productDocumentId',
+          processType: 'renewal',
+          renewalCycleId: renewalCycleObjectId,
+          session,
+        });
+      }
     }
 
     const totalDocumentCount = await this.renewDocumentModel
@@ -722,8 +721,10 @@ export class ProcessRenewProductPerformanceService {
     const ownership = renewOwnershipFields(
       await resolveUrnRenewContext(this.productModel, input.urnNo),
     );
-    const cycle = await this.resolveRenewalCycle(
-      input.urnNo,
+    const { cycle, urnStatus } = await assertRenewProcessEditable(
+      this.productModel,
+      this.renewalCycleModel,
+      input.urnNo.trim(),
       input.renewalCycleId,
     );
 
@@ -805,6 +806,7 @@ export class ProcessRenewProductPerformanceService {
         vendorObjectId,
         manufacturerObjectId,
         renewalCycleObjectId,
+        urnStatus,
         eoiNo: input.eoiNo?.trim(),
         formPrimaryId: processRenewProductPerformanceId,
         now,

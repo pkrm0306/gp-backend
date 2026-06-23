@@ -38,6 +38,8 @@ export interface DocumentStreamQueryInput {
   sectionKey: string;
   subsectionKey?: string | null;
   slotKey: string;
+  /** Renew MP/WM: scope history to one file; enables legacy subsection-stream fallback. */
+  anchorProductDocumentId?: number;
 }
 
 export interface TrackAllProductDocumentInput {

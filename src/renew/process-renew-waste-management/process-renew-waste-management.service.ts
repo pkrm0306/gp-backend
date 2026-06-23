@@ -54,6 +54,7 @@ import {
   applyRenewSectionDocumentKeepList,
   buildRenewSectionDocMigrationFilter,
   insertRenewSectionDocuments,
+  renewSectionDocumentSlotKeyMode,
 } from '../helpers/renew-section-documents.util';
 import { deleteUploadedFileByDocumentLink } from '../../utils/upload-file.util';
 import * as path from 'path';
@@ -108,7 +109,7 @@ export class ProcessRenewWasteManagementService {
 
   ) {
 
-    const { cycle, context } = await assertRenewProcessEditable(
+    const { cycle, context, urnStatus } = await assertRenewProcessEditable(
       this.productModel,
       this.renewalCycleModel,
       input.urnNo,
@@ -171,6 +172,7 @@ export class ProcessRenewWasteManagementService {
           cycleNo: Number(cycle.cycleNo ?? 1),
           sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
           existingDocumentIds: input.existingDocumentIds,
+          urnStatus,
           now,
           session,
         });
@@ -219,10 +221,11 @@ export class ProcessRenewWasteManagementService {
         renewalCycleObjectId,
         sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
         formPrimaryId: saved!.processRenewWasteManagementId,
+        urnStatus,
         now,
         session,
         rows: newDocRows,
-        slotKeyMode: 'subsection',
+        slotKeyMode: renewSectionDocumentSlotKeyMode(DocumentSectionKey.PROCESS_WASTE_MANAGEMENT),
       });
 
       await session.commitTransaction();

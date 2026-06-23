@@ -147,7 +147,7 @@ export async function assertRenewProcessEditable(
   renewalCycleModel: Model<RenewalCycleDocument>,
   urnNo: string,
   renewalCycleId?: string,
-): Promise<{ cycle: RenewalCycleDocument; context: RenewUrnContext }> {
+): Promise<{ cycle: RenewalCycleDocument; context: RenewUrnContext; urnStatus: number }> {
   const context = await resolveUrnRenewContext(productModel, urnNo);
 
   const product = await productModel
@@ -191,7 +191,7 @@ export async function assertRenewProcessEditable(
     throw new ForbiddenException('No active renewal cycle found');
   }
 
-  return { cycle, context };
+  return { cycle, context, urnStatus };
 }
 
 export function addMonths(date: Date, months: number): Date {

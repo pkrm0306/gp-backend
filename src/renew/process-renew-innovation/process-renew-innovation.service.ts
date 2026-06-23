@@ -66,7 +66,7 @@ export class ProcessRenewInnovationService {
     input: UpsertRenewInnovationInput,
     files?: Express.Multer.File[],
   ) {
-    const { cycle, context } = await assertRenewProcessEditable(
+    const { cycle, context, urnStatus } = await assertRenewProcessEditable(
       this.productModel,
       this.renewalCycleModel,
       input.urnNo,
@@ -113,6 +113,7 @@ export class ProcessRenewInnovationService {
           cycleNo: Number(cycle.cycleNo ?? 1),
           sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
           existingDocumentIds: input.existingDocumentIds,
+          urnStatus,
           now,
           session,
         });
@@ -163,6 +164,7 @@ export class ProcessRenewInnovationService {
         renewalCycleObjectId,
         sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
         formPrimaryId: saved!.processRenewInnovationId,
+        urnStatus,
         now,
         session,
         rows: newDocRows,

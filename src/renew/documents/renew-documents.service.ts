@@ -21,13 +21,17 @@ import {
 import { normalizeDocumentSectionKey } from '../../common/constants/document-section-key.constants';
 import { deleteUploadedFileByDocumentLink } from '../../utils/upload-file.util';
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
-import { certificationStreamSlotKeyForDocument } from '../../documents/helpers/certification-document-version.util';
+import {
+  isRenewVendorResubmitCycle,
+  renewDocumentVersionSlotKey,
+} from '../../documents/helpers/certification-document-version.util';
 import {
   resolveUrnRenewContext,
   toRenewObjectId,
 } from '../helpers/renew-common.util';
 import { assertRenewDocumentMatchesCycle } from '../helpers/renew-section-documents.util';
 import { buildAllProductDocumentLookupFilter } from '../../documents/helpers/resolve-all-product-document.util';
+import { matchRenewEligibleProducts } from '../helpers/renew-eligible-product.util';
 
 export interface DeleteRenewDocumentQuery {
   urnNo: string;
@@ -160,26 +164,35 @@ export class RenewDocumentsService {
       },
     );
 
-    await this.documentVersioningService.trackAllProductDocument({
-      urnNo: document.urnNo,
-      sectionKey: document.documentForm,
-      subsectionKey: document.documentFormSubsection ?? null,
-      slotKey: certificationStreamSlotKeyForDocument({
-        documentForm: String(document.documentForm),
-        documentFormSubsection: document.documentFormSubsection ?? null,
-        documentTag: document.documentTag ?? null,
+    const product = await this.productModel
+      .findOne({ urnNo: context.urnNo, ...matchRenewEligibleProducts() })
+      .select('urnStatus')
+      .lean()
+      .exec();
+    const urnStatus = Number(product?.urnStatus ?? 0);
+
+    if (isRenewVendorResubmitCycle(urnStatus)) {
+      await this.documentVersioningService.trackAllProductDocument({
+        urnNo: document.urnNo,
+        sectionKey: document.documentForm,
+        subsectionKey: document.documentFormSubsection ?? null,
+        slotKey: renewDocumentVersionSlotKey({
+          documentForm: String(document.documentForm),
+          documentFormSubsection: document.documentFormSubsection ?? null,
+          documentTag: document.documentTag ?? null,
+          productDocumentId: document.productDocumentId,
+        }),
+        action: 'deleted',
+        documentId: document._id as Types.ObjectId,
         productDocumentId: document.productDocumentId,
-      }),
-      action: 'deleted',
-      documentId: document._id as Types.ObjectId,
-      productDocumentId: document.productDocumentId,
-      filePath: document.documentLink ?? null,
-      originalName: document.documentOriginalName ?? null,
-      storedName: document.documentName ?? null,
-      userId: deletedBy,
-      processType: 'renewal',
-      renewalCycleId: cycleObjectId,
-    });
+        filePath: document.documentLink ?? null,
+        originalName: document.documentOriginalName ?? null,
+        storedName: document.documentName ?? null,
+        userId: deletedBy,
+        processType: 'renewal',
+        renewalCycleId: cycleObjectId,
+      });
+    }
 
     return {
       documentId: document.productDocumentId,

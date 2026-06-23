@@ -14,6 +14,7 @@ import {
   slotKeyFromSubsection,
   slotKeyFromSubsectionAndTag,
 } from './document-version.helper';
+import { RENEWAL_URN_STATUS } from '../../renew/constants/renewal-urn-status.constants';
 import {
   ProductDocumentVersionRow,
   trackUploadedProductDocument,
@@ -49,6 +50,25 @@ export function resolveCertificationVersionAction(
     return 'replaced';
   }
   return null;
+}
+
+/** Admin sent renewal URN back to vendor for corrections (urnStatus 16). */
+export function isRenewVendorResubmitCycle(urnStatus: number): boolean {
+  return urnStatus === RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING;
+}
+
+/** Renewal: version only after admin resend; first resubmit upload is v1, replacements v2+. */
+export function resolveRenewDocumentVersionAction(
+  priorDocsInSlot: number,
+  urnStatus: number,
+): 'added' | 'replaced' | null {
+  if (!isRenewVendorResubmitCycle(urnStatus)) {
+    return null;
+  }
+  if (priorDocsInSlot === 0) {
+    return 'added';
+  }
+  return 'replaced';
 }
 
 export function certificationSlotKeyModeForSection(
@@ -110,6 +130,28 @@ export function certificationStreamSlotKeyForDocument(doc: {
     );
   }
   return slotKeyFromProductDocumentId(doc.productDocumentId);
+}
+
+/** Renew MP/WM/PP supporting uploads: one version stream per productDocumentId (not per subsection). */
+export function usesRenewPerDocumentVersionSlot(sectionKey: string): boolean {
+  return (
+    sectionKey === DocumentSectionKey.PROCESS_MANUFACTURING ||
+    sectionKey === DocumentSectionKey.PROCESS_WASTE_MANAGEMENT ||
+    sectionKey === DocumentSectionKey.PRODUCT_PERFORMANCE
+  );
+}
+
+export function renewDocumentVersionSlotKey(doc: {
+  documentForm: string;
+  documentFormSubsection?: string | null;
+  documentTag?: string | null;
+  productDocumentId: number;
+}): string {
+  const sectionKey = String(doc.documentForm ?? '').trim();
+  if (usesRenewPerDocumentVersionSlot(sectionKey)) {
+    return slotKeyFromProductDocumentId(doc.productDocumentId);
+  }
+  return certificationStreamSlotKeyForDocument(doc);
 }
 
 export async function countCertificationDocsInSlot(

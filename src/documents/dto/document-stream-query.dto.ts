@@ -1,4 +1,5 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DOCUMENT_PROCESS_TYPE_VALUES } from '../constants/document-version.constants';
 
@@ -32,4 +33,13 @@ export class DocumentStreamQueryDto {
   @IsString()
   @IsNotEmpty()
   slotKey: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Renew MP/WM: productDocumentId for per-file history scoping and legacy stream fallback',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  anchorProductDocumentId?: number;
 }

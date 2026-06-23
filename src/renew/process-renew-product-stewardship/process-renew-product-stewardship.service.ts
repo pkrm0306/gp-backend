@@ -126,7 +126,7 @@ export class ProcessRenewProductStewardshipService {
 
   ) {
 
-    const { cycle, context } = await assertRenewProcessEditable(
+    const { cycle, context, urnStatus } = await assertRenewProcessEditable(
 
       this.productModel,
 
@@ -309,6 +309,8 @@ export class ProcessRenewProductStewardshipService {
         sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
 
         formPrimaryId: processRenewProductStewardshipId,
+
+        urnStatus,
 
         now,
 
