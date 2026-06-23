@@ -44,6 +44,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
         (exception as { message?: string }).message || 'Invalid JSON body';
       message = this.formatInvalidJsonMessage(parseMessage);
       error = 'Bad Request';
+    } else if (
+      typeof exception === 'object' &&
+      exception !== null &&
+      (exception as { type?: string }).type === 'entity.too.large'
+    ) {
+      status = HttpStatus.PAYLOAD_TOO_LARGE;
+      message =
+        'Request body is too large. For bulk product upload, split into smaller batches or contact support.';
+      error = 'Payload Too Large';
     }
 
     if (Array.isArray(message)) {

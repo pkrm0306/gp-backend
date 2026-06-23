@@ -2630,35 +2630,44 @@ export class ProductRegistrationService {
     session.startTransaction({ maxCommitTimeMS: params.maxCommitTimeMS });
 
     try {
-      const results: Array<
-        Record<string, unknown> & { plants: Record<string, unknown>[] }
-      > = [];
+      const now = new Date();
       const validatedCountryIds = new Set<string>();
       const validatedStateKeys = new Set<string>();
+      const chunk = params.chunk;
+      const totalPlants = chunk.reduce(
+        (sum, product) => sum + product.plants.length,
+        0,
+      );
 
-      for (let i = 0; i < params.chunk.length; i++) {
-        const registerProductDto = params.chunk[i];
+      const [productIds, plantIds] = await Promise.all([
+        this.sequenceHelper.reserveSequenceValues('product_id', chunk.length),
+        this.sequenceHelper.reserveSequenceValues(
+          'product_plant_id',
+          totalPlants,
+        ),
+      ]);
+
+      const productDocs: Array<Record<string, unknown>> = [];
+      const eoiNumbers: string[] = [];
+
+      for (let i = 0; i < chunk.length; i++) {
+        const registerProductDto = chunk[i];
         const globalIndex = params.chunkStartIndex + i;
         const manufacturerProductCount =
           params.initialMaxActiveSequence + globalIndex + 1;
-
         const eoiNo = buildEoiNoFromManufacturerProfile(
           params.manufacturerProfile,
           manufacturerProductCount,
         );
-        console.log(
-          `[Bulk Product Registration] Product ${globalIndex + 1}/${params.totalProducts} - EOI: ${eoiNo}, Manufacturer Product Count: ${manufacturerProductCount}`,
-        );
+        eoiNumbers.push(eoiNo);
 
-        const productId = await this.sequenceHelper.getProductId();
-        const now = new Date();
         const categoryObjectId = this.toObjectId(
           registerProductDto.categoryId,
           'categoryId',
         );
 
-        const productData = {
-          productId,
+        productDocs.push({
+          productId: productIds[i],
           categoryId: categoryObjectId,
           vendorId: params.vendorObjectId,
           manufacturerId: params.manufacturerObjectId,
@@ -2674,14 +2683,26 @@ export class ProductRegistrationService {
           urnStatus: 0,
           createdDate: now,
           updatedDate: now,
-        };
+        });
+      }
 
-        const product = new this.productModel(productData);
-        const savedProduct = await product.save({ session });
+      const insertedProducts = await this.productModel.insertMany(productDocs, {
+        session,
+      });
 
-        const plants = [];
+      const plantDocs: Array<Record<string, unknown>> = [];
+      let plantIdIndex = 0;
+
+      for (let i = 0; i < chunk.length; i++) {
+        const registerProductDto = chunk[i];
+        const savedProduct = insertedProducts[i];
+        const categoryObjectId = this.toObjectId(
+          registerProductDto.categoryId,
+          'categoryId',
+        );
+        const eoiNo = eoiNumbers[i];
+
         for (const plantDto of registerProductDto.plants) {
-          const productPlantId = await this.sequenceHelper.getProductPlantId();
           const plantCountryObjectId = this.toObjectId(
             plantDto.countryId,
             'countryId',
@@ -2701,8 +2722,8 @@ export class ProductRegistrationService {
             validatedStateKeys.add(stateKey);
           }
 
-          const plantData = {
-            productPlantId,
+          plantDocs.push({
+            productPlantId: plantIds[plantIdIndex],
             productId: savedProduct._id,
             vendorId: params.vendorObjectId,
             categoryId: categoryObjectId,
@@ -2716,18 +2737,27 @@ export class ProductRegistrationService {
             city: plantDto.city,
             plantStatus: 1,
             createdDate: now,
-          };
-
-          const plant = new this.productPlantModel(plantData);
-          const savedPlant = await plant.save({ session });
-          plants.push(savedPlant);
+          });
+          plantIdIndex += 1;
         }
-
-        results.push({
-          ...savedProduct.toObject(),
-          plants: plants.map((p) => p.toObject()),
-        });
       }
+
+      const insertedPlants = plantDocs.length
+        ? await this.productPlantModel.insertMany(plantDocs, { session })
+        : [];
+
+      const plantsByProductId = new Map<string, Record<string, unknown>[]>();
+      for (const plant of insertedPlants) {
+        const key = String(plant.productId);
+        const bucket = plantsByProductId.get(key) ?? [];
+        bucket.push(plant.toObject() as unknown as Record<string, unknown>);
+        plantsByProductId.set(key, bucket);
+      }
+
+      const results = insertedProducts.map((savedProduct) => ({
+        ...savedProduct.toObject(),
+        plants: plantsByProductId.get(String(savedProduct._id)) ?? [],
+      }));
 
       await session.commitTransaction();
       return results;

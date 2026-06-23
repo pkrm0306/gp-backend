@@ -36,6 +36,29 @@ export class SequenceHelper {
     return this.getNextSequenceValue('product_plant_id');
   }
 
+  /** Reserve a contiguous block of sequence values (inclusive start, for bulk inserts). */
+  async reserveSequenceValues(
+    sequenceName: string,
+    count: number,
+  ): Promise<number[]> {
+    const safeCount = Math.max(0, Math.floor(count));
+    if (safeCount === 0) {
+      return [];
+    }
+
+    const sequenceCollection = this.connection.collection('sequences');
+    const result: any = await sequenceCollection.findOneAndUpdate(
+      { _id: sequenceName as any },
+      { $inc: { sequenceValue: safeCount } },
+      { upsert: true, returnDocument: 'after' },
+    );
+
+    const endValue = result?.value?.sequenceValue ?? result?.sequenceValue;
+    const end = typeof endValue === 'number' ? endValue : safeCount;
+    const start = end - safeCount + 1;
+    return Array.from({ length: safeCount }, (_, index) => start + index);
+  }
+
   async getPaymentId(): Promise<number> {
     const sequenceCollection = this.connection.collection('sequences');
     const sequenceName = 'payment_id';

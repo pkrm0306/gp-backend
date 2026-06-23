@@ -6,11 +6,15 @@ import {
   NestExpressApplication,
 } from '@nestjs/platform-express';
 import express, {
+  json,
   urlencoded,
   Request,
   Response,
   NextFunction,
 } from 'express';
+
+/** Bulk product registration and large JSON payloads exceed Express default 100kb. */
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '15mb';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
@@ -141,6 +145,8 @@ async function bootstrap() {
   ensureUploadDirectories();
 
   const server = express();
+  server.use(json({ limit: JSON_BODY_LIMIT }));
+  server.use(urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
   mountUploadStaticOnExpress(server);
   mountLegacyStandardsFileRedirect(server);
 
@@ -148,8 +154,6 @@ async function bootstrap() {
     AppModule,
     new ExpressAdapter(server),
   );
-
-  app.use(urlencoded({ extended: true, limit: '1mb' }));
 
   const corsOrigins = buildCorsOrigins();
   app.enableCors({
