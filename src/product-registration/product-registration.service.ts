@@ -7636,11 +7636,16 @@ export class ProductRegistrationService {
         },
       );
 
+      const urnPlants = await this.listProductPlantsWithGeoForUrn(trimmedUrnNo);
+
       return enrichUrnDetailRowsWithSharedProcessData(
         formattedResults.map((row) => ({
           ...row,
           siteVisits,
           product_details_list: productDetailsList,
+          ...(urnPlants.length > 0
+            ? { plants: urnPlants, plant_details: urnPlants }
+            : {}),
         })),
       );
     } catch (error: any) {

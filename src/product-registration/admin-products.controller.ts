@@ -199,6 +199,12 @@ export class AdminProductsController {
     const siteVisits =
       (data[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
     const first = (data[0] ?? {}) as Record<string, any>;
+    const embeddedProductDetailsList = first.product_details_list;
+    const productDetailsList =
+      Array.isArray(embeddedProductDetailsList) &&
+      embeddedProductDetailsList.length > 0
+        ? embeddedProductDetailsList
+        : data;
     const visibleRawMaterialSteps =
       first?.product_details?.visibleRawMaterialSteps ??
       first?.category?.visibleRawMaterialSteps ??
@@ -218,7 +224,7 @@ export class AdminProductsController {
       success: true,
       message: 'Product details fetched successfully',
       data,
-      product_details_list: data,
+      product_details_list: productDetailsList,
       urnContext: {
         urnNo: trimmedUrn,
         urnStatus: first?.urnStatus ?? null,
