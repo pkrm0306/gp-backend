@@ -7,7 +7,7 @@ import {
 } from './payment-proposal.util';
 
 export const PAYMENT_REFERENCE_UNIQUE_MESSAGE =
-  'Reference Number must be unique';
+  'Reference Number already exists';
 
 export const PAYMENT_PROOF_SUBMITTED_LOCKED_MESSAGE =
   'Payment details have already been submitted and cannot be modified while admin review is in progress.';

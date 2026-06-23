@@ -6,6 +6,7 @@ import {
   buildAllProductDocumentTrackInput,
 } from '../../documents/helpers/document-version.helper';
 import {
+  certificationSlotKey,
   certificationStreamSlotKeyForDocument,
   normalizeCertificationSubsection,
 } from '../../documents/helpers/certification-document-version.util';
@@ -31,13 +32,14 @@ function renewDocSlotKey(doc: {
   documentForm: string;
   documentFormSubsection?: string | null;
   documentTag?: string | null;
+  productDocumentId: number;
 }): string {
-  const subsection =
-    normalizeCertificationSubsection(
-      String(doc.documentForm),
-      doc.documentFormSubsection ?? null,
-    ) ?? doc.documentFormSubsection ?? '';
-  return `${doc.documentForm}|${subsection}|${doc.documentTag ?? ''}`;
+  return certificationStreamSlotKeyForDocument({
+    documentForm: String(doc.documentForm),
+    documentFormSubsection: doc.documentFormSubsection ?? null,
+    documentTag: doc.documentTag ?? null,
+    productDocumentId: doc.productDocumentId,
+  });
 }
 
 /**
@@ -57,6 +59,64 @@ export class RenewDocumentPromotionService {
     private readonly productModel: Model<ProductDocument>,
     private readonly documentVersioningService: DocumentVersioningService,
   ) {}
+
+  private async softDeleteLegacyCertificationDocsInSlot(
+    trimmedUrn: string,
+    doc: {
+      documentForm: string;
+      documentFormSubsection?: string | null;
+      documentTag?: string | null;
+      productDocumentId: number;
+    },
+    userObjectId: Types.ObjectId,
+    now: Date,
+    session?: ClientSession,
+  ): Promise<void> {
+    const sectionKey = String(doc.documentForm);
+    const targetSlot = renewDocSlotKey(doc);
+
+    const query = this.allProductDocumentModel.find({
+      urnNo: trimmedUrn,
+      documentForm: doc.documentForm,
+      isDeleted: { $ne: true },
+    });
+    if (session) {
+      query.session(session);
+    }
+    const legacyDocs = await query.lean().exec();
+
+    const idsToDelete = legacyDocs
+      .filter((existing) => {
+        if (Number(existing.productDocumentId) === Number(doc.productDocumentId)) {
+          return false;
+        }
+        const existingSlot = certificationStreamSlotKeyForDocument({
+          documentForm: String(existing.documentForm),
+          documentFormSubsection: existing.documentFormSubsection ?? null,
+          documentTag: existing.documentTag ?? null,
+          productDocumentId: Number(existing.productDocumentId),
+        });
+        return existingSlot === targetSlot;
+      })
+      .map((row) => row._id);
+
+    if (!idsToDelete.length) {
+      return;
+    }
+
+    await this.allProductDocumentModel.updateMany(
+      { _id: { $in: idsToDelete } },
+      {
+        $set: {
+          isDeleted: true,
+          deletedAt: now,
+          deletedBy: userObjectId,
+          updatedDate: now,
+        },
+      },
+      session ? { session } : {},
+    );
+  }
 
   async promoteRenewDocumentsForCompletedCycle(
     urnNo: string,
@@ -99,35 +159,13 @@ export class RenewDocumentPromotionService {
     for (const doc of latestBySlot.values()) {
       try {
         const sectionKey = String(doc.documentForm);
-        const slotFilter: Record<string, unknown> = {
-          urnNo: trimmedUrn,
-          documentForm: doc.documentForm,
-          isDeleted: { $ne: true },
-          productDocumentId: { $ne: doc.productDocumentId },
-        };
-        const slotSubsection =
-          normalizeCertificationSubsection(
-            sectionKey,
-            doc.documentFormSubsection ?? null,
-          ) ?? doc.documentFormSubsection;
-        if (slotSubsection) {
-          slotFilter.documentFormSubsection = slotSubsection;
-        }
-        if (doc.documentTag) {
-          slotFilter.documentTag = doc.documentTag;
-        }
 
-        await this.allProductDocumentModel.updateMany(
-          slotFilter,
-          {
-            $set: {
-              isDeleted: true,
-              deletedAt: now,
-              deletedBy: userObjectId,
-              updatedDate: now,
-            },
-          },
-          session ? { session } : {},
+        await this.softDeleteLegacyCertificationDocsInSlot(
+          trimmedUrn,
+          doc,
+          userObjectId,
+          now,
+          session,
         );
 
         const existingProductDocQuery = this.allProductDocumentModel.findOne({
@@ -143,6 +181,8 @@ export class RenewDocumentPromotionService {
             String(doc.documentForm),
             doc.documentFormSubsection ?? null,
           ) ?? doc.documentFormSubsection;
+
+        const slotSubsection = promotedSubsection;
 
         const productDocPayload = {
           productDocumentId: doc.productDocumentId,
@@ -179,12 +219,11 @@ export class RenewDocumentPromotionService {
           promotedDocId = inserted[0]._id as Types.ObjectId;
         }
 
-        const slotKey = certificationStreamSlotKeyForDocument({
-          documentForm: sectionKey,
-          documentFormSubsection: slotSubsection ?? null,
-          documentTag: doc.documentTag ?? null,
-          productDocumentId: doc.productDocumentId,
-        });
+        const slotKey = certificationSlotKey(
+          sectionKey,
+          slotSubsection ?? null,
+          doc.documentTag ?? null,
+        );
 
         await this.documentVersioningService.trackDocumentVersionChange(
           buildAllProductDocumentTrackInput({

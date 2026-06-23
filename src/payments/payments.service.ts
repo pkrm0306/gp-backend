@@ -41,6 +41,7 @@ import {
   isVendorPaymentProofEditable,
   PAYMENT_PROOF_APPROVED_LOCKED_MESSAGE,
   PAYMENT_PROOF_SUBMITTED_LOCKED_MESSAGE,
+  PAYMENT_REFERENCE_UNIQUE_MESSAGE,
 } from './payment-response.util';
 import {
   paymentStreamSubsectionKey,
@@ -477,6 +478,30 @@ export class PaymentsService {
       );
     }
     return reference;
+  }
+
+  private async assertPaymentReferenceNoUnique(
+    paymentReferenceNo: string,
+    excludePaymentId?: Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<void> {
+    const escaped = paymentReferenceNo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const filter: Record<string, unknown> = {
+      paymentReferenceNo: { $regex: `^${escaped}$`, $options: 'i' },
+    };
+    if (excludePaymentId) {
+      filter._id = { $ne: excludePaymentId };
+    }
+
+    let query = this.paymentDetailsModel.findOne(filter).select('_id').lean();
+    if (session) {
+      query = query.session(session);
+    }
+
+    const existing = await query.exec();
+    if (existing) {
+      throw new BadRequestException(PAYMENT_REFERENCE_UNIQUE_MESSAGE);
+    }
   }
 
   private validateVendorPaymentProofMutationAllowed(params: {
@@ -1164,6 +1189,17 @@ export class PaymentsService {
           }
         }
 
+        const normalizedPaymentReferenceNo = this.normalizePaymentReferenceNo(
+          createPaymentDto.paymentReferenceNo,
+        );
+        if (normalizedPaymentReferenceNo) {
+          await this.assertPaymentReferenceNoUnique(
+            normalizedPaymentReferenceNo,
+            undefined,
+            session,
+          );
+        }
+
         // Create payment data
         const paymentData = {
           paymentId,
@@ -1182,9 +1218,7 @@ export class PaymentsService {
             : {}),
           paymentMode: createPaymentDto.paymentMode,
           onlinePaymentId: createPaymentDto.onlinePaymentId || 0,
-          paymentReferenceNo: this.normalizePaymentReferenceNo(
-            createPaymentDto.paymentReferenceNo,
-          ),
+          paymentReferenceNo: normalizedPaymentReferenceNo,
           paymentChequeDate: createPaymentDto.paymentChequeDate
             ? new Date(createPaymentDto.paymentChequeDate)
             : undefined,
@@ -1580,10 +1614,19 @@ export class PaymentsService {
         updateData.paymentMode = updatePaymentDto.paymentMode;
       if (updatePaymentDto.onlinePaymentId !== undefined)
         updateData.onlinePaymentId = updatePaymentDto.onlinePaymentId;
-      if (updatePaymentDto.paymentReferenceNo !== undefined)
-        updateData.paymentReferenceNo = this.normalizePaymentReferenceNo(
+      if (updatePaymentDto.paymentReferenceNo !== undefined) {
+        const normalizedPaymentReferenceNo = this.normalizePaymentReferenceNo(
           updatePaymentDto.paymentReferenceNo,
         );
+        if (normalizedPaymentReferenceNo) {
+          await this.assertPaymentReferenceNoUnique(
+            normalizedPaymentReferenceNo,
+            existingPayment._id,
+            session,
+          );
+        }
+        updateData.paymentReferenceNo = normalizedPaymentReferenceNo;
+      }
       if (updatePaymentDto.paymentChequeDate !== undefined) {
         updateData.paymentChequeDate = updatePaymentDto.paymentChequeDate
           ? new Date(updatePaymentDto.paymentChequeDate)

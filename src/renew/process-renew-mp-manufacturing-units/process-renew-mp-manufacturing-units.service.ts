@@ -127,7 +127,7 @@ export class ProcessRenewMpManufacturingUnitsService {
   private resolveUnitId(dto: CreateProcessMpManufacturingUnitDto): number | undefined {
     const renewId = (dto as { processRenewMpManufacturingUnitId?: number })
       .processRenewMpManufacturingUnitId;
-    return dto.processMpManufacturingUnitId ?? renewId;
+    return renewId ?? dto.processMpManufacturingUnitId;
   }
 
   private buildUnitPayload(
@@ -137,10 +137,18 @@ export class ProcessRenewMpManufacturingUnitsService {
     const {
       processMpManufacturingUnitId: _mpId,
       urnNo: _urn,
+      renewalCycleId: _renewalCycleId,
+      renewal_cycle_id: _renewalCycleSnake,
       ...fields
-    } = dto;
+    } = dto as CreateProcessMpManufacturingUnitDto & {
+      processRenewMpManufacturingUnitId?: number;
+      renewalCycleId?: string;
+      renewal_cycle_id?: string;
+    };
+    const { processRenewMpManufacturingUnitId: _renewId, ...unitFields } =
+      fields as typeof fields & { processRenewMpManufacturingUnitId?: number };
     return {
-      ...fields,
+      ...unitFields,
       urnNo,
       offsiteRenewablePower: dto.offsiteRenewablePower ?? 0,
       processMpManufacturingUnitStatus: dto.processMpManufacturingUnitStatus ?? 0,
@@ -182,16 +190,13 @@ export class ProcessRenewMpManufacturingUnitsService {
               urnNo,
               vendorId: ownership.vendorId,
             },
-            { $set: { ...incomingPayload, updatedDate: now } },
+            { $set: { ...incomingPayload, renewalCycleId: renewalCycleObjectId, updatedDate: now } },
             { new: true },
           )
           .exec();
-        if (!updated) {
-          throw new BadRequestException(
-            `Renew manufacturing unit ${unitId} not found for URN ${urnNo}`,
-          );
+        if (updated) {
+          return this.formatRow(updated);
         }
-        return this.formatRow(updated);
       }
 
       const id = await this.sequenceHelper.getProcessRenewMpManufacturingUnitId();
@@ -207,15 +212,22 @@ export class ProcessRenewMpManufacturingUnitsService {
           incomingSignature,
       );
       if (duplicateRow) {
-        return this.formatRow(duplicateRow);
+        const updatedDuplicate = await this.model
+          .findOneAndUpdate(
+            { _id: duplicateRow._id },
+            { $set: { ...incomingPayload, renewalCycleId: renewalCycleObjectId, updatedDate: now } },
+            { new: true },
+          )
+          .exec();
+        return this.formatRow(updatedDuplicate ?? duplicateRow);
       }
 
       const doc = new this.model({
         processRenewMpManufacturingUnitId: id,
         vendorId: ownership.vendorId,
         manufacturerId: ownership.manufacturerId,
-        renewalCycleId: renewalCycleObjectId,
         ...incomingPayload,
+        renewalCycleId: renewalCycleObjectId,
         createdDate: now,
         updatedDate: now,
       });

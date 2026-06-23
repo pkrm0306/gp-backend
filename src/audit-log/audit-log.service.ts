@@ -10,6 +10,7 @@ import { QueryAuditLogDto } from './dto/query-audit-log.dto';
 import { AuditLookupResolver } from './audit-lookup-resolver.service';
 import { AuditValueTransformer } from './audit-value-transformer.service';
 import { auditModuleDisplayName } from './audit-friendlies';
+import { buildAuditActorUserFilter } from './audit-log-user-filter.util';
 
 type AuditLogRow = AuditLog & {
   old_values?: Record<string, unknown>;
@@ -164,7 +165,13 @@ export class AuditLogService {
             users: [
               {
                 $project: {
-                  user: {
+                  user_id: {
+                    $ifNull: [
+                      '$performed_by.user_id',
+                      '$actor.user_id',
+                    ],
+                  },
+                  user_label: {
                     $ifNull: [
                       '$performed_by.name',
                       {
@@ -182,8 +189,8 @@ export class AuditLogService {
                   },
                 },
               },
-              { $match: { user: { $type: 'string', $ne: '' } } },
-              { $group: { _id: '$user', count: { $sum: 1 } } },
+              { $match: { user_id: { $type: 'string', $ne: '' } } },
+              { $group: { _id: '$user_id', label: { $first: '$user_label' }, count: { $sum: 1 } } },
               { $sort: { count: -1, _id: 1 } },
               { $skip: skip },
               { $limit: limit },
@@ -200,7 +207,7 @@ export class AuditLogService {
       modules?: Array<{ _id: string; count: number }>;
       action_types?: Array<{ _id: string; count: number }>;
       actions?: Array<{ _id: string; count: number }>;
-      users?: Array<{ _id: string; count: number }>;
+      users?: Array<{ _id: string; label?: string; count: number }>;
       actionsTotal?: Array<{ count: number }>;
     }>;
 
@@ -211,7 +218,7 @@ export class AuditLogService {
       ),
       action_types: this.toOptions(result?.action_types ?? []),
       actions: this.toOptions(result?.actions ?? []),
-      users: this.toOptions(result?.users ?? []),
+      users: this.toUserFilterOptions(result?.users ?? []),
       pagination: {
         page,
         limit,
@@ -266,10 +273,10 @@ export class AuditLogService {
       filter.action_type = query.action_type;
     }
     if (query.actor_user_id) {
-      filter.$or = [
-        { 'actor.user_id': query.actor_user_id },
-        { 'performed_by.user_id': query.actor_user_id },
-      ];
+      const actorFilter = buildAuditActorUserFilter(query.actor_user_id);
+      if (actorFilter) {
+        Object.assign(filter, actorFilter);
+      }
     }
     if (query.resource_type) {
       filter['resource.type'] = query.resource_type;
@@ -287,6 +294,18 @@ export class AuditLogService {
     }
     filter.occurred_at = { $gte: from, $lte: to };
     return { filter, from, to };
+  }
+
+  private toUserFilterOptions(
+    rows: Array<{ _id: string; label?: string; count: number }>,
+  ): AuditFilterOption[] {
+    return rows
+      .filter((row) => typeof row._id === 'string' && row._id.trim() !== '')
+      .map((row) => ({
+        value: row._id,
+        label: String(row.label ?? row._id).trim() || row._id,
+        count: row.count,
+      }));
   }
 
   private toOptions(

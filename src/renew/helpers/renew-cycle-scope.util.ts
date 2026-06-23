@@ -112,13 +112,18 @@ export function buildRenewProcessHeaderFilter(
     return { urnNo: trimmed };
   }
   const cycleId = cycle._id;
+  const cycleIdStr = String(cycleId);
+  const cycleIdMatches = [
+    { renewalCycleId: cycleId },
+    { renewalCycleId: cycleIdStr },
+  ];
   if (Number(cycle.cycleNo) > 1) {
-    return { urnNo: trimmed, renewalCycleId: cycleId };
+    return { urnNo: trimmed, $or: cycleIdMatches };
   }
   return {
     urnNo: trimmed,
     $or: [
-      { renewalCycleId: cycleId },
+      ...cycleIdMatches,
       { renewalCycleId: null },
       { renewalCycleId: { $exists: false } },
     ],

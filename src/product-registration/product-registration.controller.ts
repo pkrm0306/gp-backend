@@ -21,6 +21,7 @@ import {
   getSchemaPath,
 } from '@nestjs/swagger';
 import { ProductRegistrationService } from './product-registration.service';
+import { buildVendorProductListPagination } from './helpers/vendor-product-list-pagination.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import {
@@ -273,9 +274,27 @@ export class ProductRegistrationController {
         listProductsDto,
         user.manufacturerId,
       );
+      const pagination =
+        result?.pagination ??
+        buildVendorProductListPagination({
+          page: listProductsDto.page ?? 1,
+          limit: listProductsDto.limit ?? 20,
+          totalCount: 0,
+        });
       return {
         message: 'EOI list fetched successfully',
-        data: result ?? { data: [], pagination: { page: 1, limit: 10, totalCount: 0, totalPages: 0 } },
+        data: result ?? {
+          data: [],
+          pagination,
+        },
+        pagination,
+        totalCount: pagination.totalCount,
+        totalPages: pagination.totalPages,
+        page: pagination.page,
+        limit: pagination.limit,
+        currentPage: pagination.currentPage,
+        hasMore: pagination.hasMore,
+        isLastPage: pagination.isLastPage,
       };
     } catch (error: any) {
       console.error('Controller error:', error);

@@ -21,7 +21,7 @@ describe('renew-cycle-scope.util', () => {
   it('strict process header filter for cycle 2+', () => {
     expect(buildRenewProcessHeaderFilter('URN-1', cycle as never)).toEqual({
       urnNo: 'URN-1',
-      renewalCycleId: cycleId,
+      $or: [{ renewalCycleId: cycleId }, { renewalCycleId: String(cycleId) }],
     });
   });
 

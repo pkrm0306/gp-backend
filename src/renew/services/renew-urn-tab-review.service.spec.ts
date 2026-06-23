@@ -15,13 +15,13 @@ describe('RenewUrnTabReviewService', () => {
       expect(actions.enableSubmitFinal).toBe(false);
     });
 
-    it('enables resend when all reviewed and all approved', () => {
+    it('disables resend when all reviewed and all approved', () => {
       const actions = service.buildQuickActions({
         allReviewed: true,
         allApproved: true,
         hasRejection: false,
       });
-      expect(actions.enableResend).toBe(true);
+      expect(actions.enableResend).toBe(false);
       expect(actions.enableSubmitFinal).toBe(true);
     });
 

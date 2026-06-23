@@ -9,7 +9,6 @@ export const ADMIN_PRODUCTS_EXPORT_EOI_HEADERS = [
   'Product Name',
   'Category Name',
   'Product Status Label',
-  'Created Date',
 ] as const;
 
 export const ADMIN_PRODUCTS_EXPORT_EOI_KEYS = [
@@ -21,10 +20,9 @@ export const ADMIN_PRODUCTS_EXPORT_EOI_KEYS = [
   'productName',
   'categoryName',
   'statusLabel',
-  'createdDate',
 ] as const;
 
-const ADMIN_PRODUCTS_EXPORT_EOI_WIDTHS = [30, 28, 18, 28, 24, 32, 24, 20, 24];
+const ADMIN_PRODUCTS_EXPORT_EOI_WIDTHS = [30, 28, 18, 28, 24, 32, 24, 20];
 
 function csvEscape(value: unknown): string {
   const s = value === null || value === undefined ? '' : String(value);
@@ -41,7 +39,6 @@ export function mapAdminProductsExportEoiRow(row: Record<string, unknown>) {
     productName: String(row.productName ?? ''),
     categoryName: String(row.categoryName ?? ''),
     statusLabel: String(row.statusLabel ?? ''),
-    createdDate: row.createdDate ? String(row.createdDate) : '',
   };
 }
 

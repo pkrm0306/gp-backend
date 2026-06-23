@@ -329,8 +329,8 @@ describe('AuditLogService', () => {
           { _id: AUDIT_ACTION.PAYMENT_UPDATED, count: 2 },
         ],
         users: [
-          { _id: 'Admin User', count: 3 },
-          { _id: 'vendor@example.com', count: 2 },
+          { _id: '507f1f77bcf86cd799439011', label: 'Admin User', count: 3 },
+          { _id: '507f1f77bcf86cd799439012', label: 'vendor@example.com', count: 2 },
         ],
         actionsTotal: [{ count: 4 }],
       },
@@ -355,7 +355,18 @@ describe('AuditLogService', () => {
       { value: 'reject', label: 'reject', count: 1 },
     ]);
     expect(result.actions).toHaveLength(2);
-    expect(result.users).toHaveLength(2);
+    expect(result.users).toEqual([
+      {
+        value: '507f1f77bcf86cd799439011',
+        label: 'Admin User',
+        count: 3,
+      },
+      {
+        value: '507f1f77bcf86cd799439012',
+        label: 'vendor@example.com',
+        count: 2,
+      },
+    ]);
     expect(result.pagination).toEqual({
       page: 2,
       limit: 2,
@@ -393,10 +404,12 @@ describe('AuditLogService', () => {
         module: 'product',
         action_type: 'update',
         'resource.urn_no': 'URN-1',
-        $or: [
+        $or: expect.arrayContaining([
           { 'actor.user_id': 'user-1' },
           { 'performed_by.user_id': 'user-1' },
-        ],
+          { 'performed_by.email': /^user-1$/i },
+          { 'performed_by.name': /^user-1$/i },
+        ]),
       }),
     });
     expect(pipeline[1].$facet.actions).toEqual(
@@ -502,6 +515,26 @@ describe('AuditLogService', () => {
         after: 'Completed',
       },
     });
+  });
+
+  it('filters audit list rows by actor user id, email, or display name', async () => {
+    auditFindExecMock.mockResolvedValueOnce([
+      {
+        action: AUDIT_ACTION.AUTH_LOGIN,
+        performed_by: { name: 'Prabhas Miraki', email: 'prabhas@example.com' },
+      },
+    ]);
+    execMock.mockResolvedValueOnce(1);
+
+    await service.list({ actor_user_id: 'Prabhas Miraki' });
+
+    const filter = auditFindMock.mock.calls[0][0];
+    expect(filter.$or).toEqual(
+      expect.arrayContaining([
+        { 'performed_by.name': /^Prabhas Miraki$/i },
+        { 'performed_by.email': /^Prabhas Miraki$/i },
+      ]),
+    );
   });
 
   it('resolves product references to names with deleted-product fallbacks in list output', async () => {

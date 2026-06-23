@@ -208,8 +208,16 @@ export class DocumentVersioningService {
 
   async getDocumentHistory(query: DocumentStreamQueryInput) {
     const stream = await this.findStreamOrThrow(query);
+
+    if (stream.isDeleted) {
+      return {
+        stream: this.mapStream(stream),
+        versions: [],
+      };
+    }
+
     const versions = await this.docVersionModel
-      .find({ streamId: stream._id })
+      .find({ streamId: stream._id, action: { $ne: 'deleted' } })
       .sort({ versionNo: -1 })
       .lean()
       .exec();
@@ -222,6 +230,10 @@ export class DocumentVersioningService {
 
   async getLatestDocumentMetadata(query: DocumentStreamQueryInput) {
     const stream = await this.findStreamOrThrow(query);
+
+    if (stream.isDeleted) {
+      throw new NotFoundException('Document stream has been deleted');
+    }
     const latestVersion = await this.docVersionModel
       .findOne({ streamId: stream._id, isLatest: true })
       .lean()

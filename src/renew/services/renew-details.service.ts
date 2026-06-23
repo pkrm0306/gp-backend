@@ -330,14 +330,8 @@ export class RenewDetailsService {
     ]);
 
     const unitFilter = buildRenewProcessHeaderFilter(urnNo, cycle);
-    const mpUnits =
-      strictDocs && !manufacturing
-        ? []
-        : await this.renewMpUnitModel.find(unitFilter).lean().exec();
-    const wmUnits =
-      strictDocs && !waste
-        ? []
-        : await this.renewWmUnitModel.find(unitFilter).lean().exec();
+    const mpUnits = await this.renewMpUnitModel.find(unitFilter).lean().exec();
+    const wmUnits = await this.renewWmUnitModel.find(unitFilter).lean().exec();
 
     const documentRows = allDocuments as Array<Record<string, unknown>>;
     const manufacturingSection = buildManufacturingSection(

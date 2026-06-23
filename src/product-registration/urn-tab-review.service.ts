@@ -25,6 +25,7 @@ import {
   URN_TAB_REVIEW_STATUS,
   VENDOR_RESUBMIT_URN_STATUS,
 } from './constants/urn-tab-review.constants';
+import { ADMIN_FINAL_SUBMIT_URN_STATUS } from './constants/category-change.constants';
 import {
   apiStepIdFromStored,
   buildRequiredReviewSlots,
@@ -155,6 +156,7 @@ export class UrnTabReviewService {
         reviews: [] as Array<Record<string, unknown>>,
         processTabs: {} as Record<string, VendorUrnTabReviewSlotDto>,
         rawMaterialSteps: {} as Record<string, VendorUrnTabReviewSlotDto>,
+        rejectedDocumentSlotKeys: [] as string[],
         summary: null,
         tabAccess,
       };
@@ -200,6 +202,7 @@ export class UrnTabReviewService {
       reviews,
       processTabs,
       rawMaterialSteps,
+      rejectedDocumentSlotKeys: [] as string[],
       summary: adminState.summary,
       tabAccess,
     };
@@ -211,6 +214,32 @@ export class UrnTabReviewService {
       urnNo: guidance.urnNo,
       urnStatus: Number(guidance.urnStatus ?? 0),
     });
+  }
+
+  /** Used by admin PATCH urn-status before 4→5 and 4→6. */
+  async assertAdminQuickViewTransitionAllowed(
+    urnNo: string,
+    targetStatus: number,
+  ): Promise<void> {
+    const adminState = await this.getUrnTabReviews(urnNo.trim());
+    const summary = adminState.summary;
+
+    if (targetStatus === VENDOR_RESUBMIT_URN_STATUS) {
+      if (!summary.allReviewed || !summary.hasRejection || summary.allApproved) {
+        throw new BadRequestException(
+          'Cannot resend to vendor until all sections are reviewed and at least one is rejected',
+        );
+      }
+      return;
+    }
+
+    if (targetStatus === ADMIN_FINAL_SUBMIT_URN_STATUS) {
+      if (!summary.allReviewed || !summary.allApproved) {
+        throw new BadRequestException(
+          'Cannot submit for final review until all process sections are approved',
+        );
+      }
+    }
   }
 
   async getUrnTabReviews(urnNo: string, renewalCycleId?: string) {
@@ -439,8 +468,9 @@ export class UrnTabReviewService {
     allApproved: boolean;
     hasRejection: boolean;
   }) {
-    const enableResend = summary.allReviewed && summary.hasRejection;
-    const enableSubmitFinal = summary.allApproved;
+    const enableResend =
+      summary.allReviewed && summary.hasRejection && !summary.allApproved;
+    const enableSubmitFinal = summary.allReviewed && summary.allApproved;
     return {
       disableBoth: !summary.allReviewed,
       enableResend,

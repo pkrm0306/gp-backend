@@ -261,12 +261,9 @@ export class RenewUrnTabReviewService {
     }
 
     if (targetStatus === RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING) {
-      const canResend =
-        summary.allReviewed &&
-        (summary.hasRejection || summary.allApproved);
-      if (!canResend) {
+      if (!summary.allReviewed || !summary.hasRejection || summary.allApproved) {
         throw new BadRequestException(
-          'Cannot resend to vendor until all sections are reviewed and at least one is rejected, or all are approved',
+          'Cannot resend to vendor until all sections are reviewed and at least one is rejected',
         );
       }
     }
@@ -307,6 +304,8 @@ export class RenewUrnTabReviewService {
         restrictSaveAndNext: false,
         reviews: [] as Array<Record<string, unknown>>,
         processTabs: {} as Record<string, unknown>,
+        rawMaterialSteps: {} as Record<string, unknown>,
+        rejectedDocumentSlotKeys: [] as string[],
         summary: null,
       };
     }
@@ -340,6 +339,8 @@ export class RenewUrnTabReviewService {
       restrictSaveAndNext: true,
       reviews,
       processTabs,
+      rawMaterialSteps: {} as Record<string, unknown>,
+      rejectedDocumentSlotKeys: [] as string[],
       summary: adminState.summary,
     };
   }
@@ -421,8 +422,8 @@ export class RenewUrnTabReviewService {
     hasRejection: boolean;
   }) {
     const enableResend =
-      summary.allReviewed && (summary.hasRejection || summary.allApproved);
-    const enableSubmitFinal = summary.allApproved;
+      summary.allReviewed && summary.hasRejection && !summary.allApproved;
+    const enableSubmitFinal = summary.allReviewed && summary.allApproved;
     return {
       disableBoth: !summary.allReviewed,
       enableResend,

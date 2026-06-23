@@ -47,7 +47,7 @@ export class QueryAuditLogDto {
 
   @ApiPropertyOptional({
     description:
-      'Filter by user id (matches actor.user_id or performed_by.user_id)',
+      'Filter by user id, email, or display name (matches actor.user_id, performed_by.user_id, performed_by.email, or performed_by.name)',
   })
   @IsOptional()
   @IsString()

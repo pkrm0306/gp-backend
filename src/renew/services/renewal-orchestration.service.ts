@@ -847,11 +847,14 @@ export class RenewalOrchestrationService {
         },
       );
 
-      if (renewalCycleId?.trim()) {
+      if (renewalCycleId?.trim() || completedCycle?._id) {
+        const promotionCycleId = renewalCycleId?.trim()
+          ? renewalCycleId.trim()
+          : String(completedCycle._id);
         try {
           await this.renewDocumentPromotionService.promoteRenewDocumentsForCompletedCycle(
             trimmedUrn,
-            renewalCycleId.trim(),
+            promotionCycleId,
             userObjectId,
           );
         } catch (promotionError) {

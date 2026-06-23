@@ -120,9 +120,12 @@ import {
   getRenewalUrnStatusLabel,
   isRenewalUrnStatus,
 } from '../renew/constants/renewal-urn-status.constants';
-import { ADMIN_REVIEW_URN_STATUS } from './constants/urn-tab-review.constants';
-import { CATEGORY_CHANGE_CERTIFIED_MESSAGE } from './constants/category-change.constants';
-import { CATEGORY_CHANGE_LOCKED_MIN_URN_STATUS } from './constants/category-change.constants';
+import { ADMIN_REVIEW_URN_STATUS, VENDOR_RESUBMIT_URN_STATUS } from './constants/urn-tab-review.constants';
+import {
+  ADMIN_FINAL_SUBMIT_URN_STATUS,
+  CATEGORY_CHANGE_CERTIFIED_MESSAGE,
+  CATEGORY_CHANGE_LOCKED_MIN_URN_STATUS,
+} from './constants/category-change.constants';
 import {
   categoryObjectIdsEqual,
   formatCategoryWithRawMaterialVisibility,
@@ -136,6 +139,7 @@ import {
   visibleStepsForCategory,
 } from './helpers/category-change.util';
 import { CategoryChangeCleanupService } from './services/category-change-cleanup.service';
+import { buildVendorProductListPagination } from './helpers/vendor-product-list-pagination.util';
 
 export type GetProductDetailsByUrnOptions = {
   /** Only certified EOIs (renewal flows). Excludes rejected and other statuses. */
@@ -438,7 +442,7 @@ export class ProductRegistrationService {
         .trim()
         .toLowerCase(),
       sort: listProductsDto.sort === 'asc' ? 'asc' : 'desc',
-      v: 6,
+      v: 7,
     };
     return this.redisService.buildKey(
       'products',
@@ -1675,6 +1679,95 @@ export class ProductRegistrationService {
     };
   }
 
+  private formatUrnProductDetailsListEntry(
+    product: Record<string, unknown>,
+    context: {
+      urnStatuses: number[];
+      anyCertifiedOnUrn: boolean;
+      categoryDoc?: Record<string, unknown> | null;
+    },
+  ): Record<string, unknown> {
+    const productStatus = Number(product.productStatus ?? 0);
+    const categoryDoc = context.categoryDoc ?? null;
+    const categoryEditable = isProductCategoryEditableForUrn({
+      productStatus,
+      urnStatuses: context.urnStatuses,
+      anyProductCertified: context.anyCertifiedOnUrn,
+    });
+    const categoryChangeBlockReason = resolveCategoryChangeBlockReasonForUrn({
+      productStatus,
+      urnStatuses: context.urnStatuses,
+      anyProductCertified: context.anyCertifiedOnUrn,
+    });
+    const visibleRawMaterialSteps = visibleStepsForCategory(
+      String(categoryDoc?.category_raw_material_forms ?? '').trim() || null,
+    );
+
+    return {
+      _id: product._id,
+      productId: product.productId,
+      eoiNo: product.eoiNo,
+      urnNo: product.urnNo,
+      productName: product.productName,
+      productImage: product.productImage,
+      plantCount: product.plantCount,
+      categoryId: product.categoryId ?? categoryDoc?._id ?? null,
+      productDetails: product.productDetails,
+      productType: product.productType,
+      productStatus: product.productStatus,
+      productRenewStatus: product.productRenewStatus,
+      renewedDate: product.renewedDate,
+      urnStatus: product.urnStatus,
+      assessmentReportUrl: product.assessmentReportUrl,
+      rejectedDetails: product.rejectedDetails,
+      certifiedDate: product.certifiedDate,
+      validtillDate: product.validtillDate,
+      firstNotifyDate: product.firstNotifyDate,
+      secondNotifyDate: product.secondNotifyDate,
+      thirdNotifyDate: product.thirdNotifyDate,
+      createdDate: product.createdDate,
+      updatedDate: product.updatedDate,
+      categoryEditable,
+      categoryChangeBlockReason,
+      visibleRawMaterialSteps,
+    };
+  }
+
+  private async buildUrnProductDetailsList(
+    products: Array<Record<string, unknown>>,
+    context: {
+      urnStatuses: number[];
+      anyCertifiedOnUrn: boolean;
+    },
+  ): Promise<Array<Record<string, unknown>>> {
+    const categoryIds = [
+      ...new Set(
+        products
+          .map((product) => String(product.categoryId ?? '').trim())
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ].map((id) => new Types.ObjectId(id));
+
+    const categories =
+      categoryIds.length > 0
+        ? await this.categoryModel
+            .find({ _id: { $in: categoryIds } })
+            .lean()
+            .exec()
+        : [];
+    const categoryById = new Map(
+      categories.map((category) => [String(category._id), category]),
+    );
+
+    return products.map((product) =>
+      this.formatUrnProductDetailsListEntry(product, {
+        ...context,
+        categoryDoc:
+          categoryById.get(String(product.categoryId ?? '')) ?? null,
+      }),
+    );
+  }
+
   /**
    * Vendor uncertified EOI list — filters on **`products.productStatus`** (EOI list status), not manufacturer/vendor status.
    * When `statuses` is omitted or empty, defaults to **Pending (0) + Submitted (1)** only.
@@ -1763,7 +1856,6 @@ export class ProductRegistrationService {
       'Email',
       'Phone',
       'URN',
-      'Created Date',
       'URN Status',
       'Total EOI',
     ];
@@ -1773,11 +1865,10 @@ export class ProductRegistrationService {
       'email',
       'phone',
       'urnNo',
-      'createdDate',
       'urnStatus',
       'totalEoi',
     ];
-    const widths = [8, 28, 28, 18, 28, 24, 16, 12];
+    const widths = [8, 28, 28, 18, 28, 16, 12];
 
     ws.columns = keys.map((key, index) => ({
       header: headers[index],
@@ -2402,7 +2493,20 @@ export class ProductRegistrationService {
           'products',
         );
         await this.invalidateProductListingsCache();
-        return results;
+        return {
+          urnNo,
+          registeredCount: results.length,
+          products: results.map((row) => ({
+            _id: row._id,
+            productId: row.productId,
+            productName: row.productName,
+            eoiNo: row.eoiNo,
+            urnNo: row.urnNo,
+            plantCount:
+              Number(row.plantCount ?? 0) ||
+              (Array.isArray(row.plants) ? row.plants.length : 0),
+          })),
+        };
       } catch (error: any) {
         if (committedAny) {
           try {
@@ -2522,6 +2626,8 @@ export class ProductRegistrationService {
       const results: Array<
         Record<string, unknown> & { plants: Record<string, unknown>[] }
       > = [];
+      const validatedCountryIds = new Set<string>();
+      const validatedStateKeys = new Set<string>();
 
       for (let i = 0; i < params.chunk.length; i++) {
         const registerProductDto = params.chunk[i];
@@ -2573,12 +2679,20 @@ export class ProductRegistrationService {
             plantDto.countryId,
             'countryId',
           );
-          await this.validateCountry(plantDto.countryId);
+          const countryIdKey = String(plantCountryObjectId);
+          if (!validatedCountryIds.has(countryIdKey)) {
+            await this.validateCountry(plantDto.countryId);
+            validatedCountryIds.add(countryIdKey);
+          }
           const plantStateObjectId = this.toObjectId(
             plantDto.stateId,
             'stateId',
           );
-          await this.validateState(plantDto.stateId, plantDto.countryId);
+          const stateKey = `${countryIdKey}:${String(plantStateObjectId)}`;
+          if (!validatedStateKeys.has(stateKey)) {
+            await this.validateState(plantDto.stateId, plantDto.countryId);
+            validatedStateKeys.add(stateKey);
+          }
 
           const plantData = {
             productPlantId,
@@ -4679,6 +4793,20 @@ export class ProductRegistrationService {
     const previousUrnStatus = Number(products[0].urnStatus ?? 0);
     const sampleProductName = String(products[0].productName ?? '').trim();
 
+    if (dto.updateStatusType === 'urn_status') {
+      if (dto.updateStatusTo === VENDOR_RESUBMIT_URN_STATUS) {
+        await this.urnTabReviewService.assertAdminQuickViewTransitionAllowed(
+          urnNo,
+          dto.updateStatusTo,
+        );
+      } else if (dto.updateStatusTo === ADMIN_FINAL_SUBMIT_URN_STATUS) {
+        await this.urnTabReviewService.assertAdminQuickViewTransitionAllowed(
+          urnNo,
+          dto.updateStatusTo,
+        );
+      }
+    }
+
     const setDoc: Record<string, unknown> = { updatedDate: now };
     const updateFilter: Record<string, unknown> = { urnNo };
     if (dto.updateStatusType === 'urn_status') {
@@ -4859,12 +4987,7 @@ export class ProductRegistrationService {
       try {
         const cached = await this.redisService.get<{
           data: any[];
-          pagination: {
-            page: number;
-            limit: number;
-            totalCount: number;
-            totalPages: number;
-          };
+          pagination: ReturnType<typeof buildVendorProductListPagination>;
         }>(cacheKey);
         if (cached && Array.isArray(cached.data) && cached.pagination) {
           return cached;
@@ -4876,8 +4999,8 @@ export class ProductRegistrationService {
       }
 
       const {
-        page = 1,
-        limit = 20,
+        page: requestedPage = 1,
+        limit: requestedLimit = 20,
         search,
         sort = 'desc',
         categoryId,
@@ -4885,11 +5008,11 @@ export class ProductRegistrationService {
         dateTo,
       } = listProductsDto;
 
+      const limit = Math.min(100, Math.max(1, Number(requestedLimit) || 20));
+
       const resolvedStatuses = this.resolveVendorListProductStatuses(listProductsDto);
       const statusMatch = this.buildVendorListProductStatusMatch(resolvedStatuses);
 
-      const skip = (page - 1) * limit;
-      const sortOrder = sort === 'asc' ? 1 : -1;
       const vendorObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
 
       const nativeMatch: Record<string, unknown> = {
@@ -4921,12 +5044,11 @@ export class ProductRegistrationService {
         if (locationProductIds.length === 0) {
           const emptyResponse = {
             data: [],
-            pagination: {
-              page,
+            pagination: buildVendorProductListPagination({
+              page: requestedPage,
               limit,
               totalCount: 0,
-              totalPages: 0,
-            },
+            }),
           };
           this.redisService
             .set(cacheKey, emptyResponse, this.getProductListCacheTtlSeconds())
@@ -4981,6 +5103,7 @@ export class ProductRegistrationService {
       }
 
       const rowBase: any[] = [...basePipeline];
+      const sortOrder = sort === 'asc' ? 1 : -1;
 
       const urnSummaryPipeline: any[] = [
         ...rowBase,
@@ -5020,10 +5143,34 @@ export class ProductRegistrationService {
         });
       }
 
+
+      const totalUrnPipeline = [...urnSummaryPipeline, { $count: 'count' }];
+
+      const countFacetResult = await this.productModel
+        .aggregate([
+          {
+            $facet: {
+              totalCount: totalUrnPipeline,
+            },
+          },
+        ])
+        .allowDiskUse(true)
+        .option({ maxTimeMS: 120_000 })
+        .exec();
+
+      const totalCount =
+        countFacetResult[0]?.totalCount?.[0]?.count ?? 0;
+      const pagination = buildVendorProductListPagination({
+        page: requestedPage,
+        limit,
+        totalCount,
+      });
+      const skip = (pagination.page - 1) * pagination.limit;
+
       const urnDataPipeline = [
         ...urnSummaryPipeline,
         { $skip: skip },
-        { $limit: limit },
+        { $limit: pagination.limit },
         {
           $lookup: {
             from: 'products',
@@ -5155,22 +5302,19 @@ export class ProductRegistrationService {
         },
       ];
 
-      const totalUrnPipeline = [...urnSummaryPipeline, { $count: 'count' }];
-
-      const facetResult = await this.productModel
+      const dataFacetResult = await this.productModel
         .aggregate([
           {
             $facet: {
               data: urnDataPipeline,
-              totalCount: totalUrnPipeline,
             },
           },
         ])
+        .allowDiskUse(true)
+        .option({ maxTimeMS: 120_000 })
         .exec();
 
-      const payload = facetResult[0] ?? { data: [], totalCount: [] };
-      const totalCount = payload.totalCount?.[0]?.count ?? 0;
-      const totalPages = limit > 0 ? Math.ceil(totalCount / limit) : 0;
+      const payload = dataFacetResult[0] ?? { data: [] };
 
       const grouped = (payload.data ?? []).map((u: Record<string, unknown>) => {
         const urnStatusCode = this.deriveVendorUrnStatus(
@@ -5194,12 +5338,7 @@ export class ProductRegistrationService {
 
       const response = {
         data: grouped,
-        pagination: {
-          page,
-          limit,
-          totalCount,
-          totalPages,
-        },
+        pagination,
       };
 
       this.redisService
@@ -5541,14 +5680,42 @@ export class ProductRegistrationService {
       const renewEligibleOnly = options?.renewEligibleOnly === true;
       const enrichPlantsWithGeo = options?.enrichPlantsWithGeo === true;
       const excludeExpired = options?.excludeExpired === true;
+      const trimmedUrnNo = urnNo.trim();
+
+      const urnProductMatch: Record<string, unknown> = {
+        urnNo: trimmedUrnNo,
+        ...(renewEligibleOnly
+          ? {
+              ...matchActiveProducts(),
+              productStatus: PRODUCT_STATUS_CERTIFIED,
+            }
+          : matchActiveProducts()),
+        ...(excludeExpired ? { $nor: [matchExpiredProducts()] } : {}),
+      };
+
+      const urnProductSummaries = await this.productModel
+        .find(urnProductMatch)
+        .select(
+          '_id productId eoiNo urnNo productName productImage plantCount categoryId productDetails productType productStatus productRenewStatus urnStatus assessmentReportUrl rejectedDetails certifiedDate validtillDate firstNotifyDate secondNotifyDate thirdNotifyDate renewedDate createdDate updatedDate',
+        )
+        .sort({ createdDate: 1 })
+        .lean()
+        .exec();
+
+      if (urnProductSummaries.length === 0) {
+        throw new NotFoundException(`No products found with URN: ${urnNo}`);
+      }
+
+      const primaryProductId = urnProductSummaries[0]._id;
 
       // Aggregation pipeline
       const pipeline: any[] = [];
 
-      // Stage 1: $match - Filter by urnNo (active products; optional certified-only for renew)
+      // Stage 1: enrich only the primary EOI row; shared URN data is attached once below.
       pipeline.push({
         $match: {
-          urnNo: urnNo.trim(),
+          _id: primaryProductId,
+          urnNo: trimmedUrnNo,
           ...(renewEligibleOnly
             ? {
                 ...matchActiveProducts(),
@@ -7458,13 +7625,22 @@ export class ProductRegistrationService {
       });
 
       const siteVisits = await this.urnSiteVisitsService.findAllByUrnForEmbed(
-        urnNo.trim(),
+        trimmedUrnNo,
+      );
+
+      const productDetailsList = await this.buildUrnProductDetailsList(
+        urnProductSummaries as Array<Record<string, unknown>>,
+        {
+          urnStatuses,
+          anyCertifiedOnUrn: anyCertifiedOnUrn,
+        },
       );
 
       return enrichUrnDetailRowsWithSharedProcessData(
         formattedResults.map((row) => ({
           ...row,
           siteVisits,
+          product_details_list: productDetailsList,
         })),
       );
     } catch (error: any) {
@@ -8828,7 +9004,6 @@ export class ProductRegistrationService {
               email: u.email ?? u.vendor_email ?? '',
               phone: u.phone ?? u.vendor_phone ?? '',
               urnNo: u.urnNo ?? u.urn_number,
-              createdDate: u.createdDate ?? u.created_at,
               urnStatus: u.urnStatus ?? u.status,
               totalEoi: u.totalEoi ?? u.total_eoi,
             });

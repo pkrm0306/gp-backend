@@ -113,12 +113,18 @@ export class ProcessRenewWmManufacturingUnitsService {
         processWmManufacturingUnitId: _wmId,
         processWasteManagementId: _wasteId,
         urnNo: _urn,
+        renewalCycleId: _renewalCycleId,
+        renewal_cycle_id: _renewalCycleSnake,
         ...fieldUpdates
-      } = dto;
+      } = dto as CreateProcessWmManufacturingUnitDto & {
+        renewalCycleId?: string;
+        renewal_cycle_id?: string;
+      };
 
       const setFields: Record<string, unknown> = {
         ...fieldUpdates,
         urnNo,
+        renewalCycleId: renewalCycleObjectId,
         updatedDate: now,
       };
       if (processRenewWasteManagementId != null) {
@@ -147,9 +153,9 @@ export class ProcessRenewWmManufacturingUnitsService {
         processRenewWmManufacturingUnitId: id,
         vendorId: ownership.vendorId,
         manufacturerId: ownership.manufacturerId,
-        renewalCycleId: renewalCycleObjectId,
         processRenewWasteManagementId,
         ...setFields,
+        renewalCycleId: renewalCycleObjectId,
         createdDate: now,
       });
 
