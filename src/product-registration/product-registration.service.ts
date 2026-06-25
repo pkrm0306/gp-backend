@@ -75,13 +75,6 @@ import {
 import { formatPaymentRecordsForUrnDetails } from '../payments/payment-response.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { enrichUrnDetailRowsWithSharedProcessData } from './utils/consolidate-urn-detail-items.util';
-import { collectUrnScopedProductPerformanceDocuments } from './utils/urn-product-performance-documents.util';
-import {
-  collectUrnScopedInnovationProcessDocuments,
-  collectUrnScopedManufacturingProcessDocuments,
-  collectUrnScopedWasteManagementProcessDocuments,
-  formatUrnProcessDocumentForResponse,
-} from './utils/urn-renew-process-documents.util';
 import {
   filterFormaldehydeStyleProductsForVendorDisplay,
   filterHazardousProductsForVendorDisplay,
@@ -106,6 +99,7 @@ import {
   productNameEqualsFilter,
 } from './helpers/product-name-uniqueness.util';
 import { enrichMpManufacturingUnitCalculations } from '../process-mp-manufacturing-units/utils/mp-energy-consumption-calculations.util';
+import { buildManufacturingWeightedTotals } from '../process-mp-manufacturing-units/utils/mp-manufacturing-weighted-totals.util';
 import { enrichWmManufacturingUnitCalculations } from '../process-wm-manufacturing-units/utils/wm-waste-disposal-calculations.util';
 import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
@@ -2630,44 +2624,35 @@ export class ProductRegistrationService {
     session.startTransaction({ maxCommitTimeMS: params.maxCommitTimeMS });
 
     try {
-      const now = new Date();
+      const results: Array<
+        Record<string, unknown> & { plants: Record<string, unknown>[] }
+      > = [];
       const validatedCountryIds = new Set<string>();
       const validatedStateKeys = new Set<string>();
-      const chunk = params.chunk;
-      const totalPlants = chunk.reduce(
-        (sum, product) => sum + product.plants.length,
-        0,
-      );
 
-      const [productIds, plantIds] = await Promise.all([
-        this.sequenceHelper.reserveSequenceValues('product_id', chunk.length),
-        this.sequenceHelper.reserveSequenceValues(
-          'product_plant_id',
-          totalPlants,
-        ),
-      ]);
-
-      const productDocs: Array<Record<string, unknown>> = [];
-      const eoiNumbers: string[] = [];
-
-      for (let i = 0; i < chunk.length; i++) {
-        const registerProductDto = chunk[i];
+      for (let i = 0; i < params.chunk.length; i++) {
+        const registerProductDto = params.chunk[i];
         const globalIndex = params.chunkStartIndex + i;
         const manufacturerProductCount =
           params.initialMaxActiveSequence + globalIndex + 1;
+
         const eoiNo = buildEoiNoFromManufacturerProfile(
           params.manufacturerProfile,
           manufacturerProductCount,
         );
-        eoiNumbers.push(eoiNo);
+        console.log(
+          `[Bulk Product Registration] Product ${globalIndex + 1}/${params.totalProducts} - EOI: ${eoiNo}, Manufacturer Product Count: ${manufacturerProductCount}`,
+        );
 
+        const productId = await this.sequenceHelper.getProductId();
+        const now = new Date();
         const categoryObjectId = this.toObjectId(
           registerProductDto.categoryId,
           'categoryId',
         );
 
-        productDocs.push({
-          productId: productIds[i],
+        const productData = {
+          productId,
           categoryId: categoryObjectId,
           vendorId: params.vendorObjectId,
           manufacturerId: params.manufacturerObjectId,
@@ -2683,26 +2668,14 @@ export class ProductRegistrationService {
           urnStatus: 0,
           createdDate: now,
           updatedDate: now,
-        });
-      }
+        };
 
-      const insertedProducts = await this.productModel.insertMany(productDocs, {
-        session,
-      });
+        const product = new this.productModel(productData);
+        const savedProduct = await product.save({ session });
 
-      const plantDocs: Array<Record<string, unknown>> = [];
-      let plantIdIndex = 0;
-
-      for (let i = 0; i < chunk.length; i++) {
-        const registerProductDto = chunk[i];
-        const savedProduct = insertedProducts[i];
-        const categoryObjectId = this.toObjectId(
-          registerProductDto.categoryId,
-          'categoryId',
-        );
-        const eoiNo = eoiNumbers[i];
-
+        const plants = [];
         for (const plantDto of registerProductDto.plants) {
+          const productPlantId = await this.sequenceHelper.getProductPlantId();
           const plantCountryObjectId = this.toObjectId(
             plantDto.countryId,
             'countryId',
@@ -2722,8 +2695,8 @@ export class ProductRegistrationService {
             validatedStateKeys.add(stateKey);
           }
 
-          plantDocs.push({
-            productPlantId: plantIds[plantIdIndex],
+          const plantData = {
+            productPlantId,
             productId: savedProduct._id,
             vendorId: params.vendorObjectId,
             categoryId: categoryObjectId,
@@ -2737,27 +2710,18 @@ export class ProductRegistrationService {
             city: plantDto.city,
             plantStatus: 1,
             createdDate: now,
-          });
-          plantIdIndex += 1;
+          };
+
+          const plant = new this.productPlantModel(plantData);
+          const savedPlant = await plant.save({ session });
+          plants.push(savedPlant);
         }
+
+        results.push({
+          ...savedProduct.toObject(),
+          plants: plants.map((p) => p.toObject()),
+        });
       }
-
-      const insertedPlants = plantDocs.length
-        ? await this.productPlantModel.insertMany(plantDocs, { session })
-        : [];
-
-      const plantsByProductId = new Map<string, Record<string, unknown>[]>();
-      for (const plant of insertedPlants) {
-        const key = String(plant.productId);
-        const bucket = plantsByProductId.get(key) ?? [];
-        bucket.push(plant.toObject() as unknown as Record<string, unknown>);
-        plantsByProductId.set(key, bucket);
-      }
-
-      const results = insertedProducts.map((savedProduct) => ({
-        ...savedProduct.toObject(),
-        plants: plantsByProductId.get(String(savedProduct._id)) ?? [],
-      }));
 
       await session.commitTransaction();
       return results;
@@ -4533,7 +4497,6 @@ export class ProductRegistrationService {
           key: 'reason',
           label: 'Reason',
           required: true,
-          maxLength: 2000,
         },
       ],
       validationMessages: {
@@ -6884,8 +6847,8 @@ export class ProductRegistrationService {
             Record<string, unknown>
           >,
         ),
-        product_performance_documents: collectUrnScopedProductPerformanceDocuments(
-          product as Record<string, unknown>,
+        product_performance_documents: (
+          product.product_performance_documents || []
         ).map((d) => ({
           _id: d._id,
           productDocumentId: d.productDocumentId,
@@ -7276,6 +7239,28 @@ export class ProductRegistrationService {
               updatedDate: product.process_manufacturing.updatedDate,
             }
           : null,
+        process_manufacturing_documents: (
+          product.process_manufacturing_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
+        ...(() => {
+          const processMpManufacturingUnits = (
+            product.process_mp_manufacturing_units || []
+          ).map((u) =>
+            enrichMpManufacturingUnitCalculations({
         process_manufacturing_documents: collectUrnScopedManufacturingProcessDocuments(
           product as Record<string, unknown>,
         ).map((d) => formatUrnProcessDocumentForResponse(d)),
@@ -7354,7 +7339,16 @@ export class ProductRegistrationService {
             u.detailsOfRainWaterHarvestingMpUnits,
           createdDate: u.createdDate,
           updatedDate: u.updatedDate,
-        })),
+        }),
+          );
+          const manufacturingWeightedTotals =
+            buildManufacturingWeightedTotals(processMpManufacturingUnits);
+          return {
+            process_mp_manufacturing_units: processMpManufacturingUnits,
+            manufacturing_weighted_totals: manufacturingWeightedTotals,
+            manufacturingWeightedTotals,
+          };
+        })(),
         process_waste_management: product.process_waste_management
           ? {
               _id: product.process_waste_management._id,
@@ -7374,9 +7368,23 @@ export class ProductRegistrationService {
               updatedDate: product.process_waste_management.updatedDate,
             }
           : null,
-        process_waste_management_documents: collectUrnScopedWasteManagementProcessDocuments(
-          product as Record<string, unknown>,
-        ).map((d) => formatUrnProcessDocumentForResponse(d)),
+        process_waste_management_documents: (
+          product.process_waste_management_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         process_wm_manufacturing_units: (
           product.process_wm_manufacturing_units || []
         ).map((u) =>
@@ -7410,6 +7418,10 @@ export class ProductRegistrationService {
             nonHazardousWasteWaterYear2: u.nonHazardousWasteWaterYear2,
             nonHazardousWasteWaterYear3: u.nonHazardousWasteWaterYear3,
             wmImplementationDetailsWmUnits: u.wmImplementationDetailsWmUnits,
+            calculateBulkRshwd: u.calculateBulkRshwd,
+            calculateBulkRsnhwd: u.calculateBulkRsnhwd,
+            calculateBulkRshwdMultipled: u.calculateBulkRshwdMultipled,
+            calculateBulkRsnhwdMultipled: u.calculateBulkRsnhwdMultipled,
             createdDate: u.createdDate,
             updatedDate: u.updatedDate,
           }),
@@ -7547,9 +7559,24 @@ export class ProductRegistrationService {
               updatedDate: product.process_innovation.updatedDate,
             }
           : null,
-        process_innovation_documents: collectUrnScopedInnovationProcessDocuments(
-          product as Record<string, unknown>,
-        ).map((d) => formatUrnProcessDocumentForResponse(d)),
+        process_innovation_documents: (
+          product.process_innovation_documents || []
+        ).map((d) => ({
+          _id: d._id,
+          productDocumentId: d.productDocumentId,
+          vendorId: d.vendorId,
+          urnNo: d.urnNo,
+          eoiNo: d.eoiNo,
+          documentForm: d.documentForm,
+          documentFormSubsection: d.documentFormSubsection,
+          formPrimaryId: d.formPrimaryId,
+          documentName: d.documentName,
+          documentOriginalName: d.documentOriginalName,
+          documentLink: d.documentLink,
+          documentTag: d.documentTag,
+          createdDate: d.createdDate,
+          updatedDate: d.updatedDate,
+        })),
         all_urn_product_documents: (product.all_urn_product_documents || []).map(
           (d) => ({
             _id: d._id,
@@ -7630,16 +7657,11 @@ export class ProductRegistrationService {
         },
       );
 
-      const urnPlants = await this.listProductPlantsWithGeoForUrn(trimmedUrnNo);
-
       return enrichUrnDetailRowsWithSharedProcessData(
         formattedResults.map((row) => ({
           ...row,
           siteVisits,
           product_details_list: productDetailsList,
-          ...(urnPlants.length > 0
-            ? { plants: urnPlants, plant_details: urnPlants }
-            : {}),
         })),
       );
     } catch (error: any) {

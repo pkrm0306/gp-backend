@@ -4,7 +4,7 @@ import {
 } from './wm-waste-disposal-calculations.util';
 
 describe('wm-waste-disposal-calculations', () => {
-  it('computes hazardous row 4 using rounded row 3 values (14.13, not 14.29)', () => {
+  it('computes hazardous row 4 with vendor-style year fallback', () => {
     const derived = computeWmWasteDisposalDerivedFields({
       hazardousWasteProductionYear1: 12,
       hazardousWasteProductionYear2: 13,
@@ -14,8 +14,8 @@ describe('wm-waste-disposal-calculations', () => {
       hazardousWasteQuantityYear3: 34,
     });
 
-    expect(derived.calculateBulkRshwdMultipled).toBe('2.83,1.77,2.43');
     expect(derived.calculateBulkRshwd).toBe(14.13);
+    expect(derived.calculateBulkRshwdMultipled).toBe('197.82');
   });
 
   it('enriches unit with wasteDisposalDetails', () => {
@@ -49,5 +49,18 @@ describe('wm-waste-disposal-calculations', () => {
         year3: null,
       },
     });
+  });
+
+  it('keeps persisted vendor bulk fields on enrich', () => {
+    const enriched = enrichWmManufacturingUnitCalculations({
+      hazardousWasteProductionYear3: 14,
+      hazardousWasteQuantityYear1: 15,
+      hazardousWasteQuantityYear3: 17,
+      calculateBulkRshwd: 3.1428571428571,
+      calculateBulkRshwdMultipled: '44',
+    }) as Record<string, unknown>;
+
+    expect(enriched.calculateBulkRshwd).toBe(3.1428571428571);
+    expect(enriched.calculateBulkRshwdMultipled).toBe('44');
   });
 });

@@ -6,6 +6,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ProductRegistrationService } from '../../product-registration/product-registration.service';
+import { buildManufacturingWeightedTotals } from '../../process-mp-manufacturing-units/utils/mp-manufacturing-weighted-totals.util';
 import { enrichUrnDetailRowsWithSharedProcessData } from '../../product-registration/utils/consolidate-urn-detail-items.util';
 import {
   ProcessRenewManufacturing,
@@ -461,12 +462,18 @@ export class RenewDetailsService {
       return rest;
     });
 
+    const renewManufacturingWeightedTotals = buildManufacturingWeightedTotals(
+      renewMpUnits as Array<Record<string, unknown>>,
+    );
+
     const mergedRows = baseRowsWithoutCertUnits.map((row) => ({
       ...row,
       ...RENEW_CLEARED_CERT_SECTIONS,
       ...bundle.processSections,
       process_mp_manufacturing_units: renewMpUnits,
       process_wm_manufacturing_units: renewWmUnits,
+      manufacturing_weighted_totals: renewManufacturingWeightedTotals,
+      manufacturingWeightedTotals: renewManufacturingWeightedTotals,
     }));
 
     const enriched = enrichUrnDetailRowsWithSharedProcessData(

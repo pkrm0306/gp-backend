@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   forwardRef,
   Inject,
@@ -31,6 +32,7 @@ import {
   buildRequiredReviewSlots,
   isProcessTabKey,
   normalizeReviewStepId,
+  isTabReviewSlotAlreadyDecided,
   parseVisibleRawMaterialSteps,
 } from './helpers/urn-tab-review.util';
 import { shouldUseRenewWorkflowForUrn } from '../renew/constants/renewal-urn-status.constants';
@@ -340,6 +342,17 @@ export class UrnTabReviewService {
     }
 
     const stepIdStored = normalizeReviewStepId(dto.tabKey, dto.stepId);
+
+    const existing = await this.reviewModel
+      .findOne({ urnNo, tabKey: dto.tabKey, stepId: stepIdStored })
+      .select('reviewStatus')
+      .lean()
+      .exec();
+
+    if (isTabReviewSlotAlreadyDecided(existing?.reviewStatus)) {
+      throw new ConflictException('This section has already been reviewed');
+    }
+
     const reviewStatus =
       dto.decision === 'approved'
         ? URN_TAB_REVIEW_STATUS.APPROVED

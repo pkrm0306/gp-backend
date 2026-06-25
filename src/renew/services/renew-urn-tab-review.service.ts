@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -28,6 +29,7 @@ import {
   buildRenewRequiredReviewSlots,
   isRenewProcessTabKey,
 } from '../constants/renew-urn-tab-review.constants';
+import { isTabReviewSlotAlreadyDecided } from '../../product-registration/helpers/urn-tab-review.util';
 import { matchRenewEligibleProducts } from '../helpers/renew-eligible-product.util';
 import {
   isRenewalUrnStatus,
@@ -176,6 +178,21 @@ export class RenewUrnTabReviewService {
 
     if (!Types.ObjectId.isValid(adminUserId)) {
       throw new BadRequestException('Invalid admin user id');
+    }
+
+    const existing = await this.reviewModel
+      .findOne({
+        urnNo,
+        renewalCycleId: cycleId,
+        tabKey: dto.tabKey,
+        stepId: RENEW_PROCESS_TAB_STEP_ID,
+      })
+      .select('reviewStatus')
+      .lean()
+      .exec();
+
+    if (isTabReviewSlotAlreadyDecided(existing?.reviewStatus)) {
+      throw new ConflictException('This section has already been reviewed');
     }
 
     const reviewStatus =

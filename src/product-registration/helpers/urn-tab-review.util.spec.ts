@@ -1,7 +1,9 @@
 import {
   buildRequiredReviewSlots,
+  isTabReviewSlotAlreadyDecided,
   parseVisibleRawMaterialSteps,
 } from './urn-tab-review.util';
+import { URN_TAB_REVIEW_STATUS } from '../constants/urn-tab-review.constants';
 
 describe('urn-tab-review.util', () => {
   it('parses empty CSV as all 15 steps', () => {
@@ -18,5 +20,12 @@ describe('urn-tab-review.util', () => {
     const slots = buildRequiredReviewSlots([1, 7]);
     expect(slots.filter((s) => s.stepId === null)).toHaveLength(7);
     expect(slots.filter((s) => s.tabKey === 'raw-materials')).toHaveLength(2);
+  });
+
+  it('isTabReviewSlotAlreadyDecided is true only for approved or rejected', () => {
+    expect(isTabReviewSlotAlreadyDecided(URN_TAB_REVIEW_STATUS.PENDING)).toBe(false);
+    expect(isTabReviewSlotAlreadyDecided(URN_TAB_REVIEW_STATUS.APPROVED)).toBe(true);
+    expect(isTabReviewSlotAlreadyDecided(URN_TAB_REVIEW_STATUS.REJECTED)).toBe(true);
+    expect(isTabReviewSlotAlreadyDecided(undefined)).toBe(false);
   });
 });

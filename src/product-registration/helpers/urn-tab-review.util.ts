@@ -4,8 +4,19 @@ import {
   RAW_MATERIALS_TAB_KEY,
   RAW_MATERIAL_STEP_TITLES,
   PROCESS_TAB_LABELS,
+  URN_TAB_REVIEW_STATUS,
   type ProcessTabReviewKey,
 } from '../constants/urn-tab-review.constants';
+
+/** True when admin has already approved or rejected this tab/step in the current review cycle. */
+export function isTabReviewSlotAlreadyDecided(
+  reviewStatus: number | null | undefined,
+): boolean {
+  return (
+    reviewStatus === URN_TAB_REVIEW_STATUS.APPROVED ||
+    reviewStatus === URN_TAB_REVIEW_STATUS.REJECTED
+  );
+}
 
 /** Match admin UI `parseVisibleRawMaterialSteps`: empty CSV → all 15 steps. */
 export function parseVisibleRawMaterialSteps(

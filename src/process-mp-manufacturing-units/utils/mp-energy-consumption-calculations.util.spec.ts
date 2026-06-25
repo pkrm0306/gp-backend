@@ -57,8 +57,8 @@ describe('mp-energy-consumption-calculations', () => {
       ecdElectricYear3: 3,
     });
 
-    expect(derived.calculateBulkSecMultipled).toBe('0.43,0.33,0.20');
-    expect(derived.calculateBulkSec).toBe(53.49);
+    expect(derived.calculateBulkSecMultipled).toBe('1195.65,916.67,550.00');
+    expect(derived.calculateBulkSec).toBe(54);
   });
 
   it('computes thermal rows 11–13 using rounded row-12 values (-96.32, not -96.27)', () => {
@@ -117,8 +117,8 @@ describe('mp-energy-consumption-calculations', () => {
       ecdElectricYear3: '3',
     }) as Record<string, unknown>;
 
-    expect(enriched.calculateBulkSecMultipled).toBe('0.43,0.33,0.20');
-    expect(enriched.calculateBulkSec).toBe(53.49);
+    expect(enriched.calculateBulkSecMultipled).toBe('1195.65,916.67,550.00');
+    expect(enriched.calculateBulkSec).toBe(54);
     expect(enriched.energyConsumptionDetails).toEqual({
       totalThermalEnergyConsumption: {
         year1: null,

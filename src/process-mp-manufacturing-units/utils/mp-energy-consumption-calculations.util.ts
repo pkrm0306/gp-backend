@@ -114,6 +114,66 @@ export function computeReductionInSpecificConsumptionPercent(
   );
 }
 
+function electricConsumptionToKcal(
+  electric: number,
+  unit: unknown,
+): number {
+  const normalized = String(unit ?? 'kWh')
+    .trim()
+    .toLowerCase();
+  const kwh = normalized === 'mwh' ? electric * 1000 : electric;
+  return kwh * 2750;
+}
+
+/** Row 14 — total energy (electric kCal + thermal kCal) per year. */
+export function computeTotalEnergyConsumptionForYear(
+  unit: Record<string, unknown>,
+  year: (typeof THERMAL_YEAR_SUFFIXES)[number],
+): number | null {
+  const thermal = computeTotalThermalEnergyConsumptionForYear(unit, year);
+  const electric = toPositiveNumber(unit[`ecdElectricYear${year}`]);
+  if (thermal === null && electric === null) {
+    return null;
+  }
+  const electricKcal =
+    electric === null
+      ? 0
+      : electricConsumptionToKcal(electric, unit.ecdElectricUnit);
+  return roundFixed((thermal ?? 0) + electricKcal, ENERGY_CONSUMPTION_RATIO_DECIMALS);
+}
+
+/** Row 15 — overall specific energy consumption (kCal / production unit). */
+export function computeOverallSpecificEnergyConsumptionForYear(
+  unit: Record<string, unknown>,
+  year: (typeof THERMAL_YEAR_SUFFIXES)[number],
+): number | null {
+  return computeSpecificConsumptionRatio(
+    computeTotalEnergyConsumptionForYear(unit, year),
+    unit[`ecdProductionYear${year}`],
+  );
+}
+
+/** Vendor-aligned reduction: prefer base year 1, else year 2, vs reporting year. */
+export function computeReductionWithFallbackPercent(
+  baseYear1: number | null,
+  baseYear2: number | null,
+  reportingYear: number | null,
+): number | null {
+  if (baseYear1 !== null && baseYear1 > 0 && reportingYear !== null) {
+    return computeReductionInSpecificConsumptionPercent(
+      baseYear1,
+      reportingYear,
+    );
+  }
+  if (baseYear2 !== null && baseYear2 > 0 && reportingYear !== null) {
+    return computeReductionInSpecificConsumptionPercent(
+      baseYear2,
+      reportingYear,
+    );
+  }
+  return null;
+}
+
 export function formatMultipledConsumptionValues(
   values: Array<number | null>,
 ): string {
@@ -233,8 +293,26 @@ export function computeEnergyConsumptionDerivedFields(
     secYear1,
     secYear3,
   );
-  const swcReduction = computeReductionInSpecificConsumptionPercent(
+  const overallSecYear1 = computeOverallSpecificEnergyConsumptionForYear(
+    normalized,
+    1,
+  );
+  const overallSecYear2 = computeOverallSpecificEnergyConsumptionForYear(
+    normalized,
+    2,
+  );
+  const overallSecYear3 = computeOverallSpecificEnergyConsumptionForYear(
+    normalized,
+    3,
+  );
+  const overallSecReduction = computeReductionWithFallbackPercent(
+    overallSecYear1,
+    overallSecYear2,
+    overallSecYear3,
+  );
+  const swcReduction = computeReductionWithFallbackPercent(
     swcYear1,
+    swcYear2,
     swcYear3,
   );
 
@@ -251,11 +329,11 @@ export function computeEnergyConsumptionDerivedFields(
     ]),
     calculateBulkStec: stecReduction,
     calculateBulkSecMultipled: formatMultipledConsumptionValues([
-      secYear1,
-      secYear2,
-      secYear3,
+      overallSecYear1,
+      overallSecYear2,
+      overallSecYear3,
     ]),
-    calculateBulkSec: secReduction,
+    calculateBulkSec: overallSecReduction,
     calculateBulkSwcMultipled: formatMultipledConsumptionValues([
       swcYear1,
       swcYear2,

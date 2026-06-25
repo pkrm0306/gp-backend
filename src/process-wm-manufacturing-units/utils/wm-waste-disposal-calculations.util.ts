@@ -1,7 +1,8 @@
 import {
-  computeReductionInSpecificConsumptionPercent,
+  computeReductionWithFallbackPercent,
   computeSpecificConsumptionRatio,
   formatMultipledConsumptionValues,
+  roundFixed,
 } from '../../process-mp-manufacturing-units/utils/mp-energy-consumption-calculations.util';
 import { normalizeWmManufacturingUnitNumericInputs } from './wm-manufacturing-unit-numeric-fields.util';
 
@@ -53,27 +54,32 @@ export function computeWmWasteDisposalDerivedFields(
     normalized.nonHazardousWasteProductionYear3,
   );
 
-  const rshwdReduction = computeReductionInSpecificConsumptionPercent(
+  const rshwdReduction = computeReductionWithFallbackPercent(
     shwdYear1,
+    shwdYear2,
     shwdYear3,
   );
-  const rsnhwdReduction = computeReductionInSpecificConsumptionPercent(
+  const rsnhwdReduction = computeReductionWithFallbackPercent(
     snhwdYear1,
+    snhwdYear2,
     snhwdYear3,
   );
 
+  const hazProd3 = normalized.hazardousWasteProductionYear3;
+  const nonHazProd3 = normalized.nonHazardousWasteProductionYear3;
+
   return {
-    calculateBulkRshwdMultipled: formatMultipledConsumptionValues([
-      shwdYear1,
-      shwdYear2,
-      shwdYear3,
-    ]),
+    calculateBulkRshwdMultipled: formatVendorWasteBulkMultipled(
+      rshwdReduction,
+      hazProd3,
+      [shwdYear1, shwdYear2, shwdYear3],
+    ),
     calculateBulkRshwd: rshwdReduction,
-    calculateBulkRsnhwdMultipled: formatMultipledConsumptionValues([
-      snhwdYear1,
-      snhwdYear2,
-      snhwdYear3,
-    ]),
+    calculateBulkRsnhwdMultipled: formatVendorWasteBulkMultipled(
+      rsnhwdReduction,
+      nonHazProd3,
+      [snhwdYear1, snhwdYear2, snhwdYear3],
+    ),
     calculateBulkRsnhwd: rsnhwdReduction,
     specificHazardousWasteDisposalYear1: shwdYear1,
     specificHazardousWasteDisposalYear2: shwdYear2,
@@ -90,16 +96,52 @@ export function computeWmWasteDisposalDerivedFields(
   };
 }
 
+function readPersistedBulkNumber(raw: unknown): number | null {
+  if (raw == null || raw === '') return null;
+  const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+function readPersistedBulkMultipled(raw: unknown): string | null {
+  if (raw == null) return null;
+  const value = String(raw).trim();
+  return value ? value : null;
+}
+
+/** Vendor stores `bulkReduction × productionYear3` as a single number string. */
+function formatVendorWasteBulkMultipled(
+  reduction: number | null,
+  productionYear3: unknown,
+  specificYearCsvFallback: Array<number | null>,
+): string {
+  const prod = readPersistedBulkNumber(productionYear3);
+  if (reduction !== null && prod !== null && prod > 0) {
+    return String(roundFixed(reduction * prod, 4));
+  }
+  return formatMultipledConsumptionValues(specificYearCsvFallback);
+}
+
 export function enrichWmManufacturingUnitCalculations<
   T extends Record<string, unknown>,
 >(unit: T): T {
   const derived = computeWmWasteDisposalDerivedFields(unit);
+  const persistedRshwd = readPersistedBulkNumber(unit.calculateBulkRshwd);
+  const persistedRsnhwd = readPersistedBulkNumber(unit.calculateBulkRsnhwd);
+  const persistedRshwdMultipled = readPersistedBulkMultipled(
+    unit.calculateBulkRshwdMultipled,
+  );
+  const persistedRsnhwdMultipled = readPersistedBulkMultipled(
+    unit.calculateBulkRsnhwdMultipled,
+  );
+
   return {
     ...unit,
-    calculateBulkRshwdMultipled: derived.calculateBulkRshwdMultipled,
-    calculateBulkRshwd: derived.calculateBulkRshwd,
-    calculateBulkRsnhwdMultipled: derived.calculateBulkRsnhwdMultipled,
-    calculateBulkRsnhwd: derived.calculateBulkRsnhwd,
+    calculateBulkRshwdMultipled:
+      persistedRshwdMultipled ?? derived.calculateBulkRshwdMultipled,
+    calculateBulkRshwd: persistedRshwd ?? derived.calculateBulkRshwd,
+    calculateBulkRsnhwdMultipled:
+      persistedRsnhwdMultipled ?? derived.calculateBulkRsnhwdMultipled,
+    calculateBulkRsnhwd: persistedRsnhwd ?? derived.calculateBulkRsnhwd,
     wasteDisposalDetails: {
       specificHazardousWasteDisposal: {
         year1: derived.specificHazardousWasteDisposalYear1,

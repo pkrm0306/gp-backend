@@ -78,6 +78,5 @@ export class VendorProductChangeRequestDto {
   @IsString()
   @IsNotEmpty({ message: 'Reason is required.' })
   @MinLength(1, { message: 'Reason is required.' })
-  @MaxLength(2000, { message: 'Reason must not exceed 2000 characters.' })
   reason: string;
 }
