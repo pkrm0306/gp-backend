@@ -100,6 +100,10 @@ import {
 } from './helpers/product-name-uniqueness.util';
 import { enrichMpManufacturingUnitCalculations } from '../process-mp-manufacturing-units/utils/mp-energy-consumption-calculations.util';
 import { buildManufacturingWeightedTotals } from '../process-mp-manufacturing-units/utils/mp-manufacturing-weighted-totals.util';
+import {
+  collectUrnScopedManufacturingProcessDocuments,
+  formatUrnProcessDocumentForResponse,
+} from './utils/urn-renew-process-documents.util';
 import { enrichWmManufacturingUnitCalculations } from '../process-wm-manufacturing-units/utils/wm-waste-disposal-calculations.util';
 import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
@@ -7239,36 +7243,15 @@ export class ProductRegistrationService {
               updatedDate: product.process_manufacturing.updatedDate,
             }
           : null,
-        process_manufacturing_documents: (
-          product.process_manufacturing_documents || []
-        ).map((d) => ({
-          _id: d._id,
-          productDocumentId: d.productDocumentId,
-          vendorId: d.vendorId,
-          urnNo: d.urnNo,
-          eoiNo: d.eoiNo,
-          documentForm: d.documentForm,
-          documentFormSubsection: d.documentFormSubsection,
-          formPrimaryId: d.formPrimaryId,
-          documentName: d.documentName,
-          documentOriginalName: d.documentOriginalName,
-          documentLink: d.documentLink,
-          createdDate: d.createdDate,
-          updatedDate: d.updatedDate,
-        })),
+        process_manufacturing_documents: collectUrnScopedManufacturingProcessDocuments(
+          product as Record<string, unknown>,
+        ).map((d) => formatUrnProcessDocumentForResponse(d)),
         ...(() => {
           const processMpManufacturingUnits = (
             product.process_mp_manufacturing_units || []
           ).map((u) =>
             enrichMpManufacturingUnitCalculations({
-        process_manufacturing_documents: collectUrnScopedManufacturingProcessDocuments(
-          product as Record<string, unknown>,
-        ).map((d) => formatUrnProcessDocumentForResponse(d)),
-        process_mp_manufacturing_units: (
-          product.process_mp_manufacturing_units || []
-        ).map((u) =>
-          enrichMpManufacturingUnitCalculations({
-          _id: u._id,
+              _id: u._id,
           processMpManufacturingUnitId: u.processMpManufacturingUnitId,
           vendorId: u.vendorId,
           urnNo: u.urnNo,
@@ -7337,9 +7320,9 @@ export class ProductRegistrationService {
           measuresImplementedMpUnits: u.measuresImplementedMpUnits,
           detailsOfRainWaterHarvestingMpUnits:
             u.detailsOfRainWaterHarvestingMpUnits,
-          createdDate: u.createdDate,
-          updatedDate: u.updatedDate,
-        }),
+              createdDate: u.createdDate,
+              updatedDate: u.updatedDate,
+            }),
           );
           const manufacturingWeightedTotals =
             buildManufacturingWeightedTotals(processMpManufacturingUnits);
