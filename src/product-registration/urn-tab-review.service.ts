@@ -101,6 +101,84 @@ export class UrnTabReviewService {
   }
 
   /**
+   * After vendor resubmit (urnStatus 5→4), reopen rejected sections for admin re-review.
+   * Approved sections stay locked.
+   */
+  async resetRejectedReviewsToPendingForUrn(urnNo: string): Promise<number> {
+    const trimmed = urnNo?.trim();
+    if (!trimmed) {
+      return 0;
+    }
+    const result = await this.reviewModel
+      .updateMany(
+        { urnNo: trimmed, reviewStatus: URN_TAB_REVIEW_STATUS.REJECTED },
+        {
+          $set: {
+            reviewStatus: URN_TAB_REVIEW_STATUS.PENDING,
+            reviewedBy: null,
+            reviewedAt: null,
+            rejectionRemarks: null,
+          },
+        },
+      )
+      .exec();
+    return result.modifiedCount ?? 0;
+  }
+
+  /**
+   * Heal rejected rows left at status 2 after vendor resubmit when the 5→4 hook did not run
+   * (e.g. data from before the reset fix). If the URN was updated after the last rejection
+   * timestamp, vendor changes are in — reopen those sections for admin.
+   */
+  async reconcileStaleRejectedReviewsAfterVendorResubmit(
+    urnNo: string,
+  ): Promise<number> {
+    const trimmed = urnNo?.trim();
+    if (!trimmed) {
+      return 0;
+    }
+
+    const rejected = await this.reviewModel
+      .find({ urnNo: trimmed, reviewStatus: URN_TAB_REVIEW_STATUS.REJECTED })
+      .select('reviewedAt')
+      .lean()
+      .exec();
+    if (rejected.length === 0) {
+      return 0;
+    }
+
+    const product = await this.productModel
+      .findOne(matchActiveProducts({ urnNo: trimmed }))
+      .select('updatedDate')
+      .sort({ updatedDate: -1 })
+      .lean()
+      .exec();
+    const productUpdatedAt = product?.updatedDate
+      ? new Date(product.updatedDate as Date)
+      : null;
+    if (!productUpdatedAt || Number.isNaN(productUpdatedAt.getTime())) {
+      return 0;
+    }
+
+    let maxRejectedReviewedAt: Date | null = null;
+    for (const row of rejected) {
+      const reviewedAt = row.reviewedAt ? new Date(row.reviewedAt as Date) : null;
+      if (!reviewedAt || Number.isNaN(reviewedAt.getTime())) {
+        continue;
+      }
+      if (!maxRejectedReviewedAt || reviewedAt > maxRejectedReviewedAt) {
+        maxRejectedReviewedAt = reviewedAt;
+      }
+    }
+
+    if (!maxRejectedReviewedAt || productUpdatedAt <= maxRejectedReviewedAt) {
+      return 0;
+    }
+
+    return this.resetRejectedReviewsToPendingForUrn(trimmed);
+  }
+
+  /**
    * Vendor panel: after admin resend (`urnStatus === 5`), which tabs/steps may use Save & Next.
    * Only sections with `reviewStatus === rejected` are editable; approved tabs are read-only.
    */
@@ -255,6 +333,9 @@ export class UrnTabReviewService {
       return this.renewUrnTabReviewService.getUrnTabReviews(urnNo, renewalCycleId);
     }
     await this.ensurePendingReviewsForUrn(urnNo);
+    if (context.urnStatus === ADMIN_REVIEW_URN_STATUS) {
+      await this.reconcileStaleRejectedReviewsAfterVendorResubmit(urnNo);
+    }
 
     const stored = await this.reviewModel
       .find({ urnNo })

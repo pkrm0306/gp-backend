@@ -419,10 +419,17 @@ export class RenewUrnStatusService {
     );
 
     if (targetStatus === RENEWAL_URN_STATUS.CHECK_PROCESS_FORMS) {
+      const cycleId = cycle._id as Types.ObjectId;
       await this.renewUrnTabReviewService.ensurePendingReviewsForCycle(
         trimmedUrn,
-        cycle._id as Types.ObjectId,
+        cycleId,
       );
+      if (currentStatus === RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING) {
+        await this.renewUrnTabReviewService.resetRejectedReviewsToPendingForCycle(
+          trimmedUrn,
+          cycleId,
+        );
+      }
       await this.logRenewUrnStatusChange(
         trimmedUrn,
         ownership.vendorId,

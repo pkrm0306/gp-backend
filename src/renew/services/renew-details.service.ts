@@ -42,6 +42,10 @@ import {
   ProcessRenewWmManufacturingUnitDocument,
 } from '../schemas/process-renew-wm-manufacturing-unit.schema';
 import {
+  ProcessWmManufacturingUnit,
+  ProcessWmManufacturingUnitDocument,
+} from '../../process-wm-manufacturing-units/schemas/process-wm-manufacturing-unit.schema';
+import {
   AllRenewProductDocument,
   AllRenewProductDocumentDocument,
 } from '../schemas/all-renew-product-document.schema';
@@ -80,6 +84,7 @@ import {
   findRenewPaymentsForCycle,
   resolveCycleScopedUrnStatus,
 } from '../helpers/renew-cycle-scope.util';
+import { findRenewWmUnitsForRead } from '../helpers/renew-wm-units-read.util';
 import {
   Product,
   ProductDocument,
@@ -176,6 +181,8 @@ export class RenewDetailsService {
     private readonly renewMpUnitModel: Model<ProcessRenewMpManufacturingUnitDocument>,
     @InjectModel(ProcessRenewWmManufacturingUnit.name)
     private readonly renewWmUnitModel: Model<ProcessRenewWmManufacturingUnitDocument>,
+    @InjectModel(ProcessWmManufacturingUnit.name)
+    private readonly certWmUnitModel: Model<ProcessWmManufacturingUnitDocument>,
     @InjectModel(AllRenewProductDocument.name)
     private readonly renewDocumentModel: Model<AllRenewProductDocumentDocument>,
     @InjectModel(RenewalCycle.name)
@@ -332,7 +339,12 @@ export class RenewDetailsService {
 
     const unitFilter = buildRenewProcessHeaderFilter(urnNo, cycle);
     const mpUnits = await this.renewMpUnitModel.find(unitFilter).lean().exec();
-    const wmUnits = await this.renewWmUnitModel.find(unitFilter).lean().exec();
+    const wmUnits = await findRenewWmUnitsForRead(
+      this.renewWmUnitModel,
+      this.certWmUnitModel,
+      urnNo,
+      cycle,
+    );
 
     const documentRows = allDocuments as Array<Record<string, unknown>>;
     const manufacturingSection = buildManufacturingSection(
@@ -400,9 +412,7 @@ export class RenewDetailsService {
         process_mp_manufacturing_units: (
           mpUnits as Array<Record<string, unknown>>
         ).map(formatRenewMpManufacturingUnitForDetails),
-        process_wm_manufacturing_units: (
-          wmUnits as Array<Record<string, unknown>>
-        ).map(formatRenewWmManufacturingUnitForDetails),
+        process_wm_manufacturing_units: wmUnits,
         all_renew_product_documents: renewDocumentsOnly,
         all_urn_product_documents: renewDocumentsOnly,
         documents: renewDocumentsOnly,

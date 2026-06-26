@@ -77,6 +77,10 @@ import {
   ProcessRenewWmManufacturingUnit,
   ProcessRenewWmManufacturingUnitSchema,
 } from './schemas/process-renew-wm-manufacturing-unit.schema';
+import {
+  ProcessWmManufacturingUnit,
+  ProcessWmManufacturingUnitSchema,
+} from '../process-wm-manufacturing-units/schemas/process-wm-manufacturing-unit.schema';
 import { RenewalCycleService } from './services/renewal-cycle.service';
 import { RenewalOrchestrationService } from './services/renewal-orchestration.service';
 import { RenewQuickViewService } from './services/renew-quick-view.service';
@@ -155,6 +159,10 @@ import { RenewProcessHeaderIndexesService } from './services/renew-process-heade
       {
         name: ProcessRenewWmManufacturingUnit.name,
         schema: ProcessRenewWmManufacturingUnitSchema,
+      },
+      {
+        name: ProcessWmManufacturingUnit.name,
+        schema: ProcessWmManufacturingUnitSchema,
       },
       { name: Product.name, schema: ProductSchema },
       { name: PaymentDetails.name, schema: PaymentDetailsSchema },

@@ -1,6 +1,7 @@
 import {
   buildRequiredReviewSlots,
   isTabReviewSlotAlreadyDecided,
+  isTabReviewSlotRejected,
   parseVisibleRawMaterialSteps,
 } from './urn-tab-review.util';
 import { URN_TAB_REVIEW_STATUS } from '../constants/urn-tab-review.constants';
@@ -22,10 +23,16 @@ describe('urn-tab-review.util', () => {
     expect(slots.filter((s) => s.tabKey === 'raw-materials')).toHaveLength(2);
   });
 
-  it('isTabReviewSlotAlreadyDecided is true only for approved or rejected', () => {
+  it('isTabReviewSlotAlreadyDecided is true only for approved', () => {
     expect(isTabReviewSlotAlreadyDecided(URN_TAB_REVIEW_STATUS.PENDING)).toBe(false);
     expect(isTabReviewSlotAlreadyDecided(URN_TAB_REVIEW_STATUS.APPROVED)).toBe(true);
-    expect(isTabReviewSlotAlreadyDecided(URN_TAB_REVIEW_STATUS.REJECTED)).toBe(true);
+    expect(isTabReviewSlotAlreadyDecided(URN_TAB_REVIEW_STATUS.REJECTED)).toBe(false);
     expect(isTabReviewSlotAlreadyDecided(undefined)).toBe(false);
+  });
+
+  it('isTabReviewSlotRejected is true only for rejected', () => {
+    expect(isTabReviewSlotRejected(URN_TAB_REVIEW_STATUS.PENDING)).toBe(false);
+    expect(isTabReviewSlotRejected(URN_TAB_REVIEW_STATUS.APPROVED)).toBe(false);
+    expect(isTabReviewSlotRejected(URN_TAB_REVIEW_STATUS.REJECTED)).toBe(true);
   });
 });

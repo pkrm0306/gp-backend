@@ -12,6 +12,10 @@ import {
   ProcessRenewWmManufacturingUnitDocument,
 } from '../schemas/process-renew-wm-manufacturing-unit.schema';
 import {
+  ProcessWmManufacturingUnit,
+  ProcessWmManufacturingUnitDocument,
+} from '../../process-wm-manufacturing-units/schemas/process-wm-manufacturing-unit.schema';
+import {
   ProcessRenewWasteManagement,
   ProcessRenewWasteManagementDocument,
 } from '../schemas/process-renew-waste-management.schema';
@@ -31,6 +35,7 @@ import {
   resolveRenewCycleForQuery,
 } from '../helpers/renew-cycle-scope.util';
 import { formatRenewWmManufacturingUnitForDetails } from '../utils/renew-details-format.util';
+import { findRenewWmUnitsForRead } from '../helpers/renew-wm-units-read.util';
 
 function readRenewalCycleId(dto: CreateProcessWmManufacturingUnitDto): string | undefined {
   const raw = (dto as { renewalCycleId?: string; renewal_cycle_id?: string })
@@ -44,6 +49,8 @@ export class ProcessRenewWmManufacturingUnitsService {
   constructor(
     @InjectModel(ProcessRenewWmManufacturingUnit.name)
     private readonly model: Model<ProcessRenewWmManufacturingUnitDocument>,
+    @InjectModel(ProcessWmManufacturingUnit.name)
+    private readonly certWmModel: Model<ProcessWmManufacturingUnitDocument>,
     @InjectModel(ProcessRenewWasteManagement.name)
     private readonly renewWasteModel: Model<ProcessRenewWasteManagementDocument>,
     @InjectModel(Product.name)
@@ -184,15 +191,7 @@ export class ProcessRenewWmManufacturingUnitsService {
       trimmedUrn,
       renewalCycleId,
     );
-    const filter = buildRenewProcessHeaderFilter(trimmedUrn, cycle);
-    const rows = await this.model
-      .find(filter)
-      .sort({ processRenewWmManufacturingUnitId: 1 })
-      .lean()
-      .exec();
-    return rows.map((row) =>
-      formatRenewWmManufacturingUnitForDetails(row as Record<string, unknown>),
-    );
+    return findRenewWmUnitsForRead(this.model, this.certWmModel, trimmedUrn, cycle);
   }
 
   async deleteById(unitId: number, urnNo: string) {

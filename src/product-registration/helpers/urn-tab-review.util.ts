@@ -8,14 +8,18 @@ import {
   type ProcessTabReviewKey,
 } from '../constants/urn-tab-review.constants';
 
-/** True when admin has already approved or rejected this tab/step in the current review cycle. */
+/** True when admin has approved this tab/step — locked for the current review cycle. */
 export function isTabReviewSlotAlreadyDecided(
   reviewStatus: number | null | undefined,
 ): boolean {
-  return (
-    reviewStatus === URN_TAB_REVIEW_STATUS.APPROVED ||
-    reviewStatus === URN_TAB_REVIEW_STATUS.REJECTED
-  );
+  return reviewStatus === URN_TAB_REVIEW_STATUS.APPROVED;
+}
+
+/** True when a slot is rejected (unlocked again after vendor resubmit resets it to pending). */
+export function isTabReviewSlotRejected(
+  reviewStatus: number | null | undefined,
+): boolean {
+  return reviewStatus === URN_TAB_REVIEW_STATUS.REJECTED;
 }
 
 /** Match admin UI `parseVisibleRawMaterialSteps`: empty CSV → all 15 steps. */

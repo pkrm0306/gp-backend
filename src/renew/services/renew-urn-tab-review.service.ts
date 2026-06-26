@@ -77,6 +77,34 @@ export class RenewUrnTabReviewService {
     return cycle._id as Types.ObjectId;
   }
 
+  /**
+   * After vendor resubmit (urnStatus 16→15), reopen rejected renewal sections for admin re-review.
+   */
+  async resetRejectedReviewsToPendingForCycle(
+    urnNo: string,
+    renewalCycleId: Types.ObjectId,
+  ): Promise<number> {
+    const trimmed = urnNo.trim();
+    const result = await this.reviewModel
+      .updateMany(
+        {
+          urnNo: trimmed,
+          renewalCycleId,
+          reviewStatus: RENEW_TAB_REVIEW_STATUS.REJECTED,
+        },
+        {
+          $set: {
+            reviewStatus: RENEW_TAB_REVIEW_STATUS.PENDING,
+            reviewedBy: null,
+            reviewedAt: null,
+            rejectionRemarks: null,
+          },
+        },
+      )
+      .exec();
+    return result.modifiedCount ?? 0;
+  }
+
   async ensurePendingReviewsForCycle(
     urnNo: string,
     renewalCycleId: Types.ObjectId,
@@ -106,6 +134,55 @@ export class RenewUrnTabReviewService {
     }
   }
 
+  async reconcileStaleRejectedReviewsAfterVendorResubmit(
+    urnNo: string,
+    renewalCycleId: Types.ObjectId,
+  ): Promise<number> {
+    const trimmed = urnNo.trim();
+    const rejected = await this.reviewModel
+      .find({
+        urnNo: trimmed,
+        renewalCycleId,
+        reviewStatus: RENEW_TAB_REVIEW_STATUS.REJECTED,
+      })
+      .select('reviewedAt')
+      .lean()
+      .exec();
+    if (rejected.length === 0) {
+      return 0;
+    }
+
+    const product = await this.productModel
+      .findOne({ urnNo: trimmed, ...matchRenewEligibleProducts() })
+      .select('updatedDate')
+      .sort({ updatedDate: -1 })
+      .lean()
+      .exec();
+    const productUpdatedAt = product?.updatedDate
+      ? new Date(product.updatedDate as Date)
+      : null;
+    if (!productUpdatedAt || Number.isNaN(productUpdatedAt.getTime())) {
+      return 0;
+    }
+
+    let maxRejectedReviewedAt: Date | null = null;
+    for (const row of rejected) {
+      const reviewedAt = row.reviewedAt ? new Date(row.reviewedAt as Date) : null;
+      if (!reviewedAt || Number.isNaN(reviewedAt.getTime())) {
+        continue;
+      }
+      if (!maxRejectedReviewedAt || reviewedAt > maxRejectedReviewedAt) {
+        maxRejectedReviewedAt = reviewedAt;
+      }
+    }
+
+    if (!maxRejectedReviewedAt || productUpdatedAt <= maxRejectedReviewedAt) {
+      return 0;
+    }
+
+    return this.resetRejectedReviewsToPendingForCycle(trimmed, renewalCycleId);
+  }
+
   async getUrnTabReviews(urnNo: string, renewalCycleId?: string) {
     const trimmedUrn = urnNo.trim();
     const cycleId = await this.resolveRenewalCycleId(trimmedUrn, renewalCycleId);
@@ -118,6 +195,12 @@ export class RenewUrnTabReviewService {
     }
 
     await this.ensurePendingReviewsForCycle(trimmedUrn, cycleId);
+    if (urnStatus === RENEW_ADMIN_REVIEW_URN_STATUS) {
+      await this.reconcileStaleRejectedReviewsAfterVendorResubmit(
+        trimmedUrn,
+        cycleId,
+      );
+    }
 
     const stored = await this.reviewModel
       .find({ urnNo: trimmedUrn, renewalCycleId: cycleId })

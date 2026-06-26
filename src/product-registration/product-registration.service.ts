@@ -75,6 +75,13 @@ import {
 import { formatPaymentRecordsForUrnDetails } from '../payments/payment-response.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { enrichUrnDetailRowsWithSharedProcessData } from './utils/consolidate-urn-detail-items.util';
+import { collectUrnScopedProductPerformanceDocuments } from './utils/urn-product-performance-documents.util';
+import {
+  collectUrnScopedInnovationProcessDocuments,
+  collectUrnScopedManufacturingProcessDocuments,
+  collectUrnScopedWasteManagementProcessDocuments,
+  formatUrnProcessDocumentForResponse,
+} from './utils/urn-renew-process-documents.util';
 import {
   filterFormaldehydeStyleProductsForVendorDisplay,
   filterHazardousProductsForVendorDisplay,
@@ -100,10 +107,6 @@ import {
 } from './helpers/product-name-uniqueness.util';
 import { enrichMpManufacturingUnitCalculations } from '../process-mp-manufacturing-units/utils/mp-energy-consumption-calculations.util';
 import { buildManufacturingWeightedTotals } from '../process-mp-manufacturing-units/utils/mp-manufacturing-weighted-totals.util';
-import {
-  collectUrnScopedManufacturingProcessDocuments,
-  formatUrnProcessDocumentForResponse,
-} from './utils/urn-renew-process-documents.util';
 import { enrichWmManufacturingUnitCalculations } from '../process-wm-manufacturing-units/utils/wm-waste-disposal-calculations.util';
 import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-change-request.dto';
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
@@ -4702,13 +4705,23 @@ export class ProductRegistrationService {
       });
 
       if (previousUrnStatus !== 4 && nextUrnStatus === 4) {
+        const trimmedUrn = updateUrnStatusDto.urnNo.trim();
         this.urnTabReviewService
-          .ensurePendingReviewsForUrn(updateUrnStatusDto.urnNo.trim())
+          .ensurePendingReviewsForUrn(trimmedUrn)
           .catch((err) =>
             this.logger.warn(
               `[Update URN Status] Tab review init failed: ${(err as Error).message}`,
             ),
           );
+        if (previousUrnStatus === VENDOR_RESUBMIT_URN_STATUS) {
+          this.urnTabReviewService
+            .resetRejectedReviewsToPendingForUrn(trimmedUrn)
+            .catch((err) =>
+              this.logger.warn(
+                `[Update URN Status] Tab review rejected reset failed: ${(err as Error).message}`,
+              ),
+            );
+        }
         this.lifecycleNotification
           .notifyUrnSubmittedForReview({
             manufacturerId: manufacturerId.toString(),
@@ -7252,74 +7265,74 @@ export class ProductRegistrationService {
           ).map((u) =>
             enrichMpManufacturingUnitCalculations({
               _id: u._id,
-          processMpManufacturingUnitId: u.processMpManufacturingUnitId,
-          vendorId: u.vendorId,
-          urnNo: u.urnNo,
-          unitName: u.unitName,
-          renewableEnergyUtilization: u.renewableEnergyUtilization,
-          ecdYear1: u.ecdYear1,
-          ecdYear2: u.ecdYear2,
-          ecdYear3: u.ecdYear3,
-          ecdProductionUnit: u.ecdProductionUnit,
-          ecdProductionYear1: u.ecdProductionYear1,
-          ecdProductionYear2: u.ecdProductionYear2,
-          ecdProductionYear3: u.ecdProductionYear3,
-          ecdElectricUnit: u.ecdElectricUnit,
-          ecdElectricYear1: u.ecdElectricYear1,
-          ecdElectricYear2: u.ecdElectricYear2,
-          ecdElectricYear3: u.ecdElectricYear3,
-          ecdThermalUnitFuel1: u.ecdThermalUnitFuel1,
-          ecdThermalUnitFuel2: u.ecdThermalUnitFuel2,
-          ecdThermalUnitFuel3: u.ecdThermalUnitFuel3,
-          ecdThermalFuel1Year1: u.ecdThermalFuel1Year1,
-          ecdThermalFuel1Year2: u.ecdThermalFuel1Year2,
-          ecdThermalFuel1Year3: u.ecdThermalFuel1Year3,
-          ecdThermalFuel2Year1: u.ecdThermalFuel2Year1,
-          ecdThermalFuel2Year2: u.ecdThermalFuel2Year2,
-          ecdThermalFuel2Year3: u.ecdThermalFuel2Year3,
-          ecdThermalFuel3Year1: u.ecdThermalFuel3Year1,
-          ecdThermalFuel3Year2: u.ecdThermalFuel3Year2,
-          ecdThermalFuel3Year3: u.ecdThermalFuel3Year3,
-          ecdCalorificFuel1Year1: u.ecdCalorificFuel1Year1,
-          ecdCalorificFuel1Year2: u.ecdCalorificFuel1Year2,
-          ecdCalorificFuel1Year3: u.ecdCalorificFuel1Year3,
-          ecdCalorificFuel2Year1: u.ecdCalorificFuel2Year1,
-          ecdCalorificFuel2Year2: u.ecdCalorificFuel2Year2,
-          ecdCalorificFuel2Year3: u.ecdCalorificFuel2Year3,
-          ecdCalorificFuel3Year1: u.ecdCalorificFuel3Year1,
-          ecdCalorificFuel3Year2: u.ecdCalorificFuel3Year2,
-          ecdCalorificFuel3Year3: u.ecdCalorificFuel3Year3,
-          ecdTextareaNewUnits: u.ecdTextareaNewUnits,
-          wcdYear1: u.wcdYear1,
-          wcdYear2: u.wcdYear2,
-          wcdYear3: u.wcdYear3,
-          wcdProductionUnit: u.wcdProductionUnit,
-          wcdWaterUnit: u.wcdWaterUnit,
-          wcdProductionYear1: u.wcdProductionYear1,
-          wcdProductionYear2: u.wcdProductionYear2,
-          wcdProductionYear3: u.wcdProductionYear3,
-          wcdWaterYear1: u.wcdWaterYear1,
-          wcdWaterYear2: u.wcdWaterYear2,
-          wcdWaterYear3: u.wcdWaterYear3,
-          reYear: u.reYear,
-          reSolarPhotovoltaic: u.reSolarPhotovoltaic,
-          reWind: u.reWind,
-          reBiomass: u.reBiomass,
-          reSolarThermal: u.reSolarThermal,
-          reOthersUnit: u.reOthersUnit,
-          reOthers: u.reOthers,
-          offsiteRenewablePower: u.offsiteRenewablePower,
-          processMpManufacturingUnitStatus: u.processMpManufacturingUnitStatus,
-          calculateBulkSec: u.calculateBulkSec,
-          calculateBulkSwc: u.calculateBulkSwc,
-          calculateBulkStec: u.calculateBulkStec,
-          calculateBulkSecMultipled: u.calculateBulkSecMultipled,
-          calculateBulkSwcMultipled: u.calculateBulkSwcMultipled,
-          calculateBulkTecMultipled: u.calculateBulkTecMultipled,
-          calculateBulkStecMultipled: u.calculateBulkStecMultipled,
-          measuresImplementedMpUnits: u.measuresImplementedMpUnits,
-          detailsOfRainWaterHarvestingMpUnits:
-            u.detailsOfRainWaterHarvestingMpUnits,
+              processMpManufacturingUnitId: u.processMpManufacturingUnitId,
+              vendorId: u.vendorId,
+              urnNo: u.urnNo,
+              unitName: u.unitName,
+              renewableEnergyUtilization: u.renewableEnergyUtilization,
+              ecdYear1: u.ecdYear1,
+              ecdYear2: u.ecdYear2,
+              ecdYear3: u.ecdYear3,
+              ecdProductionUnit: u.ecdProductionUnit,
+              ecdProductionYear1: u.ecdProductionYear1,
+              ecdProductionYear2: u.ecdProductionYear2,
+              ecdProductionYear3: u.ecdProductionYear3,
+              ecdElectricUnit: u.ecdElectricUnit,
+              ecdElectricYear1: u.ecdElectricYear1,
+              ecdElectricYear2: u.ecdElectricYear2,
+              ecdElectricYear3: u.ecdElectricYear3,
+              ecdThermalUnitFuel1: u.ecdThermalUnitFuel1,
+              ecdThermalUnitFuel2: u.ecdThermalUnitFuel2,
+              ecdThermalUnitFuel3: u.ecdThermalUnitFuel3,
+              ecdThermalFuel1Year1: u.ecdThermalFuel1Year1,
+              ecdThermalFuel1Year2: u.ecdThermalFuel1Year2,
+              ecdThermalFuel1Year3: u.ecdThermalFuel1Year3,
+              ecdThermalFuel2Year1: u.ecdThermalFuel2Year1,
+              ecdThermalFuel2Year2: u.ecdThermalFuel2Year2,
+              ecdThermalFuel2Year3: u.ecdThermalFuel2Year3,
+              ecdThermalFuel3Year1: u.ecdThermalFuel3Year1,
+              ecdThermalFuel3Year2: u.ecdThermalFuel3Year2,
+              ecdThermalFuel3Year3: u.ecdThermalFuel3Year3,
+              ecdCalorificFuel1Year1: u.ecdCalorificFuel1Year1,
+              ecdCalorificFuel1Year2: u.ecdCalorificFuel1Year2,
+              ecdCalorificFuel1Year3: u.ecdCalorificFuel1Year3,
+              ecdCalorificFuel2Year1: u.ecdCalorificFuel2Year1,
+              ecdCalorificFuel2Year2: u.ecdCalorificFuel2Year2,
+              ecdCalorificFuel2Year3: u.ecdCalorificFuel2Year3,
+              ecdCalorificFuel3Year1: u.ecdCalorificFuel3Year1,
+              ecdCalorificFuel3Year2: u.ecdCalorificFuel3Year2,
+              ecdCalorificFuel3Year3: u.ecdCalorificFuel3Year3,
+              ecdTextareaNewUnits: u.ecdTextareaNewUnits,
+              wcdYear1: u.wcdYear1,
+              wcdYear2: u.wcdYear2,
+              wcdYear3: u.wcdYear3,
+              wcdProductionUnit: u.wcdProductionUnit,
+              wcdWaterUnit: u.wcdWaterUnit,
+              wcdProductionYear1: u.wcdProductionYear1,
+              wcdProductionYear2: u.wcdProductionYear2,
+              wcdProductionYear3: u.wcdProductionYear3,
+              wcdWaterYear1: u.wcdWaterYear1,
+              wcdWaterYear2: u.wcdWaterYear2,
+              wcdWaterYear3: u.wcdWaterYear3,
+              reYear: u.reYear,
+              reSolarPhotovoltaic: u.reSolarPhotovoltaic,
+              reWind: u.reWind,
+              reBiomass: u.reBiomass,
+              reSolarThermal: u.reSolarThermal,
+              reOthersUnit: u.reOthersUnit,
+              reOthers: u.reOthers,
+              offsiteRenewablePower: u.offsiteRenewablePower,
+              processMpManufacturingUnitStatus: u.processMpManufacturingUnitStatus,
+              calculateBulkSec: u.calculateBulkSec,
+              calculateBulkSwc: u.calculateBulkSwc,
+              calculateBulkStec: u.calculateBulkStec,
+              calculateBulkSecMultipled: u.calculateBulkSecMultipled,
+              calculateBulkSwcMultipled: u.calculateBulkSwcMultipled,
+              calculateBulkTecMultipled: u.calculateBulkTecMultipled,
+              calculateBulkStecMultipled: u.calculateBulkStecMultipled,
+              measuresImplementedMpUnits: u.measuresImplementedMpUnits,
+              detailsOfRainWaterHarvestingMpUnits:
+                u.detailsOfRainWaterHarvestingMpUnits,
               createdDate: u.createdDate,
               updatedDate: u.updatedDate,
             }),
