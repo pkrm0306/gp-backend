@@ -51,10 +51,142 @@ export const AdminNotificationMessages = {
     };
   },
 
+  certificationFeeApproved(manufacturerName: string, urnNo: string) {
+    return {
+      title: `Certification Payment Approved — ${manufacturerName}`,
+      message: `Certification payment for URN ${urnNo} was approved for ${manufacturerName}`,
+      actorName: manufacturerName,
+    };
+  },
+
   urnSubmittedForReview(manufacturerName: string, urnNo: string) {
     return {
       title: `URN Submitted For Review By ${manufacturerName}`,
       message: `${manufacturerName} submitted URN ${urnNo} for review. Please review the portal.`,
+      actorName: manufacturerName,
+    };
+  },
+
+  manufacturerApproved(manufacturerName: string) {
+    return {
+      title: `Manufacturer Approved — ${manufacturerName}`,
+      message: `${manufacturerName} has been verified and activated on the portal`,
+      actorName: manufacturerName,
+    };
+  },
+
+  manufacturerInactive(manufacturerName: string) {
+    return {
+      title: `Manufacturer Inactive — ${manufacturerName}`,
+      message: `${manufacturerName} has been marked inactive on the portal`,
+      actorName: manufacturerName,
+    };
+  },
+
+  manufacturerRejected(manufacturerName: string) {
+    return {
+      title: `Unverified Manufacturer Removed — ${manufacturerName}`,
+      message: `Unverified registration for ${manufacturerName} was removed from the portal`,
+      actorName: manufacturerName,
+    };
+  },
+
+  productCertified(manufacturerName: string, urnNo: string, productName: string) {
+    return {
+      title: `Product Certified — ${manufacturerName}`,
+      message: `${manufacturerName} product "${productName}" on URN ${urnNo} is now certified`,
+      actorName: manufacturerName,
+    };
+  },
+
+  productRejected(manufacturerName: string, urnNo: string, productName: string) {
+    return {
+      title: `Product Rejected — ${manufacturerName}`,
+      message: `${manufacturerName} product "${productName}" on URN ${urnNo} was rejected`,
+      actorName: manufacturerName,
+    };
+  },
+
+  productNameChangeRequested(
+    manufacturerName: string,
+    urnNo: string,
+    currentName: string,
+    requestedName: string,
+    reason?: string,
+  ) {
+    const trimmedReason = String(reason ?? '').trim();
+    const reasonSuffix = trimmedReason
+      ? `. Reason: ${trimmedReason.slice(0, 200)}${
+          trimmedReason.length > 200 ? '…' : ''
+        }`
+      : '';
+    return {
+      title: `Product Name Change Request — ${manufacturerName}`,
+      message: `${manufacturerName} requested renaming "${currentName}" to "${requestedName}" on URN ${urnNo}${reasonSuffix}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  productEnquiry(manufacturerName: string, visitorName: string) {
+    return {
+      title: `New Product Enquiry — ${manufacturerName}`,
+      message: `${visitorName} submitted an enquiry for ${manufacturerName}`,
+      actorName: visitorName,
+    };
+  },
+
+  certificationExpiryReminder(
+    manufacturerName: string,
+    urnNo: string,
+    eoiNo: string,
+    stage: string,
+  ) {
+    return {
+      title: `Certification Expiry — ${manufacturerName}`,
+      message: `${stage} reminder sent for ${eoiNo || urnNo} (${manufacturerName})`,
+      actorName: manufacturerName,
+    };
+  },
+
+  urnMerged(
+    manufacturerName: string,
+    sourceUrn: string,
+    targetUrn: string,
+    movedCount: number,
+  ) {
+    return {
+      title: `URN Merged — ${manufacturerName}`,
+      message: `${manufacturerName} merged URN ${sourceUrn} into ${targetUrn} (${movedCount} products)`,
+      actorName: manufacturerName,
+    };
+  },
+
+  renewalSubmitted(manufacturerName: string, urnNo: string) {
+    return {
+      title: `Renewal Submitted — ${manufacturerName}`,
+      message: `${manufacturerName} submitted renewal forms for URN ${urnNo}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  renewalDecision(
+    manufacturerName: string,
+    urnNo: string,
+    decision: 'approved' | 'sent_back',
+  ) {
+    const verb =
+      decision === 'approved' ? 'approved for final review' : 'sent back to vendor';
+    return {
+      title: `Renewal Update — ${manufacturerName}`,
+      message: `Renewal for URN ${urnNo} was ${verb}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  renewalCompleted(manufacturerName: string, urnNo: string) {
+    return {
+      title: `Renewal Completed — ${manufacturerName}`,
+      message: `Renewal for URN ${urnNo} is complete for ${manufacturerName}`,
       actorName: manufacturerName,
     };
   },

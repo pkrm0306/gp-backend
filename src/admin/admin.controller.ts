@@ -82,9 +82,12 @@ import { GALLERY_TYPES, GalleryType } from '../gallery/schemas/gallery.schema';
 import { GalleryService } from '../gallery/gallery.service';
 import { uploadFile } from '../utils/upload-file.util';
 import {
+  BANNER_MEDIA_MULTIPART_FIELDS,
   createBannerDiskMulterOptions,
   pickBannerImageFile,
+  pickBannerVideoFile,
 } from './utils/banner-image-upload.util';
+import { assertBannerVideoDurationWithinLimit } from './utils/banner-video-duration.util';
 import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import {
   isAllowedStandardDocumentFile,
@@ -98,12 +101,27 @@ import {
 import { PaymentsService } from '../payments/payments.service';
 import { AdminListPaymentsDto } from '../payments/dto/admin-list-payments.dto';
 
-const bannerImageMultipartFields = [
-  { name: 'image', maxCount: 1 },
-  { name: 'bannerImage', maxCount: 1 },
-  { name: 'banner_image', maxCount: 1 },
-  { name: 'file', maxCount: 1 },
-];
+const bannerImageMultipartFields = BANNER_MEDIA_MULTIPART_FIELDS;
+
+async function resolveUploadedBannerVideoUrl(
+  uploadedVideo?: Express.Multer.File,
+  durationBody?: Record<string, unknown>,
+): Promise<string | undefined> {
+  if (!uploadedVideo) return undefined;
+  assertBannerVideoDurationWithinLimit(uploadedVideo, durationBody);
+  return (await uploadFile(uploadedVideo, 'banners')).fileUrl;
+}
+
+function mergeBannerVideoDurationBody(
+  ...sources: Array<object | null | undefined>
+): Record<string, unknown> {
+  return Object.assign({}, ...sources.filter(Boolean)) as Record<string, unknown>;
+}
+
+function parseBannerClearVideoFlag(body: Record<string, unknown>): boolean {
+  const raw = String(body.clearVideo ?? body.removeVideo ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
 
 const storage = diskStorage({
   destination: join(process.cwd(), 'uploads', 'manufacturers'),
@@ -940,12 +958,24 @@ export class AdminController {
   async createBanner(
     @CurrentUser() user: { vendorId: string },
     @Body() body: any,
+    @Req() req: Request,
     @UploadedFiles() files?: Record<string, Express.Multer.File[]>,
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
     }
     const uploadedFile = pickBannerImageFile(files);
+    const uploadedVideo = pickBannerVideoFile(files);
+    if (String(body.imageUrl ?? '').trim() && !uploadedFile) {
+      throw new BadRequestException(
+        'Banner image must be uploaded from your device. Image URLs are not accepted.',
+      );
+    }
+    if (String(body.videoUrl ?? body.video_url ?? '').trim()) {
+      throw new BadRequestException(
+        'Banner video must be uploaded from your device. Video URLs are not accepted.',
+      );
+    }
     const dto = plainToClass(CreateBannerDto, {
       imageUrl: body.imageUrl,
       title: body.title ?? body.heading,
@@ -954,6 +984,7 @@ export class AdminController {
         body.sequenceNumber ?? body.sequence ?? body.displayOrder ?? body.order,
       description: body.description ?? body.bannerDescription,
       imageSource: body.imageSource,
+      videoDurationSeconds: body.videoDurationSeconds,
     });
     const errors = await validate(dto);
     if (errors.length > 0) {
@@ -966,14 +997,24 @@ export class AdminController {
     const imageUrl = uploadedFile
       ? (await uploadFile(uploadedFile, 'banners')).fileUrl
       : dto.imageUrl;
+    if (!uploadedFile) {
+      throw new BadRequestException(
+        'Banner image must be uploaded from your device.',
+      );
+    }
     if (!imageUrl) {
       throw new BadRequestException('Banner image is required');
     }
+    const videoUrl = await resolveUploadedBannerVideoUrl(
+      uploadedVideo,
+      mergeBannerVideoDurationBody(req.body, body, dto),
+    );
     const resolvedImageSource = uploadedFile ? 'binary_upload' : 'manual_url';
     const data = await this.adminService.createBanner(
       user.vendorId,
-      { ...dto, imageUrl },
+      { ...dto, imageUrl, ...(videoUrl ? { videoUrl } : {}) },
       resolvedImageSource,
+      videoUrl ? 'binary_upload' : undefined,
     );
     return { message: 'Banner created successfully', data };
   }
@@ -1021,6 +1062,7 @@ export class AdminController {
     @CurrentUser() user: { vendorId: string },
     @Param('id') id: string,
     @Body() body: any,
+    @Req() req: Request,
     @UploadedFiles() files?: Record<string, Express.Multer.File[]>,
   ) {
     if (!user?.vendorId) {
@@ -1028,6 +1070,18 @@ export class AdminController {
     }
 
     const uploadedFile = pickBannerImageFile(files);
+    const uploadedVideo = pickBannerVideoFile(files);
+    if (String(body.imageUrl ?? '').trim() && !uploadedFile) {
+      throw new BadRequestException(
+        'Banner image must be uploaded from your device. Image URLs are not accepted.',
+      );
+    }
+    if (String(body.videoUrl ?? body.video_url ?? '').trim()) {
+      throw new BadRequestException(
+        'Banner video must be uploaded from your device. Video URLs are not accepted.',
+      );
+    }
+    const clearVideo = parseBannerClearVideoFlag(body);
 
     const dto = plainToClass(EditBannerDto, {
       imageUrl: body.imageUrl,
@@ -1036,6 +1090,7 @@ export class AdminController {
       sequenceNumber: body.sequenceNumber,
       description: body.description,
       imageSource: body.imageSource,
+      videoDurationSeconds: body.videoDurationSeconds,
     });
 
     const errors = await validate(dto, { skipMissingProperties: true });
@@ -1048,6 +1103,8 @@ export class AdminController {
 
     if (
       !uploadedFile &&
+      !uploadedVideo &&
+      !clearVideo &&
       dto.imageUrl === undefined &&
       dto.title === undefined &&
       dto.status === undefined &&
@@ -1060,6 +1117,10 @@ export class AdminController {
     const imageUrl = uploadedFile
       ? (await uploadFile(uploadedFile, 'banners')).fileUrl
       : dto.imageUrl;
+    const videoUrl = await resolveUploadedBannerVideoUrl(
+      uploadedVideo,
+      mergeBannerVideoDurationBody(req.body, body, dto),
+    );
     let imageSource: 'binary_upload' | 'manual_url' | undefined;
     if (uploadedFile) {
       imageSource = 'binary_upload';
@@ -1073,6 +1134,8 @@ export class AdminController {
     const data = await this.adminService.updateBanner(user.vendorId, id, {
       ...(imageUrl ? { imageUrl } : {}),
       ...(imageSource !== undefined ? { imageSource } : {}),
+      ...(clearVideo ? { clearVideo: true } : {}),
+      ...(videoUrl ? { videoUrl, videoSource: 'binary_upload' as const } : {}),
       ...(dto.title !== undefined ? { title: dto.title } : {}),
       ...(dto.status !== undefined ? { status: dto.status } : {}),
       ...(dto.sequenceNumber !== undefined
@@ -2655,14 +2718,9 @@ export class AdminController {
   @ApiResponse({ status: 201, description: 'Team member created successfully' })
   @ApiResponse({ status: 409, description: 'Email or mobile already exists' })
   async createTeamMember(
-    @CurrentUser() user: { vendorId: string },
     @Body() body: any,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
-
     const parsedCreateDisplayOrder =
       body.displayOrder === undefined ||
       body.displayOrder === null ||
@@ -2701,7 +2759,7 @@ export class AdminController {
     const imagePath = file
       ? (await uploadFile(file, 'team-members')).fileUrl
       : undefined;
-    const teamMember = await this.adminService.createTeamMember(user.vendorId, {
+    const teamMember = await this.adminService.createTeamMember({
       name: dto.name,
       designation: dto.designation,
       email: dto.email,
@@ -2787,7 +2845,7 @@ export class AdminController {
     const imagePath = file
       ? (await uploadFile(file, 'team-members')).fileUrl
       : undefined;
-    const teamMember = await this.adminService.updateTeamMember(user?.vendorId ?? '', {
+    const teamMember = await this.adminService.updateTeamMember({
       id: dto.id,
       name: dto.name,
       designation: dto.designation,

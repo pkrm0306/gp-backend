@@ -33,6 +33,12 @@ import { EmailService } from '../common/services/email.service';
 import { RedisService } from '../common/redis/redis.service';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
+import {
+  platformRbacScopeDocument,
+  rbacScopeFilter,
+  resolveRbacCacheScope,
+  platformPortalUserManufacturerFilter,
+} from '../common/utils/platform-rbac-scope.util';
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -75,14 +81,44 @@ export class RbacService {
     return Number.isFinite(ttl) && ttl > 0 ? ttl : 120;
   }
 
-  private async invalidateRbacCache(manufacturerId: string): Promise<void> {
+  private async invalidateRbacCache(manufacturerId?: string | null): Promise<void> {
+    const scope = resolveRbacCacheScope(manufacturerId);
     await this.redisService
-      .deleteByPattern(this.redisService.buildKey('rbac', manufacturerId, '*'))
+      .deleteByPattern(this.redisService.buildKey('rbac', scope, '*'))
       .catch((error) => {
         this.logger.warn(
-          `RBAC cache invalidation failed for manufacturer=${manufacturerId}: ${(error as Error)?.message || 'unknown error'}`,
+          `RBAC cache invalidation failed for scope=${scope}: ${(error as Error)?.message || 'unknown error'}`,
         );
       });
+  }
+
+  private rbacScope(manufacturerId?: string | null): Record<string, unknown> {
+    return rbacScopeFilter(manufacturerId);
+  }
+
+  private scopeDocument(manufacturerId?: string | null): {
+    manufacturerId: Types.ObjectId | null;
+  } {
+    const id = String(manufacturerId ?? '').trim();
+    if (!id) {
+      return platformRbacScopeDocument();
+    }
+    return { manufacturerId: new Types.ObjectId(id) };
+  }
+
+  async hasAnyActiveStaffRoleMapping(
+    manufacturerId: string | undefined | null,
+    vendorUserId: string,
+  ): Promise<boolean> {
+    const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
+    const count = await this.mappingModel
+      .countDocuments({
+        ...this.rbacScope(manufacturerId),
+        vendorUserId: vendorUserObjectId,
+        status: 1,
+      })
+      .exec();
+    return count > 0;
   }
 
   private toObjectId(id: string, field: string): Types.ObjectId {
@@ -92,27 +128,20 @@ export class RbacService {
     return new Types.ObjectId(id);
   }
 
-  async hasAnyActiveStaffRoleMapping(
-    manufacturerId: string,
-    vendorUserId: string,
-  ): Promise<boolean> {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
-    const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
-    const count = await this.mappingModel
-      .countDocuments({
-        manufacturerId: manufacturerObjectId,
-        vendorUserId: vendorUserObjectId,
-        status: 1,
+  private async findStaffUserById(
+    vendorUserId: Types.ObjectId,
+  ): Promise<VendorUserDocument | null> {
+    return this.vendorUserModel
+      .findOne({
+        _id: vendorUserId,
+        type: 'staff',
+        ...platformPortalUserManufacturerFilter(),
       })
       .exec();
-    return count > 0;
   }
 
   private async sendFirstRoleAssignmentCredentialsIfNeeded(input: {
-    manufacturerId: string;
+    manufacturerId?: string | null;
     vendorUserId: Types.ObjectId;
     user: VendorUserDocument;
   }): Promise<{ temporaryPassword: string; email: string } | undefined> {
@@ -188,14 +217,10 @@ export class RbacService {
     return expandEffectivePermissions(rawPermissions, ALL_KNOWN_PERMISSION_VALUES);
   }
 
-  async createRole(manufacturerId: string, dto: CreateRoleDto) {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
+  async createRole(manufacturerId: string | undefined | null, dto: CreateRoleDto) {
     try {
       const role = await this.roleModel.create({
-        manufacturerId: manufacturerObjectId,
+        ...this.scopeDocument(manufacturerId),
         name: dto.name.trim(),
         description: dto.description?.trim() || '',
         permissions: this.normalizePermissions(dto.permissions || []),
@@ -245,7 +270,7 @@ export class RbacService {
    * - `search` only: all matches, no cache.
    */
   async listRoles(
-    manufacturerId: string,
+    manufacturerId: string | undefined | null,
     query?: ListRolesQueryDto,
   ): Promise<{
     paged: boolean;
@@ -254,16 +279,12 @@ export class RbacService {
     page?: number;
     limit?: number;
   }> {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
     const search = query?.search?.trim();
     const pagingRequested =
       query?.page !== undefined || query?.limit !== undefined;
     const sortSpec = this.buildRolesSort(query?.sort, query?.order);
 
-    const filter: Record<string, unknown> = { manufacturerId: manufacturerObjectId };
+    const filter: Record<string, unknown> = { ...this.rbacScope(manufacturerId) };
     if (search) {
       const rx = new RegExp(escapeRegex(search), 'i');
       filter.$or = [{ name: rx }, { description: rx }, { permissions: rx }];
@@ -276,7 +297,7 @@ export class RbacService {
     if (!pagingRequested && !search && !sortOrOrder) {
       const cacheKey = this.redisService.buildKey(
         'rbac',
-        manufacturerId,
+        resolveRbacCacheScope(manufacturerId),
         'roles',
         'list',
       );
@@ -294,7 +315,7 @@ export class RbacService {
       }
 
       const rows = await this.roleModel
-        .find({ manufacturerId: manufacturerObjectId })
+        .find(this.rbacScope(manufacturerId))
         .sort(sortSpec)
         .lean()
         .exec();
@@ -341,11 +362,11 @@ export class RbacService {
     };
   }
 
-  async updateRole(manufacturerId: string, roleId: string, dto: UpdateRoleDto) {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
+  async updateRole(
+    manufacturerId: string | undefined | null,
+    roleId: string,
+    dto: UpdateRoleDto,
+  ) {
     const roleObjectId = this.toObjectId(roleId, 'roleId');
     const updateDoc: Record<string, unknown> = {};
     if (dto.name !== undefined) updateDoc.name = dto.name.trim();
@@ -356,7 +377,7 @@ export class RbacService {
 
     const row = await this.roleModel
       .findOneAndUpdate(
-        { _id: roleObjectId, manufacturerId: manufacturerObjectId },
+        { _id: roleObjectId, ...this.rbacScope(manufacturerId) },
         { $set: updateDoc },
         { new: true },
       )
@@ -366,19 +387,15 @@ export class RbacService {
     return row;
   }
 
-  async disableRole(manufacturerId: string, roleId: string) {
+  async disableRole(manufacturerId: string | undefined | null, roleId: string) {
     return this.setOrToggleRoleStatus(manufacturerId, roleId, 0);
   }
 
   async setOrToggleRoleStatus(
-    manufacturerId: string,
+    manufacturerId: string | undefined | null,
     roleId: string,
     status?: number,
   ) {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
     const roleObjectId = this.toObjectId(roleId, 'roleId');
 
     let nextStatus: number;
@@ -386,7 +403,7 @@ export class RbacService {
       nextStatus = status;
     } else {
       const current = await this.roleModel
-        .findOne({ _id: roleObjectId, manufacturerId: manufacturerObjectId })
+        .findOne({ _id: roleObjectId, ...this.rbacScope(manufacturerId) })
         .select('status')
         .lean()
         .exec();
@@ -396,7 +413,7 @@ export class RbacService {
 
     const row = await this.roleModel
       .findOneAndUpdate(
-        { _id: roleObjectId, manufacturerId: manufacturerObjectId },
+        { _id: roleObjectId, ...this.rbacScope(manufacturerId) },
         { $set: { status: nextStatus } },
         { new: true },
       )
@@ -412,15 +429,11 @@ export class RbacService {
     };
   }
 
-  async deleteRole(manufacturerId: string, roleId: string) {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
+  async deleteRole(manufacturerId: string | undefined | null, roleId: string) {
     const roleObjectId = this.toObjectId(roleId, 'roleId');
 
     const role = await this.roleModel
-      .findOne({ _id: roleObjectId, manufacturerId: manufacturerObjectId })
+      .findOne({ _id: roleObjectId, ...this.rbacScope(manufacturerId) })
       .select('_id name')
       .lean()
       .exec();
@@ -428,7 +441,7 @@ export class RbacService {
 
     const activeMappingsCount = await this.mappingModel
       .countDocuments({
-        manufacturerId: manufacturerObjectId,
+        ...this.rbacScope(manufacturerId),
         roleId: roleObjectId,
         status: 1,
       })
@@ -440,16 +453,15 @@ export class RbacService {
     }
 
     const res = await this.roleModel
-      .deleteOne({ _id: roleObjectId, manufacturerId: manufacturerObjectId })
+      .deleteOne({ _id: roleObjectId, ...this.rbacScope(manufacturerId) })
       .exec();
     if (!res || res.deletedCount === 0) {
       throw new NotFoundException('Role not found');
     }
 
-    // Clean up any stale inactive mappings for this deleted role.
     await this.mappingModel
       .deleteMany({
-        manufacturerId: manufacturerObjectId,
+        ...this.rbacScope(manufacturerId),
         roleId: roleObjectId,
       })
       .exec();
@@ -458,17 +470,11 @@ export class RbacService {
     return { id: String(roleObjectId), name: String((role as any).name ?? '') };
   }
 
-  async createStaff(manufacturerId: string, dto: CreateStaffDto) {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
+  async createStaff(_manufacturerId: string | undefined | null, dto: CreateStaffDto) {
     const existing = await this.vendorUsersService.findByEmail(dto.email);
     if (existing) throw new ConflictException('Email already exists');
 
     const createdStaff = await this.vendorUsersService.create({
-      manufacturerId: manufacturerObjectId,
-      vendorId: manufacturerObjectId,
       name: dto.name.trim(),
       email: dto.email.trim().toLowerCase(),
       phone: dto.phone.trim(),
@@ -490,12 +496,17 @@ export class RbacService {
       );
     }
 
-    await this.invalidateRbacCache(manufacturerId);
+    await this.invalidateRbacCache(undefined);
     return createdStaff;
   }
 
-  async listStaff(manufacturerId: string) {
-    const cacheKey = this.redisService.buildKey('rbac', manufacturerId, 'staff', 'list');
+  async listStaff(manufacturerId?: string | null) {
+    const cacheKey = this.redisService.buildKey(
+      'rbac',
+      resolveRbacCacheScope(manufacturerId),
+      'staff',
+      'list',
+    );
     try {
       const cached = await this.redisService.get<Record<string, unknown>[]>(cacheKey);
       if (Array.isArray(cached)) return cached;
@@ -505,15 +516,11 @@ export class RbacService {
       );
     }
 
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
     const rows = await this.vendorUserModel
       .find({
-        manufacturerId: manufacturerObjectId,
         type: 'staff',
         status: { $ne: 2 },
+        ...platformPortalUserManufacturerFilter(),
       })
       .sort({ createdAt: -1 })
       .lean()
@@ -528,27 +535,22 @@ export class RbacService {
     return rows;
   }
 
-  async assignRole(manufacturerId: string, dto: AssignRoleDto) {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
+  async assignRole(manufacturerId: string | undefined | null, dto: AssignRoleDto) {
     const vendorUserId = this.toObjectId(dto.vendorUserId, 'vendorUserId');
     if (!dto.roleId) {
       throw new BadRequestException('roleId is required');
     }
     const roleId = this.toObjectId(dto.roleId, 'roleId');
+    const scopeDoc = this.scopeDocument(manufacturerId);
 
     const [user, role, hadAnyRoleBefore] = await Promise.all([
-      this.vendorUserModel
-        .findOne({ _id: vendorUserId, manufacturerId: manufacturerObjectId })
-        .exec(),
+      this.findStaffUserById(vendorUserId),
       this.roleModel
-        .findOne({ _id: roleId, manufacturerId: manufacturerObjectId, status: 1 })
+        .findOne({ _id: roleId, ...this.rbacScope(manufacturerId), status: 1 })
         .exec(),
       this.mappingModel
         .countDocuments({
-          manufacturerId: manufacturerObjectId,
+          ...this.rbacScope(manufacturerId),
           vendorUserId,
           status: 1,
         })
@@ -556,14 +558,11 @@ export class RbacService {
         .then((c) => c > 0),
     ]);
     if (!user) throw new NotFoundException('Staff user not found');
-    if (user.type !== 'staff') {
-      throw new BadRequestException('Role assignment only allowed for staff');
-    }
     if (!role) throw new NotFoundException('Role not found');
 
     const mapping = await this.mappingModel
       .findOneAndUpdate(
-        { manufacturerId: manufacturerObjectId, vendorUserId, roleId },
+        { ...scopeDoc, vendorUserId, roleId },
         { $set: { status: 1 } },
         { upsert: true, new: true },
       )
@@ -580,27 +579,25 @@ export class RbacService {
     return mapping;
   }
 
-  async updateStaffRole(manufacturerId: string, dto: AssignRoleDto) {
+  async updateStaffRole(
+    manufacturerId: string | undefined | null,
+    dto: AssignRoleDto,
+  ) {
     if (!dto.roleId) {
       throw new BadRequestException('roleId is required');
     }
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
     const vendorUserId = this.toObjectId(dto.vendorUserId, 'vendorUserId');
     const roleId = this.toObjectId(dto.roleId, 'roleId');
+    const scopeDoc = this.scopeDocument(manufacturerId);
 
     const [role, user, hadAnyRoleBefore] = await Promise.all([
       this.roleModel
-        .findOne({ _id: roleId, manufacturerId: manufacturerObjectId, status: 1 })
+        .findOne({ _id: roleId, ...this.rbacScope(manufacturerId), status: 1 })
         .exec(),
-      this.vendorUserModel
-        .findOne({ _id: vendorUserId, manufacturerId: manufacturerObjectId })
-        .exec(),
+      this.findStaffUserById(vendorUserId),
       this.mappingModel
         .countDocuments({
-          manufacturerId: manufacturerObjectId,
+          ...this.rbacScope(manufacturerId),
           vendorUserId,
           status: 1,
         })
@@ -609,16 +606,13 @@ export class RbacService {
     ]);
     if (!role) throw new NotFoundException('Role not found');
     if (!user) throw new NotFoundException('Staff user not found');
-    if (user.type !== 'staff') {
-      throw new BadRequestException('Role assignment only allowed for staff');
-    }
 
     await this.mappingModel.deleteMany({
-      manufacturerId: manufacturerObjectId,
+      ...this.rbacScope(manufacturerId),
       vendorUserId,
     });
     const mapping = await this.mappingModel.create({
-      manufacturerId: manufacturerObjectId,
+      ...scopeDoc,
       vendorUserId,
       roleId,
       status: 1,
@@ -636,24 +630,19 @@ export class RbacService {
   }
 
   async replaceStaffRoles(
-    manufacturerId: string,
+    manufacturerId: string | undefined | null,
     dto: { vendorUserId: string; roleIds: string[] },
   ) {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
     const vendorUserId = this.toObjectId(dto.vendorUserId, 'vendorUserId');
     const roleIds = Array.from(new Set((dto.roleIds || []).map((r) => String(r))));
     const roleObjectIds = roleIds.map((id) => this.toObjectId(id, 'roleIds'));
+    const scopeDoc = this.scopeDocument(manufacturerId);
 
     const [user, hadAnyRoleBefore] = await Promise.all([
-      this.vendorUserModel
-        .findOne({ _id: vendorUserId, manufacturerId: manufacturerObjectId })
-        .exec(),
+      this.findStaffUserById(vendorUserId),
       this.mappingModel
         .countDocuments({
-          manufacturerId: manufacturerObjectId,
+          ...this.rbacScope(manufacturerId),
           vendorUserId,
           status: 1,
         })
@@ -661,15 +650,12 @@ export class RbacService {
         .then((c) => c > 0),
     ]);
     if (!user) throw new NotFoundException('Staff user not found');
-    if (user.type !== 'staff') {
-      throw new BadRequestException('Role assignment only allowed for staff');
-    }
 
     if (roleObjectIds.length > 0) {
       const validRolesCount = await this.roleModel
         .countDocuments({
           _id: { $in: roleObjectIds },
-          manufacturerId: manufacturerObjectId,
+          ...this.rbacScope(manufacturerId),
           status: 1,
         })
         .exec();
@@ -684,7 +670,7 @@ export class RbacService {
       await session.withTransaction(async () => {
         await this.mappingModel
           .deleteMany({
-            manufacturerId: manufacturerObjectId,
+            ...this.rbacScope(manufacturerId),
             vendorUserId,
           })
           .session(session)
@@ -693,7 +679,7 @@ export class RbacService {
         if (roleObjectIds.length > 0) {
           await this.mappingModel.insertMany(
             roleObjectIds.map((roleId) => ({
-              manufacturerId: manufacturerObjectId,
+              ...scopeDoc,
               vendorUserId,
               roleId,
               status: 1,
@@ -732,16 +718,15 @@ export class RbacService {
     }
   }
 
-  async unassignStaffRole(manufacturerId: string, vendorUserId: string) {
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
+  async unassignStaffRole(
+    manufacturerId: string | undefined | null,
+    vendorUserId: string,
+  ) {
     const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
 
     const res = await this.mappingModel
       .deleteMany({
-        manufacturerId: manufacturerObjectId,
+        ...this.rbacScope(manufacturerId),
         vendorUserId: vendorUserObjectId,
       })
       .exec();
@@ -753,10 +738,13 @@ export class RbacService {
     };
   }
 
-  async getStaffWithRoles(manufacturerId: string, vendorUserId?: string) {
+  async getStaffWithRoles(
+    manufacturerId?: string | null,
+    vendorUserId?: string,
+  ) {
     const cacheKey = this.redisService.buildKey(
       'rbac',
-      manufacturerId,
+      resolveRbacCacheScope(manufacturerId),
       'staff-roles',
       vendorUserId || 'all',
     );
@@ -769,12 +757,8 @@ export class RbacService {
       );
     }
 
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
     const where: Record<string, unknown> = {
-      manufacturerId: manufacturerObjectId,
+      ...this.rbacScope(manufacturerId),
       status: 1,
     };
     if (vendorUserId) {
@@ -848,7 +832,7 @@ export class RbacService {
   }
 
   async getStaffPermissions(
-    manufacturerId: string,
+    manufacturerId: string | undefined | null,
     vendorUserId: string,
   ): Promise<string[]> {
     if (await this.vendorUserIsPlatformAdmin(vendorUserId)) {
@@ -857,7 +841,7 @@ export class RbacService {
 
     const cacheKey = this.redisService.buildKey(
       'rbac',
-      manufacturerId,
+      resolveRbacCacheScope(manufacturerId),
       'staff-permissions',
       vendorUserId,
     );
@@ -870,14 +854,10 @@ export class RbacService {
       );
     }
 
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
     const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
     const mappings = await this.mappingModel
       .find({
-        manufacturerId: manufacturerObjectId,
+        ...this.rbacScope(manufacturerId),
         vendorUserId: vendorUserObjectId,
         status: 1,
       })
@@ -909,7 +889,7 @@ export class RbacService {
    * Always reflects current `Role.permissions` in the database (same source as `getStaffPermissions` + guard).
    */
   async getStaffPermissionContext(
-    manufacturerId: string,
+    manufacturerId: string | undefined | null,
     vendorUserId: string,
   ): Promise<{
     roleIds: string[];
@@ -927,17 +907,13 @@ export class RbacService {
       };
     }
 
-    const manufacturerObjectId = this.toObjectId(
-      manufacturerId,
-      'manufacturerId',
-    );
     const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
 
     const [grants, mappings] = await Promise.all([
       this.getStaffPermissions(manufacturerId, vendorUserId),
       this.mappingModel
         .find({
-          manufacturerId: manufacturerObjectId,
+          ...this.rbacScope(manufacturerId),
           vendorUserId: vendorUserObjectId,
           status: 1,
         })

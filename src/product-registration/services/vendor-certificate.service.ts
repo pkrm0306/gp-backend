@@ -36,10 +36,13 @@ import {
   ProductPlantDocument,
 } from '../schemas/product-plant.schema';
 import { readUploadedFileBuffer } from '../../utils/upload-file-read.util';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 
 const CERTIFIED_PRODUCT_STATUS = 2;
 const PAGE_W = 787;
 const PAGE_H = 590;
+const CERTIFICATE_BACKGROUND_FILE = 'GPAMNS281001 2_page-0001.jpg';
 
 export type CertificateDownloadFile = {
   buffer: Buffer;
@@ -213,10 +216,8 @@ export class VendorCertificateService {
     const vendorObjectId = this.toObjectId(vendorId, 'manufacturerId');
     const products = await this.productModel
       .find(
-        matchActiveProducts({
-          vendorId: vendorObjectId,
+        this.matchCertifiedProductsForVendor(vendorObjectId, {
           urnNo: trimmedUrn,
-          productStatus: CERTIFIED_PRODUCT_STATUS,
         }),
       )
       .sort({ eoiNo: 1 })
@@ -283,6 +284,180 @@ export class VendorCertificateService {
     };
   }
 
+  /** All plant certificates across every certified EOI for the logged-in vendor. */
+  async downloadVendorAllCertifiedCertificates(
+    vendorId: string,
+    format: 'merged' | 'zip' = 'merged',
+  ): Promise<CertificateDownloadFile> {
+    const vendorObjectId = this.toObjectId(vendorId, 'manufacturerId');
+    const products = await this.listCertifiedProductsForVendor(vendorObjectId);
+
+    if (!products.length) {
+      throw new NotFoundException(
+        'No certified products found for this vendor',
+      );
+    }
+
+    const hydrated = await Promise.all(
+      products.map((product) => this.hydrateProduct(product)),
+    );
+
+    if (format === 'zip') {
+      const files: Array<{ name: string; buffer: Buffer }> = [];
+
+      for (const product of hydrated) {
+        const plants = await this.loadPlantsForProduct(product);
+        const buffers = await this.collectPlantCertificateBuffers(product, plants);
+        for (const [index, buffer] of buffers.entries()) {
+          const plant = plants[index];
+          files.push({
+            name: this.buildPlantCertificateFileName(
+              product.eoiNo,
+              plant?.plantName ?? `Plant_${index + 1}`,
+              plant?.productPlantId || index + 1,
+            ),
+            buffer,
+          });
+        }
+      }
+
+      if (!files.length) {
+        throw new NotFoundException(
+          'No certificate files are available for this vendor',
+        );
+      }
+
+      const zipBuffer = await this.buildZipBuffer(files);
+      return {
+        buffer: zipBuffer,
+        fileName: 'GreenPro_Certificates_All_Plants.zip',
+        contentType: 'application/zip',
+      };
+    }
+
+    const mergedPdf = await PDFLibDocument.create();
+    let addedPages = 0;
+
+    for (const product of hydrated) {
+      const buffers = await this.collectPlantCertificateBuffers(product);
+      for (const buffer of buffers) {
+        try {
+          addedPages += await this.appendBufferToMergedPdf(mergedPdf, buffer);
+        } catch {
+          /* skip invalid plant certificate rows */
+        }
+      }
+    }
+
+    if (addedPages === 0) {
+      throw new NotFoundException(
+        'No certificate files are available for this vendor',
+      );
+    }
+
+    const mergedBuffer = Buffer.from(await mergedPdf.save());
+    return {
+      buffer: mergedBuffer,
+      fileName: 'GreenPro_Certificates_All_Plants.pdf',
+      contentType: 'application/pdf',
+    };
+  }
+
+  async countVendorCertifiedPlantCertificates(vendorId: string): Promise<number> {
+    const vendorObjectId = this.toObjectId(vendorId, 'manufacturerId');
+    const products = await this.productModel
+      .find(this.matchCertifiedProductsForVendor(vendorObjectId))
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+
+    if (!products.length) {
+      return 0;
+    }
+
+    const productIds = products.map((product) => product._id);
+    const plantCount = await this.productPlantModel.countDocuments(
+      matchActiveProductPlants({
+        productId: { $in: productIds },
+      }),
+    );
+
+    if (plantCount > 0) {
+      return plantCount;
+    }
+
+    return products.length;
+  }
+
+  private matchCertifiedProductsForVendor(
+    vendorObjectId: Types.ObjectId,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return matchActiveProducts({
+      ...extra,
+      productStatus: CERTIFIED_PRODUCT_STATUS,
+      $and: [
+        {
+          $or: [
+            { vendorId: vendorObjectId },
+            { manufacturerId: vendorObjectId },
+          ],
+        },
+      ],
+    });
+  }
+
+  private listCertifiedProductsForVendor(vendorObjectId: Types.ObjectId) {
+    return this.productModel
+      .find(this.matchCertifiedProductsForVendor(vendorObjectId))
+      .sort({ eoiNo: 1 })
+      .exec();
+  }
+
+  private async collectPlantCertificateBuffers(
+    product: ProductWithRelations,
+    plantsOverride?: PlantWithGeo[],
+  ): Promise<Buffer[]> {
+    const plants = plantsOverride ?? (await this.loadPlantsForProduct(product));
+    const buffers: Buffer[] = [];
+
+    if (!plants.length) {
+      try {
+        buffers.push(await this.resolveCertificateBuffer(product));
+      } catch {
+        /* one certificate per EOI when plant rows are missing */
+      }
+      return buffers;
+    }
+
+    for (const plant of plants) {
+      try {
+        buffers.push(
+          await this.generateCertificatePdf(
+            product,
+            this.derivePlantLocation(plant),
+          ),
+        );
+      } catch {
+        /* skip invalid plant certificate rows */
+      }
+    }
+
+    return buffers;
+  }
+
+  private async appendBufferToMergedPdf(
+    mergedPdf: PDFLibDocument,
+    buffer: Buffer,
+  ): Promise<number> {
+    const src = await PDFLibDocument.load(buffer);
+    const pages = await mergedPdf.copyPages(src, src.getPageIndices());
+    for (const page of pages) {
+      mergedPdf.addPage(page);
+    }
+    return pages.length;
+  }
+
   private async loadCertifiedProductForVendor(
     vendorId: string,
     productId: string,
@@ -297,8 +472,15 @@ export class VendorCertificateService {
       .findOne(
         matchActiveProducts({
           _id: new Types.ObjectId(trimmedId),
-          vendorId: vendorObjectId,
           productStatus: CERTIFIED_PRODUCT_STATUS,
+          $and: [
+            {
+              $or: [
+                { vendorId: vendorObjectId },
+                { manufacturerId: vendorObjectId },
+              ],
+            },
+          ],
         }),
       )
       .exec();
@@ -344,7 +526,6 @@ export class VendorCertificateService {
         {
           $match: matchActiveProductPlants({
             productId: product._id,
-            eoiNo: String(product.eoiNo ?? '').trim(),
           }),
         },
         {
@@ -392,7 +573,6 @@ export class VendorCertificateService {
           $match: matchActiveProductPlants({
             _id: new Types.ObjectId(trimmedPlantId),
             productId: product._id,
-            eoiNo: String(product.eoiNo ?? '').trim(),
           }),
         },
         {
@@ -631,12 +811,44 @@ export class VendorCertificateService {
     );
   }
 
+  private resolveCertificateBackgroundPath(): string | null {
+    const candidates = [
+      join(process.cwd(), 'uploads', 'certificates', CERTIFICATE_BACKGROUND_FILE),
+      join(process.cwd(), 'public', 'certificate', CERTIFICATE_BACKGROUND_FILE),
+    ];
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  private async embedCertificateBackground(
+    pdfDoc: PDFLibDocument,
+    page: PDFPage,
+  ): Promise<void> {
+    const bgPath = this.resolveCertificateBackgroundPath();
+    if (!bgPath) return;
+
+    try {
+      const bytes = readFileSync(bgPath);
+      const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
+      const image = isJpeg
+        ? await pdfDoc.embedJpg(bytes)
+        : await pdfDoc.embedPng(bytes);
+      page.drawImage(image, { x: 0, y: 0, width: PAGE_W, height: PAGE_H });
+    } catch {
+      /* keep text-only page when artwork cannot be loaded */
+    }
+  }
+
   private async generateCertificatePdfWithTemplateLayout(
     product: ProductWithRelations,
     locationOverride?: string,
   ): Promise<Buffer> {
     const pdfDoc = await PDFLibDocument.create();
     const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+
+    await this.embedCertificateBackground(pdfDoc, page);
 
     const regular = await pdfDoc.embedStandardFont(StandardFonts.Helvetica);
     const bold = await pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);

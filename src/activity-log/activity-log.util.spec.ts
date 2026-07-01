@@ -2,6 +2,7 @@ import {
   isAuxiliaryActivityLog,
   resolveCurrentWorkflowActivityLog,
 } from './activity-log.util';
+import { ActivityWorkflowItemStatus } from './activity-workflow.constants';
 
 describe('activity-log Quick View helpers', () => {
   it('detects site visit auxiliary rows by sub_activities_id', () => {
@@ -28,6 +29,7 @@ describe('activity-log Quick View helpers', () => {
           activities_id: 4,
           activity_status: 4,
           activity: 'Approve/Reject Registration Fee',
+          status: ActivityWorkflowItemStatus.Pending,
           created_at: new Date('2026-01-01'),
         },
         {
@@ -43,6 +45,7 @@ describe('activity-log Quick View helpers', () => {
     expect(current).toMatchObject({
       activities_id: 4,
       activity: 'Approve/Reject Registration Fee',
+      status: ActivityWorkflowItemStatus.Pending,
     });
   });
 });

@@ -37,6 +37,7 @@ import type { VendorUserDocument } from '../vendor-users/schemas/vendor-user.sch
 import type { ManufacturerDocument } from '../manufacturers/schemas/manufacturer.schema';
 import { ZohoLeadsService } from '../zoho/services/zoho-leads.service';
 import { normalizeLoginEmail } from '../vendor-users/utils/vendor-login-email.util';
+import { isPlatformPortalAccountType } from '../common/utils/platform-rbac-scope.util';
 import {
   generateVendorRegistrationOtp,
   OTP_RESEND_COOLDOWN_SECONDS,
@@ -167,6 +168,32 @@ export class AuthService {
     private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
     private readonly zohoLeadsService: ZohoLeadsService,
   ) {}
+
+  private buildAuthTokenPayload(user: VendorUserDocument): Record<string, unknown> {
+    const manufacturerId =
+      user.manufacturerId?.toString() || user.vendorId?.toString();
+    const base: Record<string, unknown> = {
+      userId: user._id.toString(),
+      type: user.type,
+      role: user.type,
+      name: user.name,
+      email: user.email,
+    };
+    if (this.isVendorPortalRole(user.type) && manufacturerId) {
+      base.manufacturerId = manufacturerId;
+    }
+    return base;
+  }
+
+  private async assertStaffPortalAccess(user: VendorUserDocument): Promise<void> {
+    const hasRole = await this.rbacService.hasAnyActiveStaffRoleMapping(
+      undefined,
+      user._id.toString(),
+    );
+    if (!hasRole) {
+      throw new UnauthorizedException('Portal access restricted');
+    }
+  }
 
   private splitContactName(name: string): {
     firstName?: string;
@@ -819,29 +846,11 @@ export class AuthService {
     // Portal access is authoritative by RBAC role mapping presence for staff users.
     // Active/inactive status remains independent (checked above).
     if (user && resolvedUserType === 'staff') {
-      const manufacturerId =
-        user.manufacturerId?.toString() || user.vendorId?.toString();
-      const hasRole = manufacturerId
-        ? await this.rbacService.hasAnyActiveStaffRoleMapping(
-            manufacturerId,
-            user._id.toString(),
-          )
-        : false;
-      if (!hasRole) {
-        throw new UnauthorizedException('Portal access restricted');
-      }
+      await this.assertStaffPortalAccess(user);
     }
 
     const payload = user
-      ? {
-          userId: user._id.toString(),
-          manufacturerId:
-            user.manufacturerId?.toString() || user.vendorId?.toString(),
-          type: user.type,
-          role: user.type,
-          name: user.name,
-          email: user.email,
-        }
+      ? this.buildAuthTokenPayload(user)
       : {
           userId: fallbackManufacturer!._id.toString(),
           manufacturerId: fallbackManufacturer!._id.toString(),
@@ -904,19 +913,12 @@ export class AuthService {
         ALL_KNOWN_PERMISSION_VALUES,
       );
     } else if (user?.type === 'staff') {
-      const manufacturerId =
-        user.manufacturerId?.toString() || user.vendorId?.toString();
-      if (manufacturerId) {
-        const ctx = await this.rbacService.getStaffPermissionContext(
-          manufacturerId,
-          user._id.toString(),
-        );
-        loginData.isPlatformAdmin = ctx.isPlatformAdmin;
-        loginData.effectivePermissions = ctx.effectivePermissions;
-      } else {
-        loginData.isPlatformAdmin = false;
-        loginData.effectivePermissions = [];
-      }
+      const ctx = await this.rbacService.getStaffPermissionContext(
+        undefined,
+        user._id.toString(),
+      );
+      loginData.isPlatformAdmin = ctx.isPlatformAdmin;
+      loginData.effectivePermissions = ctx.effectivePermissions;
     }
 
     return {
@@ -972,14 +974,10 @@ export class AuthService {
         throw new BadRequestException('Portal access restricted');
       }
       if (user.type === 'staff') {
-        const manufacturerId =
-          user.manufacturerId?.toString() || user.vendorId?.toString();
-        const hasRole = manufacturerId
-          ? await this.rbacService.hasAnyActiveStaffRoleMapping(
-              manufacturerId,
-              user._id.toString(),
-            )
-          : false;
+        const hasRole = await this.rbacService.hasAnyActiveStaffRoleMapping(
+          undefined,
+          user._id.toString(),
+        );
         if (!hasRole) {
           throw new BadRequestException('Portal access restricted');
         }
@@ -1076,35 +1074,35 @@ export class AuthService {
       vendorId: payload?.vendorId,
     });
 
-    const isPlatformAdmin = payload.role === 'admin';
-    if (!isPlatformAdmin && !(payload.manufacturerId || payload.vendorId)) {
+    const isPlatformPortalAccount = isPlatformPortalAccountType(payload.role);
+    if (!isPlatformPortalAccount && !(payload.manufacturerId || payload.vendorId)) {
       throw new UnauthorizedException('Invalid refresh token payload');
     }
 
     const mid = payload.manufacturerId || payload.vendorId;
     const roleForOrg = String(payload.type || payload.role || '');
-    if (!isPlatformAdmin && mid && this.isVendorPortalRole(roleForOrg)) {
+    if (!isPlatformPortalAccount && mid && this.isVendorPortalRole(roleForOrg)) {
       await this.assertVendorOrganizationActive(
         typeof mid === 'string' ? mid : String(mid),
       );
       await this.assertVendorPortalUserAccountActive(String(payload.userId));
     }
 
-    const newPayload: Record<string, unknown> = {
-      userId: payload.userId,
-      type: payload.type || payload.role,
-      role: payload.role,
-    };
-    const midForPayload = payload.manufacturerId || payload.vendorId;
-    if (midForPayload) {
-      newPayload.manufacturerId = midForPayload;
+    const vu = await this.vendorUsersService.findById(String(payload.userId));
+    if (vu?.type === 'staff') {
+      await this.assertStaffPortalAccess(vu);
     }
-    if (payload.name) {
-      newPayload.name = payload.name;
-    }
-    if (payload.email) {
-      newPayload.email = payload.email;
-    }
+
+    const newPayload: Record<string, unknown> = vu
+      ? this.buildAuthTokenPayload(vu)
+      : {
+          userId: payload.userId,
+          type: payload.type || payload.role,
+          role: payload.role,
+          ...(mid ? { manufacturerId: mid } : {}),
+          ...(payload.name ? { name: payload.name } : {}),
+          ...(payload.email ? { email: payload.email } : {}),
+        };
 
     const accessTokenJti = crypto.randomUUID();
     const newRefreshTokenJti = crypto.randomUUID();
@@ -1130,7 +1128,6 @@ export class AuthService {
     };
 
     try {
-      const vu = await this.vendorUsersService.findById(String(payload.userId));
       if (vu && (vu.type === 'admin' || vu.type === 'staff')) {
         refreshData.user = this.buildAdminPortalUserPayload(vu);
       } else if (vu && (vu.type === 'vendor' || vu.type === 'partner')) {
@@ -1143,16 +1140,12 @@ export class AuthService {
           ALL_KNOWN_PERMISSION_VALUES,
         );
       } else if (vu?.type === 'staff') {
-        const manufacturerId =
-          vu.manufacturerId?.toString() || vu.vendorId?.toString();
-        if (manufacturerId) {
-          const ctx = await this.rbacService.getStaffPermissionContext(
-            manufacturerId,
-            vu._id.toString(),
-          );
-          refreshData.isPlatformAdmin = ctx.isPlatformAdmin;
-          refreshData.effectivePermissions = ctx.effectivePermissions;
-        }
+        const ctx = await this.rbacService.getStaffPermissionContext(
+          undefined,
+          vu._id.toString(),
+        );
+        refreshData.isPlatformAdmin = ctx.isPlatformAdmin;
+        refreshData.effectivePermissions = ctx.effectivePermissions;
       }
     } catch {
       /* ignore */

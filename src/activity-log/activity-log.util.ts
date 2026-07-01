@@ -4,6 +4,7 @@ import {
   activityLifecycleResponsibility,
   nextActivityLifecycleStatus,
 } from './activity-lifecycle.constants';
+import { ActivityWorkflowItemStatus } from './activity-workflow.constants';
 
 /** Marks timeline rows that must not become Quick View "current activity". */
 export const AUXILIARY_ACTIVITY_SUB_IDS = {
@@ -19,6 +20,7 @@ export type ActivityLogLike = {
   next_activity?: string | null;
   next_responsibility?: string | null;
   next_acitivities_id?: number | null;
+  status?: number;
   created_at?: Date | string;
   createdAt?: Date | string;
 };
@@ -59,6 +61,20 @@ export function resolveCurrentWorkflowActivityLog(
   urnStatus?: number,
 ): Record<string, unknown> | null {
   const sorted = sortActivityLogsChronologically(logs);
+
+  for (let i = sorted.length - 1; i >= 0; i -= 1) {
+    const row = sorted[i];
+    if (isAuxiliaryActivityLog(row)) {
+      continue;
+    }
+    if (Number(row.status) === ActivityWorkflowItemStatus.Pending) {
+      return {
+        ...formatActivityLogRow(row as ActivityLogDocument),
+        status: ActivityWorkflowItemStatus.Pending,
+      };
+    }
+  }
+
   for (let i = sorted.length - 1; i >= 0; i -= 1) {
     const row = sorted[i];
     if (isAuxiliaryActivityLog(row)) {
@@ -66,8 +82,7 @@ export function resolveCurrentWorkflowActivityLog(
     }
     return {
       ...formatActivityLogRow(row as ActivityLogDocument),
-      // Quick View "Current Activity" is always actionable until advanced.
-      status: 0,
+      status: ActivityWorkflowItemStatus.Pending,
     };
   }
 

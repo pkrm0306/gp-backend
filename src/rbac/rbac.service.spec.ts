@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { RbacService } from './rbac.service';
 
 describe('RbacService', () => {
@@ -15,6 +15,13 @@ describe('RbacService', () => {
   };
   const vendorUserModel: any = {
     findOne: jest.fn(),
+    findById: jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue({ type: 'staff' }),
+        }),
+      }),
+    }),
   };
   const vendorUsersService: any = {
     findByEmail: jest.fn(),
@@ -84,30 +91,27 @@ describe('RbacService', () => {
       }),
     });
 
-    const mid = '507f1f77bcf86cd799439012';
     const uid = '507f1f77bcf86cd799439099';
-    const grants = await service.getStaffPermissions(mid, uid);
-
-    expect(grants).toContain('dashboard:view');
+    const grants = await service.getStaffPermissions(undefined, uid);
     expect(grants).toContain('products:view');
     expect(grants).toContain('inquiries:view');
     expect(mappingModel.find).toHaveBeenCalled();
   });
 
-  it('rejects role assignment when target user is not staff', async () => {
+  it('rejects role assignment when staff user is not found', async () => {
     vendorUserModel.findOne.mockReturnValue({
-      exec: jest.fn().mockResolvedValue({ type: 'vendor' }),
+      exec: jest.fn().mockResolvedValue(null),
     });
     roleModel.findOne.mockReturnValue({
       exec: jest.fn().mockResolvedValue({ _id: 'r1', status: 1 }),
     });
 
     await expect(
-      service.assignRole('507f1f77bcf86cd799439012', {
+      service.assignRole(undefined, {
         vendorUserId: '507f1f77bcf86cd799439013',
         roleId: '507f1f77bcf86cd799439014',
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('sends credentials email when staff is created', async () => {
@@ -115,14 +119,19 @@ describe('RbacService', () => {
     vendorUsersService.create.mockResolvedValue({ _id: 'staff1' });
     emailService.sendStaffCredentialsEmail.mockResolvedValue(undefined);
 
-    await service.createStaff('507f1f77bcf86cd799439012', {
+    await service.createStaff(undefined, {
       name: 'Staff User',
       email: 'staff@example.com',
       phone: '9999999999',
       password: 'Pass@123',
     });
 
-    expect(vendorUsersService.create).toHaveBeenCalled();
+    expect(vendorUsersService.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'staff',
+        email: 'staff@example.com',
+      }),
+    );
     expect(emailService.sendStaffCredentialsEmail).toHaveBeenCalledWith(
       'staff@example.com',
       'Pass@123',

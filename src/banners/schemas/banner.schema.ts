@@ -23,6 +23,21 @@ export class Banner {
   })
   imageSource?: 'binary_upload' | 'manual_url';
 
+  /** Relative path for uploaded banner video (e.g. banners/banner-video-….mp4). */
+  @Prop({ required: false, default: '' })
+  banner_video?: string;
+
+  @Prop({ required: false, default: '' })
+  videoUrl?: string;
+
+  /** Banner video is always provided via multipart upload (no manual URL). */
+  @Prop({
+    type: String,
+    enum: ['binary_upload'],
+    required: false,
+  })
+  videoSource?: 'binary_upload';
+
   @Prop({ required: true })
   heading: string;
 

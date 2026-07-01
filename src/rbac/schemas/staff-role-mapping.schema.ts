@@ -5,8 +5,8 @@ export type StaffRoleMappingDocument = StaffRoleMapping & Document;
 
 @Schema({ collection: 'staff_role_mappings', timestamps: true })
 export class StaffRoleMapping {
-  @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: true })
-  manufacturerId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: false, default: null })
+  manufacturerId?: Types.ObjectId | null;
 
   @Prop({ type: Types.ObjectId, ref: 'VendorUser', required: true })
   vendorUserId: Types.ObjectId;
@@ -24,7 +24,24 @@ export class StaffRoleMapping {
 export const StaffRoleMappingSchema =
   SchemaFactory.createForClass(StaffRoleMapping);
 StaffRoleMappingSchema.index(
+  { vendorUserId: 1, roleId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      $or: [
+        { manufacturerId: null },
+        { manufacturerId: { $exists: false } },
+      ],
+    },
+  },
+);
+StaffRoleMappingSchema.index(
   { manufacturerId: 1, vendorUserId: 1, roleId: 1 },
-  { unique: true },
+  {
+    unique: true,
+    partialFilterExpression: {
+      manufacturerId: { $exists: true, $type: 'objectId' },
+    },
+  },
 );
 

@@ -34,5 +34,18 @@ export type CronJobRunResult = {
   skipped: number;
   failed: number;
   deactivated: number;
+  /** Products selected for deactivation in the current run (deactivationMail only). */
+  planned?: number;
+  /** `updateMany` matched count (deactivationMail only). */
+  matchedCount?: number;
+  /** `updateMany` modified count (deactivationMail only). */
+  modifiedCount?: number;
+  /** Wall-clock duration of the job handler in milliseconds. */
+  durationMs?: number;
   errors: Array<{ productId?: number; urnNo?: string; message: string }>;
+};
+
+export type DeactivationBatchItem = {
+  product: EligibleExpiryProduct;
+  notifyDate: string;
 };

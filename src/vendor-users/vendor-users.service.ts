@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, ClientSession, Types } from 'mongoose';
 import { VendorUser, VendorUserDocument } from './schemas/vendor-user.schema';
 import * as bcrypt from 'bcryptjs';
+import { assertVendorUserManufacturerRules } from './utils/vendor-user-manufacturer-rules.util';
 import {
   isLikelyEmailDomainTypo,
   normalizeLoginEmail,
@@ -24,6 +25,11 @@ export class VendorUsersService {
     data: Partial<VendorUser>,
     session?: ClientSession,
   ): Promise<VendorUserDocument> {
+    assertVendorUserManufacturerRules({
+      type: data.type,
+      manufacturerId: data.manufacturerId,
+      vendorId: data.vendorId,
+    });
     if (data.password) {
       data.password = await bcrypt.hash(data.password, 10);
     }

@@ -24,8 +24,8 @@ const vendorUsersCollectionName =
 
 @Schema({ collection: vendorUsersCollectionName, timestamps: true })
 export class VendorUser {
-  @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: true })
-  manufacturerId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: false })
+  manufacturerId?: Types.ObjectId;
 
   // Legacy alias retained for backward compatibility with existing modules.
   @Prop({ type: Types.ObjectId, ref: 'Manufacturer', required: false })
@@ -105,19 +105,80 @@ export class VendorUser {
 
 export const VendorUserSchema = SchemaFactory.createForClass(VendorUser);
 
-// Uniqueness should be per vendor/manufacturer (not global).
-VendorUserSchema.index({ manufacturerId: 1, email: 1 }, { unique: true });
-VendorUserSchema.index({ manufacturerId: 1, phone: 1 }, { unique: true });
+VendorUserSchema.pre('validate', function vendorUserManufacturerRules(next) {
+  const doc = this as VendorUser;
+  const type = String(doc.type ?? '').trim().toLowerCase();
+  const hasManufacturer = doc.manufacturerId != null;
+  const hasVendor = doc.vendorId != null;
 
-/**
- * Team members: one display slot per (manufacturer, team). Requires no duplicate
- * (manufacturerId, team, displayOrder) among active staff; resolve legacy dupes before deploying.
- */
+  if (type === 'vendor' || type === 'partner') {
+    if (!hasManufacturer && !hasVendor) {
+      return next(
+        new Error('manufacturerId is required for vendor and partner accounts'),
+      );
+    }
+    return next();
+  }
+
+  if (type === 'admin' || type === 'staff') {
+    if (hasManufacturer || hasVendor) {
+      return next(
+        new Error(
+          'manufacturerId and vendorId must not be set for admin and staff accounts',
+        ),
+      );
+    }
+  }
+
+  next();
+});
+
+// Vendor/partner: unique email and phone per manufacturer.
 VendorUserSchema.index(
-  { manufacturerId: 1, team: 1, displayOrder: 1 },
+  { manufacturerId: 1, email: 1 },
   {
     unique: true,
-    name: 'uniq_staff_manufacturer_team_display_order',
+    partialFilterExpression: {
+      type: { $in: ['vendor', 'partner'] },
+      manufacturerId: { $exists: true, $type: 'objectId' },
+    },
+  },
+);
+VendorUserSchema.index(
+  { manufacturerId: 1, phone: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      type: { $in: ['vendor', 'partner'] },
+      manufacturerId: { $exists: true, $type: 'objectId' },
+    },
+  },
+);
+
+// Platform admin/staff: globally unique email and phone.
+VendorUserSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { type: { $in: ['admin', 'staff'] } },
+  },
+);
+VendorUserSchema.index(
+  { phone: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { type: { $in: ['admin', 'staff'] } },
+  },
+);
+
+/**
+ * Team members: one display slot per team (platform staff / website team).
+ */
+VendorUserSchema.index(
+  { team: 1, displayOrder: 1 },
+  {
+    unique: true,
+    name: 'uniq_staff_team_display_order',
     partialFilterExpression: {
       type: 'staff',
       status: { $ne: 2 },

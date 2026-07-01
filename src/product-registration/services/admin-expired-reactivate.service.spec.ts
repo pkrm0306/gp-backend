@@ -17,16 +17,22 @@ describe('AdminExpiredReactivateService', () => {
   let findOneExec: jest.Mock;
   let findLeanExec: jest.Mock;
   let updateOne: jest.Mock;
+  let bulkWrite: jest.Mock;
   let productStatusAuditCreate: jest.Mock;
+  let productStatusAuditInsertMany: jest.Mock;
   let auditRecord: jest.Mock;
+  let auditRecordMany: jest.Mock;
   let service: AdminExpiredReactivateService;
 
   beforeEach(() => {
     findOneExec = jest.fn();
     findLeanExec = jest.fn();
     updateOne = jest.fn().mockResolvedValue({ acknowledged: true });
+    bulkWrite = jest.fn().mockResolvedValue({ modifiedCount: 0 });
     productStatusAuditCreate = jest.fn().mockResolvedValue({});
+    productStatusAuditInsertMany = jest.fn().mockResolvedValue([]);
     auditRecord = jest.fn().mockResolvedValue(undefined);
+    auditRecordMany = jest.fn().mockResolvedValue(undefined);
 
     const productModel = {
       findOne: jest.fn().mockReturnValue({ exec: findOneExec }),
@@ -36,12 +42,16 @@ describe('AdminExpiredReactivateService', () => {
         }),
       }),
       updateOne,
+      bulkWrite,
     };
 
     service = new AdminExpiredReactivateService(
       productModel as never,
-      { create: productStatusAuditCreate } as never,
-      { record: auditRecord } as never,
+      {
+        create: productStatusAuditCreate,
+        insertMany: productStatusAuditInsertMany,
+      } as never,
+      { record: auditRecord, recordMany: auditRecordMany } as never,
       {
         del: jest.fn(),
         deleteByPattern: jest.fn().mockResolvedValue(0),
@@ -137,7 +147,7 @@ describe('AdminExpiredReactivateService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('reactivates all expired products on a URN', async () => {
+  it('bulk-reactivates all expired products on a URN with one bulkWrite', async () => {
     const secondId = new Types.ObjectId();
     findLeanExec.mockResolvedValue([
       {
@@ -153,15 +163,50 @@ describe('AdminExpiredReactivateService', () => {
         productStatus: PRODUCT_STATUS_CERTIFIED,
       },
     ]);
+    bulkWrite.mockResolvedValue({ modifiedCount: 2 });
 
     const result = await service.reactivateUrn(urnNo, adminUserId);
 
     expect(result.updatedCount).toBe(2);
+    expect(result.modifiedCount).toBe(2);
     expect(result.updatedEoiNos).toEqual(['GPPMI003026', 'GPPMI003027']);
-    expect(updateOne).toHaveBeenCalledTimes(2);
-    expect(auditRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'expired_reactivate_urn' }),
+    expect(bulkWrite).toHaveBeenCalledTimes(1);
+    expect(bulkWrite).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          updateOne: expect.objectContaining({
+            filter: { _id: productObjectId },
+          }),
+        }),
+        expect.objectContaining({
+          updateOne: expect.objectContaining({
+            filter: { _id: secondId },
+          }),
+        }),
+      ]),
+      { ordered: false },
     );
+    expect(updateOne).not.toHaveBeenCalled();
+    expect(productStatusAuditInsertMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ productId: productObjectId }),
+        expect.objectContaining({ productId: secondId }),
+      ]),
+      { ordered: false },
+    );
+    expect(auditRecordMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'expired_reactivate_urn',
+          entity_name: 'GPPMI003026',
+        }),
+        expect.objectContaining({
+          action: 'expired_reactivate_urn',
+          entity_name: 'GPPMI003027',
+        }),
+      ]),
+    );
+    expect(auditRecord).not.toHaveBeenCalled();
   });
 
   it('throws 404 when URN has no expired products', async () => {

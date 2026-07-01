@@ -65,6 +65,7 @@ import {
   RenewCompletionResult,
 } from './renewal-orchestration.service';
 import { RenewUrnTabReviewService } from './renew-urn-tab-review.service';
+import { LifecycleNotificationService } from '../../notifications/lifecycle-notification.service';
 
 export type RenewUrnStatusActorContext = {
   actor: RenewUrnStatusActor;
@@ -104,6 +105,7 @@ export class RenewUrnStatusService {
     private readonly activityLogService: ActivityLogService,
     private readonly renewalOrchestrationService: RenewalOrchestrationService,
     private readonly renewUrnTabReviewService: RenewUrnTabReviewService,
+    private readonly lifecycleNotification: LifecycleNotificationService,
   ) {}
 
   private async resolveRenewalCycle(
@@ -311,6 +313,16 @@ export class RenewUrnStatusService {
       dto.renewalCycleId.trim(),
     );
 
+    const ownership = renewOwnershipFields(
+      await resolveUrnRenewContext(this.productModel, trimmedUrn),
+    );
+    this.lifecycleNotification
+      .notifyRenewalCompleted({
+        manufacturerId: String(ownership.manufacturerId),
+        urnNo: trimmedUrn,
+      })
+      .catch(() => undefined);
+
     return this.toStatusUpdateResult(
       completion,
       'Renewal completed — final review approved',
@@ -441,6 +453,12 @@ export class RenewUrnStatusService {
         'Admin',
         RENEWAL_URN_STATUS.CHECK_PROCESS_FORMS,
       );
+      this.lifecycleNotification
+        .notifyRenewalSubmitted({
+          manufacturerId: String(ownership.manufacturerId),
+          urnNo: trimmedUrn,
+        })
+        .catch(() => undefined);
     } else if (targetStatus === RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING) {
       await this.logRenewUrnStatusChange(
         trimmedUrn,
@@ -453,6 +471,13 @@ export class RenewUrnStatusService {
         'Vendor',
         RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING,
       );
+      this.lifecycleNotification
+        .notifyRenewalDecision({
+          manufacturerId: String(ownership.manufacturerId),
+          urnNo: trimmedUrn,
+          decision: 'sent_back',
+        })
+        .catch(() => undefined);
     } else if (
       targetStatus === RENEWAL_URN_STATUS.PAYMENT_APPROVED &&
       currentStatus === RENEWAL_URN_STATUS.PAYMENT_SUBMITTED

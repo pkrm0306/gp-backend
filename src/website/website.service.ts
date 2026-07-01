@@ -40,6 +40,7 @@ import { PublicListEventsQueryDto } from './dto/public-list-events-query.dto';
 import { PublicListArticlesQueryDto } from './dto/public-list-articles-query.dto';
 import { PublicListGalleryQueryDto } from './dto/public-list-gallery-query.dto';
 import { EmailService } from '../common/services/email.service';
+import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import {
   Notification,
   NotificationDocument,
@@ -122,6 +123,7 @@ export class WebsiteService {
     private readonly galleryService: GalleryService,
     private readonly productRegistrationService: ProductRegistrationService,
     private emailService: EmailService,
+    private readonly lifecycleNotification: LifecycleNotificationService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
   ) {}
@@ -1519,15 +1521,21 @@ ${visitorDetailsBlock}
       </html>
     `;
 
-    await this.createNotification({
-      title: 'New manufacturer inquiry',
-      message: `${dto.name} submitted an inquiry for ${manufacturerName || 'a manufacturer'}.`,
-      type: 'info',
-      source: 'website',
-      referenceType: 'manufacturer_inquiry',
-      referenceId: manufacturerId,
-      actorName: dto.name,
-    });
+    await this.lifecycleNotification
+      .notifyProductEnquiry({
+        manufacturerId,
+        manufacturerName: manufacturerName || vendorName,
+        vendorEmail,
+        visitorName: dto.name,
+        visitorEmail: dto.email,
+        visitorPhone,
+        visitorMessage: visitorMessage || undefined,
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `[submitManufacturerInquiry] Lifecycle notification failed: ${(err as Error).message}`,
+        ),
+      );
 
     this.emailService.sendInBackground(() =>
       this.emailService.sendEmail(dto.email, subject, htmlBody),

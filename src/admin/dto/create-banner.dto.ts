@@ -81,4 +81,17 @@ export class CreateBannerDto {
   @MaxReadableLength(1000)
   @Transform(({ value }) => String(value ?? '').trim())
   description: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Video duration in seconds measured in the admin UI before upload.',
+    example: 29.5,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number.parseFloat(String(value).trim());
+    return Number.isFinite(n) ? n : undefined;
+  })
+  videoDurationSeconds?: number;
 }

@@ -1,4 +1,4 @@
-import { Global, Module, forwardRef } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { EmailService } from '../common/services/email.service';
@@ -11,6 +11,10 @@ import {
   Notification,
   NotificationSchema,
 } from '../common/schemas/notification.schema';
+import {
+  Manufacturer,
+  ManufacturerSchema,
+} from '../manufacturers/schemas/manufacturer.schema';
 import { NotificationTemplateRegistry } from './templates/notification-template.registry';
 import { NotificationChannelRegistry } from './channels/notification-channel.registry';
 import { EmailNotificationChannel } from './channels/email-notification.channel';
@@ -24,17 +28,16 @@ import { AdminSystemNotificationService } from './helpers/admin-system-notificat
 import { LifecycleNotificationService } from './lifecycle-notification.service';
 import { ProductDocumentUploadNotificationHelper } from './helpers/product-document-upload-notification.helper';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
-import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 
 @Global()
 @Module({
   imports: [
     ConfigModule,
     VendorUsersModule,
-    forwardRef(() => ManufacturersModule),
     MongooseModule.forFeature([
       { name: UserNotification.name, schema: UserNotificationSchema },
       { name: Notification.name, schema: NotificationSchema },
+      { name: Manufacturer.name, schema: ManufacturerSchema },
     ]),
   ],
   controllers: [],

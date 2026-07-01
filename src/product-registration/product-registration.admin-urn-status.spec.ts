@@ -54,13 +54,28 @@ describe('ProductRegistrationService.adminUpdateUrnStatus', () => {
     serviceAny.urnTabReviewService = {
       ensurePendingReviewsForUrn: jest.fn().mockResolvedValue(undefined),
     };
+    serviceAny.manufacturerModel = {
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({
+              manufacturerName: 'Acme Co',
+              vendor_email: 'vendor@example.com',
+            }),
+          }),
+        }),
+      }),
+    };
     serviceAny.lifecycleNotification = {
       notifyUrnInitialApproved: jest.fn().mockResolvedValue(undefined),
+      notifyUrnRegistrationRejected: jest.fn().mockResolvedValue(undefined),
+      notifyProductCertified: jest.fn().mockResolvedValue(undefined),
+      notifyProductRejected: jest.fn().mockResolvedValue(undefined),
     };
     serviceAny.invalidateProductListingsCache = jest
       .fn()
       .mockResolvedValue(undefined);
-    serviceAny.logger = { warn: jest.fn() };
+    serviceAny.logger = { warn: jest.fn(), log: jest.fn(), debug: jest.fn() };
 
     return {
       service,
@@ -211,6 +226,202 @@ describe('ProductRegistrationService.adminUpdateUrnStatus', () => {
         updateStatusTo: 4,
       }),
     ).rejects.toThrow('updateStatusTo must be between 0 and 3 for product_status');
+  });
+
+  it('notifies product certified when product_status becomes 2', async () => {
+    const { service } = createServiceHarness();
+    const notifyProductCertified = (service as any).lifecycleNotification
+      .notifyProductCertified as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'product_status',
+      updateStatusTo: 2,
+    });
+
+    expect(notifyProductCertified).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manufacturerId: manufacturerId.toString(),
+        urnNo: 'URN-202604010001',
+        productName: 'Test Product',
+      }),
+    );
+  });
+
+  it('notifies product rejected when product_status becomes 3', async () => {
+    const { service } = createServiceHarness();
+    const notifyProductRejected = (service as any).lifecycleNotification
+      .notifyProductRejected as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'product_status',
+      updateStatusTo: 3,
+    });
+
+    expect(notifyProductRejected).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manufacturerId: manufacturerId.toString(),
+        urnNo: 'URN-202604010001',
+        productName: 'Test Product',
+      }),
+    );
+  });
+
+  it('notifies registration rejected when product_status becomes 3 at initial stage', async () => {
+    const { service, find } = createServiceHarness();
+    find.mockReturnValue({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue([
+          {
+            urnNo: 'URN-202604010001',
+            urnStatus: 0,
+            vendorId,
+            manufacturerId,
+            productName: 'Test Product',
+          },
+        ]),
+      }),
+    } as LeanExec<typeof baseProducts>);
+    const notifyUrnRegistrationRejected = (service as any).lifecycleNotification
+      .notifyUrnRegistrationRejected as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'product_status',
+      updateStatusTo: 3,
+    });
+
+    expect(notifyUrnRegistrationRejected).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manufacturerId: manufacturerId.toString(),
+        urnNo: 'URN-202604010001',
+      }),
+    );
+  });
+
+  it('notifies urn initial approved when urn_status becomes 1 from 0 (legacy approve)', async () => {
+    const { service, find } = createServiceHarness();
+    find.mockReturnValue({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue([
+          {
+            urnNo: 'URN-202604010001',
+            urnStatus: 0,
+            vendorId,
+            manufacturerId,
+            productName: 'Test Product',
+          },
+        ]),
+      }),
+    } as LeanExec<typeof baseProducts>);
+    const notifyUrnInitialApproved = (service as any).lifecycleNotification
+      .notifyUrnInitialApproved as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'urn_status',
+      updateStatusTo: 1,
+    });
+
+    expect(notifyUrnInitialApproved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manufacturerId: manufacturerId.toString(),
+        urnNo: 'URN-202604010001',
+      }),
+    );
+  });
+
+  it('notifies urn initial approved when urn_status becomes 2', async () => {
+    const { service, find } = createServiceHarness();
+    find.mockReturnValue({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue([
+          {
+            urnNo: 'URN-202604010001',
+            urnStatus: 0,
+            vendorId,
+            manufacturerId,
+            productName: 'Test Product',
+          },
+        ]),
+      }),
+    } as LeanExec<typeof baseProducts>);
+    const notifyUrnInitialApproved = (service as any).lifecycleNotification
+      .notifyUrnInitialApproved as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'urn_status',
+      updateStatusTo: 2,
+    });
+
+    expect(notifyUrnInitialApproved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manufacturerId: manufacturerId.toString(),
+        urnNo: 'URN-202604010001',
+      }),
+    );
+  });
+
+  it('does not notify initial approval when urn_status goes 1 to 2', async () => {
+    const { service, find } = createServiceHarness();
+    find.mockReturnValue({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue([
+          {
+            urnNo: 'URN-202604010001',
+            urnStatus: 1,
+            vendorId,
+            manufacturerId,
+            productName: 'Test Product',
+          },
+        ]),
+      }),
+    } as LeanExec<typeof baseProducts>);
+    const notifyUrnInitialApproved = (service as any).lifecycleNotification
+      .notifyUrnInitialApproved as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'urn_status',
+      updateStatusTo: 2,
+    });
+
+    expect(notifyUrnInitialApproved).not.toHaveBeenCalled();
+  });
+
+  it('notifies product certified when urn_status becomes 11 (non-renewal)', async () => {
+    const { service, find } = createServiceHarness();
+    find.mockReturnValue({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue([
+          {
+            urnNo: 'URN-202604010001',
+            urnStatus: 10,
+            productRenewStatus: 0,
+            vendorId,
+            manufacturerId,
+            productName: 'Test Product',
+          },
+        ]),
+      }),
+    } as LeanExec<typeof baseProducts>);
+    const notifyProductCertified = (service as any).lifecycleNotification
+      .notifyProductCertified as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'urn_status',
+      updateStatusTo: 11,
+    });
+
+    expect(notifyProductCertified).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manufacturerId: manufacturerId.toString(),
+        urnNo: 'URN-202604010001',
+      }),
+    );
   });
 });
 

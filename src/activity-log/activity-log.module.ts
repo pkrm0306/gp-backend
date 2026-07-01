@@ -6,6 +6,7 @@ import { ActivityLogService } from './activity-log.service';
 import { ActivityLogController } from './activity-log.controller';
 import { AdminProcessActivityLogController } from './admin-process-activity-log.controller';
 import { ActivityLogAccessService } from './activity-log-access.service';
+import { ProductRegistrationWorkflowService } from './product-registration-workflow.service';
 import {
   Product,
   ProductSchema,
@@ -24,7 +25,16 @@ import { AuthModule } from '../auth/auth.module';
     RbacModule,
   ],
   controllers: [ActivityLogController, AdminProcessActivityLogController],
-  providers: [ActivityLogService, ActivityLogAccessService, PermissionsGuard],
-  exports: [ActivityLogService, ActivityLogAccessService],
+  providers: [
+    ActivityLogService,
+    ActivityLogAccessService,
+    ProductRegistrationWorkflowService,
+    PermissionsGuard,
+  ],
+  exports: [
+    ActivityLogService,
+    ActivityLogAccessService,
+    ProductRegistrationWorkflowService,
+  ],
 })
 export class ActivityLogModule {}

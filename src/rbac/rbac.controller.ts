@@ -32,6 +32,17 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
 
+type AdminPortalUser = {
+  manufacturerId?: string;
+  vendorId?: string;
+  userId: string;
+  role: string;
+  type?: string;
+};
+
+/** Admin portal RBAC is platform-scoped (not tied to a manufacturer). */
+const PLATFORM_RBAC_SCOPE = undefined;
+
 @ApiTags('Admin RBAC')
 @ApiBearerAuth()
 @Controller('admin/rbac')
@@ -58,11 +69,8 @@ export class RbacController {
 
   @Post('roles')
   @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
-  async createRole(
-    @CurrentUser() user: { manufacturerId: string },
-    @Body() dto: CreateRoleDto,
-  ) {
-    const data = await this.rbacService.createRole(user.manufacturerId, dto);
+  async createRole(@Body() dto: CreateRoleDto) {
+    const data = await this.rbacService.createRole(PLATFORM_RBAC_SCOPE, dto);
     return { message: 'Role created successfully', data };
   }
 
@@ -85,11 +93,8 @@ export class RbacController {
     status: 200,
     description: 'Unpaged: { message, data, total }. Paged: { success, data, total, page, limit }.',
   })
-  async listRoles(
-    @CurrentUser() user: { manufacturerId: string },
-    @Query() query: ListRolesQueryDto,
-  ) {
-    const result = await this.rbacService.listRoles(user.manufacturerId, query);
+  async listRoles(@Query() query: ListRolesQueryDto) {
+    const result = await this.rbacService.listRoles(PLATFORM_RBAC_SCOPE, query);
     if (result.paged) {
       return {
         message: 'Roles retrieved successfully',
@@ -109,19 +114,14 @@ export class RbacController {
 
   @Patch('roles/:id')
   @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
-  async updateRole(
-    @CurrentUser() user: { manufacturerId: string },
-    @Param('id') id: string,
-    @Body() dto: UpdateRoleDto,
-  ) {
-    const data = await this.rbacService.updateRole(user.manufacturerId, id, dto);
+  async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
+    const data = await this.rbacService.updateRole(PLATFORM_RBAC_SCOPE, id, dto);
     return { message: 'Role updated successfully', data };
   }
 
   @Patch('roles/:id/status')
   @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
   async updateRoleStatus(
-    @CurrentUser() user: { manufacturerId: string },
     @Param('id') id: string,
     @Body() dto: UpdateRoleStatusDto,
   ) {
@@ -131,7 +131,7 @@ export class RbacController {
     if (desired === 'active' || desired === '1') status = 1;
     if (desired === 'inactive' || desired === '0') status = 0;
     const data = await this.rbacService.setOrToggleRoleStatus(
-      user.manufacturerId,
+      PLATFORM_RBAC_SCOPE,
       id,
       status,
     );
@@ -140,54 +140,42 @@ export class RbacController {
 
   @Delete('roles/:id/delete')
   @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
-  async deleteRole(
-    @CurrentUser() user: { manufacturerId: string },
-    @Param('id') id: string,
-  ) {
-    const data = await this.rbacService.deleteRole(user.manufacturerId, id);
+  async deleteRole(@Param('id') id: string) {
+    const data = await this.rbacService.deleteRole(PLATFORM_RBAC_SCOPE, id);
     return { message: 'Role deleted successfully', data };
   }
 
   @Post('staff')
   @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
-  async createStaff(
-    @CurrentUser() user: { manufacturerId: string },
-    @Body() dto: CreateStaffDto,
-  ) {
-    const data = await this.rbacService.createStaff(user.manufacturerId, dto);
+  async createStaff(@Body() dto: CreateStaffDto) {
+    const data = await this.rbacService.createStaff(PLATFORM_RBAC_SCOPE, dto);
     return { message: 'Staff user created successfully', data };
   }
 
   @Get('staff')
   @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
-  async listStaff(@CurrentUser() user: { manufacturerId: string }) {
-    const data = await this.rbacService.listStaff(user.manufacturerId);
+  async listStaff() {
+    const data = await this.rbacService.listStaff(PLATFORM_RBAC_SCOPE);
     return { message: 'Staff users retrieved successfully', data };
   }
 
   @Post('staff/roles')
   @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
-  async assignRole(
-    @CurrentUser() user: { manufacturerId: string },
-    @Body() dto: AssignRoleDto,
-  ) {
-    const data = await this.rbacService.assignRole(user.manufacturerId, dto);
+  async assignRole(@Body() dto: AssignRoleDto) {
+    const data = await this.rbacService.assignRole(PLATFORM_RBAC_SCOPE, dto);
     return { message: 'Role assigned successfully', data };
   }
 
   @Patch('staff/roles')
   @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
-  async updateRoleAssignment(
-    @CurrentUser() user: { manufacturerId: string },
-    @Body() dto: AssignRoleDto,
-  ) {
+  async updateRoleAssignment(@Body() dto: AssignRoleDto) {
     const normalizedRoleIds =
       Array.isArray(dto.roleIds) && dto.roleIds.length > 0
         ? dto.roleIds
         : dto.roleId
           ? [dto.roleId]
           : [];
-    const data = await this.rbacService.replaceStaffRoles(user.manufacturerId, {
+    const data = await this.rbacService.replaceStaffRoles(PLATFORM_RBAC_SCOPE, {
       vendorUserId: dto.vendorUserId,
       roleIds: normalizedRoleIds,
     });
@@ -196,12 +184,9 @@ export class RbacController {
 
   @Delete('staff/roles')
   @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
-  async unassignRole(
-    @CurrentUser() user: { manufacturerId: string },
-    @Body() dto: UnassignStaffRoleDto,
-  ) {
+  async unassignRole(@Body() dto: UnassignStaffRoleDto) {
     const data = await this.rbacService.unassignStaffRole(
-      user.manufacturerId,
+      PLATFORM_RBAC_SCOPE,
       dto.vendorUserId,
     );
     return { message: 'Staff role unassigned successfully', data };
@@ -211,12 +196,12 @@ export class RbacController {
   @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
   @AllowStaffSelfRoleRead()
   async getStaffPermissionContext(
-    @CurrentUser() user: { manufacturerId: string; userId: string; role: string },
+    @CurrentUser() user: AdminPortalUser,
     @Query('vendorUserId') vendorUserId?: string,
   ) {
     if (isPlatformAdminUser(user)) {
       const data = await this.rbacService.getStaffPermissionContext(
-        user.manufacturerId,
+        PLATFORM_RBAC_SCOPE,
         user.userId,
       );
       return { message: 'Permission context retrieved successfully', data };
@@ -229,7 +214,7 @@ export class RbacController {
         );
       }
       const data = await this.rbacService.getStaffPermissionContext(
-        user.manufacturerId,
+        PLATFORM_RBAC_SCOPE,
         user.userId,
       );
       return { message: 'Permission context retrieved successfully', data };
@@ -238,11 +223,11 @@ export class RbacController {
     const targetId = String(vendorUserId ?? '').trim();
     if (!targetId) {
       throw new BadRequestException(
-        'vendorUserId query parameter is required for manufacturer admins',
+        'vendorUserId query parameter is required when viewing another staff member',
       );
     }
     const data = await this.rbacService.getStaffPermissionContext(
-      user.manufacturerId,
+      PLATFORM_RBAC_SCOPE,
       targetId,
     );
     return { message: 'Permission context retrieved successfully', data };
@@ -252,7 +237,7 @@ export class RbacController {
   @Permissions(PERMISSIONS.RBAC_STAFF_MANAGE)
   @AllowStaffSelfRoleRead()
   async getStaffWithRoles(
-    @CurrentUser() user: { manufacturerId: string; userId: string; role: string },
+    @CurrentUser() user: AdminPortalUser,
     @Query('vendorUserId') vendorUserId?: string,
   ) {
     if (user.role === 'staff') {
@@ -260,17 +245,16 @@ export class RbacController {
         throw new ForbiddenException('Staff can access only own role mapping');
       }
       const data = await this.rbacService.getStaffWithRoles(
-        user.manufacturerId,
+        PLATFORM_RBAC_SCOPE,
         user.userId,
       );
       return { message: 'Staff roles retrieved successfully', data };
     }
 
     const data = await this.rbacService.getStaffWithRoles(
-      user.manufacturerId,
+      PLATFORM_RBAC_SCOPE,
       vendorUserId,
     );
     return { message: 'Staff roles retrieved successfully', data };
   }
 }
-

@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { AuthService } from '../auth.service';
 import { AuthSessionInvalidationService } from '../auth-session-invalidation.service';
+import { isPlatformPortalAccountType } from '../../common/utils/platform-rbac-scope.util';
 
 function tokenFromAccessTokenHeader(req: Request): string | null {
   const h = req.headers['x-access-token'];
@@ -66,8 +67,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!payload.userId || !role) {
       throw new UnauthorizedException('Invalid token payload');
     }
-    const isPlatformAdmin = role === 'admin';
-    if (!isPlatformAdmin && !manufacturerId) {
+    if (!isPlatformPortalAccountType(String(role)) && !manufacturerId) {
       throw new UnauthorizedException('Invalid token payload');
     }
     return {

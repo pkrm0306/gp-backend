@@ -45,6 +45,7 @@ import { buildPhoneLookupVariants } from '../common/utils/phone-lookup.util';
 import { AuthService } from '../auth/auth.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
+import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import ExcelJS from 'exceljs';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
@@ -130,6 +131,8 @@ export class ManufacturersService {
     private readonly authService: AuthService,
     private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
     private readonly zohoDealsService: ZohoDealsService,
+    @Inject(forwardRef(() => LifecycleNotificationService))
+    private readonly lifecycleNotification: LifecycleNotificationService,
   ) {}
 
   private normalizeVendorEmail(raw: unknown): string {
@@ -1818,6 +1821,25 @@ export class ManufacturersService {
     }
   }
 
+  private fireManufacturerApprovedNotification(
+    manufacturer: ManufacturerDocument,
+  ): void {
+    const manufacturerId = manufacturer._id.toString();
+    const manufacturerName =
+      String(manufacturer.manufacturerName ?? manufacturer.vendor_name ?? '').trim();
+    const vendorEmail = this.normalizeVendorEmail(manufacturer.vendor_email);
+    this.lifecycleNotification
+      .notifyManufacturerApproved(manufacturerId, {
+        manufacturerName: manufacturerName || undefined,
+        vendorEmail: vendorEmail || undefined,
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `[manufacturerApproved] Notification failed for ${manufacturerId}: ${(err as Error).message}`,
+        ),
+      );
+  }
+
   /** Verifies an unverified manufacturer (confirm action). */
   async verifyManufacturer(id: string) {
     const manufacturerId = new Types.ObjectId(id);
@@ -1827,6 +1849,7 @@ export class ManufacturersService {
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
     }
+    const wasUnverified = (manufacturer.manufacturerStatus ?? 0) !== 1;
 
     const updated = await this.manufacturerModel
       .findByIdAndUpdate(
@@ -1848,7 +1871,13 @@ export class ManufacturersService {
       );
     }
 
-    if (updated) {
+    if (updated && wasUnverified) {
+      await this.tryConvertManufacturerLeadInZoho(
+        updated,
+        'verifyManufacturer',
+      );
+      this.fireManufacturerApprovedNotification(updated);
+    } else if (updated) {
       await this.tryConvertManufacturerLeadInZoho(
         updated,
         'verifyManufacturer',
@@ -1918,6 +1947,7 @@ export class ManufacturersService {
       if (!manufacturer) {
         throw new NotFoundException('Manufacturer not found');
       }
+      const wasUnverified = (manufacturer.manufacturerStatus ?? 0) !== 1;
       const currentVendor = manufacturer.vendor_status ?? 0;
       const newVendor = currentVendor === 1 ? 0 : 1;
       if (newVendor === 1) {
@@ -1936,12 +1966,24 @@ export class ManufacturersService {
         )
         .exec();
 
-      if (updated && newVendor === 0) {
+      if (updated && wasUnverified && newVendor === 1) {
+        await this.tryConvertManufacturerLeadInZoho(
+          updated,
+          'toggleManufacturerStatus',
+        );
+        this.fireManufacturerApprovedNotification(updated);
+      } else if (updated && newVendor === 0) {
         await this.authService.invalidateSessionsForManufacturer(
           manufacturerId.toString(),
         );
-      }
-      if (updated && newVendor === 1) {
+        this.lifecycleNotification
+          .notifyManufacturerInactive(manufacturerId.toString())
+          .catch((err) =>
+            this.logger.warn(
+              `[toggleManufacturerStatus] Inactive notification failed: ${(err as Error).message}`,
+            ),
+          );
+      } else if (updated && newVendor === 1) {
         await this.tryConvertManufacturerLeadInZoho(
           updated,
           'toggleManufacturerStatus',
@@ -2001,6 +2043,13 @@ export class ManufacturersService {
         await this.authService.invalidateSessionsForManufacturer(
           manufacturerId.toString(),
         );
+        this.lifecycleNotification
+          .notifyManufacturerInactive(manufacturerId.toString())
+          .catch((err) =>
+            this.logger.warn(
+              `[setVendorStatusForVerified] Inactive notification failed: ${(err as Error).message}`,
+            ),
+          );
       }
       if (updated && vendor_status === 1) {
         await this.tryConvertManufacturerLeadInZoho(
@@ -2438,7 +2487,17 @@ export class ManufacturersService {
         'Only unverified manufacturer can be deleted from this endpoint',
       );
     }
+    const manufacturerName = String(
+      manufacturer.manufacturerName ?? manufacturer.vendor_name ?? 'Manufacturer',
+    ).trim();
     await this.manufacturerModel.deleteOne({ _id: manufacturerId }).exec();
+    this.lifecycleNotification
+      .notifyManufacturerRejected(manufacturerName, id)
+      .catch((err) =>
+        this.logger.warn(
+          `[deleteUnverifiedById] Rejection notification failed: ${(err as Error).message}`,
+        ),
+      );
     await this.manufacturerIdGeneration.enqueueReclaimedSuffixFromGpInternalId(
       manufacturer.gpInternalId,
     );

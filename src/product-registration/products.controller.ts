@@ -720,6 +720,54 @@ export class ProductsController {
     });
   }
 
+  @Get('certificates/vendor/plant-count')
+  @ApiOperation({
+    summary: 'Count all plant certificates for certified vendor portfolio',
+    description:
+      'Vendor-only. Returns the total number of manufacturing plants across all certified EOIs for the logged-in vendor.',
+  })
+  async countVendorPlantCertificates(
+    @CurrentUser() user: { manufacturerId?: string },
+  ) {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const plantCount =
+      await this.vendorCertificateService.countVendorCertifiedPlantCertificates(
+        user.manufacturerId,
+      );
+    return {
+      message: 'Vendor plant certificate count retrieved successfully',
+      data: { plantCount },
+    };
+  }
+
+  @Get('certificates/vendor/download')
+  @ApiOperation({
+    summary: 'Download all plant certificates for the vendor portfolio',
+    description:
+      'Vendor-only. Merges one certificate per manufacturing plant across **all** certified EOIs (e.g. 52 EOIs / 189 plants → one PDF with 189 pages, or ZIP with separate files).',
+  })
+  @ApiResponse({ status: 200, description: 'Merged certificate PDF or ZIP download' })
+  async downloadVendorAllCertifiedCertificates(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Query('format') format?: 'merged' | 'zip',
+  ): Promise<StreamableFile> {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const resolvedFormat = format === 'zip' ? 'zip' : 'merged';
+    const file =
+      await this.vendorCertificateService.downloadVendorAllCertifiedCertificates(
+        user.manufacturerId,
+        resolvedFormat,
+      );
+    return new StreamableFile(file.buffer, {
+      type: file.contentType,
+      disposition: `attachment; filename="${file.fileName}"`,
+    });
+  }
+
   @Get('certificates/urn/:urnNo/download')
   @ApiOperation({
     summary: 'Download all certificates for a URN (single PDF)',

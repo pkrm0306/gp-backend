@@ -1,0 +1,162 @@
+import type { ActivityLifecycleOwner } from './activity-lifecycle.constants';
+
+/** Each workflow activity is either Pending or Done. */
+export enum ActivityWorkflowItemStatus {
+  Pending = 0,
+  Done = 1,
+}
+
+/**
+ * Product registration workflow activity ids (canonical order).
+ * Id `6` is reserved for legacy rows ("Process Forms Submission") and is not used in forward flow.
+ */
+export const PRODUCT_REGISTRATION_ACTIVITY_ID = {
+  PRODUCT_REGISTRATION: 0,
+  PRODUCT_APPROVE_REJECT: 1,
+  ASSIGN_REGISTRATION_FEE: 2,
+  APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT: 3,
+  APPROVE_REJECT_REGISTRATION_FEE: 4,
+  PROCESS_FORMS_IN_PROGRESS: 5,
+  /** Legacy only — forward flow goes 5 → 7 */
+  PROCESS_FORMS_SUBMISSION_LEGACY: 6,
+  REVIEW_SUBMIT_FINAL_REVIEW: 7,
+  ASSIGN_CERTIFICATION_FEE: 8,
+  CERTIFICATION_FEE_PAYMENT: 9,
+  APPROVE_REJECT_CERTIFICATION_FEE: 10,
+} as const;
+
+export type ProductRegistrationActivityId =
+  (typeof PRODUCT_REGISTRATION_ACTIVITY_ID)[keyof typeof PRODUCT_REGISTRATION_ACTIVITY_ID];
+
+export const PRODUCT_REGISTRATION_WORKFLOW_STEPS: Readonly<
+  Record<number, { activity: string; responsibility: ActivityLifecycleOwner }>
+> = {
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_REGISTRATION]: {
+    activity: 'Product Registration',
+    responsibility: 'Manufacturer',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT]: {
+    activity: 'Product Approve/Reject',
+    responsibility: 'Admin',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE]: {
+    activity: 'Assign Registration Fee',
+    responsibility: 'Admin',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT]: {
+    activity: 'Approve/Reject Registration Fee Proposal & Payment',
+    responsibility: 'Manufacturer',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REGISTRATION_FEE]: {
+    activity: 'Approve/Reject Registration Fee',
+    responsibility: 'Admin',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS]: {
+    activity: 'Process Forms in Progress',
+    responsibility: 'Manufacturer',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_SUBMISSION_LEGACY]: {
+    activity: 'Process Forms Submission',
+    responsibility: 'Manufacturer',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW]: {
+    activity: 'Review & Submit for Final Review',
+    responsibility: 'Admin',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_CERTIFICATION_FEE]: {
+    activity: 'Assign Certification Fee',
+    responsibility: 'Admin',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT]: {
+    activity: 'Certification Fee Payment',
+    responsibility: 'Manufacturer',
+  },
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE]: {
+    activity: 'Approve/Reject Certification Fee',
+    responsibility: 'Admin',
+  },
+};
+
+/** Forward transitions when an activity is completed successfully. */
+export const WORKFLOW_COMPLETE_NEXT: Readonly<Partial<Record<number, number>>> = {
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_REGISTRATION]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REGISTRATION_FEE,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REGISTRATION_FEE]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_CERTIFICATION_FEE,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_CERTIFICATION_FEE]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE,
+};
+
+/** Rollback target when an approval step is rejected. */
+export const WORKFLOW_REJECT_TARGET: Readonly<Partial<Record<number, number>>> = {
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_REGISTRATION,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REGISTRATION_FEE]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS,
+  [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE]:
+    PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT,
+};
+
+/**
+ * Maps `products.urnStatus` to the activity that should be Pending.
+ * Renewal statuses (12+) are managed by the renew module.
+ */
+export const URN_STATUS_PENDING_ACTIVITY: Readonly<
+  Partial<Record<number, number | null>>
+> = {
+  0: PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
+  1: PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+  2: PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
+  3: PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
+  4: PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW,
+  5: PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS,
+  6: PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_CERTIFICATION_FEE,
+  7: PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT,
+  8: PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT,
+  9: PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE,
+  10: PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE,
+  11: null,
+};
+
+export function workflowActivityName(activityId: number): string {
+  return (
+    PRODUCT_REGISTRATION_WORKFLOW_STEPS[activityId]?.activity ??
+    'Unknown Activity'
+  );
+}
+
+export function workflowActivityResponsibility(
+  activityId: number,
+): ActivityLifecycleOwner {
+  return (
+    PRODUCT_REGISTRATION_WORKFLOW_STEPS[activityId]?.responsibility ??
+    'Manufacturer'
+  );
+}
+
+export function workflowForwardNextActivityId(
+  activityId: number,
+): number | null {
+  const next = WORKFLOW_COMPLETE_NEXT[activityId];
+  return next === undefined ? null : next;
+}
+
+export function isWorkflowActivityId(value: number): boolean {
+  return value in PRODUCT_REGISTRATION_WORKFLOW_STEPS;
+}

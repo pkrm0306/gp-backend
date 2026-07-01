@@ -100,6 +100,50 @@ export class AuditLogService {
     }
   }
 
+  /** Batch append-only insert for bulk admin actions (e.g. URN reactivation). */
+  async recordMany(
+    entries: CreateAuditLogDto[],
+    options: AuditRecordOptions = {},
+  ): Promise<void> {
+    if (!entries.length) return;
+    try {
+      const docs = entries.map((entry) => ({
+        occurred_at: entry.occurred_at ?? new Date(),
+        action: entry.action,
+        outcome: entry.outcome,
+        module: entry.module,
+        action_type: entry.action_type,
+        entity_name: entry.entity_name,
+        description: entry.description,
+        performed_by: entry.performed_by,
+        old_values: this.valueTransformer.sanitizeSnapshot(entry.old_values),
+        new_values: this.valueTransformer.sanitizeSnapshot(entry.new_values),
+        http_method: entry.http_method,
+        route: entry.route,
+        status_code: entry.status_code,
+        actor: entry.actor,
+        resource: entry.resource,
+        request: entry.request,
+        changes: this.valueTransformer.sanitizeChanges(entry.changes),
+        metadata: entry.metadata,
+      }));
+      if (options.session) {
+        await this.auditLogModel.insertMany(docs, {
+          session: options.session,
+          ordered: false,
+        });
+      } else {
+        await this.auditLogModel.insertMany(docs, { ordered: false });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (options.throwOnError) {
+        throw e;
+      }
+      this.logger.warn(`[AuditLog] bulk insert failed: ${msg}`);
+    }
+  }
+
   async list(query: QueryAuditLogDto): Promise<{
     items: AuditLog[];
     total: number;

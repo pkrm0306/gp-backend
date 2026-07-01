@@ -16,6 +16,7 @@ import {
   wouldExactMatchAllow,
 } from '../permissions/permission-hierarchy';
 import { isPlatformAdminUser } from '../utils/platform-admin.util';
+import { isPlatformPortalAccountType } from '../utils/platform-rbac-scope.util';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
@@ -68,12 +69,12 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('No permission mapping found for this API');
     }
 
-    if (!user.userId || !user.manufacturerId) {
+    if (!user.userId) {
       throw new ForbiddenException('Invalid token payload');
     }
 
     const userPermissions = await this.rbacService.getStaffPermissions(
-      user.manufacturerId,
+      isPlatformPortalAccountType(user.role) ? undefined : user.manufacturerId,
       user.userId,
     );
     const matchMode =

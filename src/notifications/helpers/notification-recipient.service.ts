@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
 import { VendorUsersService } from '../../vendor-users/vendor-users.service';
-import { ManufacturersService } from '../../manufacturers/manufacturers.service';
+import {
+  Manufacturer,
+  ManufacturerDocument,
+} from '../../manufacturers/schemas/manufacturer.schema';
 import { NotificationRecipient } from '../interfaces/notification.types';
 
 export type ResolvedVendorRecipient = NotificationRecipient & {
@@ -13,7 +17,8 @@ export type ResolvedVendorRecipient = NotificationRecipient & {
 export class NotificationRecipientService {
   constructor(
     private readonly vendorUsersService: VendorUsersService,
-    private readonly manufacturersService: ManufacturersService,
+    @InjectModel(Manufacturer.name)
+    private readonly manufacturerModel: Model<ManufacturerDocument>,
   ) {}
 
   async resolveByManufacturerId(
@@ -23,9 +28,9 @@ export class NotificationRecipientService {
       return null;
     }
 
-    const manufacturer = await this.manufacturersService.findById(
-      manufacturerId.trim(),
-    );
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerId.trim())
+      .exec();
     if (!manufacturer) {
       return null;
     }
@@ -49,13 +54,18 @@ export class NotificationRecipientService {
       String(manufacturer.vendor_name ?? '').trim() ||
       companyName;
 
-    if (!user && !vendorEmail) {
+    const email =
+      String(user?.email ?? '')
+        .trim()
+        .toLowerCase() || vendorEmail;
+
+    if (!email) {
       return null;
     }
 
     return {
       userId: user?._id?.toString(),
-      email: user?.email?.trim().toLowerCase() || vendorEmail || undefined,
+      email,
       vendorName,
       companyName,
     };

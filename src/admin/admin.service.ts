@@ -688,6 +688,51 @@ export class AdminService {
     return stored === 'binary_upload' ? 'binary_upload' : 'manual_url';
   }
 
+  private resolveBannerVideoPath(videoUrl?: string | null): string {
+    return this.resolveBannerImagePath(videoUrl);
+  }
+
+  private resolveBannerVideoForResponse(
+    videoUrl?: string | null,
+    bannerVideo?: string | null,
+  ): string {
+    const videoRaw = String(videoUrl ?? '').trim();
+    if (videoRaw && /^https?:\/\//i.test(videoRaw)) return videoRaw;
+    const candidate = videoRaw || (bannerVideo ? `/uploads/${bannerVideo}` : '');
+    return String(candidate).trim();
+  }
+
+  private resolveBannerVideoSource(stored: unknown): 'binary_upload' | undefined {
+    return stored === 'binary_upload' ? 'binary_upload' : undefined;
+  }
+
+  private mapBannerRowForResponse(
+    b: Record<string, unknown>,
+    index?: number,
+  ) {
+    const st = (b.status as number | undefined) ?? 1;
+    return {
+      ...(index != null ? { s_no: index + 1 } : {}),
+      id: String(b._id),
+      imageUrl: this.resolveBannerImageForResponse(
+        b.imageUrl as string,
+        b.banner_image as string,
+      ),
+      imageSource: this.resolveBannerImageSource(b.imageSource),
+      videoUrl: this.resolveBannerVideoForResponse(
+        b.videoUrl as string,
+        b.banner_video as string,
+      ),
+      videoSource: this.resolveBannerVideoSource(b.videoSource),
+      heading: b.heading as string,
+      title: b.heading as string,
+      sequenceNumber: Number(b.sequenceNumber ?? 1),
+      description: b.description as string,
+      status: st === 1 ? 'active' : 'inactive',
+      is_active: st === 1,
+    };
+  }
+
   private resolveArticleImagePath(imageUrl?: string | null): string {
     const raw = String(imageUrl ?? '').trim();
     if (!raw) return '';
@@ -1836,7 +1881,6 @@ export class AdminService {
   }
 
   async createTeamMember(
-    vendorId: string,
     data: {
       name: string;
       designation?: string;
@@ -1853,13 +1897,6 @@ export class AdminService {
       sector_ids: number[];
     },
   ) {
-    let vendorObjectId: Types.ObjectId;
-    try {
-      vendorObjectId = new Types.ObjectId(vendorId);
-    } catch {
-      throw new BadRequestException('Invalid vendor ID format');
-    }
-
     const emailLower = data.email.trim().toLowerCase();
     const mobileTrim = data.mobile.trim();
 
@@ -1867,7 +1904,6 @@ export class AdminService {
 
     const existingActive = await this.vendorUserModel
       .findOne({
-        manufacturerId: vendorObjectId,
         status: { $ne: 2 },
         type: 'staff',
         email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i'),
@@ -1890,7 +1926,6 @@ export class AdminService {
     }
     const softDeleted = await this.vendorUserModel
       .findOne({
-        manufacturerId: vendorObjectId,
         type: 'staff',
         status: 2,
         $or: softDeletedOr,
@@ -1902,8 +1937,8 @@ export class AdminService {
 
       const totalNonDeleted = await this.vendorUserModel
         .countDocuments({
-          manufacturerId: vendorObjectId,
           type: 'staff',
+          team: data.team,
           status: { $ne: 2 },
         })
         .exec();
@@ -1918,8 +1953,8 @@ export class AdminService {
         await this.vendorUserModel
           .updateMany(
             {
-              manufacturerId: vendorObjectId,
               type: 'staff',
+              team: data.team,
               status: { $ne: 2 },
               displayOrder: { $gte: desiredOrder },
             },
@@ -1974,7 +2009,7 @@ export class AdminService {
             ? [String(data.roleId).trim()]
             : [];
 
-      await this.rbacService.replaceStaffRoles(vendorId, {
+      await this.rbacService.replaceStaffRoles(undefined, {
         vendorUserId: String(updated._id),
         roleIds: normalizedRoleIds,
       });
@@ -1996,8 +2031,8 @@ export class AdminService {
 
     const totalNonDeleted = await this.vendorUserModel
       .countDocuments({
-        manufacturerId: vendorObjectId,
         type: 'staff',
+        team: data.team,
         status: { $ne: 2 },
       })
       .exec();
@@ -2012,8 +2047,8 @@ export class AdminService {
       await this.vendorUserModel
         .updateMany(
           {
-            manufacturerId: vendorObjectId,
             type: 'staff',
+            team: data.team,
             status: { $ne: 2 },
             displayOrder: { $gte: desiredOrder },
           },
@@ -2022,17 +2057,11 @@ export class AdminService {
         .exec();
     }
 
-    // Staff can log into admin portal only after a role is assigned (RBAC mapping).
-    // We still store a random password hash here; on first role assignment we rotate it
-    // and send credentials via email (see RbacService).
     const passwordHash = await bcrypt.hash(crypto.randomBytes(8).toString('hex'), 10);
 
     const sector_ids = this.assertTeamMemberSectorsValid(data.sector_ids);
 
     const teamMember: Partial<VendorUser> = {
-      // Canonical + legacy alias (some modules still query vendorId)
-      manufacturerId: vendorObjectId,
-      vendorId: vendorObjectId,
       type: 'staff',
       status: 1,
       isVerified: true,
@@ -2087,7 +2116,7 @@ export class AdminService {
 
     // Role assignments drive portal access; credentials are sent only on first transition
     // from no-roles to any-role by RBAC service.
-    await this.rbacService.replaceStaffRoles(vendorId, {
+    await this.rbacService.replaceStaffRoles(undefined, {
       vendorUserId: String(saved._id),
       roleIds: normalizedRoleIds,
     });
@@ -2359,8 +2388,9 @@ export class AdminService {
 
   async createBanner(
     vendorId: string,
-    dto: CreateBannerDto & { imageUrl: string },
+    dto: CreateBannerDto & { imageUrl: string; videoUrl?: string },
     resolvedImageSource: 'binary_upload' | 'manual_url',
+    resolvedVideoSource?: 'binary_upload',
   ) {
     let vendorObjectId: Types.ObjectId;
     try {
@@ -2394,11 +2424,15 @@ export class AdminService {
       }
     }
 
+    const videoUrl = String(dto.videoUrl ?? '').trim();
     const created = new this.bannerModel({
       vendorId: vendorObjectId,
       banner_image: this.resolveBannerImagePath(dto.imageUrl),
       imageUrl: String(dto.imageUrl ?? '').trim(),
       imageSource: resolvedImageSource,
+      banner_video: videoUrl ? this.resolveBannerVideoPath(videoUrl) : '',
+      videoUrl,
+      ...(resolvedVideoSource ? { videoSource: resolvedVideoSource } : {}),
       heading: dto.title.trim(),
       sequenceNumber,
       description: dto.description.trim(),
@@ -2415,6 +2449,11 @@ export class AdminService {
       id: String(o._id),
       imageUrl: this.resolveBannerImageForResponse(o.imageUrl, o.banner_image),
       imageSource: this.resolveBannerImageSource((o as any).imageSource),
+      videoUrl: this.resolveBannerVideoForResponse(
+        (o as any).videoUrl,
+        (o as any).banner_video,
+      ),
+      videoSource: this.resolveBannerVideoSource((o as any).videoSource),
       heading: o.heading,
       title: o.heading,
       sequenceNumber: Number(o.sequenceNumber ?? 1),
@@ -2443,26 +2482,12 @@ export class AdminService {
       })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
       .select(
-        'banner_image imageUrl imageSource heading sequenceNumber description status',
+        'banner_image imageUrl imageSource banner_video videoUrl videoSource heading sequenceNumber description status',
       )
       .lean()
       .exec();
 
-    return rows.map((b, index) => {
-      const st = b.status ?? 1;
-      return {
-        s_no: index + 1,
-        id: String(b._id),
-        imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-        imageSource: this.resolveBannerImageSource((b as any).imageSource),
-        heading: b.heading,
-        title: b.heading,
-        sequenceNumber: Number((b as any).sequenceNumber ?? 1),
-        description: b.description,
-        status: st === 1 ? 'active' : 'inactive',
-        is_active: st === 1,
-      };
-    });
+    return rows.map((b, index) => this.mapBannerRowForResponse(b as any, index));
   }
 
   /** Public banner list for website (active only, newest first). */
@@ -2477,23 +2502,12 @@ export class AdminService {
       })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
       .select(
-        'banner_image imageUrl imageSource heading sequenceNumber description status',
+        'banner_image imageUrl imageSource banner_video videoUrl videoSource heading sequenceNumber description status',
       )
       .lean()
       .exec();
 
-    return rows.map((b, index) => ({
-      s_no: index + 1,
-      id: String(b._id),
-      imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-      imageSource: this.resolveBannerImageSource((b as any).imageSource),
-      heading: b.heading,
-      title: b.heading,
-      sequenceNumber: Number((b as any).sequenceNumber ?? 1),
-      description: b.description,
-      status: (b.status ?? 1) === 1 ? 'active' : 'inactive',
-      is_active: (b.status ?? 1) === 1,
-    }));
+    return rows.map((b, index) => this.mapBannerRowForResponse(b as any, index));
   }
 
   /** Single banner for the View modal (image URL, heading, description). */
@@ -2513,7 +2527,7 @@ export class AdminService {
         $or: [{ vendorId: vendorObjectId }, { vendorId }],
       })
       .select(
-        'banner_image imageUrl imageSource heading sequenceNumber description status',
+        'banner_image imageUrl imageSource banner_video videoUrl videoSource heading sequenceNumber description status',
       )
       .lean()
       .exec();
@@ -2523,14 +2537,7 @@ export class AdminService {
     }
 
     return {
-      id: String(b._id),
-      imageUrl: this.resolveBannerImageForResponse(b.imageUrl, b.banner_image),
-      imageSource: this.resolveBannerImageSource((b as any).imageSource),
-      heading: b.heading,
-      title: b.heading,
-      sequenceNumber: Number((b as any).sequenceNumber ?? 1),
-      description: b.description,
-      status: Number((b as any).status) === 1 ? 'active' : 'inactive',
+      ...this.mapBannerRowForResponse(b as any),
     };
   }
 
@@ -2541,6 +2548,9 @@ export class AdminService {
     payload: {
       imageUrl?: string;
       imageSource?: 'binary_upload' | 'manual_url';
+      videoUrl?: string;
+      videoSource?: 'binary_upload';
+      clearVideo?: boolean;
       title?: string;
       sequenceNumber?: number;
       description?: string;
@@ -2609,6 +2619,22 @@ export class AdminService {
     if (payload.imageSource !== undefined) {
       $set.imageSource = payload.imageSource;
     }
+    if (payload.clearVideo) {
+      $set.videoUrl = '';
+      $set.banner_video = '';
+      $set.videoSource = undefined;
+    } else if (payload.videoUrl !== undefined) {
+      const trimmedVideo = payload.videoUrl.trim();
+      $set.videoUrl = trimmedVideo;
+      $set.banner_video = trimmedVideo
+        ? this.resolveBannerVideoPath(trimmedVideo)
+        : '';
+      if (payload.videoSource !== undefined) {
+        $set.videoSource = payload.videoSource;
+      } else if (!trimmedVideo) {
+        $set.videoSource = undefined;
+      }
+    }
 
     const updated = await this.bannerModel
       .findByIdAndUpdate(bannerObjectId, { $set }, { new: true })
@@ -2627,6 +2653,11 @@ export class AdminService {
         (updated as any).banner_image,
       ),
       imageSource: this.resolveBannerImageSource((updated as any).imageSource),
+      videoUrl: this.resolveBannerVideoForResponse(
+        (updated as any).videoUrl,
+        (updated as any).banner_video,
+      ),
+      videoSource: this.resolveBannerVideoSource((updated as any).videoSource),
       heading: updated.heading,
       title: updated.heading,
       sequenceNumber: Number((updated as any).sequenceNumber ?? 1),
@@ -2734,7 +2765,6 @@ export class AdminService {
   }
 
   async updateTeamMember(
-    vendorId: string,
     data: {
       id: string;
       name: string;
@@ -2911,7 +2941,7 @@ export class AdminService {
         : data.roleId
           ? [String(data.roleId).trim()]
           : [];
-    await this.rbacService.replaceStaffRoles(vendorId, {
+    await this.rbacService.replaceStaffRoles(undefined, {
       vendorUserId: data.id,
       roleIds: normalizedRoleIds,
     });
@@ -3679,7 +3709,7 @@ export class AdminService {
     }
 
     const grants = await this.rbacService.getStaffPermissions(
-      input.manufacturerId,
+      undefined,
       input.userId,
     );
     return filterDashboardMetricsByPermissions(full, grants, appliedFilters);

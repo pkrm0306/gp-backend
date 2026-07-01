@@ -23,7 +23,7 @@ export const ACTIVITY_LIFECYCLE_STEPS: Readonly<
     responsibility: 'Admin',
   },
   3: {
-    activity: 'Approve/Reject Registration Fee Proposal and make payment',
+    activity: 'Approve/Reject Registration Fee Proposal & Payment',
     responsibility: 'Manufacturer',
   },
   4: {

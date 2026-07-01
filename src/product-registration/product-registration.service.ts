@@ -65,7 +65,7 @@ import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
 import { SectorsService } from '../sectors/sectors.service';
 import { StatesService } from '../states/states.service';
-import { ActivityLogService } from '../activity-log/activity-log.service';
+import { ProductRegistrationWorkflowService } from '../activity-log/product-registration-workflow.service';
 import {
   activityLifecycleName,
   activityLifecycleResponsibility,
@@ -202,7 +202,7 @@ export class ProductRegistrationService {
     private countriesService: CountriesService,
     private sectorsService: SectorsService,
     private statesService: StatesService,
-    private activityLogService: ActivityLogService,
+    private productRegistrationWorkflowService: ProductRegistrationWorkflowService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
     private readonly urnSiteVisitsService: UrnSiteVisitsService,
@@ -1684,6 +1684,9 @@ export class ProductRegistrationService {
       certificateDownloadUrl: `/products/certificates/eoi/${productId}`,
       certificateZipDownloadUrl: `/products/certificates/eoi/${productId}?format=zip`,
       plantCertificatesListUrl: `/products/certificates/eoi/${productId}/plants`,
+      certificateVendorDownloadUrl: `/products/certificates/vendor/download`,
+      certificateVendorZipDownloadUrl: `/products/certificates/vendor/download?format=zip`,
+      certificateVendorPlantCountUrl: `/products/certificates/vendor/plant-count`,
     };
   }
 
@@ -1989,33 +1992,81 @@ export class ProductRegistrationService {
       throw new NotFoundException(`State with ID ${stateId} not found`);
     }
 
-    // Get country to check its properties
     const country = await this.countriesService.findById(countryId);
     if (!country) {
       throw new NotFoundException(`Country with ID ${countryId} not found`);
     }
 
-    // Check if state belongs to the country using multiple methods:
-    // 1. Check countryId (ObjectId) if it exists
+    this.assertStateBelongsToCountry(state, country, stateId, countryId);
+  }
+
+  private assertStateBelongsToCountry(
+    state: NonNullable<Awaited<ReturnType<StatesService['findById']>>>,
+    country: NonNullable<Awaited<ReturnType<CountriesService['findById']>>>,
+    stateId: string,
+    countryId: string,
+  ): void {
     if (state.countryId && state.countryId.toString() === countryId) {
-      return; // Valid match
+      return;
     }
 
-    // 2. Check country_id (integer) if it exists and country has id field
     if (state.country_id && country.id && state.country_id === country.id) {
-      return; // Valid match
+      return;
     }
 
-    // 3. Check country_code if both exist
-    const stateCountryCode = (state as any).country_code;
-    const countryCode = (country as any).country_code || country.countryCode;
+    const stateCountryCode = (state as { country_code?: string }).country_code;
+    const countryCode =
+      (country as { country_code?: string }).country_code || country.countryCode;
     if (stateCountryCode && countryCode && stateCountryCode === countryCode) {
-      return; // Valid match
+      return;
     }
 
-    // If none of the checks passed, state doesn't belong to country
     throw new BadRequestException(
       `State with ID ${stateId} does not belong to country with ID ${countryId}`,
+    );
+  }
+
+  /** Validate unique plant country/state pairs once per bulk chunk (before DB writes). */
+  private async validateBulkRegistrationPlantLocations(
+    chunk: BulkRegisterProductDto['products'],
+  ): Promise<void> {
+    const countryIds = new Set<string>();
+    const stateCountryPairs = new Map<string, string>();
+
+    for (const product of chunk) {
+      for (const plant of product.plants) {
+        countryIds.add(plant.countryId);
+        stateCountryPairs.set(plant.stateId, plant.countryId);
+      }
+    }
+
+    const countryCache = new Map<
+      string,
+      NonNullable<Awaited<ReturnType<CountriesService['findById']>>>
+    >();
+
+    await Promise.all(
+      [...countryIds].map(async (countryId) => {
+        const country = await this.countriesService.findById(countryId);
+        if (!country) {
+          throw new NotFoundException(`Country with ID ${countryId} not found`);
+        }
+        countryCache.set(countryId, country);
+      }),
+    );
+
+    await Promise.all(
+      [...stateCountryPairs.entries()].map(async ([stateId, countryId]) => {
+        const state = await this.statesService.findById(stateId);
+        if (!state) {
+          throw new NotFoundException(`State with ID ${stateId} not found`);
+        }
+        const country = countryCache.get(countryId);
+        if (!country) {
+          throw new NotFoundException(`Country with ID ${countryId} not found`);
+        }
+        this.assertStateBelongsToCountry(state, country, stateId, countryId);
+      }),
     );
   }
 
@@ -2077,32 +2128,18 @@ export class ProductRegistrationService {
     manufacturerId: string | Types.ObjectId,
     urnNo: string,
     newUrnStatus: number,
+    previousUrnStatus?: number,
   ): Promise<void> {
     try {
-      const responsibility = this.getResponsibilityForStatus(newUrnStatus);
-      const nextActivityId = this.getNextActivityIdForLog(newUrnStatus);
-      const nextResponsibility =
-        this.getResponsibilityForStatus(nextActivityId);
-      await this.activityLogService.logActivity({
-        vendor_id:
-          vendorId instanceof Types.ObjectId ? vendorId.toString() : vendorId,
-        manufacturer_id:
-          manufacturerId instanceof Types.ObjectId
-            ? manufacturerId.toString()
-            : manufacturerId,
-        urn_no: urnNo,
-        activities_id: newUrnStatus,
-        activity: this.getActivityName(newUrnStatus),
-        activity_status: newUrnStatus,
-        responsibility,
-        next_responsibility: nextResponsibility,
-        next_acitivities_id: nextActivityId,
-        next_activity:
-          nextActivityId <= 11
-            ? this.getActivityName(nextActivityId)
-            : this.getActivityName(11),
-        status: 0,
-      });
+      await this.productRegistrationWorkflowService.syncToUrnStatus(
+        {
+          vendorId,
+          manufacturerId,
+          urnNo,
+        },
+        previousUrnStatus ?? Math.max(0, newUrnStatus - 1),
+        newUrnStatus,
+      );
     } catch (err) {
       console.error('[Activity Log] tryLogUrnLifecycleStep failed:', err);
     }
@@ -2287,19 +2324,13 @@ export class ProductRegistrationService {
         // Log activity after successful product registration
         // urnStatus is 0 (Product Registration), next step is 1 (Product Approve/Reject)
         try {
-          await this.activityLogService.logActivity({
-            vendor_id: manufacturerId,
-            manufacturer_id: manufacturerId,
-            urn_no: urnNo,
-            activities_id: 0, // Current urnStatus
-            activity: this.getActivityName(0), // "Product Registration"
-            activity_status: 0,
-            responsibility: this.getResponsibilityForStatus(0),
-            next_responsibility: this.getResponsibilityForStatus(1),
-            next_acitivities_id: 1,
-            next_activity: this.getNextActivityName(0),
-            status: 0,
-          });
+          await this.productRegistrationWorkflowService.initializeOnProductRegistration(
+            {
+              vendorId: manufacturerId,
+              manufacturerId,
+              urnNo,
+            },
+          );
         } catch (activityLogError: any) {
           // Log error but don't fail the product registration
           console.error(
@@ -2396,8 +2427,9 @@ export class ProductRegistrationService {
   ) {
     const maxRetries = 3;
     let retryCount = 0;
-    const BULK_REGISTRATION_CHUNK_SIZE = 20;
+    const BULK_REGISTRATION_CHUNK_SIZE = 500;
     const BULK_TXN_MAX_COMMIT_MS = 120_000;
+    const bulkStartedAt = Date.now();
 
     while (retryCount < maxRetries) {
       const manufacturerObjectId = this.toObjectId(
@@ -2474,19 +2506,13 @@ export class ProductRegistrationService {
         // Log activity after successful bulk product registration
         // urnStatus is 0 (Product Registration), next step is 1 (Product Approve/Reject)
         try {
-          await this.activityLogService.logActivity({
-            vendor_id: manufacturerId,
-            manufacturer_id: manufacturerId,
-            urn_no: urnNo,
-            activities_id: 0, // Current urnStatus
-            activity: this.getActivityName(0), // "Product Registration"
-            activity_status: 0,
-            responsibility: this.getResponsibilityForStatus(0),
-            next_responsibility: this.getResponsibilityForStatus(1),
-            next_acitivities_id: 1,
-            next_activity: this.getNextActivityName(0),
-            status: 0,
-          });
+          await this.productRegistrationWorkflowService.initializeOnProductRegistration(
+            {
+              vendorId: manufacturerId,
+              manufacturerId,
+              urnNo,
+            },
+          );
         } catch (activityLogError: any) {
           // Log error but don't fail the bulk product registration
           console.error(
@@ -2495,10 +2521,8 @@ export class ProductRegistrationService {
           );
         }
 
-        console.log(
-          '[Bulk Product Registration] Successfully registered',
-          results.length,
-          'products',
+        this.logger.log(
+          `[Bulk Product Registration] Registered ${results.length} products in ${Date.now() - bulkStartedAt}ms (URN ${urnNo})`,
         );
         await this.invalidateProductListingsCache();
         return {
@@ -2627,89 +2651,97 @@ export class ProductRegistrationService {
   }): Promise<
     Array<Record<string, unknown> & { plants: Record<string, unknown>[] }>
   > {
+    const chunk = params.chunk;
+    const chunkSize = chunk.length;
+    const totalPlants = chunk.reduce((sum, row) => sum + row.plants.length, 0);
+
+    await this.validateBulkRegistrationPlantLocations(chunk);
+
+    const [productIds, plantIds] = await Promise.all([
+      this.sequenceHelper.reserveSequenceValues('product_id', chunkSize),
+      totalPlants > 0
+        ? this.sequenceHelper.reserveSequenceValues(
+            'product_plant_id',
+            totalPlants,
+          )
+        : Promise.resolve([] as number[]),
+    ]);
+
+    const now = new Date();
+    const productDocs: Array<Record<string, unknown>> = [];
+    const plantMetaByProduct: Array<
+      Array<{
+        plantDto: BulkRegisterProductDto['products'][number]['plants'][number];
+        eoiNo: string;
+        categoryObjectId: Types.ObjectId;
+      }>
+    > = [];
+
+    for (let i = 0; i < chunkSize; i++) {
+      const registerProductDto = chunk[i];
+      const globalIndex = params.chunkStartIndex + i;
+      const manufacturerProductCount =
+        params.initialMaxActiveSequence + globalIndex + 1;
+      const eoiNo = buildEoiNoFromManufacturerProfile(
+        params.manufacturerProfile,
+        manufacturerProductCount,
+      );
+      const categoryObjectId = this.toObjectId(
+        registerProductDto.categoryId,
+        'categoryId',
+      );
+
+      productDocs.push({
+        productId: productIds[i],
+        categoryId: categoryObjectId,
+        vendorId: params.vendorObjectId,
+        manufacturerId: params.manufacturerObjectId,
+        eoiNo,
+        urnNo: params.urnNo,
+        productName: registerProductDto.productName,
+        productImage: registerProductDto.productImage,
+        plantCount: registerProductDto.plants.length,
+        productDetails: registerProductDto.productDetails,
+        productType: registerProductDto.productType || 0,
+        productStatus: 0,
+        productRenewStatus: 0,
+        urnStatus: 0,
+        createdDate: now,
+        updatedDate: now,
+      });
+
+      plantMetaByProduct.push(
+        registerProductDto.plants.map((plantDto) => ({
+          plantDto,
+          eoiNo,
+          categoryObjectId,
+        })),
+      );
+    }
+
     const session = await this.connection.startSession();
     session.startTransaction({ maxCommitTimeMS: params.maxCommitTimeMS });
 
     try {
-      const results: Array<
-        Record<string, unknown> & { plants: Record<string, unknown>[] }
-      > = [];
-      const validatedCountryIds = new Set<string>();
-      const validatedStateKeys = new Set<string>();
+      const insertedProducts = await this.productModel.insertMany(productDocs, {
+        session,
+      });
 
-      for (let i = 0; i < params.chunk.length; i++) {
-        const registerProductDto = params.chunk[i];
-        const globalIndex = params.chunkStartIndex + i;
-        const manufacturerProductCount =
-          params.initialMaxActiveSequence + globalIndex + 1;
-
-        const eoiNo = buildEoiNoFromManufacturerProfile(
-          params.manufacturerProfile,
-          manufacturerProductCount,
-        );
-        console.log(
-          `[Bulk Product Registration] Product ${globalIndex + 1}/${params.totalProducts} - EOI: ${eoiNo}, Manufacturer Product Count: ${manufacturerProductCount}`,
-        );
-
-        const productId = await this.sequenceHelper.getProductId();
-        const now = new Date();
-        const categoryObjectId = this.toObjectId(
-          registerProductDto.categoryId,
-          'categoryId',
-        );
-
-        const productData = {
-          productId,
-          categoryId: categoryObjectId,
-          vendorId: params.vendorObjectId,
-          manufacturerId: params.manufacturerObjectId,
-          eoiNo,
-          urnNo: params.urnNo,
-          productName: registerProductDto.productName,
-          productImage: registerProductDto.productImage,
-          plantCount: registerProductDto.plants.length,
-          productDetails: registerProductDto.productDetails,
-          productType: registerProductDto.productType || 0,
-          productStatus: 0,
-          productRenewStatus: 0,
-          urnStatus: 0,
-          createdDate: now,
-          updatedDate: now,
-        };
-
-        const product = new this.productModel(productData);
-        const savedProduct = await product.save({ session });
-
-        const plants = [];
-        for (const plantDto of registerProductDto.plants) {
-          const productPlantId = await this.sequenceHelper.getProductPlantId();
-          const plantCountryObjectId = this.toObjectId(
-            plantDto.countryId,
-            'countryId',
-          );
-          const countryIdKey = String(plantCountryObjectId);
-          if (!validatedCountryIds.has(countryIdKey)) {
-            await this.validateCountry(plantDto.countryId);
-            validatedCountryIds.add(countryIdKey);
-          }
-          const plantStateObjectId = this.toObjectId(
-            plantDto.stateId,
-            'stateId',
-          );
-          const stateKey = `${countryIdKey}:${String(plantStateObjectId)}`;
-          if (!validatedStateKeys.has(stateKey)) {
-            await this.validateState(plantDto.stateId, plantDto.countryId);
-            validatedStateKeys.add(stateKey);
-          }
-
-          const plantData = {
-            productPlantId,
-            productId: savedProduct._id,
+      let plantIdIndex = 0;
+      const allPlantDocs: Array<Record<string, unknown>> = [];
+      for (let i = 0; i < chunkSize; i++) {
+        const product = insertedProducts[i];
+        for (const { plantDto, eoiNo, categoryObjectId } of plantMetaByProduct[
+          i
+        ]) {
+          allPlantDocs.push({
+            productPlantId: plantIds[plantIdIndex++],
+            productId: product._id,
             vendorId: params.vendorObjectId,
             categoryId: categoryObjectId,
             manufacturerId: params.manufacturerObjectId,
-            countryId: plantCountryObjectId,
-            stateId: plantStateObjectId,
+            countryId: this.toObjectId(plantDto.countryId, 'countryId'),
+            stateId: this.toObjectId(plantDto.stateId, 'stateId'),
             urnNo: params.urnNo,
             eoiNo,
             plantName: plantDto.plantName,
@@ -2717,21 +2749,40 @@ export class ProductRegistrationService {
             city: plantDto.city,
             plantStatus: 1,
             createdDate: now,
-          };
-
-          const plant = new this.productPlantModel(plantData);
-          const savedPlant = await plant.save({ session });
-          plants.push(savedPlant);
+          });
         }
-
-        results.push({
-          ...savedProduct.toObject(),
-          plants: plants.map((p) => p.toObject()),
-        });
       }
 
+      const insertedPlants =
+        allPlantDocs.length > 0
+          ? await this.productPlantModel.insertMany(allPlantDocs, { session })
+          : [];
+
       await session.commitTransaction();
-      return results;
+
+      const plantsByProductId = new Map<string, Record<string, unknown>[]>();
+      for (const plant of insertedPlants) {
+        const productIdKey = String(plant.productId);
+        const rows = plantsByProductId.get(productIdKey) ?? [];
+        rows.push(
+          (typeof plant.toObject === 'function'
+            ? plant.toObject()
+            : { ...plant }) as Record<string, unknown>,
+        );
+        plantsByProductId.set(productIdKey, rows);
+      }
+
+      return insertedProducts.map((product) => {
+        const productIdKey = String(product._id);
+        const productObj =
+          typeof product.toObject === 'function'
+            ? product.toObject()
+            : { ...product };
+        return {
+          ...productObj,
+          plants: plantsByProductId.get(productIdKey) ?? [],
+        };
+      });
     } catch (error) {
       await session.abortTransaction();
       throw error;
@@ -3185,6 +3236,7 @@ export class ProductRegistrationService {
           existingProduct.manufacturerId,
           updatedProduct.urnNo,
           updatedProduct.urnStatus,
+          previousUrnStatus,
         );
       }
 
@@ -4270,6 +4322,33 @@ export class ProductRegistrationService {
       updatedDate: now,
     });
 
+    const manufacturer = await this.manufacturerModel
+      .findById(vendorObjectId)
+      .select('manufacturerName vendor_name')
+      .lean()
+      .exec();
+    const manufacturerName =
+      String(manufacturer?.manufacturerName ?? '').trim() ||
+      String(manufacturer?.vendor_name ?? '').trim() ||
+      undefined;
+
+    try {
+      await this.lifecycleNotification.notifyProductNameChangeRequested({
+        manufacturerId: vendorObjectId.toString(),
+        requestId: String(created._id),
+        urnNo: String(created.urnNo ?? ''),
+        eoiNo: String(created.eoiNo ?? ''),
+        currentName,
+        requestedName,
+        reason,
+        manufacturerName,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `[Product name change] Admin notification failed: ${(err as Error).message}`,
+      );
+    }
+
     return this.mapProductChangeRequest(created.toObject());
   }
 
@@ -4611,6 +4690,48 @@ export class ProductRegistrationService {
    * Updates products table where vendorId and urnNo match, sets urnStatus to updateStatusTo
    * Also logs activity for the status change
    */
+  private vendorUrnProductMatch(
+    manufacturerId: string,
+    urnNo: string,
+  ): Record<string, unknown> {
+    const orgObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+    return matchActiveProducts({
+      urnNo,
+      $and: [
+        {
+          $or: [{ vendorId: orgObjectId }, { manufacturerId: orgObjectId }],
+        },
+      ],
+    });
+  }
+
+  private async resolveManufacturerDisplayName(
+    manufacturerId: Types.ObjectId | string,
+  ): Promise<string | undefined> {
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerId)
+      .select('manufacturerName vendor_name')
+      .lean()
+      .exec();
+    return (
+      String(manufacturer?.manufacturerName ?? '').trim() ||
+      String(manufacturer?.vendor_name ?? '').trim() ||
+      undefined
+    );
+  }
+
+  private async resolveManufacturerVendorEmail(
+    manufacturerId: Types.ObjectId | string,
+  ): Promise<string | undefined> {
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerId)
+      .select('vendor_email')
+      .lean()
+      .exec();
+    const email = String(manufacturer?.vendor_email ?? '').trim();
+    return email || undefined;
+  }
+
   async updateUrnStatus(
     updateUrnStatusDto: UpdateUrnStatusDto,
     manufacturerId: string,
@@ -4624,11 +4745,7 @@ export class ProductRegistrationService {
 
       // Find one product for validation, timeline context and response shape
       const existingProduct = await this.productModel
-        .findOne({
-          vendorId: vendorObjectId,
-          urnNo: updateUrnStatusDto.urnNo,
-          ...matchActiveProducts(),
-        })
+        .findOne(this.vendorUrnProductMatch(manufacturerId, updateUrnStatusDto.urnNo))
         .session(session)
         .exec();
 
@@ -4654,10 +4771,7 @@ export class ProductRegistrationService {
       const now = new Date();
       await this.productModel
         .updateMany(
-          matchActiveProducts({
-            vendorId: vendorObjectId,
-            urnNo: updateUrnStatusDto.urnNo,
-          }),
+          this.vendorUrnProductMatch(manufacturerId, updateUrnStatusDto.urnNo),
           {
             $set: {
               urnStatus: nextUrnStatus,
@@ -4672,11 +4786,7 @@ export class ProductRegistrationService {
         .exec();
 
       const updatedProduct = await this.productModel
-        .findOne({
-          vendorId: vendorObjectId,
-          urnNo: updateUrnStatusDto.urnNo,
-          ...matchActiveProducts(),
-        })
+        .findOne(this.vendorUrnProductMatch(manufacturerId, updateUrnStatusDto.urnNo))
         .session(session)
         .exec();
 
@@ -4692,6 +4802,7 @@ export class ProductRegistrationService {
         existingProduct.manufacturerId,
         updateUrnStatusDto.urnNo,
         nextUrnStatus,
+        previousUrnStatus,
       );
       await this.syncUrnProductsToZohoDeal(
         updateUrnStatusDto.urnNo,
@@ -4722,11 +4833,17 @@ export class ProductRegistrationService {
               ),
             );
         }
+        const [manufacturerName, vendorEmail] = await Promise.all([
+          this.resolveManufacturerDisplayName(existingProduct.manufacturerId),
+          this.resolveManufacturerVendorEmail(existingProduct.manufacturerId),
+        ]);
         this.lifecycleNotification
           .notifyUrnSubmittedForReview({
-            manufacturerId: manufacturerId.toString(),
-            urnNo: updateUrnStatusDto.urnNo.trim(),
+            manufacturerId: existingProduct.manufacturerId.toString(),
+            urnNo: trimmedUrn,
             productName: existingProduct.productName,
+            manufacturerName,
+            vendorEmail,
           })
           .catch((err) =>
             this.logger.warn(
@@ -4735,6 +4852,9 @@ export class ProductRegistrationService {
               }`,
             ),
           );
+        this.logger.log(
+          `[Update URN Status] Submit-for-review admin notification queued for ${updateUrnStatusDto.urnNo.trim()} (${previousUrnStatus} → 4)`,
+        );
       }
 
       await this.invalidateProductListingsCache();
@@ -4861,6 +4981,7 @@ export class ProductRegistrationService {
         manufacturerId,
         urnNo,
         dto.updateStatusTo,
+        previousUrnStatus,
       );
       await this.syncUrnProductsToZohoDeal(urnNo, manufacturerId).catch(
         (error: any) => {
@@ -4894,17 +5015,32 @@ export class ProductRegistrationService {
           );
       }
 
-      if (
-        dto.updateStatusTo === 2 &&
-        previousUrnStatus < 2 &&
-        previousUrnStatus !== dto.updateStatusTo
-      ) {
+      const shouldNotifyInitialUrnApproval =
+        (dto.updateStatusTo === 1 && previousUrnStatus === 0) ||
+        (dto.updateStatusTo === 2 && previousUrnStatus === 0);
+
+      if (shouldNotifyInitialUrnApproval) {
+        const manufacturer = await this.manufacturerModel
+          .findById(manufacturerId)
+          .select('manufacturerName vendor_name vendor_email')
+          .lean()
+          .exec();
+        const vendorEmail = String(manufacturer?.vendor_email ?? '').trim();
+        const manufacturerName =
+          String(manufacturer?.manufacturerName ?? '').trim() ||
+          String(manufacturer?.vendor_name ?? '').trim();
+
+        this.logger.log(
+          `[Admin URN Status] Initial approval email for ${urnNo} (${previousUrnStatus} → ${dto.updateStatusTo})`,
+        );
         this.lifecycleNotification
           .notifyUrnInitialApproved({
             manufacturerId: manufacturerId.toString(),
             urnNo,
             productName: sampleProductName || urnNo,
             approvedBy: 'GreenPro Admin',
+            vendorEmail: vendorEmail || undefined,
+            manufacturerName: manufacturerName || undefined,
           })
           .catch((err) =>
             this.logger.warn(
@@ -4913,11 +5049,79 @@ export class ProductRegistrationService {
               }`,
             ),
           );
+      } else if (
+        dto.updateStatusTo === 2 &&
+        dto.updateStatusType === 'urn_status' &&
+        previousUrnStatus === 1
+      ) {
+        this.logger.debug(
+          `[Admin URN Status] Skipping initial approval email for ${urnNo}: ${previousUrnStatus} → 2 (registration payment stage)`,
+        );
+      } else if (
+        dto.updateStatusTo === 2 &&
+        dto.updateStatusType === 'urn_status' &&
+        previousUrnStatus >= 2
+      ) {
+        this.logger.debug(
+          `[Admin URN Status] Skipping initial approval email for ${urnNo}: already at urnStatus ${previousUrnStatus}`,
+        );
+      }
+
+      if (dto.updateStatusTo === 11) {
+        const productRenewStatus = Number(products[0].productRenewStatus ?? 0);
+        if (productRenewStatus === 0) {
+          this.lifecycleNotification
+            .notifyProductCertified({
+              manufacturerId: manufacturerId.toString(),
+              urnNo,
+              productName: sampleProductName || urnNo,
+            })
+            .catch((err) =>
+              this.logger.warn(
+                `[Admin URN Status] Certification complete notification failed: ${(err as Error).message}`,
+              ),
+            );
+        }
       }
 
       await this.invalidateProductListingsCache();
       return { urnNo, urnStatus: dto.updateStatusTo };
     }
+
+    if (dto.updateStatusType === 'product_status') {
+      if (dto.updateStatusTo === 2) {
+        this.lifecycleNotification
+          .notifyProductCertified({
+            manufacturerId: manufacturerId.toString(),
+            urnNo,
+            productName: sampleProductName || urnNo,
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `[Admin URN Status] Product certified notification failed: ${(err as Error).message}`,
+            ),
+          );
+      } else if (dto.updateStatusTo === 3) {
+        const notifyRejected =
+          previousUrnStatus < 2
+            ? this.lifecycleNotification.notifyUrnRegistrationRejected({
+                manufacturerId: manufacturerId.toString(),
+                urnNo,
+                productName: sampleProductName || urnNo,
+              })
+            : this.lifecycleNotification.notifyProductRejected({
+                manufacturerId: manufacturerId.toString(),
+                urnNo,
+                productName: sampleProductName || urnNo,
+              });
+        notifyRejected.catch((err) =>
+          this.logger.warn(
+            `[Admin URN Status] Product rejected notification failed: ${(err as Error).message}`,
+          ),
+        );
+      }
+    }
+
     await this.invalidateProductListingsCache();
     return { urnNo, productStatus: dto.updateStatusTo };
   }

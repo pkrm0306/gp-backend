@@ -27,6 +27,7 @@ import { matchActiveProducts } from '../constants/active-product.filter';
 import { matchActiveProductPlants } from '../constants/active-product.filter';
 import { runInTransactionIfSupported } from '../../renew/helpers/mongo-session.util';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
+import { LifecycleNotificationService } from '../../notifications/lifecycle-notification.service';
 import { UrnMergeExecuteDto } from './dto/urn-merge-execute.dto';
 import {
   URN_MERGE_MULTI_ROW_COLLECTIONS,
@@ -102,6 +103,7 @@ export class UrnMergeService {
     private readonly urnMergeAuditModel: Model<UrnMergeAuditDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly activityLogService: ActivityLogService,
+    private readonly lifecycleNotification: LifecycleNotificationService,
   ) {}
 
   async preview(
@@ -284,6 +286,19 @@ export class UrnMergeService {
         logError instanceof Error ? logError.stack : String(logError),
       );
     }
+
+    this.lifecycleNotification
+      .notifyUrnMerged({
+        manufacturerId: String(context.manufacturerId),
+        sourceUrnNo: context.sourceUrnNo,
+        targetUrnNo: context.targetUrnNo,
+        movedCount: movedProductIds.length,
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `URN merge notification failed: ${(err as Error).message}`,
+        ),
+      );
 
     return {
       success: true,

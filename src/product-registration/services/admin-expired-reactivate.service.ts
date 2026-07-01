@@ -44,6 +44,18 @@ type ReactivationUpdate = {
   discontinuedBy: null;
 };
 
+type UrnReactivationPlan = {
+  product: {
+    _id: Types.ObjectId;
+    eoiNo: string;
+    validtillDate?: Date;
+    productStatus: number;
+  };
+  fromStatus: number;
+  update: ReactivationUpdate;
+  validityExtended: boolean;
+};
+
 @Injectable()
 export class AdminExpiredReactivateService {
   private readonly logger = new Logger(AdminExpiredReactivateService.name);
@@ -143,6 +155,7 @@ export class AdminExpiredReactivateService {
     updatedProductIds: string[];
     updatedEoiNos: string[];
     updatedCount: number;
+    modifiedCount: number;
     message: string;
   }> {
     const trimmedUrn = urnNo.trim();
@@ -166,34 +179,62 @@ export class AdminExpiredReactivateService {
     }
 
     const adminObjectId = new Types.ObjectId(adminUserId);
-    let extendedAny = false;
+    const plans = this.buildUrnReactivationPlans(products, now);
+    const extendedAny = plans.some((plan) => plan.validityExtended);
 
-    for (const product of products) {
-      const { update, validityExtended } = this.buildReactivationUpdate(
-        product.validtillDate as Date | undefined,
-        now,
-      );
-      if (validityExtended) {
-        extendedAny = true;
-      }
+    const bulkResult = await this.productModel.bulkWrite(
+      plans.map((plan) => ({
+        updateOne: {
+          filter: { _id: plan.product._id },
+          update: { $set: plan.update },
+        },
+      })),
+      { ordered: false },
+    );
 
-      await this.productModel.updateOne({ _id: product._id }, { $set: update });
-      await this.writeAudits({
-        productObjectId: product._id as Types.ObjectId,
+    await this.productStatusAuditModel.insertMany(
+      plans.map((plan) => ({
+        productId: plan.product._id,
         urnNo: trimmedUrn,
-        eoiNo: String(product.eoiNo),
-        adminUserId,
-        adminObjectId,
-        now,
-        validtillDate: update.validtillDate,
-        fromStatus: Number(product.productStatus),
+        fromStatus: plan.fromStatus,
+        toStatus: PRODUCT_STATUS_CERTIFIED,
+        reason: 'Reactivated expired product to certified via URN bulk action',
+        changedBy: adminObjectId,
+        changedAt: now,
+      })),
+      { ordered: false },
+    );
+
+    await this.auditLogService.recordMany(
+      plans.map((plan) => ({
+        occurred_at: now,
+        action: AUDIT_ACTION.EXPIRED_REACTIVATE_URN,
+        outcome: 'success' as const,
+        module: AUDIT_MODULE.PRODUCT,
+        action_type: AUDIT_ACTION_TYPE.UPDATE,
+        entity_name: String(plan.product.eoiNo),
+        description:
+          'Reactivated expired product to certified via URN bulk action',
+        performed_by: { user_id: adminUserId },
+        old_values: { productStatus: plan.fromStatus },
+        new_values: {
+          productStatus: PRODUCT_STATUS_CERTIFIED,
+          validtillDate: plan.update.validtillDate.toISOString(),
+          urnNo: trimmedUrn,
+          eoiNo: String(plan.product.eoiNo),
+        },
+        http_method: 'PATCH',
         route: '/api/admin/products/expired-reactivate/urn',
-        auditAction: AUDIT_ACTION.EXPIRED_REACTIVATE_URN,
-        description: 'Reactivated expired product to certified via URN bulk action',
-      });
-    }
+        status_code: 200,
+      })),
+    );
 
     await invalidateProductListingsCache(this.redisService, this.logger);
+
+    const modifiedCount = bulkResult.modifiedCount ?? products.length;
+    this.logger.log(
+      `[reactivateUrn] urnNo=${trimmedUrn} planned=${products.length} modified=${modifiedCount}`,
+    );
 
     return {
       success: true,
@@ -201,10 +242,34 @@ export class AdminExpiredReactivateService {
       updatedProductIds: products.map((p) => String(p._id)),
       updatedEoiNos: products.map((p) => String(p.eoiNo)),
       updatedCount: products.length,
+      modifiedCount,
       message: extendedAny
         ? 'URN reactivated; validtillDate extended by 1 year where past expiry'
         : 'URN reactivated; existing validtillDate retained for all products',
     };
+  }
+
+  private buildUrnReactivationPlans(
+    products: Array<{
+      _id: Types.ObjectId;
+      eoiNo: string;
+      validtillDate?: Date;
+      productStatus: number;
+    }>,
+    now: Date,
+  ): UrnReactivationPlan[] {
+    return products.map((product) => {
+      const { update, validityExtended } = this.buildReactivationUpdate(
+        product.validtillDate,
+        now,
+      );
+      return {
+        product,
+        fromStatus: Number(product.productStatus),
+        update,
+        validityExtended,
+      };
+    });
   }
 
   private async resolveProduct(

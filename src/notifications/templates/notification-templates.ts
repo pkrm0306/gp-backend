@@ -138,14 +138,28 @@ export const NOTIFICATION_TEMPLATES: Record<
   [NotificationTemplateCode.URN_INITIAL_APPROVED]: {
     code: NotificationTemplateCode.URN_INITIAL_APPROVED,
     email: {
-      subject: 'GreenPro — Registration fee approved for {{urnNo}}',
+      subject: 'GreenPro — URN {{urnNo}} approved for registration',
       html: `
         <p>Hello {{manufacturerName}},</p>
-        <p>Your registration fee for URN <strong>{{urnNo}}</strong> has been approved.</p>
-        <p>You may continue with the certification process forms.</p>
+        <p>Your product registration for URN <strong>{{urnNo}}</strong> has been approved by GreenPro.</p>
+        <p>Please sign in to the vendor portal to review the registration fee proposal and complete the next steps.</p>
         <p>Thank you,<br/>The GreenPro Team</p>
       `,
-      text: 'Registration fee approved for {{urnNo}}. Continue with certification forms.',
+      text: 'URN {{urnNo}} registration approved. Sign in to review the registration fee proposal.',
+    },
+  },
+  [NotificationTemplateCode.URN_REGISTRATION_REJECTED]: {
+    code: NotificationTemplateCode.URN_REGISTRATION_REJECTED,
+    email: {
+      subject: 'GreenPro — URN {{urnNo}} registration not approved',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your product registration for URN <strong>{{urnNo}}</strong> was not approved at this stage.</p>
+        <p>{{reason}}</p>
+        <p>Contact GreenPro support if you need more information.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'URN {{urnNo}} registration was not approved. {{reason}}',
     },
   },
   [NotificationTemplateCode.URN_SUBMITTED_FOR_REVIEW]: {
@@ -198,6 +212,131 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Certification payment approved for {{urnNo}}.',
+    },
+  },
+  [NotificationTemplateCode.MANUFACTURER_APPROVED]: {
+    code: NotificationTemplateCode.MANUFACTURER_APPROVED,
+    email: {
+      subject: 'GreenPro — Your manufacturer account is approved',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your GreenPro manufacturer account has been verified and activated.</p>
+        <p>You can sign in to the vendor portal and continue product registration.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Your GreenPro manufacturer account has been approved.',
+    },
+  },
+  [NotificationTemplateCode.MANUFACTURER_INACTIVE]: {
+    code: NotificationTemplateCode.MANUFACTURER_INACTIVE,
+    email: {
+      subject: 'GreenPro — Manufacturer account inactive',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your GreenPro manufacturer account has been marked inactive.</p>
+        <p>Vendor portal access is suspended until your account is reactivated by GreenPro.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Your GreenPro manufacturer account is inactive.',
+    },
+  },
+  [NotificationTemplateCode.MANUFACTURER_REJECTED]: {
+    code: NotificationTemplateCode.MANUFACTURER_REJECTED,
+    email: {
+      subject: 'GreenPro — Registration not approved',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your unverified GreenPro registration was not approved and has been removed.</p>
+        <p>Contact GreenPro support if you believe this is an error.</p>
+      `,
+      text: 'Your unverified GreenPro registration was removed.',
+    },
+  },
+  [NotificationTemplateCode.PAYMENT_PROPOSAL_READY]: {
+    code: NotificationTemplateCode.PAYMENT_PROPOSAL_READY,
+    email: {
+      subject: 'GreenPro — {{paymentTypeLabel}} proposal ready for {{urnNo}}',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>A {{paymentTypeLabel}} payment proposal for URN <strong>{{urnNo}}</strong> is ready for your review.</p>
+        <p>Payment reference: {{paymentId}}. Amount: {{quoteTotal}}.</p>
+        <p>Please sign in to the vendor portal to review and proceed.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: '{{paymentTypeLabel}} proposal ready for {{urnNo}}. Sign in to review.',
+    },
+  },
+  [NotificationTemplateCode.PRODUCT_ENQUIRY_VENDOR]: {
+    code: NotificationTemplateCode.PRODUCT_ENQUIRY_VENDOR,
+    email: {
+      subject: 'GreenPro — New product enquiry for {{manufacturerName}}',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>You received a new product enquiry from <strong>{{visitorName}}</strong> ({{visitorEmail}}).</p>
+        <p>Phone: {{visitorPhone}}</p>
+        <p>{{visitorMessage}}</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'New enquiry from {{visitorName}} ({{visitorEmail}}).',
+    },
+  },
+  [NotificationTemplateCode.CERTIFICATION_EXPIRY_REMINDER]: {
+    code: NotificationTemplateCode.CERTIFICATION_EXPIRY_REMINDER,
+    email: {
+      subject: 'GreenPro — Certification expiry reminder ({{eoiNo}})',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>This is a reminder that certification for <strong>{{productName}}</strong> ({{eoiNo}}) is approaching expiry.</p>
+        <p>{{reminderStage}}</p>
+        <p>Please begin renewal in the vendor portal if required.</p>
+      `,
+      text: 'Certification expiry reminder for {{eoiNo}}.',
+    },
+  },
+  [NotificationTemplateCode.URN_MERGED]: {
+    code: NotificationTemplateCode.URN_MERGED,
+    email: {
+      subject: 'GreenPro — URN merge completed ({{sourceUrnNo}} → {{targetUrnNo}})',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>GreenPro merged URN <strong>{{sourceUrnNo}}</strong> into <strong>{{targetUrnNo}}</strong>.</p>
+        <p>{{movedCount}} product(s) were moved. Please review your URN in the vendor portal.</p>
+      `,
+      text: 'URN {{sourceUrnNo}} merged into {{targetUrnNo}}.',
+    },
+  },
+  [NotificationTemplateCode.RENEWAL_SUBMITTED]: {
+    code: NotificationTemplateCode.RENEWAL_SUBMITTED,
+    email: {
+      subject: 'GreenPro — Renewal submitted for {{urnNo}}',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your renewal process forms for URN <strong>{{urnNo}}</strong> have been submitted for GreenPro review.</p>
+      `,
+      text: 'Renewal submitted for {{urnNo}}.',
+    },
+  },
+  [NotificationTemplateCode.RENEWAL_DECISION]: {
+    code: NotificationTemplateCode.RENEWAL_DECISION,
+    email: {
+      subject: 'GreenPro — Renewal update for {{urnNo}}',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your renewal for URN <strong>{{urnNo}}</strong>: {{decisionMessage}}</p>
+      `,
+      text: 'Renewal update for {{urnNo}}: {{decisionMessage}}',
+    },
+  },
+  [NotificationTemplateCode.RENEWAL_COMPLETED]: {
+    code: NotificationTemplateCode.RENEWAL_COMPLETED,
+    email: {
+      subject: 'GreenPro — Renewal completed for {{urnNo}}',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Renewal for URN <strong>{{urnNo}}</strong> is complete. Your renewed validity dates are updated in the portal.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Renewal completed for {{urnNo}}.',
     },
   },
 };

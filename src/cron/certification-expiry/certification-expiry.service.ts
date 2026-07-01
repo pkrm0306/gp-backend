@@ -13,8 +13,10 @@ import {
 } from '../../renew/schemas/renewal-cycle.schema';
 import { EmailService } from '../../common/services/email.service';
 import { computeGraceEndDate } from '../../product-registration/helpers/certification-dates.util';
-import { PRODUCT_STATUS_DISCONTINUED } from '../../renew/constants/product-status.constants';
-import { PRODUCT_RENEW_STATUS } from '../../renew/constants/renewal-urn-status.constants';
+import {
+  PRODUCT_STATUS_CERTIFIED,
+  PRODUCT_STATUS_DISCONTINUED,
+} from '../../renew/constants/product-status.constants';
 import {
   CronEmailLog,
   CronEmailLogDocument,
@@ -29,7 +31,14 @@ import {
 } from '../utils/cron-date.util';
 import { CertificationExpiryQueryService } from './certification-expiry-query.service';
 import { CertificationExpiryTemplateService } from './certification-expiry-template.service';
-import { CronJobRunResult, EligibleExpiryProduct } from './certification-expiry.types';
+import { LifecycleNotificationService } from '../../notifications/lifecycle-notification.service';
+import {
+  CronJobRunResult,
+  DeactivationBatchItem,
+  EligibleExpiryProduct,
+} from './certification-expiry.types';
+
+const DEACTIVATION_EMAIL_CONCURRENCY = 5;
 
 @Injectable()
 export class CertificationExpiryService {
@@ -46,7 +55,32 @@ export class CertificationExpiryService {
     private readonly renewalCycleModel: Model<RenewalCycleDocument>,
     @InjectModel(CronEmailLog.name)
     private readonly cronEmailLogModel: Model<CronEmailLogDocument>,
+    private readonly lifecycleNotification: LifecycleNotificationService,
   ) {}
+
+  private notifyExpiryAdmin(
+    product: EligibleExpiryProduct,
+    stage: '60-day' | 'weekly' | 'deactivation',
+    includeAdminEmail: boolean,
+  ): void {
+    const manufacturerName = String(
+      product.manufacturerName ?? product.vendorName ?? 'Manufacturer',
+    ).trim();
+    this.lifecycleNotification
+      .notifyCertificationExpiryAdmin({
+        manufacturerName,
+        urnNo: product.urnNo,
+        eoiNo: product.eoiNo,
+        stage,
+        productId: product.productId,
+        includeAdminEmail,
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `[${stage}] Admin expiry notification failed for product ${product.productId}: ${(err as Error).message}`,
+        ),
+      );
+  }
 
   async runBefore2Month(asOf = new Date()): Promise<CronJobRunResult> {
     return this.runJob('before2month', asOf, async (products, todayIso, result) => {
@@ -116,57 +150,148 @@ export class CertificationExpiryService {
       'deactivationMail',
       asOf,
       async (products, todayIso, result) => {
-      const regYear = yearMonthsAgoInTimeZone(24);
-      const currentYear = Number(todayIso.slice(0, 4));
+        const startedAt = Date.now();
+        const regYear = yearMonthsAgoInTimeZone(24);
+        const currentYear = Number(todayIso.slice(0, 4));
 
-      for (const product of products) {
-        if (!product.validtillDate) {
-          result.skipped += 1;
-          continue;
-        }
-        const graceEndIso = toIsoDateInTimeZone(
-          computeGraceEndDate(product.validtillDate),
+        const toDeactivate = await this.planDeactivationBatch(
+          products,
+          todayIso,
+          result,
         );
-        if (graceEndIso > todayIso) {
-          result.skipped += 1;
-          continue;
-        }
-        const notifyDate = `deactivate-${graceEndIso}`;
-        const already = await this.cronEmailLogModel.exists({
-          productId: product.productId,
-          jobType: 'deactivationMail',
-          notifyDate,
-        });
-        if (already) {
-          const current = await this.productModel
-            .findOne({ productId: product.productId })
-            .select('productStatus')
-            .lean()
-            .exec();
-          if (Number(current?.productStatus) === PRODUCT_STATUS_DISCONTINUED) {
-            result.skipped += 1;
-            continue;
-          }
+        result.planned = toDeactivate.length;
+
+        if (toDeactivate.length === 0) {
+          result.durationMs = Date.now() - startedAt;
+          return;
         }
 
-        result.processed += 1;
+        result.processed = toDeactivate.length;
+        const productIds = toDeactivate.map((item) => item.product.productId);
+        const now = new Date();
+
+        const updateResult = await this.productModel.updateMany(
+          {
+            productId: { $in: productIds },
+            productStatus: PRODUCT_STATUS_CERTIFIED,
+          },
+          {
+            $set: {
+              productStatus: PRODUCT_STATUS_DISCONTINUED,
+              updatedDate: now,
+            },
+          },
+        );
+
+        result.matchedCount = updateResult.matchedCount ?? 0;
+        result.modifiedCount = updateResult.modifiedCount ?? 0;
+        result.deactivated = result.modifiedCount;
+
+        await this.sendDeactivationNotifications(
+          toDeactivate,
+          { regYear, currentYear },
+          result,
+        );
+
+        result.durationMs = Date.now() - startedAt;
+      },
+      (date) => this.queryService.getDeactivationEligibleProducts(date),
+    );
+  }
+
+  /** Phase 1 — eligibility + idempotency in memory; no product status writes. */
+  async planDeactivationBatch(
+    products: EligibleExpiryProduct[],
+    todayIso: string,
+    result: CronJobRunResult,
+  ): Promise<DeactivationBatchItem[]> {
+    const candidates: DeactivationBatchItem[] = [];
+
+    for (const product of products) {
+      if (!product.validtillDate) {
+        result.skipped += 1;
+        continue;
+      }
+      const graceEndIso = toIsoDateInTimeZone(
+        computeGraceEndDate(product.validtillDate),
+      );
+      if (graceEndIso > todayIso) {
+        result.skipped += 1;
+        continue;
+      }
+      candidates.push({
+        product,
+        notifyDate: `deactivate-${graceEndIso}`,
+      });
+    }
+
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    const productIds = candidates.map((item) => item.product.productId);
+    const notifyDates = [...new Set(candidates.map((item) => item.notifyDate))];
+
+    const [existingLogs, statusRows] = await Promise.all([
+      this.cronEmailLogModel
+        .find({
+          jobType: 'deactivationMail',
+          productId: { $in: productIds },
+          notifyDate: { $in: notifyDates },
+        })
+        .select('productId notifyDate')
+        .lean()
+        .exec(),
+      this.productModel
+        .find({ productId: { $in: productIds } })
+        .select('productId productStatus')
+        .lean()
+        .exec(),
+    ]);
+
+    const loggedKeys = new Set(
+      existingLogs.map((row) => `${row.productId}:${row.notifyDate}`),
+    );
+    const statusByProductId = new Map(
+      statusRows.map((row) => [Number(row.productId), Number(row.productStatus)]),
+    );
+
+    const toDeactivate: DeactivationBatchItem[] = [];
+    for (const item of candidates) {
+      const logKey = `${item.product.productId}:${item.notifyDate}`;
+      if (
+        loggedKeys.has(logKey) &&
+        statusByProductId.get(item.product.productId) ===
+          PRODUCT_STATUS_DISCONTINUED
+      ) {
+        result.skipped += 1;
+        continue;
+      }
+      toDeactivate.push(item);
+    }
+
+    return toDeactivate;
+  }
+
+  /** Phase 3 — vendor email + cron log after bulk status commit. */
+  private async sendDeactivationNotifications(
+    batch: DeactivationBatchItem[],
+    templateVars: { regYear: number; currentYear: number },
+    result: CronJobRunResult,
+  ): Promise<void> {
+    await this.mapWithConcurrency(
+      batch,
+      DEACTIVATION_EMAIL_CONCURRENCY,
+      async (item) => {
+        const { product, notifyDate } = item;
         try {
-          const now = new Date();
-          await this.productModel.updateOne(
-            { productId: product.productId },
+          const html = await this.templateService.renderDeactivationEmail(
+            product,
             {
-              $set: {
-                productStatus: PRODUCT_STATUS_DISCONTINUED,
-                updatedDate: now,
-              },
+              productRegistrationYear: templateVars.regYear,
+              currentYear: templateVars.currentYear,
             },
           );
-          result.deactivated += 1;
-
-          const html = await this.templateService.renderDeactivationEmail(product, {
-            productRegistrationYear: regYear,
-            currentYear,
-          });
           await this.sendVendorEmail(
             product,
             `GreenPro — Product deactivated (${product.eoiNo || product.urnNo})`,
@@ -174,14 +299,31 @@ export class CertificationExpiryService {
           );
           await this.writeLog(product, 'deactivationMail', notifyDate);
           result.sent += 1;
+          this.notifyExpiryAdmin(product, 'deactivation', true);
         } catch (error) {
           result.failed += 1;
           result.errors.push(this.errorEntry(product, error));
         }
-      }
-    },
-      (date) => this.queryService.getDeactivationEligibleProducts(date),
+      },
     );
+  }
+
+  private async mapWithConcurrency<T>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T) => Promise<void>,
+  ): Promise<void> {
+    if (items.length === 0) return;
+    let index = 0;
+    const limit = Math.max(1, Math.min(concurrency, items.length));
+    const runners = Array.from({ length: limit }, async () => {
+      while (index < items.length) {
+        const current = items[index];
+        index += 1;
+        await worker(current);
+      }
+    });
+    await Promise.all(runners);
   }
 
   private async runJob(
@@ -219,8 +361,12 @@ export class CertificationExpiryService {
     const emailOff =
       String(this.configService.get<string>('EMAIL_DISABLED') ?? 'false').toLowerCase() ===
       'true';
+    const extras =
+      jobType === 'deactivationMail'
+        ? ` planned=${result.planned ?? 0} matched=${result.matchedCount ?? 0} modified=${result.modifiedCount ?? 0} durationMs=${result.durationMs ?? 0}`
+        : '';
     this.logger.log(
-      `[${jobType}] processed=${result.processed} sent=${result.sent} skipped=${result.skipped} failed=${result.failed} deactivated=${result.deactivated} emailDisabled=${emailOff}`,
+      `[${jobType}] processed=${result.processed} sent=${result.sent} skipped=${result.skipped} failed=${result.failed} deactivated=${result.deactivated}${extras} emailDisabled=${emailOff}`,
     );
     return result;
   }
@@ -271,6 +417,14 @@ export class CertificationExpiryService {
       }
       await this.writeLog(product, jobType, notifyDate);
       result.sent += 1;
+      const expiryStage =
+        jobType === 'before2month'
+          ? '60-day'
+          : jobType === 'weeklyMail'
+            ? 'weekly'
+            : 'deactivation';
+      const includeAdminEmail = jobType !== 'before2month';
+      this.notifyExpiryAdmin(product, expiryStage, includeAdminEmail);
     } catch (error) {
       result.failed += 1;
       result.errors.push(this.errorEntry(product, error));

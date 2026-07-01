@@ -28,6 +28,7 @@ import {
   ManufacturerDocument,
 } from '../manufacturers/schemas/manufacturer.schema';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { ProductRegistrationWorkflowService } from '../activity-log/product-registration-workflow.service';
 import { uploadFile } from '../utils/upload-file.util';
 import { VendorProposalApprovalDto } from './dto/vendor-proposal-approval.dto';
 import {
@@ -99,6 +100,7 @@ export class PaymentsService {
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private activityLogService: ActivityLogService,
+    private readonly productRegistrationWorkflowService: ProductRegistrationWorkflowService,
     private readonly zohoDealsService: ZohoDealsService,
     private readonly lifecycleNotification: LifecycleNotificationService,
     private readonly certificationLifecycle: CertificationLifecycleService,
@@ -213,6 +215,25 @@ export class PaymentsService {
     return ownerId instanceof Types.ObjectId
       ? ownerId
       : this.toObjectId(String(ownerId), 'vendorId');
+  }
+
+  /** Resolve an active URN product row for either vendorId or manufacturerId org id. */
+  private findUrnProductForOrg(
+    urnNo: string,
+    orgObjectId: Types.ObjectId,
+    select = 'manufacturerId vendorId urnStatus productName',
+  ) {
+    const urnOptions = this.urnCandidates(urnNo);
+    return this.productModel
+      .findOne(
+        matchActiveProducts({
+          urnNo: { $in: urnOptions },
+          $or: [{ vendorId: orgObjectId }, { manufacturerId: orgObjectId }],
+        }),
+      )
+      .select(select)
+      .lean()
+      .exec();
   }
 
   private async assertCallerOwnsUrn(
@@ -861,28 +882,18 @@ export class PaymentsService {
     manufacturerIdStr: string,
     urnNo: string,
     newUrnStatus: number,
+    previousUrnStatus: number,
   ): Promise<void> {
     try {
-      const responsibility = this.getResponsibilityForStatus(newUrnStatus);
-      const nextActivityId = this.getNextActivityIdForLog(newUrnStatus);
-      const nextResponsibility =
-        this.getResponsibilityForStatus(nextActivityId);
-      await this.activityLogService.logActivity({
-        vendor_id: vendorId,
-        manufacturer_id: manufacturerIdStr,
-        urn_no: urnNo,
-        activities_id: newUrnStatus,
-        activity: this.getActivityName(newUrnStatus),
-        activity_status: newUrnStatus,
-        responsibility,
-        next_responsibility: nextResponsibility,
-        next_acitivities_id: nextActivityId,
-        next_activity:
-          nextActivityId <= 11
-            ? this.getActivityName(nextActivityId)
-            : this.getActivityName(11),
-        status: 0,
-      });
+      await this.productRegistrationWorkflowService.syncToUrnStatus(
+        {
+          vendorId,
+          manufacturerId: manufacturerIdStr,
+          urnNo,
+        },
+        previousUrnStatus,
+        newUrnStatus,
+      );
     } catch (err) {
       console.error(
         '[Payment] Activity log (URN status via payment) failed:',
@@ -960,6 +971,85 @@ export class PaymentsService {
     }
   }
 
+  private tryNotifyUrnRegistrationApproved(
+    urnNo: string,
+    vendorObjectId: Types.ObjectId,
+    previousUrnStatus: number,
+  ): void {
+    if (previousUrnStatus >= 2) {
+      return;
+    }
+    this.findUrnProductForOrg(urnNo, vendorObjectId, 'manufacturerId productName')
+      .then(async (product) => {
+        if (!product?.manufacturerId) return;
+        const manufacturer = await this.manufacturerModel
+          .findById(product.manufacturerId)
+          .select('manufacturerName vendor_name vendor_email')
+          .lean()
+          .exec();
+        return this.lifecycleNotification.notifyUrnInitialApproved({
+          manufacturerId: product.manufacturerId.toString(),
+          urnNo,
+          productName: String(product.productName ?? urnNo),
+          vendorEmail: String(manufacturer?.vendor_email ?? '').trim() || undefined,
+          manufacturerName:
+            String(manufacturer?.manufacturerName ?? '').trim() ||
+            String(manufacturer?.vendor_name ?? '').trim() ||
+            undefined,
+        });
+      })
+      .catch((err) =>
+        console.warn(
+          '[Payment] URN registration approved notification failed:',
+          (err as Error)?.message,
+        ),
+      );
+  }
+
+  private tryNotifyPaymentProposalReady(
+    urnNo: string,
+    vendorObjectId: Types.ObjectId,
+    paymentId: number,
+    paymentType: 'registration' | 'certification' | 'renew',
+    quoteTotal?: number | string,
+  ): void {
+    this.findUrnProductForOrg(urnNo, vendorObjectId, 'manufacturerId')
+      .then(async (product) => {
+        if (!product?.manufacturerId) {
+          console.warn(
+            `[Payment] Proposal ready notification skipped — no product for ${urnNo}`,
+          );
+          return;
+        }
+        const manufacturer = await this.manufacturerModel
+          .findById(product.manufacturerId)
+          .select('manufacturerName vendor_name vendor_email')
+          .lean()
+          .exec();
+        console.log(
+          `[Payment] Registration fee proposal notification for ${urnNo} (paymentId=${paymentId})`,
+        );
+        return this.lifecycleNotification.notifyPaymentProposalReady({
+          manufacturerId: product.manufacturerId.toString(),
+          urnNo,
+          paymentId,
+          paymentType,
+          quoteTotal,
+          vendorEmail: String(manufacturer?.vendor_email ?? '').trim() || undefined,
+          manufacturerName:
+            String(manufacturer?.manufacturerName ?? '').trim() ||
+            String(manufacturer?.vendor_name ?? '').trim() ||
+            undefined,
+        });
+      })
+      .catch((err) =>
+        console.warn(
+          '[Payment] Proposal ready notification failed:',
+          (err as Error)?.message,
+        ),
+      );
+  }
+
   /**
    * Safely convert string to ObjectId with validation
    */
@@ -1014,6 +1104,13 @@ export class PaymentsService {
         }
 
         const vendorObjectId = urnOwnerObjectId;
+
+        const urnProductBeforePayment = await this.findUrnProductForOrg(
+          normalizedUrnNo,
+          vendorObjectId,
+          'urnStatus',
+        );
+        const previousUrnStatus = Number(urnProductBeforePayment?.urnStatus ?? 0);
 
         // Get next payment ID
         const paymentId = await this.sequenceHelper.getPaymentId();
@@ -1273,6 +1370,26 @@ export class PaymentsService {
           normalizedPaymentType,
           Boolean(proposalFilePath),
         );
+        if (
+          proposalFilePath &&
+          (normalizedPaymentType === 'registration' ||
+            normalizedPaymentType === 'certification')
+        ) {
+          this.tryNotifyPaymentProposalReady(
+            normalizedUrnNo,
+            vendorObjectId,
+            savedPayment.paymentId,
+            normalizedPaymentType,
+            savedPayment.quoteTotal,
+          );
+          if (normalizedPaymentType === 'registration') {
+            this.tryNotifyUrnRegistrationApproved(
+              normalizedUrnNo,
+              vendorObjectId,
+              previousUrnStatus,
+            );
+          }
+        }
         const response = await this.formatPaymentForApi(savedPayment);
         if (normalizedPaymentType === 'certification') {
           return {
@@ -1751,6 +1868,7 @@ export class PaymentsService {
       let deferredUrnLog: {
         urnNo: string;
         newUrnStatus: number;
+        previousUrnStatus: number;
         manufacturerId: string;
       } | null = null;
 
@@ -1790,6 +1908,7 @@ export class PaymentsService {
           deferredUrnLog = {
             urnNo: urnNoToUse,
             newUrnStatus: updatePaymentDto.urnStatus,
+            previousUrnStatus: Number(anyProduct.urnStatus ?? 0),
             manufacturerId: anyProduct.manufacturerId.toString(),
           };
         }
@@ -1864,18 +1983,32 @@ export class PaymentsService {
           deferredUrnLog.manufacturerId,
           deferredUrnLog.urnNo,
           deferredUrnLog.newUrnStatus,
+          deferredUrnLog.previousUrnStatus,
         );
+        if (
+          deferredUrnLog.newUrnStatus === 2 &&
+          deferredUrnLog.previousUrnStatus < 2
+        ) {
+          this.lifecycleNotification
+            .notifyUrnInitialApproved({
+              manufacturerId: deferredUrnLog.manufacturerId,
+              urnNo: deferredUrnLog.urnNo,
+            })
+            .catch((err) =>
+              console.warn(
+                '[Payment] URN registration approved notification failed:',
+                (err as Error)?.message,
+              ),
+            );
+        }
       }
 
       if (proposalFile) {
-        const anyProduct = await this.productModel
-          .findOne({
-            urnNo: { $in: urnOptions },
-            vendorId: effectiveVendorObjectId,
-          })
-          .select('manufacturerId urnStatus')
-          .lean()
-          .exec();
+        const anyProduct = await this.findUrnProductForOrg(
+          normalizedUrn,
+          effectiveVendorObjectId,
+          'manufacturerId urnStatus',
+        );
         if (anyProduct) {
           const urnStatus =
             typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
@@ -1897,6 +2030,30 @@ export class PaymentsService {
             },
             urnStatus,
           );
+          if (
+            paymentType === 'registration' ||
+            paymentType === 'certification'
+          ) {
+            this.tryNotifyPaymentProposalReady(
+              normalizedUrn,
+              effectiveVendorObjectId,
+              updatedPayment.paymentId,
+              paymentType,
+              updatedPayment.quoteTotal,
+            );
+            if (
+              paymentType === 'registration' &&
+              (!deferredUrnLog || deferredUrnLog.newUrnStatus !== 2)
+            ) {
+              const previousUrnStatus =
+                deferredUrnLog?.previousUrnStatus ?? urnStatus;
+              this.tryNotifyUrnRegistrationApproved(
+                normalizedUrn,
+                effectiveVendorObjectId,
+                previousUrnStatus,
+              );
+            }
+          }
         }
       }
 
