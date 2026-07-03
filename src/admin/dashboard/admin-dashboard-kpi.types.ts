@@ -19,6 +19,8 @@ export interface AdminDashboardKpiCards {
   totalRevenue: DashboardKpiCard & { currency: 'INR' };
   pendingRenewals: DashboardKpiCard;
   expiredCertifications: DashboardKpiCard;
+  totalInquiries: DashboardKpiCard;
+  productInquiries: DashboardKpiCard;
 }
 
 export interface AdminDashboardKpiBundle {

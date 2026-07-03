@@ -42,7 +42,11 @@ import { join } from 'path';
 const CERTIFIED_PRODUCT_STATUS = 2;
 const PAGE_W = 787;
 const PAGE_H = 590;
-const CERTIFICATE_BACKGROUND_FILE = 'GPAMNS281001 2_page-0001.jpg';
+const CERTIFICATE_BACKGROUND_FILES = [
+  'GPAMNS281001 2_page-0001.jpg',
+  'cert-bg2.jpg',
+  'cert-bg.jpg',
+] as const;
 
 export type CertificateDownloadFile = {
   buffer: Buffer;
@@ -812,12 +816,45 @@ export class VendorCertificateService {
   }
 
   private resolveCertificateBackgroundPath(): string | null {
-    const candidates = [
-      join(process.cwd(), 'uploads', 'certificates', CERTIFICATE_BACKGROUND_FILE),
-      join(process.cwd(), 'public', 'certificate', CERTIFICATE_BACKGROUND_FILE),
+    const roots = [
+      join(process.cwd(), 'uploads', 'certificates'),
+      join(process.cwd(), 'public', 'certificate'),
     ];
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) return candidate;
+    for (const fileName of CERTIFICATE_BACKGROUND_FILES) {
+      for (const root of roots) {
+        const candidate = join(root, fileName);
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+    return null;
+  }
+
+  private async loadCertificateBackgroundBytes(): Promise<Buffer | null> {
+    const bgPath = this.resolveCertificateBackgroundPath();
+    if (bgPath) {
+      try {
+        return readFileSync(bgPath);
+      } catch {
+        /* fall through to remote static assets */
+      }
+    }
+
+    const base = String(
+      process.env.CERTIFICATE_ASSET_BASE_URL ??
+        'https://greenpro-portals.vercel.app/vendor/certificate',
+    )
+      .trim()
+      .replace(/\/+$/, '');
+    if (!base) return null;
+
+    for (const fileName of CERTIFICATE_BACKGROUND_FILES) {
+      const url = `${base}/${encodeURIComponent(fileName)}`;
+      try {
+        const res = await fetch(url);
+        if (res.ok) return Buffer.from(await res.arrayBuffer());
+      } catch {
+        /* try next candidate */
+      }
     }
     return null;
   }
@@ -826,11 +863,10 @@ export class VendorCertificateService {
     pdfDoc: PDFLibDocument,
     page: PDFPage,
   ): Promise<void> {
-    const bgPath = this.resolveCertificateBackgroundPath();
-    if (!bgPath) return;
+    const bytes = await this.loadCertificateBackgroundBytes();
+    if (!bytes) return;
 
     try {
-      const bytes = readFileSync(bgPath);
       const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
       const image = isJpeg
         ? await pdfDoc.embedJpg(bytes)

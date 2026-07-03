@@ -72,6 +72,12 @@ export class SummitSpeakerItem {
   name: string;
 
   @Prop({ default: '' })
+  designation: string;
+
+  @Prop({ default: '' })
+  organisation: string;
+
+  @Prop({ default: '' })
   sub: string;
 
   @Prop({ default: '' })

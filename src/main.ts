@@ -123,6 +123,7 @@ const ALLOWED_CORS_ORIGINS = [
   'https://demo1-admin.vercel.app',
   'https://greenpro-new-design-admin.vercel.app',
   'https://greenpro-new-design-vendor.vercel.app',
+  'https://updateddesign.vercel.app/',
 ];
 
 function buildCorsOrigins(): string[] {

@@ -38,6 +38,7 @@ import { sanitizeSummitHtml } from './utils/summit-sanitize.util';
 import {
   normalizeSpeakerKeyPoint,
   normalizeSpeakerTags,
+  resolveSpeakerDesignationAndOrganisation,
 } from './utils/summit-speaker.util';
 import {
   normalizeSummitBannersInput,
@@ -774,15 +775,27 @@ export class SummitsService {
 
   private normalizeSpeakersAfterInput(raw: unknown) {
     if (!Array.isArray(raw)) return [];
-    return raw.map((item, index) => ({
-      id: ensureSummitItemId((item as { id?: string }).id),
-      sortOrder: (item as { sortOrder?: number }).sortOrder ?? index,
-      name: String((item as { name?: string }).name ?? ''),
-      sub: String((item as { sub?: string }).sub ?? ''),
-      keyPoint: normalizeSpeakerKeyPoint((item as { keyPoint?: string }).keyPoint),
-      tags: normalizeSpeakerTags((item as { tags?: unknown }).tags),
-      imageUrl: String((item as { imageUrl?: string }).imageUrl ?? ''),
-    }));
+    return raw.map((item, index) => {
+      const { designation, organisation } = resolveSpeakerDesignationAndOrganisation(
+        item as {
+          designation?: string;
+          organisation?: string;
+          organization?: string;
+          sub?: string;
+        },
+      );
+      return {
+        id: ensureSummitItemId((item as { id?: string }).id),
+        sortOrder: (item as { sortOrder?: number }).sortOrder ?? index,
+        name: String((item as { name?: string }).name ?? ''),
+        designation,
+        organisation,
+        sub: String((item as { sub?: string }).sub ?? ''),
+        keyPoint: normalizeSpeakerKeyPoint((item as { keyPoint?: string }).keyPoint),
+        tags: normalizeSpeakerTags((item as { tags?: unknown }).tags),
+        imageUrl: String((item as { imageUrl?: string }).imageUrl ?? ''),
+      };
+    });
   }
 
   private normalizeSponsors(raw: unknown) {

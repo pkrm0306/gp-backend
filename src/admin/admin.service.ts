@@ -1292,19 +1292,16 @@ export class AdminService {
     const externalUrl = payload.externalUrl === true;
     const description = String(payload.description ?? '').trim();
     const url = String(payload.url ?? '').trim();
-    if (externalUrl) {
-      if (!url) {
-        throw new BadRequestException('url is required when externalUrl is true');
-      }
-    } else if (!description) {
-      throw new BadRequestException(
-        'description is required when externalUrl is false',
-      );
+    if (externalUrl && !url) {
+      throw new BadRequestException('url is required when externalUrl is true');
+    }
+    if (!description) {
+      throw new BadRequestException('description is required');
     }
 
     const doc = new this.articleModel({
       title: String(payload.title ?? '').trim(),
-      description: externalUrl ? '' : description,
+      description,
       date: payload.date,
       image: payload.image,
       article_image: this.resolveArticleImagePath(payload.image),
@@ -1389,14 +1386,15 @@ export class AdminService {
       if (!nextUrl) {
         throw new BadRequestException('url is required when externalUrl is true');
       }
-      $set.description = '';
+      if (!nextDescription) {
+        throw new BadRequestException('description is required');
+      }
+      $set.description = nextDescription;
       $set.url = nextUrl;
       $set.externalUrl = true;
     } else {
       if (!nextDescription) {
-        throw new BadRequestException(
-          'description is required when externalUrl is false',
-        );
+        throw new BadRequestException('description is required');
       }
       $set.url = '';
       $set.description = nextDescription;
@@ -1437,7 +1435,7 @@ export class AdminService {
       article_image: this.resolveArticleAssetForResponse(
         a.article_image ?? this.resolveArticleImagePath(a.image),
       ),
-      url: a.externalUrl === true ? String(a.url ?? '') : '',
+      url: String(a.url ?? ''),
       externalUrl: a.externalUrl === true,
       pdf: this.resolveArticleAssetForResponse(a.pdf) || null,
       article_pdf: this.resolveArticleAssetForResponse(

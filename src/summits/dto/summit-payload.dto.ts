@@ -83,6 +83,10 @@ class SummitSpeakerDto {
   @IsOptional() @IsString() id?: string;
   @IsOptional() @IsInt() sortOrder?: number;
   @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() designation?: string;
+  @IsOptional() @IsString() organisation?: string;
+  /** US spelling alias accepted from older clients */
+  @IsOptional() @IsString() organization?: string;
   @IsOptional() @IsString() sub?: string;
   @IsOptional() @IsString() keyPoint?: string;
   @ApiPropertyOptional({

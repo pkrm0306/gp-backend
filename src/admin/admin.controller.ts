@@ -819,7 +819,7 @@ export class AdminController {
     return {
       id,
       title: item?.title ?? '',
-      description: externalUrl ? '' : (item?.description ?? ''),
+      description: item?.description ?? '',
       date:
         item?.date instanceof Date
           ? item.date.toISOString().slice(0, 10)
@@ -828,7 +828,7 @@ export class AdminController {
             : '',
       image: item?.image ?? null,
       article_image: item?.article_image ?? '',
-      url: externalUrl ? (item?.url ?? '') : '',
+      url: item?.url ?? '',
       externalUrl,
       pdf: item?.pdf ?? null,
       article_pdf: item?.article_pdf ?? '',
@@ -2067,14 +2067,11 @@ export class AdminController {
     const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
     if (!imageFile) throw new BadRequestException('image is required');
     if (!pdfFile) throw new BadRequestException('pdf/file is required');
-    if (externalUrl) {
-      if (!url) {
-        throw new BadRequestException('url is required when externalUrl is true');
-      }
-    } else if (!description) {
-      throw new BadRequestException(
-        'description is required when externalUrl is false',
-      );
+    if (externalUrl && !url) {
+      throw new BadRequestException('url is required when externalUrl is true');
+    }
+    if (!description) {
+      throw new BadRequestException('description is required');
     }
     const imageUpload = imageFile ? await uploadFile(imageFile, 'articles') : undefined;
     const pdfUpload = pdfFile ? await uploadFile(pdfFile, 'articles') : undefined;
@@ -2083,7 +2080,7 @@ export class AdminController {
 
     const data = await this.adminService.createArticle({
       title,
-      description: externalUrl ? '' : description,
+      description,
       date,
       image,
       pdf,

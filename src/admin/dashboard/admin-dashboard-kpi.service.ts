@@ -17,6 +17,10 @@ import {
   VendorProductChangeRequest,
   VendorProductChangeRequestDocument,
 } from '../../product-registration/schemas/vendor-product-change-request.schema';
+import {
+  ContactMessage,
+  ContactMessageDocument,
+} from '../../website/schemas/contact-message.schema';
 import { PRODUCT_STATUS_CERTIFIED } from '../../renew/constants/product-status.constants';
 import { manufacturerStatusKey } from '../admin-dashboard-metrics.util';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
@@ -32,6 +36,9 @@ import type {
   AdminDashboardKpiCards,
 } from './admin-dashboard-kpi.types';
 
+/** Placeholder until product inquiry tracking is wired to the dashboard. */
+const PRODUCT_INQUIRIES_STATIC_COUNT = 0;
+
 @Injectable()
 export class AdminDashboardKpiService {
   constructor(
@@ -43,6 +50,8 @@ export class AdminDashboardKpiService {
     private readonly paymentDetailsModel: Model<PaymentDetailsDocument>,
     @InjectModel(VendorProductChangeRequest.name)
     private readonly vendorProductChangeRequestModel: Model<VendorProductChangeRequestDocument>,
+    @InjectModel(ContactMessage.name)
+    private readonly contactMessageModel: Model<ContactMessageDocument>,
     private readonly dashboardStatsService: AdminDashboardStatsService,
     private readonly certificationTimingService: AdminDashboardCertificationTimingService,
   ) {}
@@ -67,6 +76,8 @@ export class AdminDashboardKpiService {
 
     const thresholdDate = new Date(now);
     thresholdDate.setDate(thresholdDate.getDate() + 60);
+
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const renewEoiMatch = {
       ...productMatch,
@@ -103,6 +114,8 @@ export class AdminDashboardKpiService {
       renewQueueUrnCount,
       paymentFacet,
       revenueFacet,
+      totalInquiriesCount,
+      inquiriesThisMonth,
     ] = await Promise.all([
       this.dashboardStatsService.getProductWidgetStats(filters),
       this.aggregateManufacturerFacet(manufacturerMatch),
@@ -121,6 +134,10 @@ export class AdminDashboardKpiService {
         .then((rows) => rows[0]?.count ?? 0),
       this.aggregatePaymentFacet(paymentVendorScope),
       this.aggregateCompletedRevenue(paymentVendorScope),
+      this.contactMessageModel.countDocuments({}).exec(),
+      this.contactMessageModel
+        .countDocuments({ createdAt: { $gte: monthStart } })
+        .exec(),
     ]);
 
     const manufacturers = {
@@ -218,6 +235,20 @@ export class AdminDashboardKpiService {
         subMetrics: {
           requiresRenewal: expiredCount,
         },
+      },
+      totalInquiries: {
+        key: 'totalInquiries',
+        label: 'Total Inquiries',
+        value: totalInquiriesCount,
+        subMetrics: {
+          thisMonth: inquiriesThisMonth,
+        },
+      },
+      productInquiries: {
+        key: 'productInquiries',
+        label: 'Product Inquiries',
+        value: PRODUCT_INQUIRIES_STATIC_COUNT,
+        subMetrics: {},
       },
     };
   }

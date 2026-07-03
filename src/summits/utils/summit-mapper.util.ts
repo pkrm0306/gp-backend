@@ -42,6 +42,9 @@ export interface SummitApiResponse {
     id: string;
     sortOrder: number;
     name: string;
+    designation: string;
+    organisation: string;
+    organization: string;
     sub: string;
     keyPoint: string;
     tags: string[];
@@ -221,10 +224,15 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
     speakers: sortByOrder(doc.speakers ?? []).map((s) => {
       const tags = s.tags ?? [];
       const keyPoint = String(s.keyPoint ?? '').trim();
+      const designation = String(s.designation ?? s.sub ?? '').trim();
+      const organisation = String(s.organisation ?? '').trim();
       return {
         id: s.id,
         sortOrder: s.sortOrder ?? 0,
         name: s.name ?? '',
+        designation,
+        organisation,
+        organization: organisation,
         sub: s.sub ?? '',
         keyPoint,
         tags,
