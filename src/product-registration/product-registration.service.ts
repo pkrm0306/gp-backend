@@ -48,6 +48,10 @@ import { formatAdminCertifiedProductPatchResponse } from './helpers/format-admin
 import { formatProcessFinalReviewPayload } from './helpers/format-process-final-review.util';
 import { formatProcessCommentsForApi } from '../process-comments/helpers/process-comments-payload.util';
 import {
+  canAdminSaveUncertifiedProcessComments,
+  resolveProcessCommentsBlockReason,
+} from '../process-comments/helpers/process-comments-lock.util';
+import {
   buildAdminProductsExportCsv,
   buildAdminProductsExportXlsxBuffer,
   mapAdminProductsExportEoiRow,
@@ -60,6 +64,7 @@ import {
 } from './constants/active-product.filter';
 import { matchExpiredProducts } from './constants/expired-product.filter';
 import { matchWebsitePublicActiveCertifiedProducts } from './constants/website-public-product.filter';
+import { invalidateProductListingsCache as invalidateAllProductListingsCache } from './helpers/invalidate-product-listings-cache.util';
 import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
@@ -112,6 +117,7 @@ import { AdminUpdateProductChangeRequestDto } from './dto/admin-update-product-c
 import { AdminUpdateCertifiedProductPassportDto } from './dto/admin-update-certified-product-passport.dto';
 import {
   deleteUploadedFileByDocumentLink,
+  resolvePublicUploadUrl,
   resolveStoredUploadUrl,
   uploadCertifiedProductImage,
   uploadUrnAssessmentReport,
@@ -517,14 +523,7 @@ export class ProductRegistrationService {
   }
 
   private async invalidateProductListingsCache(): Promise<void> {
-    await Promise.all([
-      this.redisService.deleteByPattern(this.redisService.buildKey('products', 'list', 'vendor', '*')),
-      this.redisService.deleteByPattern(this.redisService.buildKey('products', 'list', 'admin', '*')),
-    ]).catch((error) => {
-      this.logger.warn(
-        `Failed to invalidate product listing caches: ${(error as Error)?.message || 'unknown error'}`,
-      );
-    });
+    await invalidateAllProductListingsCache(this.redisService, this.logger);
   }
 
   /** Distinct URN + EOI counts for a manufacturer scoped to one category (admin list totals). */
@@ -3520,7 +3519,7 @@ export class ProductRegistrationService {
         }),
       )
       .select(
-        '_id urnNo eoiNo productName productImage validtillDate productPassport productStatus',
+        '_id urnNo eoiNo productName productImage validtillDate productPassport productDetails productStatus',
       )
       .lean()
       .exec();
@@ -3543,6 +3542,7 @@ export class ProductRegistrationService {
       productImageUrl: productImage,
       validtillDate: row.validtillDate ?? null,
       passport: String(row.productPassport ?? ''),
+      productDetails: String(row.productDetails ?? '').trim() || null,
       productStatus: Number(row.productStatus ?? 0),
     };
   }
@@ -4103,12 +4103,47 @@ export class ProductRegistrationService {
     const total = payload.total?.[0]?.count ?? 0;
     const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
 
+    const data = (payload.data ?? []).map((row: Record<string, unknown>) =>
+      this.mapPublicCertifiedProductFlatRow(row),
+    );
+
     return {
-      data: payload.data ?? [],
+      data,
       total,
       page,
       limit,
       totalPages,
+    };
+  }
+
+  /** Resolve stored upload paths for public website certified product cards. */
+  private mapPublicCertifiedProductFlatRow(
+    row: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const productImageRaw = String(
+      row.productImage ?? row.product_image ?? '',
+    ).trim();
+    const categoryImageRaw = String(
+      row.categoryImage ?? row.category_image ?? '',
+    ).trim();
+    const productImage = productImageRaw
+      ? resolveStoredUploadUrl(productImageRaw) || productImageRaw
+      : null;
+    const categoryImage = categoryImageRaw
+      ? resolveStoredUploadUrl(categoryImageRaw) || categoryImageRaw
+      : null;
+
+    const productDetails = String(
+      row.productDetails ?? row.product_details ?? '',
+    ).trim();
+
+    return {
+      ...row,
+      productDetails: productDetails || null,
+      productImage,
+      productImageUrl: productImage,
+      categoryImage,
+      categoryImageUrl: categoryImage,
     };
   }
 
@@ -6959,6 +6994,14 @@ export class ProductRegistrationService {
           urnStatuses,
           anyProductCertified: anyCertifiedOnUrn,
         });
+        const canSaveProcessComments = canAdminSaveUncertifiedProcessComments({
+          urnStatus,
+          productStatus,
+        });
+        const processCommentsBlockReason = resolveProcessCommentsBlockReason({
+          urnStatus,
+          productStatus,
+        });
         const categoryDoc = Array.isArray(product.category)
           ? (product.category[0] as Record<string, unknown> | undefined)
           : (product.category as Record<string, unknown> | null | undefined);
@@ -6998,6 +7041,8 @@ export class ProductRegistrationService {
           updatedDate: product.updatedDate,
           categoryEditable,
           categoryChangeBlockReason,
+          canSaveProcessComments,
+          processCommentsBlockReason,
           visibleRawMaterialSteps,
         },
         category: this.formatCategoryForUrnDetails(categoryDoc ?? null),
@@ -8888,17 +8933,9 @@ export class ProductRegistrationService {
 
   async getManufacturersByCategory(categoryId: string) {
     const categoryObjectId = this.toObjectId(categoryId, 'categoryId');
-    const apiBaseUrl = (process.env.API_BASE_URL ?? '')
+    const apiBaseUrl = (this.configService.get<string>('API_BASE_URL') ?? '')
       .trim()
       .replace(/\/+$/, '');
-    const toImageUrl = (path?: string | null): string | null => {
-      if (!path) return null;
-      if (/^https?:\/\//i.test(path)) return path;
-      if (path.startsWith('/')) {
-        return apiBaseUrl ? `${apiBaseUrl}${path}` : path;
-      }
-      return apiBaseUrl ? `${apiBaseUrl}/${path}` : `/${path}`;
-    };
 
     const rows = await this.productModel
       .aggregate([
@@ -8948,10 +8985,17 @@ export class ProductRegistrationService {
       ])
       .exec();
 
-    const data = rows.map((row: any) => ({
-      ...row,
-      manufacturerImageUrl: toImageUrl(row.manufacturerImage),
-    }));
+    const data = rows.map((row: any) => {
+      const manufacturerImageUrl = resolvePublicUploadUrl(
+        row.manufacturerImage,
+        apiBaseUrl,
+      );
+      return {
+        ...row,
+        manufacturerImage: manufacturerImageUrl,
+        manufacturerImageUrl,
+      };
+    });
 
     return {
       categoryId,
@@ -8965,17 +9009,9 @@ export class ProductRegistrationService {
       manufacturerId,
       'manufacturerId',
     );
-    const apiBaseUrl = (process.env.API_BASE_URL ?? '')
+    const apiBaseUrl = (this.configService.get<string>('API_BASE_URL') ?? '')
       .trim()
       .replace(/\/+$/, '');
-    const toImageUrl = (path?: string | null): string | null => {
-      if (!path) return null;
-      if (/^https?:\/\//i.test(path)) return path;
-      if (path.startsWith('/')) {
-        return apiBaseUrl ? `${apiBaseUrl}${path}` : path;
-      }
-      return apiBaseUrl ? `${apiBaseUrl}/${path}` : `/${path}`;
-    };
 
     const rows = await this.productModel
       .aggregate([
@@ -9022,10 +9058,18 @@ export class ProductRegistrationService {
       ])
       .exec();
 
-    const data = rows.map((row: any) => ({
-      ...row,
-      category_image_url: toImageUrl(row.category_image),
-    }));
+    const data = rows.map((row: any) => {
+      const category_image_url = resolvePublicUploadUrl(
+        row.category_image,
+        apiBaseUrl,
+      );
+      return {
+        ...row,
+        category_image: category_image_url ?? row.category_image ?? null,
+        category_image_url,
+        categoryImageUrl: category_image_url,
+      };
+    });
 
     return {
       manufacturerId,

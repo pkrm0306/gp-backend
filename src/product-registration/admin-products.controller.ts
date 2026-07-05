@@ -230,6 +230,10 @@ export class AdminProductsController {
         urnStatus: first?.urnStatus ?? null,
         product_renew_status: first?.productRenewStatus ?? null,
         productRenewStatus: first?.productRenewStatus ?? null,
+        canSaveProcessComments:
+          first?.product_details?.canSaveProcessComments ?? null,
+        processCommentsBlockReason:
+          first?.product_details?.processCommentsBlockReason ?? null,
         vendorId,
         manufacturerId,
         visibleRawMaterialSteps,

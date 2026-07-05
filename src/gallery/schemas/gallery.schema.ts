@@ -2,6 +2,14 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
 export const GALLERY_TYPES = [
+  'Training & Workshops',
+  'Site Visits',
+  'Recognition',
+] as const;
+export type GalleryType = (typeof GALLERY_TYPES)[number];
+
+/** Legacy values kept for existing records; not offered in admin UI. */
+export const LEGACY_GALLERY_TYPES = [
   'Summits',
   'Awards',
   'Site Audits',
@@ -9,7 +17,13 @@ export const GALLERY_TYPES = [
   'Trainings',
   'Other',
 ] as const;
-export type GalleryType = (typeof GALLERY_TYPES)[number];
+
+export const ALL_GALLERY_TYPES = [
+  ...GALLERY_TYPES,
+  ...LEGACY_GALLERY_TYPES,
+] as const;
+
+export const GALLERY_MAX_IMAGES = 10;
 
 export type GalleryDocument = Gallery & Document;
 
@@ -32,7 +46,7 @@ export class Gallery {
   @Prop({ type: [String], default: [] })
   galleryImages?: string[];
 
-  @Prop({ enum: GALLERY_TYPES, required: true })
+  @Prop({ enum: ALL_GALLERY_TYPES, required: true })
   galleryType: GalleryType;
 
   @Prop()

@@ -1,6 +1,7 @@
 import {
   buildPublicFileUrl,
   extractUploadsKeyFromAbsoluteUrl,
+  resolvePublicUploadUrl,
   resolveStoredUploadUrl,
 } from './upload-file.util';
 
@@ -59,5 +60,26 @@ describe('upload-file CloudFront URL helpers', () => {
     expect(resolveStoredUploadUrl('/uploads/products/b.jpg')).toBe(
       '/uploads/products/b.jpg',
     );
+  });
+
+  it('resolvePublicUploadUrl rewrites bare category filename to CloudFront', () => {
+    expect(resolvePublicUploadUrl('categories/1775737394232.jpg')).toBe(
+      'https://d111.cloudfront.net/uploads/categories/1775737394232.jpg',
+    );
+  });
+
+  it('resolvePublicUploadUrl rewrites localhost category URL to CloudFront', () => {
+    expect(
+      resolvePublicUploadUrl(
+        'http://localhost:3000/uploads/categories/1775737394232.jpg',
+      ),
+    ).toBe('https://d111.cloudfront.net/uploads/categories/1775737394232.jpg');
+  });
+
+  it('resolvePublicUploadUrl uses localBaseUrl when S3 is not configured', () => {
+    delete process.env.AWS_ACCESS_KEY_ID;
+    expect(
+      resolvePublicUploadUrl('categories/a.jpg', 'http://localhost:3000'),
+    ).toBe('http://localhost:3000/uploads/categories/a.jpg');
   });
 });

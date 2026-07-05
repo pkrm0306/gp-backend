@@ -46,6 +46,10 @@ import {
   parseSectionCommentPayload,
   type ParsedSectionCommentPayload,
 } from '../process-comments/helpers/process-comments-payload.util';
+import {
+  canAdminSaveUncertifiedProcessComments,
+  resolveProcessCommentsBlockReason,
+} from '../process-comments/helpers/process-comments-lock.util';
 
 const TAB_KEY_TO_PROCESS_COMMENT_FIELD: Record<string, string> = {
   'product-design': 'productDesign',
@@ -363,6 +367,10 @@ export class UrnTabReviewService {
     });
 
     const summary = this.buildSummary(reviews, requiredSlots.length);
+    const canSaveProcessComments = canAdminSaveUncertifiedProcessComments({
+      urnStatus: context.urnStatus,
+      productStatus: context.productStatus,
+    });
 
     return {
       urnNo,
@@ -374,6 +382,11 @@ export class UrnTabReviewService {
       sectionReviews: sectionReviewByTabKey,
       summary,
       canReview: context.urnStatus === ADMIN_REVIEW_URN_STATUS,
+      canSaveProcessComments,
+      processCommentsBlockReason: resolveProcessCommentsBlockReason({
+        urnStatus: context.urnStatus,
+        productStatus: context.productStatus,
+      }),
     };
   }
 
@@ -587,7 +600,7 @@ export class UrnTabReviewService {
 
     const product = await this.productModel
       .findOne(matchActiveProducts({ urnNo: trimmed }))
-      .select('urnNo urnStatus categoryId vendorId productRenewStatus')
+      .select('urnNo urnStatus categoryId vendorId productRenewStatus productStatus')
       .sort({ createdDate: 1 })
       .lean()
       .exec();
@@ -611,6 +624,7 @@ export class UrnTabReviewService {
     return {
       urnNo: trimmed,
       urnStatus: Number(product.urnStatus ?? 0),
+      productStatus: Number(product.productStatus ?? 0),
       productRenewStatus: Number(product.productRenewStatus ?? 0),
       vendorId: product.vendorId as Types.ObjectId,
       categoryRawMaterialForms,

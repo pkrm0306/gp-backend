@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
@@ -92,4 +93,21 @@ export class EditTeamMemberDto {
   @IsString()
   @IsIn(TEAM_MEMBER_TEAMS)
   team: TeamMemberTeam;
+
+  @ApiProperty({
+    required: false,
+    description: 'When false, team member is hidden on the public website.',
+  })
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return undefined;
+    }
+    const v = String(value).trim().toLowerCase();
+    if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+    if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+    return undefined;
+  })
+  @IsOptional()
+  @IsBoolean()
+  showOnWebsite?: boolean;
 }

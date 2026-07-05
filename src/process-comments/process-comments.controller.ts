@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Controller,
+  ForbiddenException,
   Get,
   NotFoundException,
   Post,
@@ -31,6 +32,10 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProcessCommentsDto } from './dto/create-process-comments.dto';
 import { formatProcessCommentsForApi } from './helpers/process-comments-payload.util';
+import {
+  canAdminSaveUncertifiedProcessComments,
+  resolveProcessCommentsBlockReason,
+} from './helpers/process-comments-lock.util';
 
 @ApiTags('Process Comments')
 @Controller('process-comments')
@@ -47,7 +52,7 @@ export class ProcessCommentsController {
   private async loadUrnProduct(urnNo: string) {
     return this.productModel
       .findOne(matchActiveProducts({ urnNo: urnNo.trim() }))
-      .select('urnNo urnStatus productRenewStatus vendorId')
+      .select('urnNo urnStatus productRenewStatus productStatus vendorId')
       .lean()
       .exec();
   }
@@ -114,6 +119,16 @@ export class ProcessCommentsController {
       return { success: true, data: formatProcessCommentsForApi(data?.toObject?.() ?? data) };
     }
 
+    const urnStatus = Number(product.urnStatus ?? 0);
+    const productStatus = Number(product.productStatus ?? 0);
+    const blockReason = resolveProcessCommentsBlockReason({
+      urnStatus,
+      productStatus,
+    });
+    if (blockReason) {
+      throw new ForbiddenException(blockReason);
+    }
+
     const vendorId = String(user?.vendorId ?? product.vendorId ?? '').trim();
     if (!vendorId) {
       throw new BadRequestException('Vendor ID not found for this URN');
@@ -126,6 +141,11 @@ export class ProcessCommentsController {
 
     return {
       success: true,
+      canSaveProcessComments: canAdminSaveUncertifiedProcessComments({
+        urnStatus,
+        productStatus,
+      }),
+      processCommentsBlockReason: null,
       data: formatProcessCommentsForApi(data.toObject() as unknown as Record<string, unknown>),
     };
   }
@@ -189,6 +209,9 @@ export class ProcessCommentsController {
       throw new BadRequestException('Vendor ID not found for this URN');
     }
 
+    const urnStatus = Number(product.urnStatus ?? 0);
+    const productStatus = Number(product.productStatus ?? 0);
+
     const data = await this.processCommentsService.getByUrnAndVendor(
       urnNo,
       vendorId,
@@ -196,6 +219,14 @@ export class ProcessCommentsController {
 
     return {
       success: true,
+      canSaveProcessComments: canAdminSaveUncertifiedProcessComments({
+        urnStatus,
+        productStatus,
+      }),
+      processCommentsBlockReason: resolveProcessCommentsBlockReason({
+        urnStatus,
+        productStatus,
+      }),
       data: formatProcessCommentsForApi(
         (data?.toObject?.() ?? data) as Record<string, unknown> | null,
       ),

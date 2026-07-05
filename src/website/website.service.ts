@@ -207,22 +207,22 @@ export class WebsiteService {
     const categoryOnly = this.pickImagePath(
       row.categoryImageUrl ?? row.categoryImage ?? row.category_image,
     );
-    const displayFromProduct = productOnly;
-    const displayImage = displayFromProduct ?? categoryOnly;
-    const productImageUrl = displayFromProduct
-      ? this.normalizeWebsiteImageUrl(displayFromProduct, origin, 'product')
-      : this.normalizeWebsiteImageUrl(categoryOnly, origin, 'category');
+    const normalizedProductImage = productOnly
+      ? this.normalizeWebsiteImageUrl(productOnly, origin, 'product')
+      : null;
+    const normalizedCategoryImage = this.normalizeWebsiteImageUrl(
+      categoryOnly,
+      origin,
+      'category',
+    );
+    const cardImage = normalizedProductImage ?? normalizedCategoryImage;
 
     return {
       ...row,
-      productImage: displayImage,
-      productImageUrl,
+      productImage: cardImage,
+      productImageUrl: normalizedProductImage,
       categoryImage: categoryOnly,
-      categoryImageUrl: this.normalizeWebsiteImageUrl(
-        categoryOnly,
-        origin,
-        'category',
-      ),
+      categoryImageUrl: normalizedCategoryImage,
     };
   }
 
@@ -255,7 +255,7 @@ export class WebsiteService {
       'public',
       'manufacturers',
       'with-certified-products',
-      'v2',
+      'v4',
       this.shortHash(this.stableJsonStringify(normalized)),
     );
   }
@@ -723,7 +723,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'flat',
-      'v6',
+      'v8',
       this.shortHash(this.stableJsonStringify({ ...(dto as object), origin })),
     );
     try {
@@ -984,7 +984,7 @@ export class WebsiteService {
       'website',
       'public',
       'manufacturers-by-category',
-      'v2',
+      'v3',
       id,
     );
     try {
@@ -1024,7 +1024,7 @@ export class WebsiteService {
       'website',
       'public',
       'categories-by-manufacturer',
-      'v2',
+      'v3',
       id,
     );
     try {
@@ -1227,6 +1227,7 @@ export class WebsiteService {
       const message = String(dto.message ?? '').trim();
 
       const payload: Partial<ContactMessage> = {
+        inquiryType: 'contact',
         name,
         email,
         phoneNumber,
@@ -1331,7 +1332,7 @@ export class WebsiteService {
    * sorted by displayOrder so website follows admin ordering.
    */
   async listWebsiteTeamMembers() {
-    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list-v2');
+    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list-v3');
     try {
       const cached = await this.redisService.get<
         Array<{
@@ -1367,10 +1368,10 @@ export class WebsiteService {
     }
 
     const rows = await this.vendorUserModel
-      .find({ type: 'staff', status: 1 })
+      .find({ type: 'staff', status: 1, showOnWebsite: { $ne: false } })
       .sort({ displayOrder: 1, _id: 1 })
       .select(
-        'name designation email phone image facebookUrl twitterUrl linkedinUrl displayOrder team sector_ids sector_id category_ids category_id',
+        'name designation email phone image facebookUrl twitterUrl linkedinUrl displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
@@ -1536,6 +1537,66 @@ ${visitorDetailsBlock}
           `[submitManufacturerInquiry] Lifecycle notification failed: ${(err as Error).message}`,
         ),
       );
+
+    const productId = String(dto.productId ?? '').trim();
+    let categoryId = String(dto.categoryId ?? '').trim();
+    let urnNumber = String(
+      dto.urnNumber ?? (dto as any).urnNo ?? (dto as any).urn_no ?? '',
+    ).trim();
+
+    if (productId && Types.ObjectId.isValid(productId)) {
+      const product = await this.productModel
+        .findById(new Types.ObjectId(productId))
+        .select('urnNo categoryId')
+        .lean()
+        .exec();
+      if (product) {
+        if (!urnNumber) {
+          urnNumber = String(product.urnNo ?? '').trim();
+        }
+        if (!categoryId && product.categoryId) {
+          categoryId = String(product.categoryId);
+        }
+      }
+    }
+
+    const designation = String(dto.designation ?? '').trim();
+    const organisation = String(
+      dto.organisation ?? (dto as any).organization ?? '',
+    ).trim();
+
+    try {
+      const inquiryDoc = new this.contactMessageModel({
+        inquiryType: 'product',
+        name: String(dto.name ?? '').trim(),
+        email: String(dto.email ?? '')
+          .trim()
+          .toLowerCase(),
+        phoneNumber: visitorPhone,
+        subject,
+        message: visitorMessage,
+        designation,
+        organisation,
+        manufacturerId,
+        productId,
+        categoryId,
+        urnNumber,
+      });
+      const saved = await inquiryDoc.save();
+      await this.createNotification({
+        title: 'New product inquiry',
+        message: `${dto.name || 'A visitor'} submitted a product inquiry.`,
+        type: 'info',
+        source: 'website',
+        referenceType: 'product_inquiry',
+        referenceId: String((saved as any)._id),
+        actorName: dto.name,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `[submitManufacturerInquiry] Failed to persist product inquiry: ${(err as Error).message}`,
+      );
+    }
 
     this.emailService.sendInBackground(() =>
       this.emailService.sendEmail(dto.email, subject, htmlBody),

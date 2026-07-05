@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsIn,
   IsInt,
@@ -10,9 +11,17 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { SUMMIT_SPONSOR_TIERS, SUMMIT_STATUSES } from '../constants/summit.constants';
+import {
+  SUMMIT_CMS_CARD_MAX,
+  SUMMIT_CMS_FIELD_MAX,
+  SUMMIT_CMS_FIELD_MIN,
+  SUMMIT_FOCUS_POINTS_MAX,
+  SUMMIT_SPONSOR_TIERS,
+  SUMMIT_STATUSES,
+} from '../constants/summit.constants';
 import { normalizeSummitStatus } from '../utils/summit-status.util';
 import { normalizeSpeakerTags } from '../utils/summit-speaker.util';
+
 class SummitBasicDto {
   @ApiPropertyOptional({ example: '2026' })
   @IsOptional()
@@ -44,7 +53,6 @@ class SummitBasicDto {
   @IsIn([...SUMMIT_STATUSES])
   status?: 'active' | 'inactive';
 
-  /** Ignored — slug is server-generated from title + year; accepted for legacy clients */
   @IsOptional()
   @IsString()
   slug?: string;
@@ -54,9 +62,7 @@ class SummitBannerDto {
   @IsOptional() @IsString() id?: string;
   @IsOptional() @IsInt() sortOrder?: number;
   @IsOptional() @IsString() imageUrl?: string;
-  /** Ignored — accepted for older clients; not stored */
   @IsOptional() @IsString() title?: string;
-  /** Ignored — accepted for older clients; not stored */
   @IsOptional() @IsString() subtitle?: string;
 }
 
@@ -73,7 +79,34 @@ class SummitRichTextDto {
   @IsOptional() @IsString() content?: string;
 }
 
-class SummitTextItemDto {
+class SummitCardItemDto {
+  @IsOptional() @IsString() id?: string;
+  @IsOptional() @IsInt() sortOrder?: number;
+  @IsOptional() @IsString() heading?: string;
+  @IsOptional() @IsString() description?: string;
+  /** Legacy flat bullet alias */
+  @IsOptional() @IsString() text?: string;
+}
+
+class SummitFocusPointDto {
+  @IsOptional() @IsString() id?: string;
+  @IsOptional() @IsInt() sortOrder?: number;
+  @IsOptional() @IsString() text?: string;
+}
+
+class SummitFocusAreaCardDto {
+  @IsOptional() @IsString() id?: string;
+  @IsOptional() @IsInt() sortOrder?: number;
+  @IsOptional() @IsString() heading?: string;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SUMMIT_FOCUS_POINTS_MAX)
+  @ValidateNested({ each: true })
+  @Type(() => SummitFocusPointDto)
+  points?: SummitFocusPointDto[];
+}
+
+class SummitAgendaPointDto {
   @IsOptional() @IsString() id?: string;
   @IsOptional() @IsInt() sortOrder?: number;
   @IsOptional() @IsString() text?: string;
@@ -85,21 +118,15 @@ class SummitSpeakerDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() designation?: string;
   @IsOptional() @IsString() organisation?: string;
-  /** US spelling alias accepted from older clients */
   @IsOptional() @IsString() organization?: string;
   @IsOptional() @IsString() sub?: string;
   @IsOptional() @IsString() keyPoint?: string;
-  @ApiPropertyOptional({
-    type: [String],
-    example: ['Sustainability', 'Green buildings'],
-    description: 'Speaker topic tags (array of strings). Required field on each speaker row — do not omit.',
-  })
+  @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @Transform(({ value }) => normalizeSpeakerTags(value))
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
-  /** Alias of `tags` — accepted from frontend forms */
   @IsOptional()
   @Transform(({ value }) => normalizeSpeakerTags(value))
   @IsArray()
@@ -157,41 +184,61 @@ export class UpdateSummitPayloadDto {
   @Type(() => SummitRichTextDto)
   aboutSummit?: SummitRichTextDto;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    minLength: SUMMIT_CMS_FIELD_MIN,
+    maxLength: SUMMIT_CMS_FIELD_MAX,
+  })
   @IsOptional()
   @IsString()
   highlightsTitle?: string;
 
-  @ApiPropertyOptional({ type: [SummitTextItemDto] })
+  @ApiPropertyOptional({ type: [SummitCardItemDto], maxItems: SUMMIT_CMS_CARD_MAX })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(SUMMIT_CMS_CARD_MAX)
   @ValidateNested({ each: true })
-  @Type(() => SummitTextItemDto)
-  highlights?: SummitTextItemDto[];
+  @Type(() => SummitCardItemDto)
+  highlights?: SummitCardItemDto[];
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    minLength: SUMMIT_CMS_FIELD_MIN,
+    maxLength: SUMMIT_CMS_FIELD_MAX,
+  })
   @IsOptional()
   @IsString()
   focusedAreaTitle?: string;
 
-  @ApiPropertyOptional({ type: [SummitTextItemDto] })
+  @ApiPropertyOptional({ type: [SummitFocusAreaCardDto], maxItems: SUMMIT_CMS_CARD_MAX })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SUMMIT_CMS_CARD_MAX)
+  @ValidateNested({ each: true })
+  @Type(() => SummitFocusAreaCardDto)
+  focusedAreas?: SummitFocusAreaCardDto[];
+
+  /** @deprecated legacy flat bullets — use focusedAreas */
+  @ApiPropertyOptional({ type: [SummitAgendaPointDto] })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => SummitTextItemDto)
-  areaPoints?: SummitTextItemDto[];
+  @Type(() => SummitAgendaPointDto)
+  areaPoints?: SummitAgendaPointDto[];
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    minLength: SUMMIT_CMS_FIELD_MIN,
+    maxLength: SUMMIT_CMS_FIELD_MAX,
+  })
   @IsOptional()
   @IsString()
   eventOutcomesTitle?: string;
 
-  @ApiPropertyOptional({ type: [SummitTextItemDto] })
+  @ApiPropertyOptional({ type: [SummitCardItemDto], maxItems: SUMMIT_CMS_CARD_MAX })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(SUMMIT_CMS_CARD_MAX)
   @ValidateNested({ each: true })
-  @Type(() => SummitTextItemDto)
-  eventOutcomes?: SummitTextItemDto[];
+  @Type(() => SummitCardItemDto)
+  eventOutcomes?: SummitCardItemDto[];
 
   @ApiPropertyOptional({ type: [SummitSpeakerDto] })
   @IsOptional()
@@ -201,8 +248,22 @@ export class UpdateSummitPayloadDto {
   speakers?: SummitSpeakerDto[];
 
   @ApiPropertyOptional({
-    description: 'Rich-text agenda (title + HTML content), same shape as aboutGreenPro',
+    minLength: SUMMIT_CMS_FIELD_MIN,
+    maxLength: SUMMIT_CMS_FIELD_MAX,
   })
+  @IsOptional()
+  @IsString()
+  agendaTitle?: string;
+
+  @ApiPropertyOptional({ type: [SummitAgendaPointDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SummitAgendaPointDto)
+  agendaPoints?: SummitAgendaPointDto[];
+
+  /** @deprecated legacy rich-text agenda — use agendaTitle + agendaPoints */
+  @ApiPropertyOptional()
   @IsOptional()
   @ValidateNested()
   @Type(() => SummitRichTextDto)
@@ -220,7 +281,6 @@ export class UpdateSummitPayloadDto {
   @Type(() => SummitSponsorDto)
   sponsors?: SummitSponsorDto[];
 
-  /** Ignored — slug is server-generated from title + year */
   @ApiPropertyOptional({ deprecated: true })
   @IsOptional()
   @IsString()

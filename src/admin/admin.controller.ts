@@ -78,7 +78,11 @@ import {
   DASHBOARD_PERMISSION_CATALOG,
   PERMISSIONS,
 } from '../common/constants/permissions.constants';
-import { GALLERY_TYPES, GalleryType } from '../gallery/schemas/gallery.schema';
+import {
+  GALLERY_MAX_IMAGES,
+  GALLERY_TYPES,
+  GalleryType,
+} from '../gallery/schemas/gallery.schema';
 import { GalleryService } from '../gallery/gallery.service';
 import { uploadFile } from '../utils/upload-file.util';
 import {
@@ -710,16 +714,63 @@ export class AdminController {
       }
       return undefined;
     }
-    const value = String(raw).trim();
-    const matched = GALLERY_TYPES.find(
-      (t) => t.toLowerCase() === value.toLowerCase(),
-    );
+    const matched = this.resolveCanonicalGalleryType(String(raw));
     if (!matched) {
       throw new BadRequestException(
         `Invalid galleryType. Use one of: ${GALLERY_TYPES.join(', ')}`,
       );
     }
     return matched;
+  }
+
+  private resolveCanonicalGalleryType(value: string): GalleryType | undefined {
+    const normalized = value.trim().toLowerCase();
+    const direct = GALLERY_TYPES.find(
+      (t) => t.toLowerCase() === normalized,
+    );
+    if (direct) return direct;
+
+    const aliases: Record<string, GalleryType> = {
+      'training and workshops': 'Training & Workshops',
+      trainings: 'Training & Workshops',
+      training: 'Training & Workshops',
+      workshops: 'Training & Workshops',
+      workshop: 'Training & Workshops',
+      'site audits': 'Site Visits',
+      'site audit': 'Site Visits',
+      awards: 'Recognition',
+      award: 'Recognition',
+      summits: 'Recognition',
+      summit: 'Recognition',
+    };
+    return aliases[normalized];
+  }
+
+  private parseJsonStringArrayField(raw: unknown): string[] | undefined {
+    if (raw === undefined || raw === null) return undefined;
+    if (Array.isArray(raw)) {
+      return raw.map((v) => String(v).trim()).filter(Boolean);
+    }
+    const text = String(raw).trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) {
+        throw new BadRequestException('Expected a JSON array');
+      }
+      return parsed.map((v) => String(v).trim()).filter(Boolean);
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      throw new BadRequestException('Invalid JSON array field');
+    }
+  }
+
+  private assertGalleryImageCount(count: number): void {
+    if (count > GALLERY_MAX_IMAGES) {
+      throw new BadRequestException(
+        `A gallery item can have at most ${GALLERY_MAX_IMAGES} images`,
+      );
+    }
   }
 
   private normalizeTeamMemberRoleIds(body: any): string[] {
@@ -1501,9 +1552,9 @@ export class AdminController {
   @UseInterceptors(
     FileFieldsInterceptor(
       [
-        { name: 'image', maxCount: 20 },
-        { name: 'image[]', maxCount: 20 },
-        { name: 'images', maxCount: 20 },
+        { name: 'image', maxCount: GALLERY_MAX_IMAGES },
+        { name: 'image[]', maxCount: GALLERY_MAX_IMAGES },
+        { name: 'images', maxCount: GALLERY_MAX_IMAGES },
       ],
       adminImageMemoryMulterOptions(),
     ),
@@ -1586,6 +1637,7 @@ export class AdminController {
       );
     }
     const galleryImages = await this.uploadGalleryImageFiles(allImages);
+    this.assertGalleryImageCount(galleryImages.length);
     const galleryType = this.parseGalleryType(
       pick(['galleryType', 'type', 'category']),
       true,
@@ -1611,11 +1663,11 @@ export class AdminController {
   @UseInterceptors(
     FileFieldsInterceptor(
       [
-        { name: 'image', maxCount: 20 },
-        { name: 'image[]', maxCount: 20 },
-        { name: 'images', maxCount: 20 },
-        { name: 'eventImage', maxCount: 20 },
-        { name: 'event_image', maxCount: 20 },
+        { name: 'image', maxCount: GALLERY_MAX_IMAGES },
+        { name: 'image[]', maxCount: GALLERY_MAX_IMAGES },
+        { name: 'images', maxCount: GALLERY_MAX_IMAGES },
+        { name: 'eventImage', maxCount: GALLERY_MAX_IMAGES },
+        { name: 'event_image', maxCount: GALLERY_MAX_IMAGES },
       ],
       adminImageMemoryMulterOptions(),
     ),
@@ -1710,14 +1762,27 @@ export class AdminController {
       pick(['galleryType', 'type', 'category']),
       false,
     );
-    const galleryImages = await this.uploadGalleryImageFiles(allImages);
+    const existingImages = this.parseJsonStringArrayField(
+      pick(['existingImages']),
+    );
+    const uploadedImages = await this.uploadGalleryImageFiles(allImages);
+    const mergedGalleryImages =
+      existingImages !== undefined || uploadedImages.length > 0
+        ? [...(existingImages ?? []), ...uploadedImages]
+        : undefined;
+    if (mergedGalleryImages !== undefined) {
+      this.assertGalleryImageCount(mergedGalleryImages.length);
+    }
     const data = await this.galleryService.updateGallery(id, {
       ...(title !== undefined ? { title } : {}),
       ...(description !== undefined ? { description } : {}),
       ...(eventDate !== undefined ? { date: eventDate } : {}),
       ...(galleryType !== undefined ? { galleryType } : {}),
-      ...(galleryImages.length
-        ? { galleryImages, image: galleryImages[0] }
+      ...(mergedGalleryImages !== undefined
+        ? {
+            galleryImages: mergedGalleryImages,
+            image: mergedGalleryImages[0],
+          }
         : {}),
     });
     return {
@@ -2743,6 +2808,7 @@ export class AdminController {
       twitterUrl: body.twitterUrl,
       linkedinUrl: body.linkedinUrl,
       roleId: normalizedRoleIds[0],
+      showOnWebsite: body.showOnWebsite ?? body.show_on_website,
     });
 
     const errors = await validate(dto);
@@ -2770,6 +2836,7 @@ export class AdminController {
       roleId: dto.roleId,
       roleIds: normalizedRoleIds,
       sector_ids: mergedSectorIds,
+      showOnWebsite: dto.showOnWebsite,
     });
 
     return { message: 'Team member created successfully', data: teamMember };
@@ -2829,6 +2896,7 @@ export class AdminController {
       twitterUrl: body.twitterUrl,
       linkedinUrl: body.linkedinUrl,
       roleId: body.roleId,
+      showOnWebsite: body.showOnWebsite ?? body.show_on_website,
     });
 
     const errors = await validate(dto);
@@ -2857,6 +2925,7 @@ export class AdminController {
       roleId: dto.roleId,
       roleIds: normalizedRoleIds,
       sector_ids: explicitSectors ? mergedSectorIds : undefined,
+      showOnWebsite: dto.showOnWebsite,
     });
 
     return { message: 'Team member updated successfully', data: teamMember };
@@ -3226,6 +3295,32 @@ export class AdminController {
   async viewContactMessage(@Param('id') id: string) {
     const data = await this.adminService.getContactMessageById(id);
     return { message: 'Contact message retrieved successfully', data };
+  }
+
+  @Get('product-inquiry/list')
+  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List product inquiries',
+    description:
+      'Returns ecolabelled product inquiry submissions for the admin panel with resolved manufacturerName, categoryName, productName, urnNumber, and eoiNo.',
+  })
+  async listProductInquiries() {
+    const data = await this.adminService.listProductInquiries();
+    return { message: 'Product inquiries retrieved successfully', data };
+  }
+
+  @Get('product-inquiry/:id/view')
+  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'View product inquiry',
+    description:
+      'Returns one product inquiry with manufacturer, product, category, and URN details.',
+  })
+  async viewProductInquiry(@Param('id') id: string) {
+    const data = await this.adminService.getProductInquiryById(id);
+    return { message: 'Product inquiry retrieved successfully', data };
   }
 
   @Post('contact/delete')

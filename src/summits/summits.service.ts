@@ -53,6 +53,12 @@ import {
 } from './utils/summit-status.util';
 import { getSummitYearOptions } from './utils/summit-year.util';
 import { normalizeSummitBasicInput } from './utils/summit-basic-payload.util';
+import {
+  normalizeAgendaSectionInput,
+  normalizeEventOutcomesSection,
+  normalizeFocusedAreaSection,
+  normalizeHighlightsSection,
+} from './utils/summit-cms-sections.util';
 
 @Injectable()
 export class SummitsService {
@@ -326,10 +332,13 @@ export class SummitsService {
       highlightsTitle: 'Highlights of GreenPro Summit',
       highlights: [],
       focusedAreaTitle: 'Focused Area',
+      focusedAreas: [],
       areaPoints: [],
       eventOutcomesTitle: 'Event Outcomes',
       eventOutcomes: [],
       speakers: [],
+      agendaTitle: "GreenPro's Core Agenda",
+      agendaPoints: [],
       agenda: { title: "GreenPro's Core Agenda", content: '' },
       sponsorsTitle: 'Our Sponsors & Partners',
       sponsors: [],
@@ -398,32 +407,41 @@ export class SummitsService {
       case 'about-summit':
         doc.aboutSummit = this.normalizeRichText(body);
         break;
-      case 'highlights':
-        if (typeof body.highlightsTitle === 'string') {
-          doc.highlightsTitle = body.highlightsTitle;
-        }
-        doc.highlights = this.normalizeTextItems(body.highlights);
+      case 'highlights': {
+        const { title, items } = normalizeHighlightsSection(body);
+        doc.highlightsTitle = title;
+        doc.highlights = items;
+        doc.markModified('highlights');
         break;
-      case 'focused-area':
-        if (typeof body.focusedAreaTitle === 'string') {
-          doc.focusedAreaTitle = body.focusedAreaTitle;
-        }
-        doc.areaPoints = this.normalizeTextItems(
-          body.areaPoints ?? body.focusedAreaPoints,
-        );
+      }
+      case 'focused-area': {
+        const { title, cards } = normalizeFocusedAreaSection(body);
+        doc.focusedAreaTitle = title;
+        doc.focusedAreas = cards;
+        doc.areaPoints = [];
+        doc.markModified('focusedAreas');
+        doc.markModified('areaPoints');
         break;
-      case 'event-outcomes':
-        if (typeof body.eventOutcomesTitle === 'string') {
-          doc.eventOutcomesTitle = body.eventOutcomesTitle;
-        }
-        doc.eventOutcomes = this.normalizeTextItems(body.eventOutcomes);
+      }
+      case 'event-outcomes': {
+        const { title, items } = normalizeEventOutcomesSection(body);
+        doc.eventOutcomesTitle = title;
+        doc.eventOutcomes = items;
+        doc.markModified('eventOutcomes');
         break;
+      }
       case 'speakers':
         doc.speakers = this.normalizeSpeakers(body.speakers);
         break;
-      case 'agenda':
-        doc.agenda = this.normalizeAgendaSection(body);
+      case 'agenda': {
+        const { title, points } = normalizeAgendaSectionInput(body);
+        doc.agendaTitle = title;
+        doc.agendaPoints = points;
+        doc.agenda = { title, content: '' };
+        doc.markModified('agendaPoints');
+        doc.markModified('agenda');
         break;
+      }
       case 'sponsors':
         if (typeof body.sponsorsTitle === 'string') {
           doc.sponsorsTitle = body.sponsorsTitle;
@@ -578,29 +596,87 @@ export class SummitsService {
     if (payload.aboutSummit !== undefined) {
       doc.aboutSummit = this.normalizeRichText(payload.aboutSummit);
     }
-    if (payload.highlightsTitle !== undefined) {
-      doc.highlightsTitle = payload.highlightsTitle;
+    if (
+      payload.highlightsTitle !== undefined ||
+      payload.highlights !== undefined
+    ) {
+      const { title, items } = normalizeHighlightsSection({
+        highlightsTitle:
+          payload.highlightsTitle !== undefined
+            ? payload.highlightsTitle
+            : doc.highlightsTitle,
+        highlights:
+          payload.highlights !== undefined
+            ? payload.highlights
+            : doc.highlights,
+      });
+      doc.highlightsTitle = title;
+      doc.highlights = items;
     }
-    if (payload.highlights !== undefined) {
-      doc.highlights = this.normalizeTextItems(payload.highlights);
+    if (
+      payload.focusedAreaTitle !== undefined ||
+      payload.focusedAreas !== undefined ||
+      payload.areaPoints !== undefined
+    ) {
+      const focusedBody: Record<string, unknown> = {
+        focusedAreaTitle:
+          payload.focusedAreaTitle !== undefined
+            ? payload.focusedAreaTitle
+            : doc.focusedAreaTitle,
+      };
+      if (payload.focusedAreas !== undefined) {
+        focusedBody.focusedAreas = payload.focusedAreas;
+      } else if (payload.areaPoints !== undefined) {
+        focusedBody.areaPoints = payload.areaPoints;
+      } else if ((doc.focusedAreas ?? []).length > 0) {
+        focusedBody.focusedAreas = doc.focusedAreas;
+      } else {
+        focusedBody.areaPoints = doc.areaPoints;
+      }
+      const { title, cards } = normalizeFocusedAreaSection(focusedBody);
+      doc.focusedAreaTitle = title;
+      doc.focusedAreas = cards;
+      doc.areaPoints = [];
     }
-    if (payload.focusedAreaTitle !== undefined) {
-      doc.focusedAreaTitle = payload.focusedAreaTitle;
+    if (
+      payload.eventOutcomesTitle !== undefined ||
+      payload.eventOutcomes !== undefined
+    ) {
+      const { title, items } = normalizeEventOutcomesSection({
+        eventOutcomesTitle:
+          payload.eventOutcomesTitle !== undefined
+            ? payload.eventOutcomesTitle
+            : doc.eventOutcomesTitle,
+        eventOutcomes:
+          payload.eventOutcomes !== undefined
+            ? payload.eventOutcomes
+            : doc.eventOutcomes,
+      });
+      doc.eventOutcomesTitle = title;
+      doc.eventOutcomes = items;
     }
-    if (payload.areaPoints !== undefined) {
-      doc.areaPoints = this.normalizeTextItems(payload.areaPoints);
-    }
-    if (payload.eventOutcomesTitle !== undefined) {
-      doc.eventOutcomesTitle = payload.eventOutcomesTitle;
-    }
-    if (payload.eventOutcomes !== undefined) {
-      doc.eventOutcomes = this.normalizeTextItems(payload.eventOutcomes);
+    if (
+      payload.agendaTitle !== undefined ||
+      payload.agendaPoints !== undefined ||
+      payload.agenda !== undefined
+    ) {
+      const { title, points } = normalizeAgendaSectionInput({
+        agendaTitle:
+          payload.agendaTitle !== undefined
+            ? payload.agendaTitle
+            : payload.agenda?.title ?? doc.agendaTitle,
+        agendaPoints:
+          payload.agendaPoints !== undefined
+            ? payload.agendaPoints
+            : doc.agendaPoints,
+        agenda: payload.agenda,
+      });
+      doc.agendaTitle = title;
+      doc.agendaPoints = points;
+      doc.agenda = { title, content: '' };
     }
     if (payload.speakers !== undefined) {
       doc.speakers = this.normalizeSpeakers(payload.speakers);
-    }
-    if (payload.agenda !== undefined) {
-      doc.agenda = this.normalizeAgendaSection(payload.agenda);
     }
     if (payload.sponsorsTitle !== undefined) {
       doc.sponsorsTitle = payload.sponsorsTitle;
@@ -731,40 +807,6 @@ export class SummitsService {
       title: String(o.title ?? ''),
       content: sanitizeSummitHtml(o.content),
     };
-  }
-
-  /** Agenda section: rich text `{ title, content }` (legacy text list is converted). */
-  private normalizeAgendaSection(raw: unknown) {
-    if (Array.isArray(raw)) {
-      const items = this.normalizeTextItems(raw);
-      const content = items
-        .map((i) => i.text.trim())
-        .filter(Boolean)
-        .map((t) => `<p>${t}</p>`)
-        .join('');
-      return {
-        title: "GreenPro's Core Agenda",
-        content: sanitizeSummitHtml(content),
-      };
-    }
-    const o = (raw ?? {}) as {
-      title?: string;
-      content?: string;
-      agendaTitle?: string;
-    };
-    return {
-      title: String(o.title ?? o.agendaTitle ?? "GreenPro's Core Agenda"),
-      content: sanitizeSummitHtml(o.content),
-    };
-  }
-
-  private normalizeTextItems(raw: unknown) {
-    if (!Array.isArray(raw)) return [];
-    return raw.map((item, index) => ({
-      id: ensureSummitItemId((item as { id?: string }).id),
-      sortOrder: (item as { sortOrder?: number }).sortOrder ?? index,
-      text: String((item as { text?: string }).text ?? ''),
-    }));
   }
 
   private normalizeSpeakers(raw: unknown) {

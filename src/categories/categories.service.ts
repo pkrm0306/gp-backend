@@ -35,12 +35,15 @@ import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
 import { UpdateCategoryStatusDto } from './dto/update-category-status.dto';
 import { UpdateCategoryMultipartDto } from './dto/update-category-multipart.dto';
 import { RedisService } from '../common/redis/redis.service';
-import { uploadFile } from '../utils/upload-file.util';
+import { resolvePublicUploadUrl, uploadFile } from '../utils/upload-file.util';
 import { matchWebsitePublicCertifiedProducts } from '../product-registration/constants/website-public-product.filter';
 
 /** Listing row: Mongo lean doc plus computed image URL */
 export type CategoryListItem = Record<string, unknown> & {
   category_image_url: string | null;
+  categoryImageUrl?: string | null;
+  category_product_count?: number;
+  category_manufacturer_count?: number;
 };
 
 function pad2(n: number): string {
@@ -316,19 +319,7 @@ export class CategoriesService implements OnModuleInit {
   resolveCategoryImageUrl(
     categoryImage: string | undefined | null,
   ): string | null {
-    if (categoryImage == null || String(categoryImage).trim() === '') {
-      return null;
-    }
-    const raw = String(categoryImage).trim();
-    if (/^https?:\/\//i.test(raw)) {
-      return raw;
-    }
-    const pathPart = raw.replace(/^\/+/, '');
-    const underUploads = pathPart.startsWith('uploads/')
-      ? pathPart
-      : `uploads/${pathPart}`;
-    const segments = underUploads.split('/').map((s) => encodeURIComponent(s));
-    return `${this.getApiBaseUrl()}/${segments.join('/')}`;
+    return resolvePublicUploadUrl(categoryImage, this.getApiBaseUrl());
   }
 
   private buildFindFilter(
@@ -406,6 +397,64 @@ export class CategoriesService implements OnModuleInit {
     return out;
   }
 
+  private async countWebsitePublicProductsAndManufacturersByCategory(
+    categoryIds: Types.ObjectId[],
+  ): Promise<
+    Map<
+      string,
+      {
+        category_product_count: number;
+        category_manufacturer_count: number;
+      }
+    >
+  > {
+    if (!categoryIds.length) {
+      return new Map();
+    }
+
+    const rows = await this.productModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        category_product_count: number;
+        category_manufacturer_count: number;
+      }>([
+        {
+          $match: matchWebsitePublicCertifiedProducts({
+            categoryId: { $in: categoryIds },
+          }),
+        },
+        {
+          $group: {
+            _id: '$categoryId',
+            category_product_count: { $sum: 1 },
+            manufacturerIds: { $addToSet: '$manufacturerId' },
+          },
+        },
+        {
+          $project: {
+            category_product_count: 1,
+            category_manufacturer_count: { $size: '$manufacturerIds' },
+          },
+        },
+      ])
+      .exec();
+
+    const out = new Map<
+      string,
+      {
+        category_product_count: number;
+        category_manufacturer_count: number;
+      }
+    >();
+    for (const row of rows) {
+      out.set(String(row._id), {
+        category_product_count: row.category_product_count,
+        category_manufacturer_count: row.category_manufacturer_count,
+      });
+    }
+    return out;
+  }
+
   /**
    * Public website categories listing: only categories with at least one certified,
    * non–soft-deleted product (same scope as the website product grid).
@@ -416,7 +465,7 @@ export class CategoriesService implements OnModuleInit {
     const cacheKey = this.redisService.buildKey(
       'categories',
       'list',
-      'website-public-certified-products',
+      'website-public-certified-products-v3',
       JSON.stringify({
         sector: query.sector ?? null,
         sectors: String(query.sectors || '')
@@ -466,10 +515,26 @@ export class CategoriesService implements OnModuleInit {
       .lean()
       .exec();
 
-    const out: CategoryListItem[] = rows.map((doc) => ({
-      ...(doc as Record<string, unknown>),
-      category_image_url: this.resolveCategoryImageUrl(doc.category_image),
-    }));
+    const categoryObjectIds = rows.map((doc) => doc._id as Types.ObjectId);
+    const countsByCategoryId =
+      await this.countWebsitePublicProductsAndManufacturersByCategory(
+        categoryObjectIds,
+      );
+
+    const out: CategoryListItem[] = rows.map((doc) => {
+      const counts = countsByCategoryId.get(String(doc._id)) ?? {
+        category_product_count: 0,
+        category_manufacturer_count: 0,
+      };
+      const category_image_url = this.resolveCategoryImageUrl(doc.category_image);
+      return {
+        ...(doc as Record<string, unknown>),
+        category_image: category_image_url ?? doc.category_image ?? null,
+        category_image_url,
+        categoryImageUrl: category_image_url,
+        ...counts,
+      };
+    });
 
     this.redisService
       .set(cacheKey, out, this.getCategoryListCacheTtlSeconds())

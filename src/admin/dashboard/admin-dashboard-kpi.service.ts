@@ -36,9 +36,6 @@ import type {
   AdminDashboardKpiCards,
 } from './admin-dashboard-kpi.types';
 
-/** Placeholder until product inquiry tracking is wired to the dashboard. */
-const PRODUCT_INQUIRIES_STATIC_COUNT = 0;
-
 @Injectable()
 export class AdminDashboardKpiService {
   constructor(
@@ -116,6 +113,8 @@ export class AdminDashboardKpiService {
       revenueFacet,
       totalInquiriesCount,
       inquiriesThisMonth,
+      productInquiriesCount,
+      productInquiriesThisMonth,
     ] = await Promise.all([
       this.dashboardStatsService.getProductWidgetStats(filters),
       this.aggregateManufacturerFacet(manufacturerMatch),
@@ -134,9 +133,31 @@ export class AdminDashboardKpiService {
         .then((rows) => rows[0]?.count ?? 0),
       this.aggregatePaymentFacet(paymentVendorScope),
       this.aggregateCompletedRevenue(paymentVendorScope),
-      this.contactMessageModel.countDocuments({}).exec(),
+      this.contactMessageModel.countDocuments({
+        $or: [
+          { inquiryType: 'contact' },
+          { inquiryType: { $exists: false } },
+          { inquiryType: null },
+          { inquiryType: '' },
+        ],
+      }).exec(),
       this.contactMessageModel
-        .countDocuments({ createdAt: { $gte: monthStart } })
+        .countDocuments({
+          createdAt: { $gte: monthStart },
+          $or: [
+            { inquiryType: 'contact' },
+            { inquiryType: { $exists: false } },
+            { inquiryType: null },
+            { inquiryType: '' },
+          ],
+        })
+        .exec(),
+      this.contactMessageModel.countDocuments({ inquiryType: 'product' }).exec(),
+      this.contactMessageModel
+        .countDocuments({
+          inquiryType: 'product',
+          createdAt: { $gte: monthStart },
+        })
         .exec(),
     ]);
 
@@ -247,8 +268,10 @@ export class AdminDashboardKpiService {
       productInquiries: {
         key: 'productInquiries',
         label: 'Product Inquiries',
-        value: PRODUCT_INQUIRIES_STATIC_COUNT,
-        subMetrics: {},
+        value: productInquiriesCount,
+        subMetrics: {
+          thisMonth: productInquiriesThisMonth,
+        },
       },
     };
   }

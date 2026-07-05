@@ -60,6 +60,53 @@ export class SummitTextItem {
   text: string;
 }
 
+/** Card row for Highlights / Event Outcomes tabs. */
+@Schema({ _id: false })
+export class SummitCardItem {
+  @Prop({ required: true })
+  id: string;
+
+  @Prop({ default: 0 })
+  sortOrder: number;
+
+  @Prop({ default: '', maxlength: 75 })
+  heading: string;
+
+  @Prop({ default: '', maxlength: 75 })
+  description: string;
+
+  /** @deprecated legacy flat bullet — migrated to description on read */
+  @Prop()
+  text?: string;
+}
+
+@Schema({ _id: false })
+export class SummitFocusPointItem {
+  @Prop({ required: true })
+  id: string;
+
+  @Prop({ default: 0 })
+  sortOrder: number;
+
+  @Prop({ default: '', maxlength: 75 })
+  text: string;
+}
+
+@Schema({ _id: false })
+export class SummitFocusAreaCard {
+  @Prop({ required: true })
+  id: string;
+
+  @Prop({ default: 0 })
+  sortOrder: number;
+
+  @Prop({ default: '', maxlength: 75 })
+  heading: string;
+
+  @Prop({ type: [SummitFocusPointItem], default: [] })
+  points: SummitFocusPointItem[];
+}
+
 @Schema({ _id: false })
 export class SummitSpeakerItem {
   @Prop({ required: true })
@@ -157,33 +204,44 @@ export class Summit {
   @Prop({ default: 'Highlights of GreenPro Summit' })
   highlightsTitle: string;
 
-  @Prop({ type: [SummitTextItem], default: [] })
-  highlights: SummitTextItem[];
+  @Prop({ type: [SummitCardItem], default: [] })
+  highlights: SummitCardItem[];
 
   @Prop({ default: 'Focused Area' })
   focusedAreaTitle: string;
 
+  @Prop({ type: [SummitFocusAreaCard], default: [] })
+  focusedAreas: SummitFocusAreaCard[];
+
+  /** @deprecated legacy flat bullets — migrated to focusedAreas on read */
   @Prop({ type: [SummitTextItem], default: [] })
   areaPoints: SummitTextItem[];
 
   @Prop({ default: 'Event Outcomes' })
   eventOutcomesTitle: string;
 
-  @Prop({ type: [SummitTextItem], default: [] })
-  eventOutcomes: SummitTextItem[];
+  @Prop({ type: [SummitCardItem], default: [] })
+  eventOutcomes: SummitCardItem[];
 
   @Prop({ type: [SummitSpeakerItem], default: [] })
   speakers: SummitSpeakerItem[];
 
+  @Prop({ default: "GreenPro's Core Agenda" })
+  agendaTitle: string;
+
+  @Prop({ type: [SummitTextItem], default: [] })
+  agendaPoints: SummitTextItem[];
+
+  /** @deprecated legacy rich-text agenda — migrated to agendaPoints on read */
   @Prop({
     type: SummitRichTextBlock,
     default: () => ({ title: "GreenPro's Core Agenda", content: '' }),
   })
   agenda: SummitRichTextBlock;
 
-  /** @deprecated Legacy field — migrated into `agenda.title` on read */
+  /** @deprecated duplicate of agendaTitle — kept for legacy reads */
   @Prop()
-  agendaTitle?: string;
+  agendaTitleLegacy?: string;
 
   @Prop({ default: 'Our Sponsors & Partners' })
   sponsorsTitle: string;

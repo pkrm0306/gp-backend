@@ -103,6 +103,42 @@ export function resolveStoredUploadUrl(stored?: string | null): string {
 }
 
 /**
+ * Resolve a stored upload path to the URL public website clients should load.
+ * Prefers CloudFront/S3 when configured; otherwise builds an absolute URL from
+ * `localBaseUrl` or `API_BASE_URL`, or returns a root-relative `/uploads/...` path.
+ */
+export function resolvePublicUploadUrl(
+  stored?: string | null,
+  localBaseUrl?: string,
+): string | null {
+  const raw = String(stored ?? '').trim();
+  if (!raw || raw.toLowerCase() === 'string') {
+    return null;
+  }
+
+  const resolved = resolveStoredUploadUrl(raw);
+  const candidate = resolved || raw;
+
+  if (/^https?:\/\//i.test(candidate)) {
+    return candidate;
+  }
+
+  const pathPart = candidate.replace(/^\/+/, '');
+  const underUploads = pathPart.startsWith('uploads/')
+    ? pathPart
+    : `uploads/${pathPart}`;
+  const segments = underUploads.split('/').map((s) => encodeURIComponent(s));
+  const base =
+    String(localBaseUrl ?? process.env.API_BASE_URL ?? '')
+      .trim()
+      .replace(/\/$/, '');
+  if (base) {
+    return `${base}/${segments.join('/')}`;
+  }
+  return `/${segments.join('/')}`;
+}
+
+/**
  * Upload a Multer **memory** file to S3 (if configured) or to `uploads/{folderName}/`.
  */
 export async function uploadFile(

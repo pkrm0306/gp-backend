@@ -169,4 +169,50 @@ export class ManufacturerInquiryDto {
 
   @Allow()
   'g-recaptcha-response'?: string;
+
+  @ApiProperty({ required: false, description: 'Mongo product id from product detail page.' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => String(value ?? '').trim())
+  productId?: string;
+
+  @ApiProperty({ required: false, description: 'Category id from product detail page.' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => String(value ?? '').trim())
+  categoryId?: string;
+
+  @ApiProperty({ required: false, description: 'Product URN number.' })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value, obj }) =>
+    String(value ?? obj?.urnNo ?? obj?.urn_no ?? obj?.urnNumber ?? '').trim(),
+  )
+  urnNumber?: string;
+
+  @Allow()
+  urnNo?: string;
+
+  @Allow()
+  urn_no?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => String(value ?? '').trim())
+  designation?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value, obj }) =>
+    String(value ?? obj?.organization ?? obj?.org ?? '').trim(),
+  )
+  organisation?: string;
+
+  @Allow()
+  organization?: string;
+
+  @Allow()
+  org?: string;
 }

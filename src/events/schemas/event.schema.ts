@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import {
+  ALL_GALLERY_TYPES,
   GALLERY_TYPES,
   GalleryType,
 } from '../../gallery/schemas/gallery.schema';
@@ -28,7 +29,7 @@ export class Event {
   @Prop({ type: [String], default: [] })
   galleryImages?: string[];
 
-  @Prop({ enum: GALLERY_TYPES, required: false })
+  @Prop({ enum: ALL_GALLERY_TYPES, required: false })
   galleryType?: GalleryType;
 
   @Prop()

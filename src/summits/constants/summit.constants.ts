@@ -40,3 +40,16 @@ export type SummitUploadType = (typeof SUMMIT_UPLOAD_TYPES)[number];
 
 export const SUMMIT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const SUMMIT_PDF_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Shared CMS card / bullet field limits (Highlights, Focused Area, Event Outcomes, Agenda). */
+export const SUMMIT_CMS_CARD_MAX = 3;
+export const SUMMIT_CMS_FIELD_MIN = 3;
+export const SUMMIT_CMS_FIELD_MAX = 75;
+export const SUMMIT_FOCUS_POINTS_MAX = 3;
+
+/** @deprecated use SUMMIT_CMS_CARD_MAX */
+export const SUMMIT_HIGHLIGHTS_MAX = SUMMIT_CMS_CARD_MAX;
+/** @deprecated use SUMMIT_CMS_FIELD_MIN */
+export const SUMMIT_HIGHLIGHTS_TITLE_MIN = SUMMIT_CMS_FIELD_MIN;
+/** @deprecated use SUMMIT_CMS_FIELD_MAX */
+export const SUMMIT_HIGHLIGHTS_TITLE_MAX = SUMMIT_CMS_FIELD_MAX;

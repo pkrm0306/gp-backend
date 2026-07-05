@@ -1,15 +1,32 @@
 import { Types } from 'mongoose';
 import type { SummitDocument } from '../schemas/summit.schema';
 import { normalizeSummitStatus } from './summit-status.util';
+import {
+  buildAgendaHtmlFromPoints,
+  enrichFocusedAreaRow,
+  enrichSummitCardRow,
+  mapLegacyAreaPoints,
+  type SummitCardApiRow,
+  type SummitFocusAreaApiRow,
+} from './summit-api-compat.util';
+import {
+  mapAgendaFromDoc as mapAgendaSectionFromDoc,
+  mapEventOutcomesFromDoc,
+  mapFocusedAreasFromDoc,
+  mapHighlightsFromDoc,
+  type SummitAgendaPointRow,
+} from './summit-cms-sections.util';
 
 export interface SummitApiResponse {
   id: string;
+  slug: string;
   basic: {
     year: string;
     title: string;
     date: string;
     location: string;
     status: string;
+    slug: string;
   };
   banners: Array<{
     id: string;
@@ -33,11 +50,15 @@ export interface SummitApiResponse {
   aboutGreenPro: { title: string; content: string };
   aboutSummit: { title: string; content: string };
   highlightsTitle: string;
-  highlights: Array<{ id: string; sortOrder: number; text: string }>;
+  highlights: SummitCardApiRow[];
   focusedAreaTitle: string;
+  /** Legacy alias for focusedAreaTitle — used by public website. */
+  areaPointsTitle: string;
+  focusedAreas: SummitFocusAreaApiRow[];
+  /** Legacy flat bullets derived from focusedAreas when areaPoints is empty. */
   areaPoints: Array<{ id: string; sortOrder: number; text: string }>;
   eventOutcomesTitle: string;
-  eventOutcomes: Array<{ id: string; sortOrder: number; text: string }>;
+  eventOutcomes: SummitCardApiRow[];
   speakers: Array<{
     id: string;
     sortOrder: number;
@@ -48,10 +69,12 @@ export interface SummitApiResponse {
     sub: string;
     keyPoint: string;
     tags: string[];
-    /** Legacy read-only alias — first key point string when present */
     keyPoints: string[];
     imageUrl: string;
   }>;
+  agendaTitle: string;
+  agendaPoints: SummitAgendaPointRow[];
+  /** Legacy rich-text agenda block for public website HTML fallback. */
   agenda: { title: string; content: string };
   sponsorsTitle: string;
   sponsors: Array<{
@@ -63,7 +86,6 @@ export interface SummitApiResponse {
   }>;
   createdAt: string;
   updatedAt: string;
-  /** Present on GET /website/summits/:slug and GET /admin/summits/:id — tabs to show when filled */
   visibleSections?: string[];
   sectionVisibility?: Record<string, boolean>;
 }
@@ -84,7 +106,6 @@ export interface SummitListItemApi {
   createdAt: string;
 }
 
-/** Card row for public website listing (active summits only; no status field). */
 export interface SummitPublicListItemApi {
   s_no: number;
   id: string;
@@ -94,7 +115,6 @@ export interface SummitPublicListItemApi {
   date: string;
   location: string;
   coverImageUrl: string | null;
-  /** Plain-text excerpt from About Summit (max ~200 chars) for cards */
   excerpt: string;
 }
 
@@ -132,61 +152,27 @@ export function ensureSummitItemId(id?: string): string {
   return new Types.ObjectId().toString();
 }
 
-function mapTextItems(
-  items: Array<{ id: string; sortOrder?: number; text?: string }> | undefined,
-) {
-  return sortByOrder(items ?? []).map((h) => ({
-    id: h.id,
-    sortOrder: h.sortOrder ?? 0,
-    text: h.text ?? '',
-  }));
-}
-
-/** Supports rich-text agenda and legacy array + agendaTitle documents. */
-export function mapAgendaFromDoc(doc: SummitDocument): {
-  title: string;
-  content: string;
-} {
-  const legacyTitle =
-    (doc as SummitDocument & { agendaTitle?: string }).agendaTitle ?? '';
-  const raw = doc.agenda as unknown;
-
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    const block = raw as { title?: string; content?: string };
-    return {
-      title: block.title ?? legacyTitle ?? "GreenPro's Core Agenda",
-      content: block.content ?? '',
-    };
-  }
-
-  if (Array.isArray(raw) && raw.length > 0) {
-    const lines = sortByOrder(
-      raw as Array<{ sortOrder?: number; text?: string }>,
-    )
-      .map((item) => String(item.text ?? '').trim())
-      .filter(Boolean);
-    return {
-      title: legacyTitle || "GreenPro's Core Agenda",
-      content: lines.map((t) => `<p>${t}</p>`).join(''),
-    };
-  }
-
-  return {
-    title: legacyTitle || "GreenPro's Core Agenda",
-    content: '',
-  };
-}
-
 export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
   const banners = sortByOrder(doc.banners ?? []);
+  const agenda = mapAgendaSectionFromDoc(doc);
+  const highlights = mapHighlightsFromDoc(doc).map(enrichSummitCardRow);
+  const focusedAreas = mapFocusedAreasFromDoc(doc).map(enrichFocusedAreaRow);
+  const eventOutcomes = mapEventOutcomesFromDoc(doc).map(enrichSummitCardRow);
+  const focusedAreaTitle = doc.focusedAreaTitle ?? 'Focused Area';
+  const agendaContent =
+    buildAgendaHtmlFromPoints(agenda.points) ||
+    String(doc.agenda?.content ?? '').trim();
+
   return {
     id: doc._id.toString(),
+    slug: doc.slug ?? '',
     basic: {
       year: doc.year ?? '',
       title: doc.title ?? '',
       date: doc.date ?? '',
       location: doc.location ?? '',
       status: normalizeSummitStatus(doc.status),
+      slug: doc.slug ?? '',
     },
     banners: banners.map((b) => ({
       id: b.id,
@@ -216,11 +202,13 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
       content: doc.aboutSummit?.content ?? '',
     },
     highlightsTitle: doc.highlightsTitle ?? '',
-    highlights: mapTextItems(doc.highlights),
-    focusedAreaTitle: doc.focusedAreaTitle ?? 'Focused Area',
-    areaPoints: mapTextItems(doc.areaPoints),
+    highlights,
+    focusedAreaTitle,
+    areaPointsTitle: focusedAreaTitle,
+    focusedAreas,
+    areaPoints: mapLegacyAreaPoints(doc, focusedAreas),
     eventOutcomesTitle: doc.eventOutcomesTitle ?? 'Event Outcomes',
-    eventOutcomes: mapTextItems(doc.eventOutcomes),
+    eventOutcomes,
     speakers: sortByOrder(doc.speakers ?? []).map((s) => {
       const tags = s.tags ?? [];
       const keyPoint = String(s.keyPoint ?? '').trim();
@@ -240,7 +228,12 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
         imageUrl: s.imageUrl ?? '',
       };
     }),
-    agenda: mapAgendaFromDoc(doc),
+    agendaTitle: agenda.title,
+    agendaPoints: agenda.points,
+    agenda: {
+      title: agenda.title,
+      content: agendaContent,
+    },
     sponsorsTitle: doc.sponsorsTitle ?? '',
     sponsors: sortByOrder(doc.sponsors ?? []).map((s) => ({
       id: s.id,

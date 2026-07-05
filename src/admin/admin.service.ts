@@ -547,6 +547,44 @@ export class AdminService {
     }
   }
 
+  /** Platform admin/staff emails are globally unique (including soft-deleted rows). */
+  private async assertPlatformEmailAvailable(
+    emailLower: string,
+    excludeUserId?: Types.ObjectId,
+  ): Promise<void> {
+    const filter: Record<string, unknown> = {
+      type: { $in: ['admin', 'staff'] },
+      email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i'),
+    };
+    if (excludeUserId) {
+      filter._id = { $ne: excludeUserId };
+    }
+    const existing = await this.vendorUserModel
+      .findOne(filter)
+      .select('_id email')
+      .lean()
+      .exec();
+    if (existing) {
+      throw new ConflictException('Email already exists');
+    }
+  }
+
+  private rethrowTeamMemberDuplicateKeyError(e: unknown): never {
+    const err = e as { code?: number; keyPattern?: Record<string, unknown>; keyValue?: Record<string, unknown> };
+    if (err?.code === 11000) {
+      const pattern = err.keyPattern ?? {};
+      const keyVal = err.keyValue ?? {};
+      if ('email' in pattern || keyVal.email !== undefined) {
+        throw new ConflictException('Email already exists');
+      }
+      if ('phone' in pattern || keyVal.phone !== undefined) {
+        throwTeamMemberMobileDuplicateIssue();
+      }
+      throw new ConflictException('Duplicate record');
+    }
+    throw e;
+  }
+
   /** Attach fixed CMS sector names for API; strips category_* and internal fields. */
   private async attachSectorsToTeamMemberRows<
     T extends Record<string, unknown>,
@@ -637,12 +675,25 @@ export class AdminService {
   }
 
   private invalidateWebsiteTeamMembersListCache(): void {
-    const key = this.redisService.buildKey('website', 'team-members', 'list-v2');
-    this.redisService.del(key).catch((err) => {
-      this.logger.warn(
-        `Website team-members cache invalidation failed: ${(err as Error)?.message || 'unknown'}`,
-      );
-    });
+    for (const version of ['list-v2', 'list-v3']) {
+      const key = this.redisService.buildKey('website', 'team-members', version);
+      this.redisService.del(key).catch((err) => {
+        this.logger.warn(
+          `Website team-members cache invalidation failed: ${(err as Error)?.message || 'unknown'}`,
+        );
+      });
+    }
+  }
+
+  private mapTeamMemberShowOnWebsite(value: unknown): boolean {
+    if (value === false || value === 0) return false;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+        return false;
+      }
+    }
+    return true;
   }
 
   private resolveEventImagePath(eventImage?: string | null): string {
@@ -1893,6 +1944,7 @@ export class AdminService {
       roleId?: string;
       roleIds?: string[];
       sector_ids: number[];
+      showOnWebsite?: boolean;
     },
   ) {
     const emailLower = data.email.trim().toLowerCase();
@@ -1900,19 +1952,7 @@ export class AdminService {
 
     await this.assertGlobalMobileAvailable(mobileTrim);
 
-    const existingActive = await this.vendorUserModel
-      .findOne({
-        status: { $ne: 2 },
-        type: 'staff',
-        email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i'),
-      })
-      .select('_id email')
-      .lean()
-      .exec();
-
-    if (existingActive) {
-      throw new ConflictException('Email already exists');
-    }
+    await this.assertPlatformEmailAvailable(emailLower);
 
     /** Same email/phone can still exist on a soft-deleted row (status 2); unique index blocks a second insert. */
     const phoneVariants = buildPhoneLookupVariants(mobileTrim);
@@ -1932,6 +1972,7 @@ export class AdminService {
 
     if (softDeleted) {
       await this.assertGlobalMobileAvailable(mobileTrim, softDeleted._id);
+      await this.assertPlatformEmailAvailable(emailLower, softDeleted._id);
 
       const totalNonDeleted = await this.vendorUserModel
         .countDocuments({
@@ -1980,6 +2021,7 @@ export class AdminService {
         twitterUrl: data.twitterUrl,
         linkedinUrl: data.linkedinUrl,
         updatedAt: new Date(),
+        showOnWebsite: data.showOnWebsite !== false,
       };
       if (data.designation !== undefined && data.designation !== '') {
         $set.designation = data.designation;
@@ -1990,9 +2032,14 @@ export class AdminService {
         updatePayload.$unset = { designation: '' };
       }
 
-      const updated = await this.vendorUserModel
-        .findByIdAndUpdate(softDeleted._id, updatePayload, { new: true })
-        .exec();
+      let updated: VendorUserDocument | null;
+      try {
+        updated = await this.vendorUserModel
+          .findByIdAndUpdate(softDeleted._id, updatePayload, { new: true })
+          .exec();
+      } catch (e) {
+        this.rethrowTeamMemberDuplicateKeyError(e);
+      }
 
       if (!updated) {
         throw new NotFoundException('Team member record could not be reactivated');
@@ -2024,6 +2071,7 @@ export class AdminService {
         vendorUserId: id,
         roleIds: normalizedRoleIds,
         portalAccess: normalizedRoleIds.length > 0,
+        showOnWebsite: this.mapTeamMemberShowOnWebsite(obj.showOnWebsite),
       };
     }
 
@@ -2079,25 +2127,15 @@ export class AdminService {
       sector_ids,
       ...(sector_ids.length > 0 ? { sector_id: sector_ids[0] } : {}),
       category_ids: [],
+      showOnWebsite: data.showOnWebsite !== false,
     };
 
     const created = new this.vendorUserModel(teamMember);
     let saved: any;
     try {
       saved = await created.save();
-    } catch (e: any) {
-      if (e?.code === 11000) {
-        const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
-        const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
-        if ('email' in pattern || keyVal.email !== undefined) {
-          throw new ConflictException('Email already exists');
-        }
-        if ('phone' in pattern || keyVal.phone !== undefined) {
-          throwTeamMemberMobileDuplicateIssue();
-        }
-        throw new ConflictException('Duplicate record');
-      }
-      throw e;
+    } catch (e) {
+      this.rethrowTeamMemberDuplicateKeyError(e);
     }
 
     // Never return password hash/plaintext
@@ -2142,6 +2180,7 @@ export class AdminService {
         roleIds: normalizedRoleIds,
         portalAccess: normalizedRoleIds.length > 0,
         sector_ids: sectorIds,
+        showOnWebsite: this.mapTeamMemberShowOnWebsite(obj.showOnWebsite),
       },
     ]);
     return enriched;
@@ -2159,7 +2198,7 @@ export class AdminService {
       })
       .sort({ displayOrder: 1, _id: 1 })
       .select(
-        'name designation email phone status displayOrder team sector_ids sector_id category_ids category_id',
+        'name designation email phone status displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
@@ -2178,6 +2217,7 @@ export class AdminService {
           is_active: m.status === 1,
           displayOrder: Number((m as any).displayOrder) || 0,
           team: String((m as any).team ?? ''),
+          showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
           sector_ids,
         };
       }),
@@ -2248,7 +2288,7 @@ export class AdminService {
         .skip(skip)
         .limit(perPage)
         .select(
-          'name designation email phone status displayOrder team sector_ids sector_id category_ids category_id',
+          'name designation email phone status displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
         )
         .lean()
         .exec(),
@@ -2269,6 +2309,7 @@ export class AdminService {
           is_active: m.status === 1,
           displayOrder: Number((m as any).displayOrder) || 0,
           team: String((m as any).team ?? ''),
+          showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
           sector_ids,
         };
       }),
@@ -2310,7 +2351,7 @@ export class AdminService {
       .find(query)
       .sort({ displayOrder: 1, _id: 1 })
       .select(
-        'name designation email phone status displayOrder team sector_ids sector_id category_ids category_id',
+        'name designation email phone status displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
@@ -2329,6 +2370,7 @@ export class AdminService {
           is_active: m.status === 1,
           displayOrder: Number((m as any).displayOrder) || 0,
           team: String((m as any).team ?? ''),
+          showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
           sector_ids,
         };
       }),
@@ -2352,7 +2394,7 @@ export class AdminService {
         status: { $ne: 2 },
       })
       .select(
-        'name designation email phone status image facebookUrl twitterUrl linkedinUrl displayOrder team sector_ids sector_id category_ids category_id',
+        'name designation email phone status image facebookUrl twitterUrl linkedinUrl displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
@@ -2378,6 +2420,7 @@ export class AdminService {
         linkedinUrl: member.linkedinUrl ?? '',
         displayOrder: Number((member as any).displayOrder) || 0,
         team: String((member as any).team ?? ''),
+        showOnWebsite: this.mapTeamMemberShowOnWebsite((member as any).showOnWebsite),
         sector_ids,
       },
     ]);
@@ -2778,6 +2821,7 @@ export class AdminService {
       roleId?: string;
       roleIds?: string[];
       sector_ids?: number[];
+      showOnWebsite?: boolean;
     },
   ) {
     let memberObjectId: Types.ObjectId;
@@ -2804,20 +2848,7 @@ export class AdminService {
 
     await this.assertGlobalMobileAvailable(mobileTrim, memberObjectId);
 
-    const existingOther = await this.vendorUserModel
-      .findOne({
-        _id: { $ne: memberObjectId },
-        status: { $ne: 2 },
-        type: 'staff',
-        email: new RegExp(`^${escapeRegex(emailLower)}$`, 'i'),
-      })
-      .select('_id email')
-      .lean()
-      .exec();
-
-    if (existingOther) {
-      throw new ConflictException('Email already exists');
-    }
+    await this.assertPlatformEmailAvailable(emailLower, memberObjectId);
 
     const totalNonDeleted = await this.vendorUserModel
       .countDocuments({ type: 'staff', status: { $ne: 2 } })
@@ -2883,6 +2914,9 @@ export class AdminService {
     }
     $set.displayOrder = desiredOrder;
     $set.team = data.team;
+    if (data.showOnWebsite !== undefined) {
+      $set.showOnWebsite = data.showOnWebsite;
+    }
 
     const $unset: Record<string, string> = {};
     if (data.sector_ids !== undefined) {
@@ -2910,19 +2944,8 @@ export class AdminService {
       updated = await this.vendorUserModel
         .findByIdAndUpdate(memberObjectId, updatePayload, { new: true })
         .exec();
-    } catch (e: any) {
-      if (e?.code === 11000) {
-        const pattern = (e?.keyPattern ?? {}) as Record<string, unknown>;
-        const keyVal = (e?.keyValue ?? {}) as Record<string, unknown>;
-        if ('email' in pattern || keyVal.email !== undefined) {
-          throw new ConflictException('Email already exists');
-        }
-        if ('phone' in pattern || keyVal.phone !== undefined) {
-          throwTeamMemberMobileDuplicateIssue();
-        }
-        throw new ConflictException('Duplicate record');
-      }
-      throw e;
+    } catch (e) {
+      this.rethrowTeamMemberDuplicateKeyError(e);
     }
 
     if (!updated) {
@@ -2967,6 +2990,7 @@ export class AdminService {
         roleIds: normalizedRoleIds,
         portalAccess: normalizedRoleIds.length > 0,
         sector_ids,
+        showOnWebsite: this.mapTeamMemberShowOnWebsite(obj.showOnWebsite),
       },
     ]);
     return enriched;
@@ -3230,8 +3254,15 @@ export class AdminService {
    */
   async listContactMessages() {
     const rows = await this.contactMessageModel
-      .find({})
-      .select('name email phoneNumber message createdAt')
+      .find({
+        $or: [
+          { inquiryType: 'contact' },
+          { inquiryType: { $exists: false } },
+          { inquiryType: null },
+          { inquiryType: '' },
+        ],
+      })
+      .select('name email phoneNumber message subject createdAt inquiryType')
       .sort({ createdAt: -1, _id: -1 })
       .lean()
       .exec();
@@ -3246,8 +3277,217 @@ export class AdminService {
         typeof (r as any).message === 'string'
           ? String((r as any).message).trim()
           : '',
+      subject: String((r as any).subject ?? ''),
       createdAt: (r as any).createdAt ?? null,
+      inquiryType: 'contact',
     }));
+  }
+
+  private collectValidObjectIds(values: Iterable<string>): Types.ObjectId[] {
+    const out: Types.ObjectId[] = [];
+    const seen = new Set<string>();
+    for (const raw of values) {
+      const id = String(raw ?? '').trim();
+      if (!id || seen.has(id) || !Types.ObjectId.isValid(id)) {
+        continue;
+      }
+      seen.add(id);
+      out.push(new Types.ObjectId(id));
+    }
+    return out;
+  }
+
+  private mapProductInquiryRow(
+    r: Record<string, unknown>,
+    idx: number,
+    lookups: {
+      manufacturerById: Map<string, { manufacturerName?: string; gpInternalId?: string }>;
+      categoryById: Map<string, { category_name?: string; category_id?: number }>;
+      productById: Map<
+        string,
+        {
+          productName?: string;
+          urnNo?: string;
+          eoiNo?: string;
+          categoryId?: Types.ObjectId;
+          manufacturerId?: Types.ObjectId;
+        }
+      >;
+    },
+  ) {
+    const manufacturerId = String(r.manufacturerId ?? '').trim();
+    const categoryId = String(r.categoryId ?? '').trim();
+    const productId = String(r.productId ?? '').trim();
+    const product = productId ? lookups.productById.get(productId) : undefined;
+
+    const resolvedManufacturerId =
+      manufacturerId ||
+      (product?.manufacturerId ? String(product.manufacturerId) : '');
+    const resolvedCategoryId =
+      categoryId || (product?.categoryId ? String(product.categoryId) : '');
+
+    const manufacturer = resolvedManufacturerId
+      ? lookups.manufacturerById.get(resolvedManufacturerId)
+      : undefined;
+    const category = resolvedCategoryId
+      ? lookups.categoryById.get(resolvedCategoryId)
+      : undefined;
+
+    const storedUrn = String(r.urnNumber ?? '').trim();
+    const urnNumber = storedUrn || String(product?.urnNo ?? '').trim();
+
+    return {
+      s_no: typeof r.s_no === 'number' ? r.s_no : idx + 1,
+      id: String(r.id ?? r._id ?? ''),
+      name: String(r.name ?? ''),
+      email: String(r.email ?? ''),
+      phoneNo: String(r.phoneNo ?? r.phoneNumber ?? ''),
+      message:
+        typeof r.message === 'string' ? String(r.message).trim() : '',
+      designation: String(r.designation ?? ''),
+      organisation: String(r.organisation ?? ''),
+      manufacturerId: resolvedManufacturerId,
+      manufacturerName: String(manufacturer?.manufacturerName ?? '').trim(),
+      gpInternalId: String(manufacturer?.gpInternalId ?? '').trim() || undefined,
+      productId,
+      productName: String(product?.productName ?? '').trim(),
+      categoryId: resolvedCategoryId,
+      categoryName: String(category?.category_name ?? '').trim(),
+      category_id:
+        category?.category_id !== undefined && category?.category_id !== null
+          ? Number(category.category_id)
+          : undefined,
+      urnNumber,
+      urnNo: urnNumber,
+      eoiNo: String(product?.eoiNo ?? '').trim(),
+      createdAt: r.createdAt ?? null,
+      inquiryType: 'product' as const,
+    };
+  }
+
+  private async enrichProductInquiries(
+    rows: Array<Record<string, unknown>>,
+  ): Promise<Array<Record<string, unknown>>> {
+    if (!rows.length) {
+      return [];
+    }
+
+    const manufacturerIdSet = new Set<string>();
+    const categoryIdSet = new Set<string>();
+    const productIdSet = new Set<string>();
+
+    for (const r of rows) {
+      const manufacturerId = String(r.manufacturerId ?? '').trim();
+      const categoryId = String(r.categoryId ?? '').trim();
+      const productId = String(r.productId ?? '').trim();
+      if (manufacturerId) manufacturerIdSet.add(manufacturerId);
+      if (categoryId) categoryIdSet.add(categoryId);
+      if (productId) productIdSet.add(productId);
+    }
+
+    const productObjectIds = this.collectValidObjectIds(productIdSet);
+    const products = productObjectIds.length
+      ? await this.productModel
+          .find({ _id: { $in: productObjectIds } })
+          .select('_id productName urnNo eoiNo categoryId manufacturerId')
+          .lean()
+          .exec()
+      : [];
+
+    for (const product of products) {
+      const manufacturerId = String(product.manufacturerId ?? '').trim();
+      const categoryId = String(product.categoryId ?? '').trim();
+      if (manufacturerId) manufacturerIdSet.add(manufacturerId);
+      if (categoryId) categoryIdSet.add(categoryId);
+    }
+
+    const manufacturerObjectIds = this.collectValidObjectIds(manufacturerIdSet);
+    const categoryObjectIds = this.collectValidObjectIds(categoryIdSet);
+
+    const [manufacturers, categories] = await Promise.all([
+      manufacturerObjectIds.length
+        ? this.manufacturerModel
+            .find({ _id: { $in: manufacturerObjectIds } })
+            .select('_id manufacturerName gpInternalId')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      categoryObjectIds.length
+        ? this.categoryModel
+            .find({ _id: { $in: categoryObjectIds } })
+            .select('_id category_name category_id')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+    ]);
+
+    const manufacturerById = new Map(
+      manufacturers.map((m) => [String(m._id), m]),
+    );
+    const categoryById = new Map(categories.map((c) => [String(c._id), c]));
+    const productById = new Map(products.map((p) => [String(p._id), p]));
+
+    return rows.map((r, idx) =>
+      this.mapProductInquiryRow(r, idx, {
+        manufacturerById,
+        categoryById,
+        productById,
+      }),
+    );
+  }
+
+  async listProductInquiries() {
+    const rows = await this.contactMessageModel
+      .find({ inquiryType: 'product' })
+      .select(
+        'name email phoneNumber message designation organisation manufacturerId productId categoryId urnNumber createdAt',
+      )
+      .sort({ createdAt: -1, _id: -1 })
+      .lean()
+      .exec();
+
+    return this.enrichProductInquiries(
+      (rows ?? []).map((r) => ({
+        ...r,
+        id: String(r._id),
+        phoneNo: String((r as any).phoneNumber ?? ''),
+      })) as Array<Record<string, unknown>>,
+    );
+  }
+
+  /** Single product inquiry for admin view modal. */
+  async getProductInquiryById(id: string) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException('Invalid inquiry id');
+    }
+
+    const msg = await this.contactMessageModel
+      .findOne({ _id: objectId, inquiryType: 'product' })
+      .select(
+        'name email phoneNumber message designation organisation manufacturerId productId categoryId urnNumber createdAt',
+      )
+      .lean()
+      .exec();
+
+    if (!msg) {
+      throw new NotFoundException('Product inquiry not found');
+    }
+
+    const [enriched] = await this.enrichProductInquiries([
+      {
+        ...msg,
+        id: String(msg._id),
+        phoneNo: String((msg as any).phoneNumber ?? ''),
+      } as Record<string, unknown>,
+    ]);
+
+    return {
+      ...enriched,
+      phone: enriched?.phoneNo ?? '',
+    };
   }
 
   /** Single contact message for admin "view" modal/page. */

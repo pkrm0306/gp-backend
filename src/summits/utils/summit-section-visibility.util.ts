@@ -1,7 +1,6 @@
 import type { SummitSectionKey } from '../constants/summit.constants';
 import type { SummitApiResponse } from './summit-mapper.util';
 
-/** Nav / block order on the public summit page (excludes `basic` — always shown as hero). */
 export const PUBLIC_SUMMIT_SECTION_ORDER: SummitSectionKey[] = [
   'banners',
   'downloads',
@@ -28,10 +27,30 @@ function hasRichTextContentOnly(block: { title?: string; content?: string }): bo
   return stripHtml(block.content).length > 0;
 }
 
-function hasListItems(
-  items: Array<{ text?: string }> | undefined,
+function hasCardSection(
+  items: Array<{ heading?: string; description?: string }> | undefined,
 ): boolean {
-  return (items ?? []).some((item) => String(item.text ?? '').trim().length > 0);
+  return (items ?? []).some(
+    (item) =>
+      String(item.heading ?? '').trim().length > 0 ||
+      String(item.description ?? '').trim().length > 0,
+  );
+}
+
+function hasFocusedAreaSection(
+  cards: Array<{ heading?: string; points?: Array<{ text?: string }> }> | undefined,
+): boolean {
+  return (cards ?? []).some(
+    (card) =>
+      String(card.heading ?? '').trim().length > 0 ||
+      (card.points ?? []).some((point) => String(point.text ?? '').trim().length > 0),
+  );
+}
+
+function hasAgendaPoints(
+  points: Array<{ text?: string }> | undefined,
+): boolean {
+  return (points ?? []).some((point) => String(point.text ?? '').trim().length > 0);
 }
 
 export function computeSummitSectionVisibility(
@@ -54,9 +73,9 @@ export function computeSummitSectionVisibility(
     downloads: hasDownloads,
     'about-greenpro': hasRichTextContentOnly(summit.aboutGreenPro),
     'about-summit': hasRichTextContentOnly(summit.aboutSummit),
-    highlights: hasListItems(summit.highlights),
-    'focused-area': hasListItems(summit.areaPoints),
-    'event-outcomes': hasListItems(summit.eventOutcomes),
+    highlights: hasCardSection(summit.highlights),
+    'focused-area': hasFocusedAreaSection(summit.focusedAreas),
+    'event-outcomes': hasCardSection(summit.eventOutcomes),
     speakers: summit.speakers.some(
       (s) =>
         String(s.name ?? '').trim() ||
@@ -65,7 +84,7 @@ export function computeSummitSectionVisibility(
         String(s.keyPoint ?? '').trim() ||
         (s.tags ?? []).some((t) => String(t).trim()),
     ),
-    agenda: hasRichTextContentOnly(summit.agenda),
+    agenda: hasAgendaPoints(summit.agendaPoints),
     sponsors: summit.sponsors.some(
       (s) => String(s.name ?? '').trim() || String(s.logoUrl ?? '').trim(),
     ),
@@ -74,7 +93,6 @@ export function computeSummitSectionVisibility(
   return visibility;
 }
 
-/** Sections to render on the public page (filled only, stable order). */
 export function getVisiblePublicSummitSections(
   summit: SummitApiResponse,
 ): SummitSectionKey[] {

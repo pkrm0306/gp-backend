@@ -34,7 +34,7 @@ import {
   resolveManufacturerScopeFilter,
   resolveVendorStatusFilter,
 } from './utils/list-manufacturers-query.util';
-import { uploadFile } from '../utils/upload-file.util';
+import { resolvePublicUploadUrl, uploadFile } from '../utils/upload-file.util';
 import { ManufacturerIdGenerationService } from './manufacturer-id-generation.service';
 import { EmailService } from '../common/services/email.service';
 import {
@@ -492,6 +492,12 @@ export class ManufacturersService {
     return map;
   }
 
+  private resolveManufacturerImageUrl(
+    manufacturerImage: string | null | undefined,
+  ): string | null {
+    return resolvePublicUploadUrl(manufacturerImage);
+  }
+
   private formatManufacturerApiRow(
     m: {
       _id: Types.ObjectId | string;
@@ -512,6 +518,7 @@ export class ManufacturersService {
       primaryVendorUserId?: string;
       manufacturer_product_count?: number;
       manufacturer_vendor_count?: number;
+      productCount?: number;
     } = {},
   ) {
     const idStr = String(m._id);
@@ -524,6 +531,9 @@ export class ManufacturersService {
     const mSt = Number(m.manufacturerStatus ?? 0);
     const vSt = Number(m.vendor_status ?? 0);
     const companyName = String(m.manufacturerName ?? '').trim();
+    const resolvedManufacturerImage = this.resolveManufacturerImageUrl(
+      m.manufacturerImage,
+    );
 
     return {
       _id: m._id,
@@ -533,7 +543,8 @@ export class ManufacturersService {
       gpInternalId: m.gpInternalId ?? null,
       manufacturerInitial,
       initial: manufacturerInitial,
-      manufacturerImage: m.manufacturerImage ?? null,
+      manufacturerImage: resolvedManufacturerImage,
+      manufacturerImageUrl: resolvedManufacturerImage,
       manufacturerStatus: mSt,
       manufacturerStatusLabel: manufacturerStatusLabel(mSt),
       vendor_name: vendorDisplay,
@@ -547,6 +558,9 @@ export class ManufacturersService {
       statusToggle: vSt === 1 ? ('On' as const) : ('Off' as const),
       manufacturer_product_count: options.manufacturer_product_count,
       manufacturer_vendor_count: options.manufacturer_vendor_count,
+      ...(options.productCount !== undefined
+        ? { productCount: options.productCount }
+        : {}),
       createdAt: m.createdAt,
       updatedAt: m.updatedAt,
     };
@@ -2359,6 +2373,39 @@ export class ManufacturersService {
     };
   }
 
+  private async countWebsitePublicProductsByManufacturer(
+    manufacturerIds: Types.ObjectId[],
+  ): Promise<Map<string, number>> {
+    if (!manufacturerIds.length) {
+      return new Map();
+    }
+
+    const rows = await this.productModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        manufacturer_product_count: number;
+      }>([
+        {
+          $match: matchWebsitePublicCertifiedProducts({
+            manufacturerId: { $in: manufacturerIds },
+          }),
+        },
+        {
+          $group: {
+            _id: '$manufacturerId',
+            manufacturer_product_count: { $sum: 1 },
+          },
+        },
+      ])
+      .exec();
+
+    const out = new Map<string, number>();
+    for (const row of rows) {
+      out.set(String(row._id), row.manufacturer_product_count);
+    }
+    return out;
+  }
+
   /**
    * Public website manufacturers listing: only manufacturers with at least one certified,
    * non–soft-deleted product.
@@ -2383,12 +2430,15 @@ export class ManufacturersService {
       };
     }
 
-    return this.findAllPaginated(query, manufacturerIds);
+    return this.findAllPaginated(query, manufacturerIds, {
+      useWebsitePublicCertifiedProductCount: true,
+    });
   }
 
   async findAllPaginated(
     query: ListManufacturersQueryDto,
     restrictToManufacturerIds?: Types.ObjectId[],
+    options?: { useWebsitePublicCertifiedProductCount?: boolean },
   ) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -2412,14 +2462,31 @@ export class ManufacturersService {
     ]);
 
     const manufacturerIds = rows.map((m) => new Types.ObjectId(String(m._id)));
-    const vendorUsersByMfgId =
-      await this.loadPrimaryVendorUsersByManufacturerIds(manufacturerIds);
+    const useWebsitePublicCertifiedProductCount =
+      options?.useWebsitePublicCertifiedProductCount === true;
+    const [vendorUsersByMfgId, publicProductCountsByManufacturerId] =
+      await Promise.all([
+        this.loadPrimaryVendorUsersByManufacturerIds(manufacturerIds),
+        useWebsitePublicCertifiedProductCount
+          ? this.countWebsitePublicProductsByManufacturer(manufacturerIds)
+          : Promise.resolve(undefined),
+      ]);
 
     const data = await Promise.all(
       rows.map(async (m) => {
         const mid = new Types.ObjectId(String(m._id));
-        const counts = await this.countForManufacturer(mid);
         const primaryVendor = vendorUsersByMfgId.get(mid.toString());
+        if (useWebsitePublicCertifiedProductCount) {
+          const manufacturer_product_count =
+            publicProductCountsByManufacturerId?.get(mid.toString()) ?? 0;
+          return this.formatManufacturerApiRow(m, {
+            primaryVendorUserName: primaryVendor?.name,
+            primaryVendorUserId: primaryVendor?.userId,
+            manufacturer_product_count,
+            productCount: manufacturer_product_count,
+          });
+        }
+        const counts = await this.countForManufacturer(mid);
         return this.formatManufacturerApiRow(m, {
           primaryVendorUserName: primaryVendor?.name,
           primaryVendorUserId: primaryVendor?.userId,

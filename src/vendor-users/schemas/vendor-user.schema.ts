@@ -99,6 +99,10 @@ export class VendorUser {
   @Prop({ default: false })
   isVerified: boolean;
 
+  /** When false, member is hidden from the public website team listing. */
+  @Prop({ default: true })
+  showOnWebsite?: boolean;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
