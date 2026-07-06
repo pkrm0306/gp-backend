@@ -9,6 +9,18 @@ import {
 export type EventDocument = Event & Document;
 export { GALLERY_TYPES, GalleryType };
 
+@Schema({ _id: false })
+export class EventBrochureItem {
+  @Prop({ required: true, trim: true })
+  heading: string;
+
+  @Prop({ required: true, trim: true })
+  link: string;
+}
+
+export const EventBrochureItemSchema =
+  SchemaFactory.createForClass(EventBrochureItem);
+
 @Schema({ collection: 'events', timestamps: false })
 export class Event {
   @Prop({ required: true, unique: true })
@@ -74,6 +86,10 @@ export class Event {
   /** Optional brochure/attachment URL */
   @Prop()
   brochureLink?: string;
+
+  /** Multiple brochure cards (heading + external link). */
+  @Prop({ type: [EventBrochureItemSchema], default: [] })
+  brochures?: EventBrochureItem[];
 
   @Prop({ required: true, type: Number, default: 1 })
   eventStatus: number; // 0=Inactive, 1=Active

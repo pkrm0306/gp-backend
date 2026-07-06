@@ -109,6 +109,9 @@ class SummitFocusAreaCardDto {
 class SummitAgendaPointDto {
   @IsOptional() @IsString() id?: string;
   @IsOptional() @IsInt() sortOrder?: number;
+  @IsOptional() @IsString() heading?: string;
+  @IsOptional() @IsString() description?: string;
+  /** @deprecated legacy flat bullet — treated as description */
   @IsOptional() @IsString() text?: string;
 }
 

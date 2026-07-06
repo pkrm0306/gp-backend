@@ -33,6 +33,10 @@ import { CertificationExpiryQueryService } from './certification-expiry-query.se
 import { CertificationExpiryTemplateService } from './certification-expiry-template.service';
 import { LifecycleNotificationService } from '../../notifications/lifecycle-notification.service';
 import {
+  parseEmailList,
+  resolveCcGroups,
+} from '../../notifications/utils/notification-recipient-groups.util';
+import {
   CronJobRunResult,
   DeactivationBatchItem,
   EligibleExpiryProduct,
@@ -85,7 +89,7 @@ export class CertificationExpiryService {
   async runBefore2Month(asOf = new Date()): Promise<CronJobRunResult> {
     return this.runJob('before2month', asOf, async (products, todayIso, result) => {
       const year = Number(todayIso.slice(0, 4));
-      const internalCc = this.internalCcEmail();
+      const vendorCc = this.resolveExpiryVendorCc();
 
       for (const product of products) {
         if (!product.firstNotifyDate) {
@@ -105,7 +109,7 @@ export class CertificationExpiryService {
           notifyDate: todayIso,
           subject: `GreenPro — Expiry reminder (${product.eoiNo || product.urnNo})`,
           html,
-          alsoSendTo: internalCc ? [internalCc] : [],
+          vendorCc,
           result,
         });
       }
@@ -378,11 +382,11 @@ export class CertificationExpiryService {
       notifyDate: string;
       subject: string;
       html: string;
-      alsoSendTo?: string[];
+      vendorCc?: string[];
       result: CronJobRunResult;
     },
   ): Promise<void> {
-    const { jobType, notifyDate, subject, html, alsoSendTo, result } = options;
+    const { jobType, notifyDate, subject, html, vendorCc, result } = options;
     const exists = await this.cronEmailLogModel.exists({
       productId: product.productId,
       jobType,
@@ -406,15 +410,7 @@ export class CertificationExpiryService {
 
     result.processed += 1;
     try {
-      await this.sendVendorEmail(product, subject, html);
-      for (const cc of alsoSendTo ?? []) {
-        const ccTrim = cc.trim();
-        if (ccTrim) {
-          await this.emailService.sendEmail(ccTrim, subject, html, undefined, {
-            rawHtml: true,
-          });
-        }
-      }
+      await this.sendVendorEmail(product, subject, html, vendorCc);
       await this.writeLog(product, jobType, notifyDate);
       result.sent += 1;
       const expiryStage =
@@ -435,11 +431,16 @@ export class CertificationExpiryService {
     product: EligibleExpiryProduct,
     subject: string,
     html: string,
+    cc?: string[],
   ): Promise<void> {
     const email = String(product.vendorEmail ?? '').trim();
     if (!email) return;
+    const vendorEmail = email.toLowerCase();
+    const ccFiltered =
+      cc?.filter((addr) => addr.trim().toLowerCase() !== vendorEmail) ?? [];
     await this.emailService.sendEmail(email, subject, html, undefined, {
       rawHtml: true,
+      cc: ccFiltered.length ? ccFiltered : undefined,
     });
   }
 
@@ -469,11 +470,14 @@ export class CertificationExpiryService {
     });
   }
 
-  private internalCcEmail(): string {
-    return (
-      this.configService.get<string>('CRON_EXPIRY_INTERNAL_CC')?.trim() ||
-      'sheshikumar.bheemreddy@cii.in'
-    );
+  private resolveExpiryVendorCc(): string[] {
+    const fromGroups = resolveCcGroups(this.configService, ['SHEshi']);
+    if (fromGroups.length) {
+      return fromGroups;
+    }
+    const legacy =
+      this.configService.get<string>('CRON_EXPIRY_INTERNAL_CC')?.trim() || '';
+    return parseEmailList(legacy);
   }
 
   private errorEntry(

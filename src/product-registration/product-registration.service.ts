@@ -1378,6 +1378,14 @@ export class ProductRegistrationService {
       mobile: String(manufacturer.vendor_phone ?? '').trim(),
       website: String(manufacturer.vendor_website ?? '').trim(),
       vendor_website: String(manufacturer.vendor_website ?? '').trim(),
+      facebook: String(manufacturer.vendor_facebook ?? '').trim(),
+      vendor_facebook: String(manufacturer.vendor_facebook ?? '').trim(),
+      youtube: String(manufacturer.vendor_youtube ?? '').trim(),
+      vendor_youtube: String(manufacturer.vendor_youtube ?? '').trim(),
+      twitter: String(manufacturer.vendor_twitter ?? '').trim(),
+      vendor_twitter: String(manufacturer.vendor_twitter ?? '').trim(),
+      linkedin: String(manufacturer.vendor_linkedin ?? '').trim(),
+      vendor_linkedin: String(manufacturer.vendor_linkedin ?? '').trim(),
       gst: String(manufacturer.vendor_gst ?? '').trim(),
       vendor_gst: String(manufacturer.vendor_gst ?? '').trim(),
       gstPdf: manufacturer.vendorGstPdf ?? null,
@@ -1403,6 +1411,14 @@ export class ProductRegistrationService {
       vendor_email: manufacturer.vendor_email ?? '',
       vendor_phone: manufacturer.vendor_phone ?? '',
       vendor_website: manufacturer.vendor_website ?? '',
+      vendor_facebook: String(manufacturer.vendor_facebook ?? '').trim(),
+      vendor_youtube: String(manufacturer.vendor_youtube ?? '').trim(),
+      vendor_twitter: String(manufacturer.vendor_twitter ?? '').trim(),
+      vendor_linkedin: String(manufacturer.vendor_linkedin ?? '').trim(),
+      facebook: String(manufacturer.vendor_facebook ?? '').trim(),
+      youtube: String(manufacturer.vendor_youtube ?? '').trim(),
+      twitter: String(manufacturer.vendor_twitter ?? '').trim(),
+      linkedin: String(manufacturer.vendor_linkedin ?? '').trim(),
       vendor_designation: manufacturer.vendor_designation ?? '',
       vendor_gst: manufacturer.vendor_gst ?? '',
       vendorGstPdf: manufacturer.vendorGstPdf ?? null,
@@ -3519,7 +3535,7 @@ export class ProductRegistrationService {
         }),
       )
       .select(
-        '_id urnNo eoiNo productName productImage validtillDate productPassport productDetails productStatus',
+        '_id urnNo eoiNo productName productImage validtillDate productPassport productDetails productStatus manufacturerId',
       )
       .lean()
       .exec();
@@ -3533,6 +3549,10 @@ export class ProductRegistrationService {
       ? resolveStoredUploadUrl(productImageRaw) || productImageRaw
       : null;
 
+    const manufacturer = await this.getPublicManufacturerDetailsForProduct(
+      row.manufacturerId,
+    );
+
     return {
       _id: this.toMongoIdString(row._id),
       urnNo: String(row.urnNo ?? ''),
@@ -3544,6 +3564,57 @@ export class ProductRegistrationService {
       passport: String(row.productPassport ?? ''),
       productDetails: String(row.productDetails ?? '').trim() || null,
       productStatus: Number(row.productStatus ?? 0),
+      manufacturerName: manufacturer?.manufacturerName ?? '',
+      manufacturer,
+      manufacturer_details: manufacturer,
+    };
+  }
+
+  /**
+   * Public-safe manufacturer details for the website product detail page:
+   * name, logo, website, and social links only (no emails/phones/documents).
+   */
+  private async getPublicManufacturerDetailsForProduct(
+    manufacturerId: unknown,
+  ): Promise<Record<string, unknown> | null> {
+    const id = String(manufacturerId ?? '').trim();
+    if (!id || !Types.ObjectId.isValid(id)) {
+      return null;
+    }
+
+    const m = await this.manufacturerModel
+      .findById(id)
+      .select(
+        'manufacturerName manufacturerImage companyLogo vendor_website vendor_facebook vendor_youtube vendor_twitter vendor_linkedin manufacturerStatus',
+      )
+      .lean()
+      .exec();
+    if (!m) {
+      return null;
+    }
+
+    const manufacturerImageRaw = String(m.manufacturerImage ?? '').trim();
+    const companyLogoRaw = String(m.companyLogo ?? '').trim();
+
+    return {
+      _id: this.toMongoIdString(m._id),
+      manufacturerName: String(m.manufacturerName ?? '').trim(),
+      manufacturerImage: manufacturerImageRaw
+        ? resolveStoredUploadUrl(manufacturerImageRaw) || manufacturerImageRaw
+        : null,
+      companyLogo: companyLogoRaw
+        ? resolveStoredUploadUrl(companyLogoRaw) || companyLogoRaw
+        : null,
+      website: String(m.vendor_website ?? '').trim(),
+      vendor_website: String(m.vendor_website ?? '').trim(),
+      facebook: String(m.vendor_facebook ?? '').trim(),
+      vendor_facebook: String(m.vendor_facebook ?? '').trim(),
+      youtube: String(m.vendor_youtube ?? '').trim(),
+      vendor_youtube: String(m.vendor_youtube ?? '').trim(),
+      twitter: String(m.vendor_twitter ?? '').trim(),
+      vendor_twitter: String(m.vendor_twitter ?? '').trim(),
+      linkedin: String(m.vendor_linkedin ?? '').trim(),
+      vendor_linkedin: String(m.vendor_linkedin ?? '').trim(),
     };
   }
 
@@ -4082,6 +4153,19 @@ export class ProductRegistrationService {
             $ifNull: ['$category.categoryName', '$category.category_name'],
           },
           manufacturerName: '$manufacturer.manufacturerName',
+          manufacturerId: { $toString: '$manufacturerId' },
+          manufacturerFacebook: {
+            $ifNull: ['$manufacturer.vendor_facebook', ''],
+          },
+          manufacturerYoutube: {
+            $ifNull: ['$manufacturer.vendor_youtube', ''],
+          },
+          manufacturerTwitter: {
+            $ifNull: ['$manufacturer.vendor_twitter', ''],
+          },
+          manufacturerLinkedin: {
+            $ifNull: ['$manufacturer.vendor_linkedin', ''],
+          },
           sectorName: '$_adminSectorDoc.name',
           plants: 1,
         },
@@ -4116,6 +4200,77 @@ export class ProductRegistrationService {
     };
   }
 
+  /** Public manufacturer social links — flat fields always returned; nested object always present. */
+  private mapPublicManufacturerSocialFields(fields: {
+    facebook?: unknown;
+    youtube?: unknown;
+    twitter?: unknown;
+    linkedin?: unknown;
+    website?: unknown;
+  }): Record<string, string | Record<string, string>> {
+    const facebook = String(fields.facebook ?? '').trim();
+    const youtube = String(fields.youtube ?? '').trim();
+    const twitter = String(fields.twitter ?? '').trim();
+    const linkedin = String(fields.linkedin ?? '').trim();
+    const website = String(fields.website ?? '').trim();
+
+    const manufacturerSocialLinks: Record<string, string> = {
+      facebook,
+      facebookUrl: facebook,
+      youtube,
+      youtubeUrl: youtube,
+      twitter,
+      twitterUrl: twitter,
+      linkedin,
+      linkedinUrl: linkedin,
+    };
+
+    return {
+      website,
+      vendor_website: website,
+      facebook,
+      facebookUrl: facebook,
+      vendor_facebook: facebook,
+      youtube,
+      youtubeUrl: youtube,
+      vendor_youtube: youtube,
+      twitter,
+      twitterUrl: twitter,
+      vendor_twitter: twitter,
+      linkedin,
+      linkedinUrl: linkedin,
+      vendor_linkedin: linkedin,
+      manufacturerSocialLinks,
+      socialLinks: manufacturerSocialLinks,
+    };
+  }
+
+  /** @deprecated use mapPublicManufacturerSocialFields */
+  private buildPublicManufacturerSocialLinks(fields: {
+    facebook?: unknown;
+    youtube?: unknown;
+    twitter?: unknown;
+    linkedin?: unknown;
+  }): Record<string, string> | undefined {
+    const mapped = this.mapPublicManufacturerSocialFields(fields);
+    const nested = mapped.manufacturerSocialLinks as Record<string, string>;
+    const hasAny = ['facebook', 'youtube', 'twitter', 'linkedin'].some(
+      (key) => String(nested[key] ?? '').trim(),
+    );
+    if (!hasAny) {
+      return undefined;
+    }
+    const out: Record<string, string> = {};
+    for (const key of ['facebook', 'youtube', 'twitter', 'linkedin'] as const) {
+      const value = String(nested[key] ?? '').trim();
+      if (value) {
+        out[key] = value;
+        out[`${key}Url`] = value;
+      }
+    }
+    return out;
+  }
+
   /** Resolve stored upload paths for public website certified product cards. */
   private mapPublicCertifiedProductFlatRow(
     row: Record<string, unknown>,
@@ -4137,13 +4292,42 @@ export class ProductRegistrationService {
       row.productDetails ?? row.product_details ?? '',
     ).trim();
 
+    const manufacturerSocialLinks = this.buildPublicManufacturerSocialLinks({
+      facebook: row.manufacturerFacebook,
+      youtube: row.manufacturerYoutube,
+      twitter: row.manufacturerTwitter,
+      linkedin: row.manufacturerLinkedin,
+    });
+
+    const {
+      manufacturerFacebook: _mf,
+      manufacturerYoutube: _my,
+      manufacturerTwitter: _mt,
+      manufacturerLinkedin: _ml,
+      ...rest
+    } = row;
+
+    const manufacturerId = String(row.manufacturerId ?? '').trim();
+
     return {
-      ...row,
+      ...rest,
+      manufacturerId: manufacturerId || undefined,
       productDetails: productDetails || null,
       productImage,
       productImageUrl: productImage,
       categoryImage,
       categoryImageUrl: categoryImage,
+      manufacturerSocialLinks:
+        manufacturerSocialLinks ?? {
+          facebook: '',
+          facebookUrl: '',
+          youtube: '',
+          youtubeUrl: '',
+          twitter: '',
+          twitterUrl: '',
+          linkedin: '',
+          linkedinUrl: '',
+        },
     };
   }
 
@@ -8978,6 +9162,21 @@ export class ProductRegistrationService {
             vendor_name: '$manufacturer.vendor_name',
             vendor_email: '$manufacturer.vendor_email',
             vendor_phone: '$manufacturer.vendor_phone',
+            vendor_website: {
+              $ifNull: ['$manufacturer.vendor_website', ''],
+            },
+            vendor_facebook: {
+              $ifNull: ['$manufacturer.vendor_facebook', ''],
+            },
+            vendor_youtube: {
+              $ifNull: ['$manufacturer.vendor_youtube', ''],
+            },
+            vendor_twitter: {
+              $ifNull: ['$manufacturer.vendor_twitter', ''],
+            },
+            vendor_linkedin: {
+              $ifNull: ['$manufacturer.vendor_linkedin', ''],
+            },
             productCount: 1,
           },
         },
@@ -8990,10 +9189,26 @@ export class ProductRegistrationService {
         row.manufacturerImage,
         apiBaseUrl,
       );
+      const socialFields = this.mapPublicManufacturerSocialFields({
+        facebook: row.vendor_facebook,
+        youtube: row.vendor_youtube,
+        twitter: row.vendor_twitter,
+        linkedin: row.vendor_linkedin,
+        website: row.vendor_website,
+      });
+      const {
+        vendor_facebook: _vf,
+        vendor_youtube: _vy,
+        vendor_twitter: _vt,
+        vendor_linkedin: _vl,
+        vendor_website: _vw,
+        ...rest
+      } = row;
       return {
-        ...row,
+        ...rest,
         manufacturerImage: manufacturerImageUrl,
         manufacturerImageUrl,
+        ...socialFields,
       };
     });
 

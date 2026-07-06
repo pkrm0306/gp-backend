@@ -37,11 +37,37 @@ describe('summit-api-compat.util', () => {
   it('builds agenda HTML list from plain-text points', () => {
     expect(
       buildAgendaHtmlFromPoints([
-        { id: '1', sortOrder: 0, text: 'Opening remarks' },
-        { id: '2', sortOrder: 1, text: 'Panel discussion' },
+        {
+          id: '1',
+          sortOrder: 0,
+          heading: '',
+          description: 'Opening remarks',
+          text: 'Opening remarks',
+        },
+        {
+          id: '2',
+          sortOrder: 1,
+          heading: '',
+          description: 'Panel discussion',
+          text: 'Panel discussion',
+        },
       ]),
     ).toBe(
       '<ul><li>Opening remarks</li><li>Panel discussion</li></ul>',
     );
+  });
+
+  it('builds agenda HTML with bold headings when heading and description exist', () => {
+    expect(
+      buildAgendaHtmlFromPoints([
+        {
+          id: '1',
+          sortOrder: 0,
+          heading: 'Opening',
+          description: 'Welcome address',
+          text: 'Opening — Welcome address',
+        },
+      ]),
+    ).toBe('<ul><li><strong>Opening</strong> — Welcome address</li></ul>');
   });
 });

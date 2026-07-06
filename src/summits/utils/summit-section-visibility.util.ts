@@ -48,9 +48,16 @@ function hasFocusedAreaSection(
 }
 
 function hasAgendaPoints(
-  points: Array<{ text?: string }> | undefined,
+  points:
+    | Array<{ text?: string; heading?: string; description?: string }>
+    | undefined,
 ): boolean {
-  return (points ?? []).some((point) => String(point.text ?? '').trim().length > 0);
+  return (points ?? []).some(
+    (point) =>
+      String(point.text ?? '').trim().length > 0 ||
+      String(point.heading ?? '').trim().length > 0 ||
+      String(point.description ?? '').trim().length > 0,
+  );
 }
 
 export function computeSummitSectionVisibility(
@@ -71,8 +78,8 @@ export function computeSummitSectionVisibility(
     ),
     banners: hasBanner,
     downloads: hasDownloads,
-    'about-greenpro': hasRichTextContentOnly(summit.aboutGreenPro),
-    'about-summit': hasRichTextContentOnly(summit.aboutSummit),
+    'about-greenpro': true,
+    'about-summit': true,
     highlights: hasCardSection(summit.highlights),
     'focused-area': hasFocusedAreaSection(summit.focusedAreas),
     'event-outcomes': hasCardSection(summit.eventOutcomes),

@@ -1,12 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsArray,
   IsEmail,
   IsNotEmpty,
   IsOptional,
   IsString,
   Length,
+  ValidateNested,
 } from 'class-validator';
+import { EventBrochureItemDto } from './event-brochure-item.dto';
 
 export class CreateEventDto {
   @ApiProperty({ example: 'Green Summit 2026' })
@@ -123,7 +126,7 @@ export class CreateEventDto {
   @ApiPropertyOptional({
     example:
       'https://www.linkedin.com/posts/cii-greenpro-ecolabelling_greenpro-summit-2025-brochure-03062025-activity-7335663123154014208-2ScV',
-    description: 'Brochure link for the event',
+    description: 'Legacy single brochure link (prefer brochures[]).',
   })
   @IsOptional()
   @IsString()
@@ -131,4 +134,22 @@ export class CreateEventDto {
     value === undefined || value === null ? undefined : String(value).trim(),
   )
   brochureLink?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Brochure cards for the event. Each item requires heading and link. ' +
+      'Multipart forms may send this as a JSON string.',
+    type: [EventBrochureItemDto],
+    example: [
+      {
+        heading: 'GreenPro Summit Brochure',
+        link: 'https://example.com/brochure.pdf',
+      },
+    ],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EventBrochureItemDto)
+  brochures?: EventBrochureItemDto[];
 }

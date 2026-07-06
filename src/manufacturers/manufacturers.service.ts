@@ -838,6 +838,18 @@ export class ManufacturersService {
       vendor_email: manufacturer.vendor_email ?? '',
       vendor_phone: manufacturer.vendor_phone ?? '',
       vendor_website: manufacturer.vendor_website ?? '',
+      vendor_facebook: manufacturer.vendor_facebook ?? '',
+      vendor_youtube: manufacturer.vendor_youtube ?? '',
+      vendor_twitter: manufacturer.vendor_twitter ?? '',
+      vendor_linkedin: manufacturer.vendor_linkedin ?? '',
+      facebook: manufacturer.vendor_facebook ?? '',
+      youtube: manufacturer.vendor_youtube ?? '',
+      twitter: manufacturer.vendor_twitter ?? '',
+      linkedin: manufacturer.vendor_linkedin ?? '',
+      facebookUrl: manufacturer.vendor_facebook ?? '',
+      youtubeUrl: manufacturer.vendor_youtube ?? '',
+      twitterUrl: manufacturer.vendor_twitter ?? '',
+      linkedinUrl: manufacturer.vendor_linkedin ?? '',
       vendor_designation: manufacturer.vendor_designation ?? '',
       vendor_gst: manufacturer.vendor_gst ?? '',
       gstPdf: manufacturer.vendorGstPdf ?? '',
@@ -869,7 +881,47 @@ export class ManufacturersService {
       panNumber: manufacturer.vendorPan ?? '',
       email: manufacturer.vendor_email ?? '',
       mobile: manufacturer.vendor_phone ?? '',
+      facebook: manufacturer.vendor_facebook ?? '',
+      youtube: manufacturer.vendor_youtube ?? '',
+      twitter: manufacturer.vendor_twitter ?? '',
+      linkedin: manufacturer.vendor_linkedin ?? '',
+      facebookUrl: manufacturer.vendor_facebook ?? '',
+      youtubeUrl: manufacturer.vendor_youtube ?? '',
+      twitterUrl: manufacturer.vendor_twitter ?? '',
+      linkedinUrl: manufacturer.vendor_linkedin ?? '',
     };
+  }
+
+  /** Vendor panel may send `facebookUrl` etc.; normalize to canonical keys for persistence. */
+  private normalizeVendorProfileSocialLinks(
+    dto: UpdateProfileDto,
+  ): UpdateProfileDto {
+    const pairs: Array<{
+      canonical: keyof Pick<
+        UpdateProfileDto,
+        'facebook' | 'youtube' | 'twitter' | 'linkedin'
+      >;
+      alias: keyof Pick<
+        UpdateProfileDto,
+        'facebookUrl' | 'youtubeUrl' | 'twitterUrl' | 'linkedinUrl'
+      >;
+    }> = [
+      { canonical: 'facebook', alias: 'facebookUrl' },
+      { canonical: 'youtube', alias: 'youtubeUrl' },
+      { canonical: 'twitter', alias: 'twitterUrl' },
+      { canonical: 'linkedin', alias: 'linkedinUrl' },
+    ];
+
+    const out = { ...dto };
+    for (const { canonical, alias } of pairs) {
+      if (out[canonical] !== undefined) {
+        continue;
+      }
+      if (out[alias] !== undefined) {
+        out[canonical] = out[alias];
+      }
+    }
+    return out;
   }
 
   private emptyVendorContactSlot() {
@@ -1125,10 +1177,18 @@ export class ManufacturersService {
         'pan',
         'email',
         'mobile',
+        'facebook',
+        'facebookUrl',
+        'youtube',
+        'youtubeUrl',
+        'twitter',
+        'twitterUrl',
+        'linkedin',
+        'linkedinUrl',
       ] as (keyof UpdateProfileDto)[]
     ).forEach(fill);
 
-    return out as UpdateProfileDto;
+    return this.normalizeVendorProfileSocialLinks(out as UpdateProfileDto);
   }
 
   /**
@@ -1216,6 +1276,7 @@ export class ManufacturersService {
       | { userId: string; manufacturerId?: string; vendorId?: string },
     updateDto: UpdateProfileDto,
   ) {
+    updateDto = this.normalizeVendorProfileSocialLinks(updateDto);
     const userId = typeof authUser === 'string' ? authUser : authUser.userId;
     const { gstNumberToApply: rawGstinFromPartition, gstPdfToApply } =
       this.partitionGstAndPdfFromUpdateDto(updateDto);
@@ -1342,6 +1403,14 @@ export class ManufacturersService {
           panNumber: panNumberToApply || '',
           email: updateDto.email ?? vendorUser?.email ?? '',
           mobile: updateDto.mobile ?? vendorUser?.phone ?? '',
+          facebook: updateDto.facebook ?? updateDto.facebookUrl ?? '',
+          youtube: updateDto.youtube ?? updateDto.youtubeUrl ?? '',
+          twitter: updateDto.twitter ?? updateDto.twitterUrl ?? '',
+          linkedin: updateDto.linkedin ?? updateDto.linkedinUrl ?? '',
+          facebookUrl: updateDto.facebook ?? updateDto.facebookUrl ?? '',
+          youtubeUrl: updateDto.youtube ?? updateDto.youtubeUrl ?? '',
+          twitterUrl: updateDto.twitter ?? updateDto.twitterUrl ?? '',
+          linkedinUrl: updateDto.linkedin ?? updateDto.linkedinUrl ?? '',
         };
       }
 
@@ -1404,6 +1473,18 @@ export class ManufacturersService {
       }
       if (panDocUrlToApply !== undefined) {
         updateData.vendorPanDocument = panDocUrlToApply;
+      }
+      if (updateDto.facebook !== undefined) {
+        updateData.vendor_facebook = String(updateDto.facebook).trim();
+      }
+      if (updateDto.youtube !== undefined) {
+        updateData.vendor_youtube = String(updateDto.youtube).trim();
+      }
+      if (updateDto.twitter !== undefined) {
+        updateData.vendor_twitter = String(updateDto.twitter).trim();
+      }
+      if (updateDto.linkedin !== undefined) {
+        updateData.vendor_linkedin = String(updateDto.linkedin).trim();
       }
       let profileEmailChanged = false;
       let profileNotifyEmail: string | null = null;

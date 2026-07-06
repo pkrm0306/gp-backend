@@ -38,6 +38,9 @@ export type SummitFocusAreaRow = {
 export type SummitAgendaPointRow = {
   id: string;
   sortOrder: number;
+  heading: string;
+  description: string;
+  /** Combined "heading — description" for legacy consumers reading `text`. */
   text: string;
 };
 
@@ -262,6 +265,35 @@ export function mapFocusedAreasFromDoc(doc: SummitDocument): SummitFocusAreaRow[
   }));
 }
 
+function combineCardText(heading: string, description: string): string {
+  if (heading && description) {
+    return `${heading} — ${description}`;
+  }
+  return heading || description;
+}
+
+function agendaPointRowFromStored(
+  item: {
+    id?: string;
+    sortOrder?: number;
+    heading?: string;
+    description?: string;
+    text?: string;
+  },
+  index: number,
+): SummitAgendaPointRow {
+  const legacyText = readTrimmed(item.text);
+  const heading = readTrimmed(item.heading);
+  const description = readTrimmed(item.description) || legacyText;
+  return {
+    id: ensureItemId(item.id),
+    sortOrder: item.sortOrder ?? index,
+    heading,
+    description,
+    text: combineCardText(heading, description),
+  };
+}
+
 export function mapAgendaFromDoc(doc: SummitDocument): {
   title: string;
   points: SummitAgendaPointRow[];
@@ -277,11 +309,9 @@ export function mapAgendaFromDoc(doc: SummitDocument): {
   if (stored.length > 0) {
     return {
       title,
-      points: stored.map((point, index) => ({
-        id: ensureItemId(point.id),
-        sortOrder: point.sortOrder ?? index,
-        text: readTrimmed(point.text),
-      })),
+      points: stored.map((point, index) =>
+        agendaPointRowFromStored(point, index),
+      ),
     };
   }
 
@@ -291,6 +321,8 @@ export function mapAgendaFromDoc(doc: SummitDocument): {
     points: parsed.map((text, index) => ({
       id: new Types.ObjectId().toString(),
       sortOrder: index,
+      heading: '',
+      description: text,
       text,
     })),
   };
@@ -510,6 +542,7 @@ export function normalizeAgendaSectionInput(body: Record<string, unknown>): {
   );
 
   let pointsSource = rawPoints;
+  let fromLegacyHtml = false;
   if (
     !pointsSource.length &&
     isPlainObject(body.agenda) &&
@@ -518,18 +551,40 @@ export function normalizeAgendaSectionInput(body: Record<string, unknown>): {
     pointsSource = parseAgendaHtmlToTexts(String(body.agenda.content)).map(
       (text) => ({ text }),
     );
+    fromLegacyHtml = true;
   }
 
-  const points = pointsSource.map((point, index) =>
-    pointRowFromInput(point, index),
-  );
+  const legacyTextOnlyIds = new Set<string>();
+  const points: SummitAgendaPointRow[] = pointsSource.map((point, index) => {
+    const row = cardRowFromInput(point, index);
+    const source = (point ?? {}) as Record<string, unknown>;
+    const isLegacyTextOnly =
+      !readTrimmed(source.heading ?? source.title ?? source.label) &&
+      readTrimmed(source.text ?? source.point).length > 0 &&
+      source.description === undefined;
+    if (fromLegacyHtml || isLegacyTextOnly) {
+      legacyTextOnlyIds.add(row.id);
+    }
+    return {
+      ...row,
+      text: combineCardText(row.heading, row.description),
+    };
+  });
   const sorted = sortSummitItems(points);
 
   for (const point of sorted) {
+    if (!legacyTextOnlyIds.has(point.id)) {
+      validateRequiredField(
+        point.heading,
+        `agenda-point.${point.id}.heading`,
+        'Agenda point heading',
+        errors,
+      );
+    }
     validateRequiredField(
-      point.text,
-      `agenda-point.${point.id}.text`,
-      'Agenda point',
+      point.description,
+      `agenda-point.${point.id}.description`,
+      'Agenda point description',
       errors,
     );
   }

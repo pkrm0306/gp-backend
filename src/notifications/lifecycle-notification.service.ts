@@ -10,6 +10,7 @@ import {
   AdminNotificationMessages,
   resolveManufacturerDisplayName,
 } from './helpers/admin-notification-messages';
+import { NotificationCcGroup } from './utils/notification-recipient-groups.util';
 
 @Injectable()
 export class LifecycleNotificationService {
@@ -58,6 +59,7 @@ export class LifecycleNotificationService {
     source?: string;
     emailSubject?: string;
     emailHtmlExtra?: string;
+    ccGroups?: NotificationCcGroup[];
   }): Promise<void> {
     await this.adminSystemNotification.createFeedNotification({
       title: input.copy.title,
@@ -72,6 +74,7 @@ export class LifecycleNotificationService {
       subject: input.emailSubject ?? `GreenPro — ${input.copy.title}`,
       html: input.emailHtmlExtra ?? `<p>${input.copy.message}</p>`,
       text: input.copy.message,
+      ccGroups: input.ccGroups,
     });
   }
 
@@ -245,6 +248,7 @@ export class LifecycleNotificationService {
       referenceType: 'document_uploaded',
       referenceId: params.urnNo || params.manufacturerId,
       type: 'info',
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -432,6 +436,7 @@ export class LifecycleNotificationService {
       referenceType: 'certification_payment_approved',
       referenceId: String(params.paymentId),
       type: 'success',
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -464,6 +469,7 @@ export class LifecycleNotificationService {
       type: 'success',
       emailSubject: `GreenPro — Manufacturer verified — ${name}`,
       emailHtmlExtra: `<p><strong>${name}</strong> has been verified and activated on the GreenPro portal.</p>`,
+      ccGroups: ['SHEshi'],
     });
   }
 
@@ -481,6 +487,7 @@ export class LifecycleNotificationService {
       referenceType: 'manufacturer_inactive',
       referenceId: manufacturerId,
       type: 'warning',
+      ccGroups: ['SHEshi'],
     });
   }
 
@@ -641,6 +648,7 @@ export class LifecycleNotificationService {
         ${reasonLine}
         <p>Please review this request in the admin portal.</p>
       `,
+      ccGroups: ['SHEshi'],
     });
   }
 
@@ -687,6 +695,7 @@ export class LifecycleNotificationService {
       source: 'website',
       type: 'info',
       emailHtmlExtra: `<p>${copy.message}</p><p>From: ${params.visitorName} (${params.visitorEmail})</p>`,
+      ccGroups: ['SHEshi'],
     });
   }
 
@@ -726,8 +735,35 @@ export class LifecycleNotificationService {
         subject: `GreenPro — ${copy.title}`,
         html: `<p>${copy.message}</p>`,
         text: copy.message,
+        ccGroups: ['SHEshi'],
       });
     }
+  }
+
+  async notifyPasswordResetAdmin(params: {
+    email: string;
+    portal?: 'admin' | 'vendor';
+    userId?: string;
+  }): Promise<void> {
+    const copy = AdminNotificationMessages.passwordReset(
+      params.email,
+      params.portal,
+    );
+    await this.adminSystemNotification.createFeedNotification({
+      title: copy.title,
+      message: copy.message,
+      type: 'info',
+      source: params.portal === 'admin' ? 'admin' : 'manufacturer',
+      referenceType: 'password_reset',
+      referenceId: params.userId,
+      actorName: copy.actorName,
+    });
+    this.adminSystemNotification.sendAdminAlertEmailInBackground({
+      subject: `GreenPro — ${copy.title}`,
+      html: `<p>${copy.message}</p>`,
+      text: copy.message,
+      ccGroups: ['SHEshi'],
+    });
   }
 
   async notifyUrnMerged(params: {
@@ -755,6 +791,7 @@ export class LifecycleNotificationService {
       referenceType: 'urn_merge',
       referenceId: params.targetUrnNo,
       type: 'info',
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 

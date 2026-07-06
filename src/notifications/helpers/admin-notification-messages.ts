@@ -190,4 +190,13 @@ export const AdminNotificationMessages = {
       actorName: manufacturerName,
     };
   },
+
+  passwordReset(email: string, portal?: string) {
+    const portalLabel = portal ? ` (${portal} portal)` : '';
+    return {
+      title: 'Password Reset',
+      message: `Password was reset for ${email}${portalLabel}`,
+      actorName: email,
+    };
+  },
 };

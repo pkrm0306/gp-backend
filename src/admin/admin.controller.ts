@@ -108,6 +108,7 @@ import {
 } from './dto/dashboard-metrics-query.dto';
 import { PaymentsService } from '../payments/payments.service';
 import { AdminListPaymentsDto } from '../payments/dto/admin-list-payments.dto';
+import { normalizeEventBrochuresInput } from '../events/utils/event-brochures.util';
 
 const bannerImageMultipartFields = BANNER_MEDIA_MULTIPART_FIELDS;
 
@@ -648,6 +649,17 @@ export class AdminController {
     throw new BadRequestException(
       'Invalid status. Use active/inactive (or 1/0)',
     );
+  }
+
+  private parseEventBrochuresFromBody(
+    body: Record<string, unknown>,
+    pick: (keys: string[]) => unknown,
+  ) {
+    const raw = pick(['brochures', 'brochure_items', 'brochureItems']);
+    if (raw === undefined) {
+      return undefined;
+    }
+    return normalizeEventBrochuresInput(raw);
   }
 
   private resolveEventDateRange(body: Record<string, unknown>): {
@@ -1313,6 +1325,7 @@ export class AdminController {
     const eventStatus = this.parseEventStatus(
       pick(['eventStatus', 'status', 'is_active', 'active']),
     );
+    const brochures = this.parseEventBrochuresFromBody(body, pick);
 
     const eventImage = file
       ? (await uploadFile(file, 'events')).fileUrl
@@ -1332,6 +1345,7 @@ export class AdminController {
       contactPersonPhone: dto.contactPersonPhone,
       registrationLink: dto.registrationLink,
       brochureLink: dto.brochureLink,
+      ...(brochures !== undefined ? { brochures } : {}),
       eventImage,
       ...(eventStatus !== undefined ? { eventStatus } : {}),
     });
@@ -1491,6 +1505,7 @@ export class AdminController {
     const eventStatus = this.parseEventStatus(
       pick(['eventStatus', 'status', 'is_active', 'active']),
     );
+    const brochures = this.parseEventBrochuresFromBody(body, pick);
 
     const picked =
       files?.image?.[0] ||
@@ -1534,6 +1549,7 @@ export class AdminController {
       ...(dto.brochureLink !== undefined
         ? { brochureLink: dto.brochureLink }
         : {}),
+      ...(brochures !== undefined ? { brochures } : {}),
       ...(eventStatus !== undefined ? { eventStatus } : {}),
       ...(eventImage ? { eventImage } : {}),
     });

@@ -139,6 +139,7 @@ describe('LifecycleNotificationService', () => {
     expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: expect.stringContaining('Manufacturer verified'),
+        ccGroups: ['SHEshi'],
       }),
     );
   });
@@ -207,13 +208,15 @@ describe('LifecycleNotificationService', () => {
     expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
   });
 
-  it('sends admin feed + email on document uploaded', async () => {
+  it('sends admin feed + email on document uploaded with team lead CC', async () => {
     await service.notifyDocumentUploaded({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
     });
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
+    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({ ccGroups: ['TEAM_LEADS'] }),
+    );
   });
 
   it('sends vendor + admin on certification payment approved', async () => {
@@ -228,10 +231,12 @@ describe('LifecycleNotificationService', () => {
       }),
     );
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
+    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({ ccGroups: ['TEAM_LEADS'] }),
+    );
   });
 
-  it('sends vendor + admin on product enquiry', async () => {
+  it('sends vendor + admin on product enquiry with sheshi CC', async () => {
     await service.notifyProductEnquiry({
       manufacturerId: '507f1f77bcf86cd799439011',
       manufacturerName: 'Acme Co',
@@ -247,7 +252,9 @@ describe('LifecycleNotificationService', () => {
       }),
     );
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
+    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({ ccGroups: ['SHEshi'] }),
+    );
   });
 
   it('sends vendor email on URN merge', async () => {
@@ -261,6 +268,10 @@ describe('LifecycleNotificationService', () => {
       expect.objectContaining({
         template: NotificationTemplateCode.URN_MERGED,
       }),
+    );
+    expect(createFeedNotification).toHaveBeenCalled();
+    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({ ccGroups: ['TEAM_LEADS'] }),
     );
   });
 
@@ -328,7 +339,9 @@ describe('LifecycleNotificationService', () => {
       includeAdminEmail: true,
     });
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
+    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({ ccGroups: ['SHEshi'] }),
+    );
   });
 
   it('creates admin feed + email when vendor requests product name change', async () => {
@@ -357,6 +370,27 @@ describe('LifecycleNotificationService', () => {
         subject: expect.stringContaining('Product Name Change Request'),
         html: expect.stringContaining('Brand naming correction'),
         text: expect.stringContaining('New Product'),
+        ccGroups: ['SHEshi'],
+      }),
+    );
+  });
+
+  it('notifies admin on password reset with sheshi CC', async () => {
+    await service.notifyPasswordResetAdmin({
+      email: 'vendor@example.com',
+      portal: 'vendor',
+      userId: '507f1f77bcf86cd799439011',
+    });
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Password Reset',
+        referenceType: 'password_reset',
+      }),
+    );
+    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: expect.stringContaining('Password Reset'),
+        ccGroups: ['SHEshi'],
       }),
     );
   });

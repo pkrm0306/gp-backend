@@ -67,13 +67,24 @@ export function enrichFocusedAreaRow(
 export function buildAgendaHtmlFromPoints(
   points: SummitAgendaPointRow[],
 ): string {
-  const texts = points
-    .map((point) => String(point.text ?? '').trim())
-    .filter(Boolean);
-  if (texts.length === 0) {
+  const rows = points
+    .map((point) => ({
+      heading: String(point.heading ?? '').trim(),
+      description:
+        String(point.description ?? '').trim() ||
+        String(point.text ?? '').trim(),
+    }))
+    .filter((row) => row.heading || row.description);
+  if (rows.length === 0) {
     return '';
   }
-  return `<ul>${texts.map((text) => `<li>${escapeHtml(text)}</li>`).join('')}</ul>`;
+  const items = rows.map((row) => {
+    if (row.heading && row.description) {
+      return `<li><strong>${escapeHtml(row.heading)}</strong> — ${escapeHtml(row.description)}</li>`;
+    }
+    return `<li>${escapeHtml(row.heading || row.description)}</li>`;
+  });
+  return `<ul>${items.join('')}</ul>`;
 }
 
 export function mapLegacyAreaPoints(

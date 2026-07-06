@@ -32,6 +32,11 @@ import {
   resolveEventStartDate,
   toDateOnlyIso,
 } from '../events/utils/event-date.util';
+import {
+  mapEventBrochuresFromDoc,
+  primaryEventBrochureLink,
+  type EventBrochureRow,
+} from '../events/utils/event-brochures.util';
 import { Article, ArticleDocument } from '../articles/schemas/article.schema';
 import {
   EventIdCounter,
@@ -155,8 +160,11 @@ function escapeHtml(input: string): string {
     .replace(/'/g, '&#039;');
 }
 
-const DEFAULT_EVENT_REGISTRATION_LINK =
-  'https://cam.mycii.in/OR/OnlineRegistrationLogin.html?EventId=E000069218';
+function resolveOptionalEventUrl(value: unknown): string | undefined {
+  const trimmed = String(value ?? '').trim();
+  return trimmed || undefined;
+}
+
 const DEFAULT_EVENT_BROCHURE_LINK =
   'https://www.linkedin.com/posts/cii-greenpro-ecolabelling_greenpro-summit-2025-brochure-03062025-activity-7335663123154014208-2ScV?utm_source=share&utm_medium=member_desktop&rcm=ACoAAB-BYukBl9XKRWqUfyykOlftYFSgtIQGafI';
 
@@ -857,11 +865,18 @@ export class AdminService {
       : obj?.id
         ? String(obj.id)
         : undefined;
-    const { _id, __v, ...rest } = obj ?? {};
+    const { _id, __v, registrationLink: storedRegistrationLink, ...rest } =
+      obj ?? {};
+    const registrationLink = resolveOptionalEventUrl(storedRegistrationLink);
     const startDate = resolveEventStartDate(rest ?? {});
     const endDate = resolveEventEndDate(rest ?? {});
     const datePart = startDate ? toDateOnlyIso(startDate) : '';
     const endDatePart = endDate ? toDateOnlyIso(endDate) : datePart;
+    const brochures = mapEventBrochuresFromDoc(rest ?? {});
+    const brochureLink =
+      primaryEventBrochureLink(brochures) ||
+      String((rest as any)?.brochureLink ?? '').trim() ||
+      DEFAULT_EVENT_BROCHURE_LINK;
     return {
       ...rest,
       eventDate: datePart || (rest as any)?.eventDate,
@@ -876,9 +891,9 @@ export class AdminService {
       event_image:
         (rest as any)?.event_image ??
         this.resolveEventImagePath((rest as any)?.eventImage),
-      registrationLink:
-        (rest as any)?.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
-      brochureLink: (rest as any)?.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
+      ...(registrationLink ? { registrationLink } : {}),
+      brochures,
+      brochureLink,
       ...(id ? { id } : {}),
     };
   }
@@ -934,11 +949,15 @@ export class AdminService {
     galleryType?: string;
     registrationLink?: string;
     brochureLink?: string;
+    brochures?: EventBrochureRow[];
   }) {
     const eventId = await this.nextEventId();
     const now = new Date();
     const eventStartDate = payload.eventStartDate ?? payload.eventDate;
     const eventEndDate = payload.eventEndDate ?? eventStartDate;
+    const brochures = payload.brochures ?? [];
+    const brochureLink =
+      primaryEventBrochureLink(brochures) ?? payload.brochureLink;
 
     const doc = new this.eventModel({
       eventId,
@@ -964,7 +983,8 @@ export class AdminService {
       contactPersonEmail: payload.contactPersonEmail,
       contactPersonPhone: payload.contactPersonPhone,
       registrationLink: payload.registrationLink,
-      brochureLink: payload.brochureLink,
+      brochures,
+      brochureLink,
       eventStatus:
         payload.eventStatus === 0 || payload.eventStatus === 1
           ? payload.eventStatus
@@ -997,6 +1017,7 @@ export class AdminService {
       galleryType?: string;
       registrationLink?: string;
       brochureLink?: string;
+      brochures?: EventBrochureRow[];
       eventStatus?: number;
     },
     kind: 'event' | 'gallery' = 'event',
@@ -1081,16 +1102,24 @@ export class AdminService {
     ) {
       $set.galleryType = payload.galleryType;
     }
-    if (
-      payload.registrationLink !== undefined &&
-      String(payload.registrationLink).trim() !== ''
-    )
-      $set.registrationLink = payload.registrationLink;
-    if (
+    if (payload.registrationLink !== undefined) {
+      const registrationLink = resolveOptionalEventUrl(payload.registrationLink);
+      if (registrationLink) {
+        $set.registrationLink = registrationLink;
+      } else {
+        $set.registrationLink = '';
+      }
+    }
+    if (payload.brochures !== undefined) {
+      $set.brochures = payload.brochures;
+      const primaryBrochure = primaryEventBrochureLink(payload.brochures);
+      $set.brochureLink = primaryBrochure ?? '';
+    } else if (
       payload.brochureLink !== undefined &&
       String(payload.brochureLink).trim() !== ''
-    )
+    ) {
       $set.brochureLink = payload.brochureLink;
+    }
     if (payload.eventStatus === 0 || payload.eventStatus === 1) {
       $set.eventStatus = payload.eventStatus;
     }
@@ -1119,7 +1148,7 @@ export class AdminService {
       .find(this.eventKindMatch(kind))
       .sort({ createdDate: -1, _id: -1 })
       .select(
-        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink brochures',
       )
       .lean()
       .exec();
@@ -1152,7 +1181,7 @@ export class AdminService {
         .skip((safePage - 1) * safePerPage)
         .limit(safePerPage)
         .select(
-          'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink',
+          'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink brochures',
         )
         .lean()
         .exec(),
@@ -1182,6 +1211,8 @@ export class AdminService {
     const endDatePart = endDate ? toDateOnlyIso(endDate) : datePart;
     const timePart = String(e?.eventStartTime ?? '').trim();
     const visible = isEventVisibleOnWebsite(e ?? {});
+    const brochures = mapEventBrochuresFromDoc(e ?? {});
+    const registrationLink = resolveOptionalEventUrl(e?.registrationLink);
     return {
       s_no: serialNo,
       id: String(e._id),
@@ -1203,8 +1234,12 @@ export class AdminService {
       dateTime: [datePart, timePart].filter(Boolean).join(' '),
       location: String(e.eventLocation ?? ''),
       is_active: visible,
-      registrationLink: e.registrationLink ?? DEFAULT_EVENT_REGISTRATION_LINK,
-      brochureLink: e.brochureLink ?? DEFAULT_EVENT_BROCHURE_LINK,
+      ...(registrationLink ? { registrationLink } : {}),
+      brochures,
+      brochureLink:
+        primaryEventBrochureLink(brochures) ||
+        e.brochureLink ||
+        DEFAULT_EVENT_BROCHURE_LINK,
     };
   }
 

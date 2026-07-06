@@ -997,6 +997,18 @@ export class AuthService {
       payload: { newPassword },
     });
 
+    this.lifecycleNotification
+      .notifyPasswordResetAdmin({
+        email: submittedEmail,
+        portal,
+        userId: user._id.toString(),
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `Password reset admin notification failed for ${submittedEmail}: ${(err as Error).message}`,
+        ),
+      );
+
     return {
       message: 'New password has been sent to your email',
     };

@@ -98,7 +98,42 @@ describe('summit-cms-sections.util', () => {
   });
 
   describe('normalizeAgendaSectionInput', () => {
-    it('perserves agenda bullet rows without HTML', () => {
+    it('persists agenda points with heading and description', () => {
+      const result = normalizeAgendaSectionInput({
+        agendaTitle: "GreenPro's Core Agenda",
+        agendaPoints: [
+          {
+            heading: 'Opening remarks',
+            description: 'Welcome address for the summit attendees',
+          },
+          {
+            heading: 'Panel discussion',
+            description: 'Sustainable building materials in practice',
+          },
+        ],
+      });
+
+      expect(result.title).toBe("GreenPro's Core Agenda");
+      expect(result.points).toHaveLength(2);
+      expect(result.points[0].heading).toBe('Opening remarks');
+      expect(result.points[0].description).toContain('Welcome address');
+      expect(result.points[0].text).toBe(
+        'Opening remarks — Welcome address for the summit attendees',
+      );
+    });
+
+    it('rejects structured points missing heading or description', () => {
+      expect(() =>
+        normalizeAgendaSectionInput({
+          agendaTitle: "GreenPro's Core Agenda",
+          agendaPoints: [
+            { heading: 'Opening remarks', description: '' },
+          ],
+        }),
+      ).toThrow(BadRequestException);
+    });
+
+    it('accepts legacy text-only bullet rows without heading', () => {
       const result = normalizeAgendaSectionInput({
         agendaTitle: "GreenPro's Core Agenda",
         agendaPoints: [
@@ -107,8 +142,9 @@ describe('summit-cms-sections.util', () => {
         ],
       });
 
-      expect(result.title).toBe("GreenPro's Core Agenda");
       expect(result.points).toHaveLength(2);
+      expect(result.points[0].heading).toBe('');
+      expect(result.points[0].description).toContain('Opening remarks');
       expect(result.points[0].text).toContain('Opening remarks');
     });
 
@@ -174,7 +210,35 @@ describe('summit-cms-sections.util', () => {
 
       const agenda = mapAgendaFromDoc(doc);
       expect(agenda.title).toBe('Summit Agenda');
+      expect(agenda.points[0].heading).toBe('');
+      expect(agenda.points[0].description).toContain('Opening remarks');
       expect(agenda.points[0].text).toContain('Opening remarks');
+    });
+
+    it('maps stored agenda card rows with heading and description on read', () => {
+      const doc = {
+        agendaTitle: 'Summit Agenda',
+        agendaPoints: [
+          {
+            id: 'a1',
+            sortOrder: 0,
+            heading: 'Opening remarks',
+            description: 'Welcome address for the summit attendees',
+          },
+          { id: 'a2', sortOrder: 1, text: 'Legacy bullet without heading' },
+        ],
+      } as unknown as SummitDocument;
+
+      const agenda = mapAgendaFromDoc(doc);
+      expect(agenda.points[0].heading).toBe('Opening remarks');
+      expect(agenda.points[0].text).toBe(
+        'Opening remarks — Welcome address for the summit attendees',
+      );
+      expect(agenda.points[1].heading).toBe('');
+      expect(agenda.points[1].description).toBe(
+        'Legacy bullet without heading',
+      );
+      expect(agenda.points[1].text).toBe('Legacy bullet without heading');
     });
   });
 

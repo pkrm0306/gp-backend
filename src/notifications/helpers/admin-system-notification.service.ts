@@ -7,6 +7,10 @@ import {
   NotificationDocument,
 } from '../../common/schemas/notification.schema';
 import { EmailService } from '../../common/services/email.service';
+import {
+  NotificationCcGroup,
+  resolveCcGroups,
+} from '../utils/notification-recipient-groups.util';
 
 @Injectable()
 export class AdminSystemNotificationService {
@@ -49,6 +53,7 @@ export class AdminSystemNotificationService {
     subject: string;
     html: string;
     text?: string;
+    ccGroups?: NotificationCcGroup[];
   }): void {
     const to =
       this.configService.get<string>('SMTP_ADMIN_ALERT_EMAIL')?.trim() ||
@@ -56,8 +61,11 @@ export class AdminSystemNotificationService {
     if (!to) {
       return;
     }
+    const cc = resolveCcGroups(this.configService, input.ccGroups, to);
     this.emailService.sendInBackground(() =>
-      this.emailService.sendEmail(to, input.subject, input.html, input.text),
+      this.emailService.sendEmail(to, input.subject, input.html, input.text, {
+        cc: cc.length ? cc : undefined,
+      }),
     );
   }
 }

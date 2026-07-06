@@ -216,7 +216,6 @@ export class Summit {
   /** @deprecated legacy flat bullets — migrated to focusedAreas on read */
   @Prop({ type: [SummitTextItem], default: [] })
   areaPoints: SummitTextItem[];
-
   @Prop({ default: 'Event Outcomes' })
   eventOutcomesTitle: string;
 
@@ -229,8 +228,9 @@ export class Summit {
   @Prop({ default: "GreenPro's Core Agenda" })
   agendaTitle: string;
 
-  @Prop({ type: [SummitTextItem], default: [] })
-  agendaPoints: SummitTextItem[];
+  /** Agenda point cards: heading + description (legacy rows may carry only `text`). */
+  @Prop({ type: [SummitCardItem], default: [] })
+  agendaPoints: SummitCardItem[];
 
   /** @deprecated legacy rich-text agenda — migrated to agendaPoints on read */
   @Prop({

@@ -125,7 +125,11 @@ export class EmailService {
     subject: string,
     htmlBody: string,
     textBody?: string,
-    options?: { rawHtml?: boolean },
+    options?: {
+      rawHtml?: boolean;
+      cc?: string | string[];
+      bcc?: string | string[];
+    },
   ): Promise<void> {
     try {
       const disabledRaw =
@@ -136,7 +140,7 @@ export class EmailService {
         return;
       }
 
-      const mailOptions = {
+      const mailOptions: nodemailer.SendMailOptions = {
         from:
           this.configService.get<string>('SMTP_SERVER_FROM') ||
           this.configService.get<string>('MAIL_FROM_ADDRESS') ||
@@ -147,11 +151,16 @@ export class EmailService {
           ? htmlBody
           : this.wrapWithGreenProTemplate(subject, htmlBody),
         text: textBody || this.stripHtml(htmlBody),
+        ...(options?.cc ? { cc: options.cc } : {}),
+        ...(options?.bcc ? { bcc: options.bcc } : {}),
       };
 
       const info = await this.transporter.sendMail(mailOptions);
+      const ccLabel = options?.cc
+        ? `, cc: ${Array.isArray(options.cc) ? options.cc.join(', ') : options.cc}`
+        : '';
       this.logger.log(
-        `Email sent successfully to ${to}. Message ID: ${info.messageId}`,
+        `Email sent successfully to ${to}${ccLabel}. Message ID: ${info.messageId}`,
       );
     } catch (error) {
       this.logger.error(`Failed to send email to ${to}:`, error);

@@ -42,6 +42,18 @@ export class Manufacturer {
   vendor_website?: string;
 
   @Prop()
+  vendor_facebook?: string;
+
+  @Prop()
+  vendor_youtube?: string;
+
+  @Prop()
+  vendor_twitter?: string;
+
+  @Prop()
+  vendor_linkedin?: string;
+
+  @Prop()
   vendor_designation?: string;
 
   @Prop()

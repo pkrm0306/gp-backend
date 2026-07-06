@@ -1,6 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsEmail, IsOptional, IsString, Length } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsArray,
+  IsEmail,
+  IsOptional,
+  IsString,
+  Length,
+  ValidateNested,
+} from 'class-validator';
+import { EventBrochureItemDto } from './event-brochure-item.dto';
 
 function emptyToUndefined(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -107,10 +115,22 @@ export class UpdateEventDto {
   @ApiPropertyOptional({
     example:
       'https://www.linkedin.com/posts/cii-greenpro-ecolabelling_greenpro-summit-2025-brochure-03062025-activity-7335663123154014208-2ScV',
-    description: 'Brochure link for the event',
+    description: 'Legacy single brochure link (prefer brochures[]).',
   })
   @IsOptional()
   @IsString()
   @Transform(({ value }) => emptyToUndefined(value))
   brochureLink?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Replace all brochure cards. Each item requires heading and link. ' +
+      'Send [] to clear. Multipart forms may send JSON string.',
+    type: [EventBrochureItemDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EventBrochureItemDto)
+  brochures?: EventBrochureItemDto[];
 }

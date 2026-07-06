@@ -95,4 +95,76 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   mobile?: string;
+
+  @ApiPropertyOptional({
+    description: 'Facebook page URL. Send an empty string to clear.',
+    example: 'https://www.facebook.com/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  facebook?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of `facebook` (vendor panel).',
+    example: 'https://www.facebook.com/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  facebookUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'YouTube channel URL. Send an empty string to clear.',
+    example: 'https://www.youtube.com/@yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  youtube?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of `youtube` (vendor panel).',
+    example: 'https://www.youtube.com/@yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  youtubeUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Twitter / X profile URL. Send an empty string to clear.',
+    example: 'https://x.com/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  twitter?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of `twitter` (vendor panel).',
+    example: 'https://x.com/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  twitterUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'LinkedIn company page URL. Send an empty string to clear.',
+    example: 'https://www.linkedin.com/company/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  linkedin?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of `linkedin` (vendor panel).',
+    example: 'https://www.linkedin.com/company/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  linkedinUrl?: string;
 }

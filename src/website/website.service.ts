@@ -435,7 +435,7 @@ export class WebsiteService {
       'website',
       'public',
       'events',
-      'v2',
+      'v4',
       String(page),
       String(limit),
       this.shortHash(origin),
@@ -723,7 +723,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'flat',
-      'v8',
+      'v10',
       this.shortHash(this.stableJsonStringify({ ...(dto as object), origin })),
     );
     try {
@@ -984,7 +984,7 @@ export class WebsiteService {
       'website',
       'public',
       'manufacturers-by-category',
-      'v3',
+      'v5',
       id,
     );
     try {
