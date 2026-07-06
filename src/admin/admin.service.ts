@@ -131,6 +131,10 @@ import {
 } from '../common/services/global-phone-uniqueness.service';
 import { throwTeamMemberMobileDuplicateIssue } from './admin-field-validation.util';
 import {
+  buildBannerVendorScopeFilter,
+  resolveBannerPersistVendorObjectId,
+} from './utils/banner-vendor-scope.util';
+import {
   getTeamMemberSectorNameById,
   isTeamMemberSectorId,
   TEAM_MEMBER_SECTOR_OPTIONS,
@@ -2428,22 +2432,18 @@ export class AdminService {
   }
 
   async createBanner(
-    vendorId: string,
+    vendorScope: string | null,
     dto: CreateBannerDto & { imageUrl: string; videoUrl?: string },
     resolvedImageSource: 'binary_upload' | 'manual_url',
     resolvedVideoSource?: 'binary_upload',
   ) {
-    let vendorObjectId: Types.ObjectId;
-    try {
-      vendorObjectId = new Types.ObjectId(vendorId);
-    } catch {
-      throw new BadRequestException('Invalid vendor ID format');
-    }
+    const vendorObjectId = resolveBannerPersistVendorObjectId(vendorScope);
+    const scopeFilter = buildBannerVendorScopeFilter(vendorScope);
 
     let sequenceNumber = dto.sequenceNumber;
     if (sequenceNumber === undefined) {
       const latestBanner = await this.bannerModel
-        .findOne({ $or: [{ vendorId: vendorObjectId }, { vendorId }] })
+        .findOne(scopeFilter)
         .sort({ sequenceNumber: -1, createdAt: -1 })
         .select('sequenceNumber')
         .lean()
@@ -2454,7 +2454,7 @@ export class AdminService {
       const duplicateSequence = await this.bannerModel
         .exists({
           sequenceNumber,
-          $or: [{ vendorId: vendorObjectId }, { vendorId }],
+          ...scopeFilter,
         })
         .lean()
         .exec();
@@ -2509,18 +2509,11 @@ export class AdminService {
   /**
    * Banners for the vendor admin grid: image, heading, full description (UI clamps ~3 lines), toggle state.
    */
-  async listBanners(vendorId: string) {
-    let vendorObjectId: Types.ObjectId;
-    try {
-      vendorObjectId = new Types.ObjectId(vendorId);
-    } catch {
-      throw new BadRequestException('Invalid vendor ID format');
-    }
+  async listBanners(vendorScope: string | null) {
+    const scopeFilter = buildBannerVendorScopeFilter(vendorScope);
 
     const rows = await this.bannerModel
-      .find({
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
-      })
+      .find(scopeFilter)
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
       .select(
         'banner_image imageUrl imageSource banner_video videoUrl videoSource heading sequenceNumber description status',
@@ -2552,11 +2545,9 @@ export class AdminService {
   }
 
   /** Single banner for the View modal (image URL, heading, description). */
-  async getBannerById(vendorId: string, bannerId: string) {
-    let vendorObjectId: Types.ObjectId;
+  async getBannerById(vendorScope: string | null, bannerId: string) {
     let bannerObjectId: Types.ObjectId;
     try {
-      vendorObjectId = new Types.ObjectId(vendorId);
       bannerObjectId = new Types.ObjectId(bannerId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -2565,7 +2556,7 @@ export class AdminService {
     const b = await this.bannerModel
       .findOne({
         _id: bannerObjectId,
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        ...buildBannerVendorScopeFilter(vendorScope),
       })
       .select(
         'banner_image imageUrl imageSource banner_video videoUrl videoSource heading sequenceNumber description status',
@@ -2584,7 +2575,7 @@ export class AdminService {
 
   /** Updates a banner that belongs to the vendor. */
   async updateBanner(
-    vendorId: string,
+    vendorScope: string | null,
     bannerId: string,
     payload: {
       imageUrl?: string;
@@ -2598,19 +2589,19 @@ export class AdminService {
       status?: string;
     },
   ) {
-    let vendorObjectId: Types.ObjectId;
     let bannerObjectId: Types.ObjectId;
     try {
-      vendorObjectId = new Types.ObjectId(vendorId);
       bannerObjectId = new Types.ObjectId(bannerId);
     } catch {
       throw new BadRequestException('Invalid ID format');
     }
 
+    const scopeFilter = buildBannerVendorScopeFilter(vendorScope);
+
     const existing = await this.bannerModel
       .findOne({
         _id: bannerObjectId,
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        ...scopeFilter,
       })
       .select('_id')
       .lean()
@@ -2625,7 +2616,7 @@ export class AdminService {
         .exists({
           _id: { $ne: bannerObjectId },
           sequenceNumber: payload.sequenceNumber,
-          $or: [{ vendorId: vendorObjectId }, { vendorId }],
+          ...scopeFilter,
         })
         .lean()
         .exec();
@@ -2711,11 +2702,9 @@ export class AdminService {
   }
 
   /** Permanently removes a banner that belongs to the vendor. */
-  async deleteBanner(vendorId: string, bannerId: string) {
-    let vendorObjectId: Types.ObjectId;
+  async deleteBanner(vendorScope: string | null, bannerId: string) {
     let bannerObjectId: Types.ObjectId;
     try {
-      vendorObjectId = new Types.ObjectId(vendorId);
       bannerObjectId = new Types.ObjectId(bannerId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -2724,7 +2713,7 @@ export class AdminService {
     const res = await this.bannerModel
       .deleteOne({
         _id: bannerObjectId,
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        ...buildBannerVendorScopeFilter(vendorScope),
       })
       .exec();
 
@@ -2742,14 +2731,12 @@ export class AdminService {
    * - When `status` is omitted: toggles (1 ↔ 0)
    */
   async setOrToggleBannerStatus(
-    vendorId: string,
+    vendorScope: string | null,
     bannerId: string,
     status?: string,
   ) {
-    let vendorObjectId: Types.ObjectId;
     let bannerObjectId: Types.ObjectId;
     try {
-      vendorObjectId = new Types.ObjectId(vendorId);
       bannerObjectId = new Types.ObjectId(bannerId);
     } catch {
       throw new BadRequestException('Invalid ID format');
@@ -2758,7 +2745,7 @@ export class AdminService {
     const existing = await this.bannerModel
       .findOne({
         _id: bannerObjectId,
-        $or: [{ vendorId: vendorObjectId }, { vendorId }],
+        ...buildBannerVendorScopeFilter(vendorScope),
       })
       .select('status')
       .lean()
@@ -2935,6 +2922,9 @@ export class AdminService {
     if (data.designation !== undefined && data.designation === '') {
       $unset.designation = '';
     }
+    // Platform CMS team members must not carry manufacturer scope (legacy rows).
+    $unset.manufacturerId = '';
+    $unset.vendorId = '';
     if (Object.keys($unset).length > 0) {
       updatePayload.$unset = $unset;
     }

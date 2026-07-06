@@ -130,14 +130,21 @@ export class RbacService {
 
   private async findStaffUserById(
     vendorUserId: Types.ObjectId,
+    manufacturerId?: string | null,
   ): Promise<VendorUserDocument | null> {
-    return this.vendorUserModel
-      .findOne({
-        _id: vendorUserId,
-        type: 'staff',
-        ...platformPortalUserManufacturerFilter(),
-      })
-      .exec();
+    const filter: Record<string, unknown> = {
+      _id: vendorUserId,
+      type: 'staff',
+      status: { $ne: 2 },
+    };
+
+    const scope = String(manufacturerId ?? '').trim();
+    if (scope) {
+      const mfgObjectId = this.toObjectId(scope, 'manufacturerId');
+      filter.$or = [{ manufacturerId: mfgObjectId }, { vendorId: mfgObjectId }];
+    }
+
+    return this.vendorUserModel.findOne(filter).exec();
   }
 
   private async sendFirstRoleAssignmentCredentialsIfNeeded(input: {
@@ -544,7 +551,7 @@ export class RbacService {
     const scopeDoc = this.scopeDocument(manufacturerId);
 
     const [user, role, hadAnyRoleBefore] = await Promise.all([
-      this.findStaffUserById(vendorUserId),
+      this.findStaffUserById(vendorUserId, manufacturerId),
       this.roleModel
         .findOne({ _id: roleId, ...this.rbacScope(manufacturerId), status: 1 })
         .exec(),
@@ -594,7 +601,7 @@ export class RbacService {
       this.roleModel
         .findOne({ _id: roleId, ...this.rbacScope(manufacturerId), status: 1 })
         .exec(),
-      this.findStaffUserById(vendorUserId),
+      this.findStaffUserById(vendorUserId, manufacturerId),
       this.mappingModel
         .countDocuments({
           ...this.rbacScope(manufacturerId),
@@ -639,7 +646,7 @@ export class RbacService {
     const scopeDoc = this.scopeDocument(manufacturerId);
 
     const [user, hadAnyRoleBefore] = await Promise.all([
-      this.findStaffUserById(vendorUserId),
+      this.findStaffUserById(vendorUserId, manufacturerId),
       this.mappingModel
         .countDocuments({
           ...this.rbacScope(manufacturerId),

@@ -43,6 +43,10 @@ import {
   mergeTeamMemberSectorIdsFromFormObject,
   hasExplicitTeamMemberSectorFields,
 } from './utils/merge-team-member-sectors-from-form.util';
+import {
+  type BannerAuthUser,
+  resolveBannerVendorScope,
+} from './utils/banner-vendor-scope.util';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -956,14 +960,9 @@ export class AdminController {
       },
     },
   })
-  async listBanners(
-    @CurrentUser() user: { vendorId?: string; manufacturerId?: string },
-  ) {
-    const scopedVendorId = user?.vendorId || user?.manufacturerId;
-    if (!scopedVendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
-    const data = await this.adminService.listBanners(scopedVendorId);
+  async listBanners(@CurrentUser() user: BannerAuthUser) {
+    const vendorScope = resolveBannerVendorScope(user);
+    const data = await this.adminService.listBanners(vendorScope);
     return { message: 'Banners retrieved successfully', data };
   }
 
@@ -1007,14 +1006,12 @@ export class AdminController {
     description: 'Validation error or invalid vendor',
   })
   async createBanner(
-    @CurrentUser() user: { vendorId: string },
+    @CurrentUser() user: BannerAuthUser,
     @Body() body: any,
     @Req() req: Request,
     @UploadedFiles() files?: Record<string, Express.Multer.File[]>,
   ) {
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
+    const vendorScope = resolveBannerVendorScope(user);
     const uploadedFile = pickBannerImageFile(files);
     const uploadedVideo = pickBannerVideoFile(files);
     if (String(body.imageUrl ?? '').trim() && !uploadedFile) {
@@ -1062,7 +1059,7 @@ export class AdminController {
     );
     const resolvedImageSource = uploadedFile ? 'binary_upload' : 'manual_url';
     const data = await this.adminService.createBanner(
-      user.vendorId,
+      vendorScope,
       { ...dto, imageUrl, ...(videoUrl ? { videoUrl } : {}) },
       resolvedImageSource,
       videoUrl ? 'binary_upload' : undefined,
@@ -1110,15 +1107,13 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Validation error / invalid id' })
   @ApiResponse({ status: 404, description: 'Banner not found' })
   async editBanner(
-    @CurrentUser() user: { vendorId: string },
+    @CurrentUser() user: BannerAuthUser,
     @Param('id') id: string,
     @Body() body: any,
     @Req() req: Request,
     @UploadedFiles() files?: Record<string, Express.Multer.File[]>,
   ) {
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
+    const vendorScope = resolveBannerVendorScope(user);
 
     const uploadedFile = pickBannerImageFile(files);
     const uploadedVideo = pickBannerVideoFile(files);
@@ -1182,7 +1177,7 @@ export class AdminController {
     ) {
       imageSource = 'manual_url';
     }
-    const data = await this.adminService.updateBanner(user.vendorId, id, {
+    const data = await this.adminService.updateBanner(vendorScope, id, {
       ...(imageUrl ? { imageUrl } : {}),
       ...(imageSource !== undefined ? { imageSource } : {}),
       ...(clearVideo ? { clearVideo: true } : {}),
@@ -2623,13 +2618,11 @@ export class AdminController {
   }
 
   private async executeBannerDelete(
-    user: { vendorId: string },
+    user: BannerAuthUser,
     body: DeleteBannerDto,
   ) {
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
-    const data = await this.adminService.deleteBanner(user.vendorId, body.id);
+    const vendorScope = resolveBannerVendorScope(user);
+    const data = await this.adminService.deleteBanner(vendorScope, body.id);
     return { message: 'Banner deleted successfully', data };
   }
 
@@ -2645,13 +2638,11 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Banner not found' })
   @ApiResponse({ status: 400, description: 'Invalid id' })
   async getBannerById(
-    @CurrentUser() user: { vendorId: string },
+    @CurrentUser() user: BannerAuthUser,
     @Param('id') id: string,
   ) {
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
-    const data = await this.adminService.getBannerById(user.vendorId, id);
+    const vendorScope = resolveBannerVendorScope(user);
+    const data = await this.adminService.getBannerById(vendorScope, id);
     return { message: 'Banner retrieved successfully', data };
   }
 
@@ -2671,15 +2662,13 @@ export class AdminController {
   @ApiResponse({ status: 404, description: 'Banner not found' })
   @ApiResponse({ status: 400, description: 'Invalid id/status' })
   async updateBannerStatus(
-    @CurrentUser() user: { vendorId: string },
+    @CurrentUser() user: BannerAuthUser,
     @Param('id') id: string,
     @Body() body: UpdateBannerStatusDto,
   ) {
-    if (!user?.vendorId) {
-      throw new BadRequestException('Vendor ID not found in token');
-    }
+    const vendorScope = resolveBannerVendorScope(user);
     const data = await this.adminService.setOrToggleBannerStatus(
-      user.vendorId,
+      vendorScope,
       id,
       body?.status,
     );

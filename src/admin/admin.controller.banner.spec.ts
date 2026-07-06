@@ -33,6 +33,14 @@ describe('AdminController Banner Endpoints', () => {
     expect(res.data).toHaveLength(1);
   });
 
+  it('lists banners for platform admin without vendor id', async () => {
+    adminServiceMock.listBanners.mockResolvedValue([] as any);
+
+    await controller.listBanners({ role: 'admin' });
+
+    expect(adminServiceMock.listBanners).toHaveBeenCalledWith(null);
+  });
+
   it('creates banner with body + image URL', async () => {
     adminServiceMock.createBanner.mockResolvedValue({ id: 'b1', title: 'Banner 1' } as any);
 
@@ -56,14 +64,36 @@ describe('AdminController Banner Endpoints', () => {
     expect(res.message).toBe('Banner created successfully');
   });
 
-  it('throws for create when vendor id missing', async () => {
+  it('throws for create when vendor id missing for vendor accounts', async () => {
     await expect(
       controller.createBanner(
-        {} as any,
+        { role: 'vendor' } as any,
         { title: 'Banner 1', description: 'Desc', sequenceNumber: 1 },
         undefined,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('creates banner for platform admin without vendor id', async () => {
+    adminServiceMock.createBanner.mockResolvedValue({ id: 'b1', title: 'Banner 1' } as any);
+
+    await controller.createBanner(
+      { role: 'staff' },
+      {
+        title: 'Banner 1',
+        description: 'Desc',
+        sequenceNumber: 1,
+        status: 'active',
+        imageUrl: 'https://example.com/banner.jpg',
+      },
+      undefined,
+    );
+
+    expect(adminServiceMock.createBanner).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({ imageUrl: 'https://example.com/banner.jpg' }),
+      'manual_url',
+    );
   });
 
   it('edits banner and forwards payload', async () => {
