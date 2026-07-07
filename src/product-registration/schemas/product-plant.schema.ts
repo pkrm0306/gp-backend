@@ -56,6 +56,13 @@ export class ProductPlant {
 
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   deleted_by?: Types.ObjectId | null;
+
+  /** Set when this plant was absorbed into another via admin plant merge. */
+  @Prop({ type: Types.ObjectId, ref: 'ProductPlant', default: null })
+  mergedIntoPlantId?: Types.ObjectId | null;
+
+  @Prop({ type: Date, default: null })
+  mergedAt?: Date | null;
 }
 
 export const ProductPlantSchema = SchemaFactory.createForClass(ProductPlant);

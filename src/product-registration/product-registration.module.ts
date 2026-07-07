@@ -74,6 +74,10 @@ import {
   ProcessComments,
   ProcessCommentsSchema,
 } from '../process-comments/schemas/process-comments.schema';
+import {
+  PlantMergeAudit,
+  PlantMergeAuditSchema,
+} from './plant-merge/schemas/plant-merge-audit.schema';
 
 @Module({
   imports: [
@@ -91,6 +95,7 @@ import {
       { name: ProductStatusAudit.name, schema: ProductStatusAuditSchema },
       { name: ProcessFinalReview.name, schema: ProcessFinalReviewSchema },
       { name: ProcessComments.name, schema: ProcessCommentsSchema },
+      { name: PlantMergeAudit.name, schema: PlantMergeAuditSchema },
     ]),
     PassportModule,
     AuthModule,

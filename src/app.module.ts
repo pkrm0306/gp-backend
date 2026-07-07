@@ -11,6 +11,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { CountriesModule } from './countries/countries.module';
 import { ProductRegistrationModule } from './product-registration/product-registration.module';
 import { UrnMergeModule } from './product-registration/urn-merge/urn-merge.module';
+import { PlantMergeModule } from './product-registration/plant-merge/plant-merge.module';
 import { PaymentsModule } from './payments/payments.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
 import { ProductDesignModule } from './product-design/product-design.module';
@@ -87,6 +88,7 @@ import { CronModule } from './cron/cron.module';
     CountriesModule,
     ProductRegistrationModule,
     UrnMergeModule,
+    PlantMergeModule,
     PaymentsModule,
     ActivityLogModule,
     ProductDesignModule,

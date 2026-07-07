@@ -175,6 +175,11 @@ async function bootstrap() {
         return callback(null, origin);
       }
 
+      // Vercel production + preview deployments (hostname varies per branch).
+      if (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin)) {
+        return callback(null, origin);
+      }
+
       return callback(new Error(`CORS blocked for origin: ${origin}`), false);
     },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],

@@ -34,7 +34,11 @@ import {
   resolveManufacturerScopeFilter,
   resolveVendorStatusFilter,
 } from './utils/list-manufacturers-query.util';
-import { resolvePublicUploadUrl, uploadFile } from '../utils/upload-file.util';
+import { uploadFile } from '../utils/upload-file.util';
+import {
+  isAllowedVendorProfileDocumentFile,
+  VENDOR_PROFILE_DOCUMENT_VALIDATION_MESSAGE,
+} from '../common/upload/vendor-profile-document.validation';
 import { ManufacturerIdGenerationService } from './manufacturer-id-generation.service';
 import { EmailService } from '../common/services/email.service';
 import {
@@ -1224,6 +1228,9 @@ export class ManufacturersService {
       this.vendorProfileBrandingMulterFiles(files);
     const out: Partial<Pick<UpdateProfileDto, 'gst' | 'companyLogo' | 'pan'>> = {};
     if (gstFile) {
+      if (!isAllowedVendorProfileDocumentFile(gstFile)) {
+        throw new BadRequestException(VENDOR_PROFILE_DOCUMENT_VALIDATION_MESSAGE);
+      }
       out.gst = await this.uploadVendorBrandingMulterFile(
         gstFile,
         'GST certificate',
@@ -1236,6 +1243,9 @@ export class ManufacturersService {
       );
     }
     if (panFile) {
+      if (!isAllowedVendorProfileDocumentFile(panFile)) {
+        throw new BadRequestException(VENDOR_PROFILE_DOCUMENT_VALIDATION_MESSAGE);
+      }
       out.pan = await this.uploadVendorBrandingMulterFile(panFile, 'PAN document');
     }
     return out;
@@ -1248,7 +1258,7 @@ export class ManufacturersService {
     const dto = await this.vendorBrandingFileUrlsFromUploadFile(files);
     if (!dto.gst && !dto.companyLogo && !dto.pan) {
       throw new BadRequestException(
-        'Send at least one file: **gst** / **gstDocument** (PDF or JPEG only), **companyLogo** (image), and/or **pan** / **panDocument** (PDF or JPEG only).',
+        'Send at least one file: **gst** / **gstDocument** (PDF, JPG, or PNG only), **companyLogo** (image), and/or **pan** / **panDocument** (PDF, JPG, or PNG only).',
       );
     }
     return this.editProfile(authUser, dto as UpdateProfileDto);

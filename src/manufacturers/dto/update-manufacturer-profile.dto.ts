@@ -22,7 +22,7 @@ export class UpdateProfileDto {
     description:
       '**GST certificate** as a public URL path (e.g. `/uploads/manufacturers/vendor-gst-….pdf`) or absolute `https://…` URL. ' +
       'If you send a plain GST number (no leading `/` or `http`), it is treated as **gstNumber** for backward compatibility. ' +
-      'Prefer **gstNumber** for the GST id text and **gst** for the document URL. Multipart uploads for this field must be **PDF or JPEG** only.',
+      'Prefer **gstNumber** for the GST id text and **gst** for the document URL. Multipart uploads for this field must be **PDF, JPG, or PNG** only (.pdf, .jpg, .jpeg, .png).',
     example: '/uploads/manufacturers/vendor-gst-123.pdf',
   })
   @IsOptional()
@@ -52,7 +52,7 @@ export class UpdateProfileDto {
 
   @ApiPropertyOptional({
     description:
-      'PAN **document** URL path (e.g. `/uploads/manufacturers/...` or `https://…`) after upload, **or** a plain PAN id string for backward compatibility. Multipart uploads for the PAN file must be **PDF or JPEG** only.',
+      'PAN **document** URL path (e.g. `/uploads/manufacturers/...` or `https://…`) after upload, **or** a plain PAN id string for backward compatibility. Multipart uploads for the PAN file must be **PDF, JPG, or PNG** only (.pdf, .jpg, .jpeg, .png).',
     example: '/uploads/manufacturers/1730000000000_pan.jpg',
   })
   @IsOptional()

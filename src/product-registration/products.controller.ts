@@ -635,8 +635,7 @@ export class ProductsController {
   @ApiOperation({
     summary: 'List plant certificates for a certified EOI',
     description:
-      'Vendor-only. Returns each manufacturing plant (unit) under the EOI with individual download paths. ' +
-      'Use when Units > 1 to show per-plant certificate actions.',
+      'Vendor-only. Returns each manufacturing plant under the EOI with individual download paths.',
   })
   @ApiParam({
     name: 'productId',
@@ -691,7 +690,7 @@ export class ProductsController {
     summary: 'Download certified product certificate(s) for one EOI',
     description:
       'Vendor-only. Downloads GreenPro certificate PDF(s) for one certified product (`productStatus = 2`). ' +
-      '**Default (`format=merged`)**: one PDF with one page per plant (5 units → 5 pages). ' +
+      '**Default (`format=merged`)**: one PDF with one page per manufacturing plant. ' +
       '**`format=zip`**: separate PDF file per plant inside a ZIP archive.',
   })
   @ApiParam({

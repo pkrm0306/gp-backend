@@ -1,7 +1,12 @@
 import { Types } from 'mongoose';
-import { PRODUCT_RENEW_STATUS } from '../../../renew/constants/renewal-urn-status.constants';
 import { PRODUCT_STATUS_CERTIFIED } from '../../../renew/constants/product-status.constants';
 import { UrnMergeBlockerCode } from '../urn-merge.constants';
+import {
+  buildRenewalWorkflowBlockers,
+  categoryIdKey,
+  normalizeTrimmedValue,
+  objectIdKey,
+} from '../../helpers/merge-eligibility.shared';
 
 export type UrnMergeBlocker = {
   code: UrnMergeBlockerCode;
@@ -27,17 +32,10 @@ export type UrnMergeProductRow = {
 };
 
 export function normalizeUrnMergeNo(value: string): string {
-  return String(value ?? '').trim();
+  return normalizeTrimmedValue(value);
 }
 
-export function categoryIdKey(id: Types.ObjectId | string | undefined): string {
-  if (!id) return '';
-  return id instanceof Types.ObjectId ? id.toHexString() : String(id);
-}
-
-export function objectIdKey(id: Types.ObjectId | string | undefined): string {
-  return categoryIdKey(id);
-}
+export { categoryIdKey, objectIdKey };
 
 export const URN_MERGE_OWNERSHIP_MISMATCH_MESSAGE =
   'Source and Target URNs must belong to the same Manufacturer and Vendor.';
@@ -67,25 +65,10 @@ export function buildRenewalBlockers(
   urnLabel: string,
   rows: Array<{ urnStatus?: number; productRenewStatus?: number }>,
 ): UrnMergeBlocker[] {
-  const blockers: UrnMergeBlocker[] = [];
-  for (const row of rows) {
-    const urnStatus = Number(row.urnStatus ?? 0);
-    if (urnStatus >= 12 && urnStatus <= 17) {
-      blockers.push({
-        code: 'RENEWAL_URN_STATUS_ACTIVE',
-        message: `${urnLabel} has an active renewal process`,
-      });
-      break;
-    }
-    if (Number(row.productRenewStatus) === PRODUCT_RENEW_STATUS.IN_PROGRESS) {
-      blockers.push({
-        code: 'PRODUCT_RENEW_IN_PROGRESS',
-        message: `${urnLabel} has product renew in progress`,
-      });
-      break;
-    }
-  }
-  return blockers;
+  return buildRenewalWorkflowBlockers(urnLabel, rows, {
+    renewalUrnStatusActive: 'RENEWAL_URN_STATUS_ACTIVE',
+    productRenewInProgress: 'PRODUCT_RENEW_IN_PROGRESS',
+  });
 }
 
 export function findEoiCollisions(

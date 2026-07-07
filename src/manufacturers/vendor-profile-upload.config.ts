@@ -2,9 +2,9 @@ import { BadRequestException } from '@nestjs/common';
 import { memoryStorage } from 'multer';
 import { Options } from 'multer';
 import {
-  isAllowedStandardDocumentFile,
-  STANDARD_DOCUMENT_VALIDATION_MESSAGE,
-} from '../common/upload/document-upload.validation';
+  isAllowedVendorProfileDocumentFile,
+  VENDOR_PROFILE_DOCUMENT_VALIDATION_MESSAGE,
+} from '../common/upload/vendor-profile-document.validation';
 
 const MAX_BYTES = 15 * 1024 * 1024;
 
@@ -18,7 +18,7 @@ const LOGO_MIMES = new Set([
 
 /**
  * Memory storage so buffers are passed to shared **uploadFile()** in `upload-file.util.ts` (S3 or local).
- * Fields: **gst** / **gstDocument** (standard documents), **companyLogo** (images), **pan** / **panDocument** (standard documents).
+ * Fields: **gst** / **gstDocument** (PDF or image), **companyLogo** (images), **pan** / **panDocument** (PDF or image).
  */
 export function vendorProfileBrandingMemoryMulterOptions(): Options {
   return {
@@ -26,10 +26,10 @@ export function vendorProfileBrandingMemoryMulterOptions(): Options {
     limits: { fileSize: MAX_BYTES },
     fileFilter: (_req, file, cb) => {
       if (file.fieldname === 'gst' || file.fieldname === 'gstDocument') {
-        if (isAllowedStandardDocumentFile(file)) {
+        if (isAllowedVendorProfileDocumentFile(file)) {
           cb(null, true);
         } else {
-          cb(new BadRequestException(STANDARD_DOCUMENT_VALIDATION_MESSAGE));
+          cb(new BadRequestException(VENDOR_PROFILE_DOCUMENT_VALIDATION_MESSAGE));
         }
         return;
       }
@@ -46,10 +46,10 @@ export function vendorProfileBrandingMemoryMulterOptions(): Options {
         return;
       }
       if (file.fieldname === 'pan' || file.fieldname === 'panDocument') {
-        if (isAllowedStandardDocumentFile(file)) {
+        if (isAllowedVendorProfileDocumentFile(file)) {
           cb(null, true);
         } else {
-          cb(new BadRequestException(STANDARD_DOCUMENT_VALIDATION_MESSAGE));
+          cb(new BadRequestException(VENDOR_PROFILE_DOCUMENT_VALIDATION_MESSAGE));
         }
         return;
       }

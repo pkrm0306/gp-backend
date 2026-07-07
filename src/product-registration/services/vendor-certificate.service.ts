@@ -131,20 +131,6 @@ export class VendorCertificateService {
       return this.downloadEoiCertificateZip(product, plants);
     }
 
-    if (plants.length <= 1) {
-      const locationOverride =
-        plants.length === 1 ? this.derivePlantLocation(plants[0]) : undefined;
-      const buffer = await this.resolveCertificateBuffer(
-        product,
-        locationOverride,
-      );
-      return {
-        buffer,
-        fileName: this.buildCertificateFileName(product.eoiNo),
-        contentType: 'application/pdf',
-      };
-    }
-
     const buffer = await this.mergePlantCertificateBuffers(
       product,
       plants,
@@ -152,7 +138,7 @@ export class VendorCertificateService {
     );
     return {
       buffer,
-      fileName: this.buildCertificateFileName(product.eoiNo),
+      fileName: this.buildCertificateFileName(product.eoiNo, plants.length),
       contentType: 'application/pdf',
     };
   }
@@ -192,10 +178,7 @@ export class VendorCertificateService {
   ): Promise<CertificateDownloadFile> {
     const product = await this.loadCertifiedProductForVendor(vendorId, productId);
     const plant = await this.loadPlantForProduct(product, plantId);
-    const buffer = await this.generateCertificatePdf(
-      product,
-      this.derivePlantLocation(plant),
-    );
+    const buffer = await this.resolvePlantCertificateBuffer(product, plant);
 
     return {
       buffer,
@@ -243,27 +226,12 @@ export class VendorCertificateService {
     for (const product of hydrated) {
       try {
         const plants = await this.loadPlantsForProduct(product);
-        if (plants.length > 1) {
-          const plantBuffer = await this.mergePlantCertificateBuffers(
-            product,
-            plants,
-          );
-          const src = await PDFLibDocument.load(plantBuffer);
-          const pages = await mergedPdf.copyPages(src, src.getPageIndices());
-          for (const p of pages) {
-            mergedPdf.addPage(p);
-          }
-          addedPages += pages.length;
+        if (!plants.length) {
           continue;
         }
 
-        const locationOverride =
-          plants.length === 1 ? this.derivePlantLocation(plants[0]) : undefined;
-        const buffer = await this.resolveCertificateBuffer(
-          product,
-          locationOverride,
-        );
-        const src = await PDFLibDocument.load(buffer);
+        const plantBuffer = await this.mergePlantCertificateBuffers(product, plants);
+        const src = await PDFLibDocument.load(plantBuffer);
         const pages = await mergedPdf.copyPages(src, src.getPageIndices());
         for (const p of pages) {
           mergedPdf.addPage(p);
@@ -621,10 +589,7 @@ export class VendorCertificateService {
 
     for (const [index, plant] of plants.entries()) {
       try {
-        const buffer = await this.generateCertificatePdf(
-          product,
-          this.derivePlantLocation(plant),
-        );
+        const buffer = await this.resolvePlantCertificateBuffer(product, plant);
         files.push({
           name: this.buildPlantCertificateFileName(
             product.eoiNo,
@@ -684,8 +649,7 @@ export class VendorCertificateService {
 
     for (const plant of plants) {
       try {
-        const location = this.derivePlantLocation(plant);
-        const buffer = await this.generateCertificatePdf(product, location);
+        const buffer = await this.resolvePlantCertificateBuffer(product, plant);
         const src = await PDFLibDocument.load(buffer);
         const pages = await mergedPdf.copyPages(src, src.getPageIndices());
         for (const p of pages) {
@@ -704,6 +668,14 @@ export class VendorCertificateService {
     }
 
     return Buffer.from(await mergedPdf.save());
+  }
+
+  private async resolvePlantCertificateBuffer(
+    product: ProductWithRelations,
+    plant: PlantWithGeo,
+  ): Promise<Buffer> {
+    const location = this.derivePlantLocation(plant);
+    return this.generateCertificatePdf(product, location);
   }
 
   private async resolveCertificateBuffer(
@@ -1053,10 +1025,16 @@ export class VendorCertificateService {
     });
   }
 
-  private buildCertificateFileName(eoiNo?: string | null): string {
+  private buildCertificateFileName(
+    eoiNo?: string | null,
+    plantCount = 1,
+  ): string {
     const safe = String(eoiNo ?? 'certificate')
       .trim()
       .replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (plantCount > 1) {
+      return `GreenPro_Certificates_${safe || 'certificate'}.pdf`;
+    }
     return `GreenPro_Certificate_${safe || 'certificate'}.pdf`;
   }
 

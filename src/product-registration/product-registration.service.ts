@@ -154,6 +154,15 @@ import {
 } from './helpers/category-change.util';
 import { CategoryChangeCleanupService } from './services/category-change-cleanup.service';
 import { buildVendorProductListPagination } from './helpers/vendor-product-list-pagination.util';
+import {
+  PlantMergeAudit,
+  PlantMergeAuditDocument,
+} from './plant-merge/schemas/plant-merge-audit.schema';
+import {
+  loadVendorPlantMergeSourceIndex,
+  plantMergeSourceLookupKey,
+  VendorPlantMergeSourceInfo,
+} from './plant-merge/helpers/vendor-plant-merge-status.util';
 
 export type GetProductDetailsByUrnOptions = {
   /** Only certified EOIs (renewal flows). Excludes rejected and other statuses. */
@@ -201,6 +210,8 @@ export class ProductRegistrationService {
     private manufacturerModel: Model<ManufacturerDocument>,
     @InjectModel(VendorProductChangeRequest.name)
     private vendorProductChangeRequestModel: Model<VendorProductChangeRequestDocument>,
+    @InjectModel(PlantMergeAudit.name)
+    private plantMergeAuditModel: Model<PlantMergeAuditDocument>,
     @InjectConnection() private connection: Connection,
     private sequenceHelper: SequenceHelper,
     private eoiNumberService: EoiNumberService,
@@ -1651,7 +1662,10 @@ export class ProductRegistrationService {
     return 0;
   }
 
-  private formatVendorListEoiEntry(e: Record<string, unknown>) {
+  private formatVendorListEoiEntry(
+    e: Record<string, unknown>,
+    plantMergeSource?: VendorPlantMergeSourceInfo | null,
+  ) {
     const productStatus = Number(e?.productStatus ?? 0);
     const sectorRaw = e?.sector;
     const sectorNum =
@@ -1694,8 +1708,18 @@ export class ProductRegistrationService {
       return base;
     }
 
+    if (plantMergeSource) {
+      return {
+        ...base,
+        plantMergeSource: true,
+        plantMergeTargetEoiNo: plantMergeSource.targetEoiNo,
+        plantMergeTargetUrnNo: plantMergeSource.targetUrnNo,
+      };
+    }
+
     return {
       ...base,
+      plantMergeSource: false,
       certificateDownloadUrl: `/products/certificates/eoi/${productId}`,
       certificateZipDownloadUrl: `/products/certificates/eoi/${productId}?format=zip`,
       plantCertificatesListUrl: `/products/certificates/eoi/${productId}/plants`,
@@ -5756,11 +5780,32 @@ export class ProductRegistrationService {
 
       const payload = dataFacetResult[0] ?? { data: [] };
 
+      const certifiedPairs: Array<{ urnNo: string; eoiNo: string }> = [];
+      for (const urnRow of payload.data ?? []) {
+        const urnNo = String((urnRow as Record<string, unknown>).urnNo ?? '').trim();
+        const eois = (urnRow as Record<string, unknown>).eois;
+        if (!urnNo || !Array.isArray(eois)) continue;
+        for (const eoi of eois as Record<string, unknown>[]) {
+          if (Number(eoi.productStatus ?? 0) === PRODUCT_STATUS_CERTIFIED) {
+            certifiedPairs.push({
+              urnNo,
+              eoiNo: String(eoi.eoiNo ?? '').trim(),
+            });
+          }
+        }
+      }
+
+      const plantMergeSourceIndex = await loadVendorPlantMergeSourceIndex(
+        this.plantMergeAuditModel,
+        certifiedPairs,
+      );
+
       const grouped = (payload.data ?? []).map((u: Record<string, unknown>) => {
         const urnStatusCode = this.deriveVendorUrnStatus(
           Array.isArray(u.statusCodes) ? (u.statusCodes as number[]) : [],
         );
         const urnStatusLabel = this.mapUrnRollupStatusLabel(urnStatusCode);
+        const urnNo = String(u.urnNo ?? '').trim();
         return {
           urnNo: u.urnNo,
           createdDate: u.createdDate,
@@ -5770,7 +5815,15 @@ export class ProductRegistrationService {
           totalEoi: Number(u.totalEoi ?? 0),
           eois: Array.isArray(u.eois)
             ? (u.eois as Record<string, unknown>[]).map((e) =>
-                this.formatVendorListEoiEntry(e ?? {}),
+                this.formatVendorListEoiEntry(
+                  e ?? {},
+                  plantMergeSourceIndex.get(
+                    plantMergeSourceLookupKey(
+                      urnNo,
+                      String(e?.eoiNo ?? ''),
+                    ),
+                  ),
+                ),
               )
             : [],
         };

@@ -54,7 +54,7 @@ export class VendorController {
   @ApiOperation({
     summary: 'Upload GST certificate and/or company logo',
     description:
-      'Multipart: **gst** or **gstDocument** = one **PDF or JPEG** (GST certificate); **companyLogo** = one image (jpeg/png/gif/webp); **pan** or **panDocument** = one **PDF or JPEG** (PAN card scan). ' +
+      'Multipart: **gst** or **gstDocument** = one **PDF, JPG, or PNG** (GST certificate); **companyLogo** = one image (jpeg/png/gif/webp); **pan** or **panDocument** = one **PDF, JPG, or PNG** (PAN card scan). ' +
       'At least one file is required. Files are stored only through the shared **uploadFile()** helper in `src/utils/upload-file.util.ts` (local `uploads/manufacturers/` or S3 when configured).',
   })
   @ApiResponse({
@@ -122,7 +122,7 @@ export class VendorController {
     description:
       'Updates vendor/company fields on the linked **manufacturer** for the logged-in vendor user. ' +
       'Send **application/json** with URL fields, or **multipart/form-data** with the same text fields plus optional files. ' +
-      'File fields: **gst** or **gstDocument** (**PDF or JPEG only**), **companyLogo** (image), **pan** or **panDocument** (**PDF or JPEG only**). If the form sends both **pan** and **panDocument**, use **panDocument** for the real file (an empty **pan** slot is ignored when **panDocument** has content). Uploaded files use the shared **uploadFile()** helper in `src/utils/upload-file.util.ts` (local or S3). ' +
+      'File fields: **gst** or **gstDocument** (**PDF, JPG, or PNG only**), **companyLogo** (image), **pan** or **panDocument** (**PDF, JPG, or PNG only**). If the form sends both **pan** and **panDocument**, use **panDocument** for the real file (an empty **pan** slot is ignored when **panDocument** has content). Uploaded files use the shared **uploadFile()** helper in `src/utils/upload-file.util.ts` (local or S3). ' +
       '**gst** (JSON): GST certificate document URL path or `https://…`; use **gstNumber** for GST id text. ' +
       'Alternatively use **POST /api/vendor/profile/upload** for file-only updates.',
   })
