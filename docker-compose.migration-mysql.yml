@@ -1,0 +1,31 @@
+# Staging MySQL for loading `greenpro (16).sql` before running migration scripts.
+# Usage:
+#   docker compose -f docker-compose.migration-mysql.yml up -d
+#   docker exec -i greenpro_migration_mysql mysql -ugreenpro -pgreenpro greenpro < "greenpro (16).sql"
+#
+# Then set in .env.migration:
+#   MYSQL_MIGRATION_HOST=127.0.0.1
+#   MYSQL_MIGRATION_PORT=3307
+
+services:
+  migration_mysql:
+    image: mysql:8.0
+    container_name: greenpro_migration_mysql
+    ports:
+      - '3307:3306'
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: greenpro
+      MYSQL_USER: greenpro
+      MYSQL_PASSWORD: greenpro
+    command: --default-authentication-plugin=mysql_native_password --max_allowed_packet=512M
+    volumes:
+      - greenpro_migration_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-uroot', '-proot']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  greenpro_migration_mysql_data:

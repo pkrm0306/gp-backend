@@ -7,6 +7,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      RUNNING_IN_DOCKER: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     ports:
       - "3000:3000"
     volumes:
@@ -19,7 +23,7 @@ services:
       start_period: 40s
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine

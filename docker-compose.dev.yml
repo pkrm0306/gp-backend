@@ -5,11 +5,14 @@ services:
       dockerfile: Dockerfile
       target: deps
     container_name: greenpro_api_dev
-    command: npm run start:dev
+    command: npm run start:dev:container
     env_file:
       - .env
     environment:
+      RUNNING_IN_DOCKER: "true"
       NODE_ENV: development
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:
@@ -21,7 +24,7 @@ services:
     restart: unless-stopped
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   api_node_modules:

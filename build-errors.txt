@@ -1,0 +1,988 @@
+﻿
+> greenpro-backend@1.0.0 build
+> nest build
+
+node.exe : 
+[96msrc/process-product-stewardship/process-product-stewardship.service.spec.ts[0m:[93m38[0m:[93m21[0m - 
+[91merror[0m[90m TS2554: [0mExpected 8 arguments, but got 7.
+At C:\nvm4w\nodejs\npm.ps1:29 char:3
++   & $NODE_EXE $NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([96msrc/proces...nts, but got 7.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+[7m 38[0m     const service = new ProcessProductStewardshipService(
+[7m   [0m [91m                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m 39[0m       model as any,
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~[0m
+[7m...[0m 
+[7m 48[0m       {} as any,
+[7m   [0m [91m~~~~~~~~~~~~~~~~[0m
+[7m 49[0m     );
+[7m   [0m [91m~~~~~[0m
+
+  [96msrc/process-product-stewardship/process-product-stewardship.service.ts[0m:[93m51[0m:[93m5[0m
+    [7m51[0m     private readonly documentVersioningService: DocumentVersioningService,
+    [7m  [0m [96m    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+    An argument for 'documentVersioningService' was not provided.
+[96msrc/raw-materials-elimination-of-formaldehyde/raw-materials-elimination-of-formaldehyde.service.ts[0m:[93m154[0
+m:[93m24[0m - [91merror[0m[90m TS2304: [0mCannot find name 'oldLinks'.
+
+[7m154[0m     for (const link of oldLinks) {
+[7m   [0m [91m                       ~~~~~~~~[0m
+[96msrc/raw-materials-elimination-of-ozone-depleting-global-warming-substances/raw-materials-elimination-of-ozone-depl
+eting-global-warming-substances.service.ts[0m:[93m107[0m:[93m30[0m - [91merror[0m[90m TS2339: [0mProperty 
+'productModel' does not exist on type 'RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesService'.
+
+[7m107[0m           productModel: this.productModel,
+[7m   [0m [91m                             ~~~~~~~~~~~~[0m
+[96msrc/raw-materials-hazardous-products/raw-materials-hazardous-products.service.spec.ts[0m:[93m55[0m:[93m12[0m 
+- [91merror[0m[90m TS2554: [0mExpected 7 arguments, but got 6.
+
+[7m 55[0m     return new RawMaterialsHazardousProductsService(
+[7m   [0m [91m           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m 56[0m       model as never,
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~[0m
+[7m...[0m 
+[7m 61[0m       { record: auditRecord } as never,
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m 62[0m     );
+[7m   [0m [91m~~~~~[0m
+
+  [96msrc/raw-materials-hazardous-products/raw-materials-hazardous-products.service.ts[0m:[93m66[0m:[93m5[0m
+    [7m66[0m     private readonly auditLogService: AuditLogService,
+    [7m  [0m [96m    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+    An argument for 'auditLogService' was not provided.
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.controller.ts[0m:[93m152[0m:[93m28[
+0m - [91merror[0m[90m TS2339: [0mProperty 'countPersistedByUrn' does not exist on type 
+'RawMaterialsReduceEnvironmentalService'.
+
+[7m152[0m       : await this.service.countPersistedByUrn(urnNo, user.vendorId);
+[7m   [0m [91m                           ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.controller.ts[0m:[93m174[0m:[93m37[
+0m - [91merror[0m[90m TS2339: [0mProperty 'create' does not exist on type 'RawMaterialsReduceEnvironmentalService'.
+
+[7m174[0m     const data = await this.service.create(dto, user.vendorId, {
+[7m   [0m [91m                                    ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.controller.ts[0m:[93m200[0m:[93m37[
+0m - [91merror[0m[90m TS2339: [0mProperty 'listByUrn' does not exist on type 
+'RawMaterialsReduceEnvironmentalService'.
+
+[7m200[0m     const data = await this.service.listByUrn(urnNo.trim(), user.vendorId);
+[7m   [0m [91m                                    ~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m14[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m             ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m14[0m 
+- [91merror[0m[90m TS2300: [0mDuplicate identifier 'i'.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m             ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m14[0m 
+- [91merror[0m[90m TS2371: [0mA parameter initializer is only allowed in a function or constructor implementation.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m             ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m19[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m                  ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m21[0m 
+- [91merror[0m[90m TS2300: [0mDuplicate identifier 'i'.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m                    ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m23[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m                      ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m36[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m                                   ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m43[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m                                          ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m45[0m 
+- [91merror[0m[90m TS2300: [0mDuplicate identifier 'i'.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m                                            ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m46[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m                                             ~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m96[0m:[93m48[0m 
+- [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m96[0m     for (let i = 0; i < uploadFiles.length; i++) {
+[7m  [0m [91m                                               ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m97[0m:[93m20[0m 
+- [91merror[0m[90m TS2552: [0mCannot find name 'uploadFiles'. Did you mean 'uploadFile'?
+
+[7m97[0m       const file = uploadFiles[i];
+[7m  [0m [91m                   ~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m97[0m:[93m32[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'i'.
+
+[7m97[0m       const file = uploadFiles[i];
+[7m  [0m [91m                               ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m98[0m:[93m30[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m98[0m       const uploaded = await this.saveFileToUrnFolder(file, urnNo);
+[7m  [0m [91m                             ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m98[0m:[93m61[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'urnNo'.
+
+[7m98[0m       const uploaded = await this.saveFileToUrnFolder(file, urnNo);
+[7m  [0m [91m                                                            ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m99[0m:[93m39[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m99[0m       const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+[7m  [0m [91m                                      ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m100[0m:[93m23[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m100[0m       const d = await this.allProductDocumentModel.create({
+[7m   [0m [91m                      ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m102[0m:[93m19[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorObjectId'.
+
+[7m102[0m         vendorId: vendorObjectId,
+[7m   [0m [91m                  ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m103[0m:[93m9[0m 
+- [91merror[0m[90m TS18004: [0mNo value exists in scope for the shorthand property 'urnNo'. Either declare one or 
+provide an initializer.
+
+[7m103[0m         urnNo,
+[7m   [0m [91m        ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m107[0m:[93m24[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'i'.
+
+[7m107[0m         formPrimaryId: i === 0 ? formPrimaryId : productDocumentId,
+[7m   [0m [91m                       ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m107[0m:[93m34[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'formPrimaryId'.
+
+[7m107[0m         formPrimaryId: i === 0 ? formPrimaryId : productDocumentId,
+[7m   [0m [91m                                 ~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m111[0m:[93m22[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'now'.
+
+[7m111[0m         createdDate: now,
+[7m   [0m [91m                     ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m112[0m:[93m22[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'now'.
+
+[7m112[0m         updatedDate: now,
+[7m   [0m [91m                     ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m114[0m:[93m7[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'documents'.
+
+[7m114[0m       documents.push(d);
+[7m   [0m [91m      ~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m116[0m:[93m25[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m116[0m           productModel: this.productModel,
+[7m   [0m [91m                        ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m117[0m:[93m23[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m117[0m           versioning: this.documentVersioningService,
+[7m   [0m [91m                      ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m118[0m:[93m26[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m118[0m           documentModel: this.allProductDocumentModel,
+[7m   [0m [91m                         ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m119[0m:[93m11[0m 
+- [91merror[0m[90m TS18004: [0mNo value exists in scope for the shorthand property 'urnNo'. Either declare one or 
+provide an initializer.
+
+[7m119[0m           urnNo,
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m121[0m:[93m19[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorObjectId'.
+
+[7m121[0m           userId: vendorObjectId,
+[7m   [0m [91m                  ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m122[0m:[93m21[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorObjectId'.
+
+[7m122[0m           vendorId: vendorObjectId,
+[7m   [0m [91m                    ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m128[0m:[93m24[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'oldLinks'.
+
+[7m128[0m     for (const link of oldLinks) {
+[7m   [0m [91m                       ~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m137[0m:[93m3[0m 
+- [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m137[0m   }
+[7m   [0m [91m  ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m139[0m:[93m3[0m 
+- [91merror[0m[90m TS1434: [0mUnexpected keyword or identifier.
+
+[7m139[0m   async create(
+[7m   [0m [91m  ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m139[0m:[93m3[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'async'.
+
+[7m139[0m   async create(
+[7m   [0m [91m  ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m139[0m:[93m9[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'create'.
+
+[7m139[0m   async create(
+[7m   [0m [91m        ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m140[0m:[93m5[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'dto'.
+
+[7m140[0m     dto: CreateRawMaterialsReduceEnvironmentalDto,
+[7m   [0m [91m    ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m140[0m:[93m8[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m140[0m     dto: CreateRawMaterialsReduceEnvironmentalDto,
+[7m   [0m [91m       ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m141[0m:[93m5[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorId'.
+
+[7m141[0m     vendorId: string,
+[7m   [0m [91m    ~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m141[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m141[0m     vendorId: string,
+[7m   [0m [91m            ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m141[0m:[93m15[0m 
+- [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m141[0m     vendorId: string,
+[7m   [0m [91m              ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m142[0m:[93m5[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'options'.
+
+[7m142[0m     options?: {
+[7m   [0m [91m    ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m142[0m:[93m13[0m 
+- [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m142[0m     options?: {
+[7m   [0m [91m            ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m143[0m:[93m24[0m 
+- [91merror[0m[90m TS2693: [0m'boolean' only refers to a type, but is being used as a value here.
+
+[7m143[0m       replaceAllRows?: boolean;
+[7m   [0m [91m                       ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m143[0m:[93m31[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m143[0m       replaceAllRows?: boolean;
+[7m   [0m [91m                              ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m144[0m:[93m21[0m 
+- [91merror[0m[90m TS2708: [0mCannot use namespace 'Express' as a value.
+
+[7m144[0m       uploadFiles?: Express.Multer.File[];
+[7m   [0m [91m                    ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m144[0m:[93m41[0m 
+- [91merror[0m[90m TS1011: [0mAn element access expression should take an argument.
+
+[7m144[0m       uploadFiles?: Express.Multer.File[];
+[7m   [0m [91m                                        [0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m144[0m:[93m42[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m144[0m       uploadFiles?: Express.Multer.File[];
+[7m   [0m [91m                                         ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m145[0m:[93m29[0m 
+- [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m145[0m       existingDocumentIds?: string[];
+[7m   [0m [91m                            ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m145[0m:[93m36[0m 
+- [91merror[0m[90m TS1011: [0mAn element access expression should take an argument.
+
+[7m145[0m       existingDocumentIds?: string[];
+[7m   [0m [91m                                   [0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m145[0m:[93m37[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m145[0m       existingDocumentIds?: string[];
+[7m   [0m [91m                                    ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m147[0m:[93m4[0m 
+- [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m147[0m   ): Promise<{
+[7m   [0m [91m   ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m147[0m:[93m6[0m 
+- [91merror[0m[90m TS2365: [0mOperator '<' cannot be applied to types 'PromiseConstructor' and '{ urnNo: any; 
+vendorId: any; units: any; documents: any; }'.
+
+[7m147[0m   ): Promise<{
+[7m   [0m [91m     ~~~~~~~~~[0m
+[7m148[0m     urnNo: string;
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~[0m
+[7m...[0m 
+[7m151[0m     documents?: unknown[];
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m152[0m   }> {
+[7m   [0m [91m~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m147[0m:[93m6[0m 
+- [91merror[0m[90m TS2365: [0mOperator '>' cannot be applied to types 'boolean' and '{ [x: number]: any; try: 
+number; for(: any, unit: any, of: any, meaningfulUnits: any): void; if(replaceAllRows: any): void; if(uploadFiles: 
+any): any; const: any; let: any; documents: number; "": boolean; }'.
+
+[7m147[0m   ): Promise<{
+[7m   [0m [91m     ~~~~~~~~~[0m
+[7m148[0m     urnNo: string;
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~[0m
+[7m...[0m 
+[7m198[0m       let documents: unknown[] | undefined;
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m199[0m       if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m148[0m:[93m12[0m 
+- [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m148[0m     urnNo: string;
+[7m   [0m [91m           ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m148[0m:[93m18[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m148[0m     urnNo: string;
+[7m   [0m [91m                 ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m149[0m:[93m15[0m 
+- [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m149[0m     vendorId: string;
+[7m   [0m [91m              ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m149[0m:[93m21[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m149[0m     vendorId: string;
+[7m   [0m [91m                    ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m150[0m:[93m12[0m 
+- [91merror[0m[90m TS2693: [0m'RawMaterialsReduceEnvironmentalDocument' only refers to a type, but is being used 
+as a value here.
+
+[7m150[0m     units: RawMaterialsReduceEnvironmentalDocument[];
+[7m   [0m [91m           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m150[0m:[93m52[0m 
+- [91merror[0m[90m TS1011: [0mAn element access expression should take an argument.
+
+[7m150[0m     units: RawMaterialsReduceEnvironmentalDocument[];
+[7m   [0m [91m                                                   [0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m150[0m:[93m53[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m150[0m     units: RawMaterialsReduceEnvironmentalDocument[];
+[7m   [0m [91m                                                    ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m151[0m:[93m17[0m 
+- [91merror[0m[90m TS2693: [0m'unknown' only refers to a type, but is being used as a value here.
+
+[7m151[0m     documents?: unknown[];
+[7m   [0m [91m                ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m151[0m:[93m25[0m 
+- [91merror[0m[90m TS1011: [0mAn element access expression should take an argument.
+
+[7m151[0m     documents?: unknown[];
+[7m   [0m [91m                        [0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m151[0m:[93m26[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m151[0m     documents?: unknown[];
+[7m   [0m [91m                         ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m153[0m:[93m9[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m153[0m     try {
+[7m   [0m [91m        ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m153[0m:[93m9[0m 
+- [91merror[0m[90m TS2362: [0mThe left-hand side of an arithmetic operation must be of type 'any', 'number', 
+'bigint' or an enum type.
+
+[7m153[0m     try {
+[7m   [0m [91m        ~[0m
+[7m154[0m       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m...[0m 
+[7m164[0m       const rowsToInsert: Array<
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m165[0m         Omit<RawMaterialsReduceEnvironmental, 'createdDate' | 'updatedDate'> & {
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m154[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m154[0m       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+[7m   [0m [91m            ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m154[0m:[93m13[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorObjectId'.
+
+[7m154[0m       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+[7m   [0m [91m            ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m154[0m:[93m30[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m154[0m       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+[7m   [0m [91m                             ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m154[0m:[93m46[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorId'.
+
+[7m154[0m       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+[7m   [0m [91m                                             ~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m154[0m:[93m67[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m154[0m       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+[7m   [0m [91m                                                                  ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m155[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m155[0m       const urnNo = dto.urnNo.trim();
+[7m   [0m [91m            ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m155[0m:[93m13[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'urnNo'.
+
+[7m155[0m       const urnNo = dto.urnNo.trim();
+[7m   [0m [91m            ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m155[0m:[93m21[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'dto'.
+
+[7m155[0m       const urnNo = dto.urnNo.trim();
+[7m   [0m [91m                    ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m155[0m:[93m37[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m155[0m       const urnNo = dto.urnNo.trim();
+[7m   [0m [91m                                    ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m156[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m156[0m       const now = new Date();
+[7m   [0m [91m            ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m156[0m:[93m13[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'now'.
+
+[7m156[0m       const now = new Date();
+[7m   [0m [91m            ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m156[0m:[93m29[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m156[0m       const now = new Date();
+[7m   [0m [91m                            ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m157[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m157[0m       const replaceAllRows = options?.replaceAllRows !== false;
+[7m   [0m [91m            ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m157[0m:[93m13[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'replaceAllRows'.
+
+[7m157[0m       const replaceAllRows = options?.replaceAllRows !== false;
+[7m   [0m [91m            ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m157[0m:[93m30[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'options'.
+
+[7m157[0m       const replaceAllRows = options?.replaceAllRows !== false;
+[7m   [0m [91m                             ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m157[0m:[93m63[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m157[0m       const replaceAllRows = options?.replaceAllRows !== false;
+[7m   [0m [91m                                                              ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m159[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m159[0m       const meaningfulUnits = filterMeaningfulRows(
+[7m   [0m [91m            ~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m159[0m:[93m13[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'meaningfulUnits'.
+
+[7m159[0m       const meaningfulUnits = filterMeaningfulRows(
+[7m   [0m [91m            ~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m160[0m:[93m10[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'dto'.
+
+[7m160[0m         (dto.units ?? []) as unknown as Array<Record<string, unknown>>,
+[7m   [0m [91m         ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m162[0m:[93m42[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m162[0m       ) as ReduceEnvironmentalUnitInput[];
+[7m   [0m [91m                                         ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m164[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m164[0m       const rowsToInsert: Array<
+[7m   [0m [91m            ~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m164[0m:[93m13[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'rowsToInsert'.
+
+[7m164[0m       const rowsToInsert: Array<
+[7m   [0m [91m            ~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m164[0m:[93m25[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m164[0m       const rowsToInsert: Array<
+[7m   [0m [91m                        ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m165[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m165[0m         Omit<RawMaterialsReduceEnvironmental, 'createdDate' | 'updatedDate'> & {
+[7m   [0m [91m            ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m165[0m:[93m14[0m 
+- [91merror[0m[90m TS2635: [0mType '{ const: any; Array<Omit>(): any; }' has no signatures for which the type 
+argument list is applicable.
+
+[7m165[0m         Omit<RawMaterialsReduceEnvironmental, 'createdDate' | 'updatedDate'> & {
+[7m   [0m [91m             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m165[0m:[93m80[0m 
+- [91merror[0m[90m TS2363: [0mThe right-hand side of an arithmetic operation must be of type 'any', 'number', 
+'bigint' or an enum type.
+
+[7m165[0m         Omit<RawMaterialsReduceEnvironmental, 'createdDate' | 'updatedDate'> & {
+[7m   [0m [91m                                                                               ~[0m
+[7m166[0m           createdDate: Date;
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m...[0m 
+[7m168[0m         }
+[7m   [0m [91m~~~~~~~~~[0m
+[7m169[0m       > = [];
+[7m   [0m [91m~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m166[0m:[93m28[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m166[0m           createdDate: Date;
+[7m   [0m [91m                           ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m167[0m:[93m28[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m167[0m           updatedDate: Date;
+[7m   [0m [91m                           ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m169[0m:[93m9[0m 
+- [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m169[0m       > = [];
+[7m   [0m [91m        ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m169[0m:[93m12[0m 
+- [91merror[0m[90m TS1109: [0mExpression expected.
+
+[7m169[0m       > = [];
+[7m   [0m [91m           ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m169[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m169[0m       > = [];
+[7m   [0m [91m            ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m171[0m:[93m12[0m 
+- [91merror[0m[90m TS1359: [0mIdentifier expected. 'const' is a reserved word that cannot be used here.
+
+[7m171[0m       for (const unit of meaningfulUnits) {
+[7m   [0m [91m           ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m171[0m:[93m18[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m171[0m       for (const unit of meaningfulUnits) {
+[7m   [0m [91m                 ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m171[0m:[93m23[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m171[0m       for (const unit of meaningfulUnits) {
+[7m   [0m [91m                      ~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m171[0m:[93m26[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m171[0m       for (const unit of meaningfulUnits) {
+[7m   [0m [91m                         ~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m174[0m:[93m9[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'rowsToInsert'.
+
+[7m174[0m         rowsToInsert.push({
+[7m   [0m [91m        ~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m176[0m:[93m11[0m 
+- [91merror[0m[90m TS18004: [0mNo value exists in scope for the shorthand property 'urnNo'. Either declare one or 
+provide an initializer.
+
+[7m176[0m           urnNo,
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m177[0m:[93m21[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorObjectId'.
+
+[7m177[0m           vendorId: vendorObjectId,
+[7m   [0m [91m                    ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m185[0m:[93m24[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'now'.
+
+[7m185[0m           createdDate: now,
+[7m   [0m [91m                       ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m186[0m:[93m24[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'now'.
+
+[7m186[0m           updatedDate: now,
+[7m   [0m [91m                       ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m190[0m:[93m7[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m190[0m       if (replaceAllRows) {
+[7m   [0m [91m      ~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m191[0m:[93m39[0m 
+- [91merror[0m[90m TS18004: [0mNo value exists in scope for the shorthand property 'urnNo'. Either declare one or 
+provide an initializer.
+
+[7m191[0m         await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+[7m   [0m [91m                                      ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m191[0m:[93m56[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorObjectId'.
+
+[7m191[0m         await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
+[7m   [0m [91m                                                       ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m194[0m:[93m7[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m194[0m       const createdRows =
+[7m   [0m [91m      ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m194[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m194[0m       const createdRows =
+[7m   [0m [91m            ~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m194[0m:[93m13[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'createdRows'.
+
+[7m194[0m       const createdRows =
+[7m   [0m [91m            ~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m195[0m:[93m9[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'rowsToInsert'.
+
+[7m195[0m         rowsToInsert.length > 0 ? await this.model.insertMany(rowsToInsert) : [];
+[7m   [0m [91m        ~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m195[0m:[93m41[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m195[0m         rowsToInsert.length > 0 ? await this.model.insertMany(rowsToInsert) : [];
+[7m   [0m [91m                                        ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m195[0m:[93m63[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'rowsToInsert'.
+
+[7m195[0m         rowsToInsert.length > 0 ? await this.model.insertMany(rowsToInsert) : [];
+[7m   [0m [91m                                                              ~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m195[0m:[93m81[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m195[0m         rowsToInsert.length > 0 ? await this.model.insertMany(rowsToInsert) : [];
+[7m   [0m [91m                                                                                ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m197[0m:[93m13[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m197[0m       const uploadFiles = options?.uploadFiles ?? [];
+[7m   [0m [91m            ~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m197[0m:[93m13[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'uploadFiles'.
+
+[7m197[0m       const uploadFiles = options?.uploadFiles ?? [];
+[7m   [0m [91m            ~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m197[0m:[93m27[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'options'.
+
+[7m197[0m       const uploadFiles = options?.uploadFiles ?? [];
+[7m   [0m [91m                          ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m197[0m:[93m53[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m197[0m       const uploadFiles = options?.uploadFiles ?? [];
+[7m   [0m [91m                                                    ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m198[0m:[93m7[0m 
+- [91merror[0m[90m TS18004: [0mNo value exists in scope for the shorthand property 'let'. Either declare one or 
+provide an initializer.
+
+[7m198[0m       let documents: unknown[] | undefined;
+[7m   [0m [91m      ~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m198[0m:[93m11[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m198[0m       let documents: unknown[] | undefined;
+[7m   [0m [91m          ~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m198[0m:[93m22[0m 
+- [91merror[0m[90m TS2693: [0m'unknown' only refers to a type, but is being used as a value here.
+
+[7m198[0m       let documents: unknown[] | undefined;
+[7m   [0m [91m                     ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m198[0m:[93m30[0m 
+- [91merror[0m[90m TS1011: [0mAn element access expression should take an argument.
+
+[7m198[0m       let documents: unknown[] | undefined;
+[7m   [0m [91m                             [0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m198[0m:[93m34[0m 
+- [91merror[0m[90m TS18050: [0mThe value 'undefined' cannot be used here.
+
+[7m198[0m       let documents: unknown[] | undefined;
+[7m   [0m [91m                                 ~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m198[0m:[93m43[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m198[0m       let documents: unknown[] | undefined;
+[7m   [0m [91m                                          ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m199[0m:[93m22[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m199[0m       if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+[7m   [0m [91m                     ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m199[0m:[93m37[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'options'.
+
+[7m199[0m       if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+[7m   [0m [91m                                    ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m199[0m:[93m79[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m199[0m       if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+[7m   [0m [91m                                                                              ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m199[0m:[93m81[0m 
+- [91merror[0m[90m TS1136: [0mProperty assignment expected.
+
+[7m199[0m       if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+[7m   [0m [91m                                                                                ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m201[0m:[93m11[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'createdRows'.
+
+[7m201[0m           createdRows[0]?.rawMaterialsReduceEnvironmentalId ??
+[7m   [0m [91m          ~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m202[0m:[93m18[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m202[0m           (await this.sequenceHelper.getProductDocumentId());
+[7m   [0m [91m                 ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m203[0m:[93m9[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'documents'.
+
+[7m203[0m         documents = await this.syncDocuments({
+[7m   [0m [91m        ~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m203[0m:[93m27[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m203[0m         documents = await this.syncDocuments({
+[7m   [0m [91m                          ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m204[0m:[93m11[0m 
+- [91merror[0m[90m TS18004: [0mNo value exists in scope for the shorthand property 'urnNo'. Either declare one or 
+provide an initializer.
+
+[7m204[0m           urnNo,
+[7m   [0m [91m          ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m205[0m:[93m11[0m 
+- [91merror[0m[90m TS18004: [0mNo value exists in scope for the shorthand property 'vendorObjectId'. Either 
+declare one or provide an initializer.
+
+[7m205[0m           vendorObjectId,
+[7m   [0m [91m          ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m207[0m:[93m11[0m 
+- [91merror[0m[90m TS18004: [0mNo value exists in scope for the shorthand property 'uploadFiles'. Either declare 
+one or provide an initializer.
+
+[7m207[0m           uploadFiles,
+[7m   [0m [91m          ~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m208[0m:[93m32[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'options'.
+
+[7m208[0m           existingDocumentIds: options?.existingDocumentIds,
+[7m   [0m [91m                               ~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m214[0m:[93m19[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorObjectId'.
+
+[7m214[0m         vendorId: vendorObjectId.toString(),
+[7m   [0m [91m                  ~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m218[0m:[93m5[0m 
+- [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m218[0m     } catch (error: any) {
+[7m   [0m [91m    ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m218[0m:[93m7[0m 
+- [91merror[0m[90m TS1005: [0m'try' expected.
+
+[7m218[0m     } catch (error: any) {
+[7m   [0m [91m      ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m231[0m:[93m3[0m 
+- [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m231[0m   }
+[7m   [0m [91m  ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m3[0m 
+- [91merror[0m[90m TS1434: [0mUnexpected keyword or identifier.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m  ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m3[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'async'.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m  ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m9[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'countPersistedByUrn'.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m29[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'urnNo'.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                            ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m34[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                                 ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m36[0m 
+- [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                                   ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m44[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorId'.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                                           ~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m52[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                                                   ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m54[0m 
+- [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                                                     ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m61[0m 
+- [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                                                            ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m63[0m 
+- [91merror[0m[90m TS2365: [0mOperator '>' cannot be applied to types 'boolean' and '{ return: Promise<number>; }'.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                                                              ~~~~~~~~~~~~~~~~~[0m
+[7m234[0m     return countVendorUrnDocuments(this.model, urnNo, vendorId);
+[7m   [0m [91m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[7m235[0m   }
+[7m   [0m [91m~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m233[0m:[93m71[0m 
+- [91merror[0m[90m TS2693: [0m'number' only refers to a type, but is being used as a value here.
+
+[7m233[0m   async countPersistedByUrn(urnNo: string, vendorId: string): Promise<number> {
+[7m   [0m [91m                                                                      ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m234[0m:[93m12[0m 
+- [91merror[0m[90m TS1005: [0m':' expected.
+
+[7m234[0m     return countVendorUrnDocuments(this.model, urnNo, vendorId);
+[7m   [0m [91m           ~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m234[0m:[93m36[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m234[0m     return countVendorUrnDocuments(this.model, urnNo, vendorId);
+[7m   [0m [91m                                   ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m234[0m:[93m48[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'urnNo'.
+
+[7m234[0m     return countVendorUrnDocuments(this.model, urnNo, vendorId);
+[7m   [0m [91m                                               ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m234[0m:[93m55[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorId'.
+
+[7m234[0m     return countVendorUrnDocuments(this.model, urnNo, vendorId);
+[7m   [0m [91m                                                      ~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m234[0m:[93m64[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m234[0m     return countVendorUrnDocuments(this.model, urnNo, vendorId);
+[7m   [0m [91m                                                               ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m3[0m 
+- [91merror[0m[90m TS1434: [0mUnexpected keyword or identifier.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m  ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m3[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'async'.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m  ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m9[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'listByUrn'.
+Found 180 error(s).
+
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m        ~~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m19[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'urnNo'.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m                  ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m24[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m                       ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m26[0m 
+- [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m                         ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m34[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorId'.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m                                 ~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m42[0m 
+- [91merror[0m[90m TS1005: [0m',' expected.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m                                         ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m44[0m 
+- [91merror[0m[90m TS2693: [0m'string' only refers to a type, but is being used as a value here.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m                                           ~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m237[0m:[93m52[0m 
+- [91merror[0m[90m TS1005: [0m';' expected.
+
+[7m237[0m   async listByUrn(urnNo: string, vendorId: string) {
+[7m   [0m [91m                                                   ~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m239[0m:[93m30[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m239[0m       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+[7m   [0m [91m                             ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m239[0m:[93m46[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'vendorId'.
+
+[7m239[0m       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+[7m   [0m [91m                                             ~~~~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m240[0m:[93m20[0m 
+- [91merror[0m[90m TS2532: [0mObject is possibly 'undefined'.
+
+[7m240[0m       return await this.model
+[7m   [0m [91m                   ~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m241[0m:[93m24[0m 
+- [91merror[0m[90m TS2304: [0mCannot find name 'urnNo'.
+
+[7m241[0m         .find({ urnNo: urnNo.trim(), vendorId: vendorObjectId })
+[7m   [0m [91m                       ~~~~~[0m
+[96msrc/raw-materials-reduce-environmental/raw-materials-reduce-environmental.service.ts[0m:[93m255[0m:[93m1[0m 
+- [91merror[0m[90m TS1128: [0mDeclaration or statement expected.
+
+[7m255[0m }
+[7m   [0m [91m~[0m
+
