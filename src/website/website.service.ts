@@ -499,6 +499,7 @@ export class WebsiteService {
       'website',
       'public',
       'articles',
+      'v2',
       String(page),
       String(limit),
       this.shortHash(origin),
@@ -530,15 +531,24 @@ export class WebsiteService {
     const result = await this.adminService.listArticlesPaginated(page, limit, {
       activeOnly: true,
     });
-    const data = (result.data ?? []).map((a: Record<string, unknown>) => ({
-      ...a,
-      description: a.externalUrl ? '' : a.description,
-      image: normalizeImageUrl(a.image),
-      article_image: normalizeImageUrl(a.article_image),
-      pdf: normalizeImageUrl(a.pdf),
-      article_pdf: normalizeImageUrl(a.article_pdf),
-      is_active: true,
-    }));
+    const data = (result.data ?? []).map((a: Record<string, unknown>) => {
+      const externalUrl = a.externalUrl === true;
+      const shortDescription = String(a.shortDescription ?? '').trim();
+      const legacyShort =
+        externalUrl && !shortDescription
+          ? String(a.description ?? '').trim()
+          : shortDescription;
+      return {
+        ...a,
+        description: externalUrl ? '' : a.description,
+        shortDescription: legacyShort,
+        image: normalizeImageUrl(a.image),
+        article_image: normalizeImageUrl(a.article_image),
+        pdf: normalizeImageUrl(a.pdf),
+        article_pdf: normalizeImageUrl(a.article_pdf),
+        is_active: true,
+      };
+    });
 
     const payload = {
       message: 'Articles retrieved successfully',
@@ -1332,7 +1342,7 @@ export class WebsiteService {
    * sorted by displayOrder so website follows admin ordering.
    */
   async listWebsiteTeamMembers() {
-    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list-v3');
+    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list-v4');
     try {
       const cached = await this.redisService.get<
         Array<{
@@ -1343,7 +1353,8 @@ export class WebsiteService {
           email: string;
           mobile: string;
           displayOrder: number;
-          team: string;
+          businessVertical: string;
+          business_vertical: string;
           image: string | null;
           facebookUrl: string;
           twitterUrl: string;
@@ -1371,7 +1382,7 @@ export class WebsiteService {
       .find({ type: 'staff', status: 1, showOnWebsite: { $ne: false } })
       .sort({ displayOrder: 1, _id: 1 })
       .select(
-        'name designation email phone image facebookUrl twitterUrl linkedinUrl displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
+        'name designation email phone image facebookUrl twitterUrl linkedinUrl displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
@@ -1387,7 +1398,8 @@ export class WebsiteService {
           email: String(m.email ?? ''),
           mobile: String(m.phone ?? ''),
           displayOrder: Number((m as any).displayOrder) || 0,
-          team: String((m as any).team ?? ''),
+          businessVertical: String((m as any).businessVertical ?? ''),
+          business_vertical: String((m as any).businessVertical ?? ''),
           image: sanitizeWebsiteImagePath(m.image),
           facebookUrl: String(m.facebookUrl ?? ''),
           twitterUrl: String(m.twitterUrl ?? ''),

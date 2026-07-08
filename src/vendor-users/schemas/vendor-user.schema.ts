@@ -10,6 +10,14 @@ export const TEAM_MEMBER_TEAMS = [
 ] as const;
 export type TeamMemberTeam = (typeof TEAM_MEMBER_TEAMS)[number];
 
+export const BUSINESS_VERTICALS = [
+  'building products',
+  'industrial products',
+  'consumer products',
+  'facility services',
+] as const;
+export type BusinessVertical = (typeof BUSINESS_VERTICALS)[number];
+
 /**
  * Vendor portal accounts (vendor / partner / admin / staff).
  *
@@ -64,6 +72,9 @@ export class VendorUser {
 
   @Prop({ required: false, enum: TEAM_MEMBER_TEAMS })
   team?: TeamMemberTeam;
+
+  @Prop({ required: false, enum: BUSINESS_VERTICALS })
+  businessVertical?: BusinessVertical;
 
   /**
    * Sector ids (GET /api/sectors numeric `id`); admin multiselect — what the user picks.
@@ -187,6 +198,23 @@ VendorUserSchema.index(
       type: 'staff',
       status: { $ne: 2 },
       team: { $exists: true, $type: 'string' },
+      displayOrder: { $exists: true, $gte: 1 },
+    },
+  },
+);
+
+/**
+ * Team members: one display slot per business vertical.
+ */
+VendorUserSchema.index(
+  { businessVertical: 1, displayOrder: 1 },
+  {
+    unique: true,
+    name: 'uniq_staff_business_vertical_display_order',
+    partialFilterExpression: {
+      type: 'staff',
+      status: { $ne: 2 },
+      businessVertical: { $exists: true, $type: 'string' },
       displayOrder: { $exists: true, $gte: 1 },
     },
   },

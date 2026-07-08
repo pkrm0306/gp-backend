@@ -235,23 +235,36 @@ export class SummitsService {
   }
 
   async findPublishedBySlug(slug: string, origin?: string) {
+    return this.findBySlug(slug, { origin, activeOnly: true });
+  }
+
+  /** Admin / draft preview — includes inactive summits. */
+  async findBySlugForPreview(slug: string, origin?: string) {
+    return this.findBySlug(slug, { origin, activeOnly: false });
+  }
+
+  private async findBySlug(
+    slug: string,
+    options?: { origin?: string; activeOnly?: boolean },
+  ) {
     const normalized = slugifySummitInput(slug);
-    if (!normalized || normalized === 'list') {
+    if (!normalized || normalized === 'list' || normalized === 'preview') {
       throw new NotFoundException('Summit not found');
     }
-    const doc = await this.summitModel
-      .findOne({
-        slug: normalized,
-        status: { $in: ['active', 'published'] },
-        deletedAt: null,
-      })
-      .exec();
+    const filter: FilterQuery<SummitDocument> = {
+      slug: normalized,
+      deletedAt: null,
+    };
+    if (options?.activeOnly !== false) {
+      filter.status = { $in: ['active', 'published'] };
+    }
+    const doc = await this.summitModel.findOne(filter).exec();
     if (!doc) {
       throw new NotFoundException('Summit not found');
     }
     const payload = buildSummitViewPayload(mapSummitToApi(doc));
-    if (origin) {
-      return this.applyPublicAssetUrls(payload, origin);
+    if (options?.origin) {
+      return this.applyPublicAssetUrls(payload, options.origin);
     }
     return payload;
   }
@@ -261,6 +274,7 @@ export class SummitsService {
     origin: string,
   ): T {
     const summit = payload as T & {
+      coverImageUrl?: string | null;
       banners?: Array<{ imageUrl?: string }>;
       speakers?: Array<{ imageUrl?: string }>;
       sponsors?: Array<{ logoUrl?: string }>;
@@ -273,6 +287,12 @@ export class SummitsService {
         ...b,
         imageUrl: normalizeSummitAssetUrl(b.imageUrl, origin),
       }));
+    }
+    if (summit.coverImageUrl) {
+      summit.coverImageUrl =
+        normalizeSummitAssetUrl(summit.coverImageUrl, origin) || null;
+    } else if (Array.isArray(summit.banners) && summit.banners[0]?.imageUrl) {
+      summit.coverImageUrl = summit.banners[0].imageUrl || null;
     }
     if (Array.isArray(summit.speakers)) {
       summit.speakers = summit.speakers.map((s) => ({

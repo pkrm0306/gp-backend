@@ -20,6 +20,8 @@ import {
 export interface SummitApiResponse {
   id: string;
   slug: string;
+  /** First banner image — used for listing cards and hero fallback. */
+  coverImageUrl: string | null;
   basic: {
     year: string;
     title: string;
@@ -116,6 +118,11 @@ export interface SummitPublicListItemApi {
   location: string;
   coverImageUrl: string | null;
   excerpt: string;
+  /** Card preview block for website listing / admin preview grids. */
+  preview: {
+    coverImageUrl: string | null;
+    excerpt: string;
+  };
 }
 
 export function normalizeSummitAssetUrl(
@@ -134,13 +141,35 @@ export function normalizeSummitAssetUrl(
   return v;
 }
 
+function decodeBasicHtmlEntities(text: string): string {
+  return String(text)
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;/gi, "'");
+}
+
 function stripHtmlForExcerpt(html: string | undefined | null): string {
   if (!html) return '';
-  return String(html)
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return decodeBasicHtmlEntities(
+    String(html)
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  );
+}
+
+function resolveSummitCoverImageUrl(
+  doc: SummitDocument,
+  origin?: string,
+): string | null {
+  const banners = sortByOrder(doc.banners ?? []);
+  const firstBanner = banners.find((b) => b.imageUrl?.trim());
+  const raw = firstBanner?.imageUrl?.trim() ?? '';
+  if (!raw) return null;
+  return normalizeSummitAssetUrl(raw, origin) || null;
 }
 
 function sortByOrder<T extends { sortOrder?: number }>(items: T[]): T[] {
@@ -162,10 +191,12 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
   const agendaContent =
     buildAgendaHtmlFromPoints(agenda.points) ||
     String(doc.agenda?.content ?? '').trim();
+  const coverImageUrl = resolveSummitCoverImageUrl(doc);
 
   return {
     id: doc._id.toString(),
     slug: doc.slug ?? '',
+    coverImageUrl,
     basic: {
       year: doc.year ?? '',
       title: doc.title ?? '',
@@ -252,7 +283,6 @@ export function mapSummitToPublicListItem(
   options: { s_no: number; origin?: string },
 ): SummitPublicListItemApi {
   const banners = sortByOrder(doc.banners ?? []);
-  const firstBanner = banners.find((b) => b.imageUrl?.trim());
   const id =
     doc._id != null
       ? typeof doc._id === 'object' && 'toString' in doc._id
@@ -263,6 +293,7 @@ export function mapSummitToPublicListItem(
   const excerptRaw = stripHtmlForExcerpt(aboutContent);
   const excerpt =
     excerptRaw.length > 200 ? `${excerptRaw.slice(0, 197)}...` : excerptRaw;
+  const coverImageUrl = resolveSummitCoverImageUrl(doc, options.origin);
 
   return {
     s_no: options.s_no,
@@ -272,10 +303,12 @@ export function mapSummitToPublicListItem(
     slug: doc.slug ?? '',
     date: doc.date ?? '',
     location: doc.location ?? '',
-    coverImageUrl: firstBanner?.imageUrl?.trim()
-      ? normalizeSummitAssetUrl(firstBanner.imageUrl, options.origin) || null
-      : null,
+    coverImageUrl,
     excerpt,
+    preview: {
+      coverImageUrl,
+      excerpt,
+    },
   };
 }
 

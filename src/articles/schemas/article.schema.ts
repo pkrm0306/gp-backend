@@ -11,6 +11,10 @@ export class Article {
   @Prop({ default: '', trim: true })
   description?: string;
 
+  /** Plain-text teaser shown on cards when externalUrl is true. */
+  @Prop({ default: '', trim: true })
+  shortDescription?: string;
+
   @Prop({ required: true })
   date: Date;
 

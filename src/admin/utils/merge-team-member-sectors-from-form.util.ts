@@ -6,7 +6,7 @@ import {
 
 /**
  * Parses team-member sector multiselect from multipart/JSON.
- * Accepts fixed ids (1–4) or names: Building, Industries, Consumer Products, Facility Services.
+ * Accepts fixed ids (1–4) or names: Building Products, Industrial Products, Consumer Products, Facility Services.
  */
 export function mergeTeamMemberSectorIdsFromFormObject(obj: unknown): number[] {
   if (!obj || typeof obj !== 'object') {
@@ -78,6 +78,10 @@ export function mergeTeamMemberSectorIdsFromFormObject(obj: unknown): number[] {
   consumeArrayLike(o['sectors[]']);
   consumeArrayLike(o.sector_names);
   consumeArrayLike(o['sector_names[]']);
+  consumeArrayLike(o.business_verticals);
+  consumeArrayLike(o['business_verticals[]']);
+  consumeArrayLike(o.business_vertical_names);
+  consumeArrayLike(o['business_vertical_names[]']);
   consumeArrayLike(o.sectorNames);
   consumeArrayLike(o['sectorNames[]']);
   consumeArrayLike(o.sector_ids);
@@ -113,6 +117,10 @@ const TEAM_MEMBER_SECTOR_BODY_KEYS = [
   'sectors[]',
   'sector_names',
   'sector_names[]',
+  'business_verticals',
+  'business_verticals[]',
+  'business_vertical_names',
+  'business_vertical_names[]',
   'sectorNames',
   'sectorNames[]',
   'sector_ids',

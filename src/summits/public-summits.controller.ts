@@ -25,12 +25,25 @@ export class PublicSummitsController {
     summary: 'Public summit listing (active only)',
     description:
       'Returns paginated summits with `status: active` only (legacy `published` included). ' +
-      'Use for the website summits index / cards page. Default: page=1, limit=12 (max 50).',
+      'Each row includes `coverImageUrl`, `excerpt`, and nested `preview` for card rendering. ' +
+      'Default: page=1, limit=12 (max 50).',
   })
   @ApiResponse({ status: 200, description: 'Paginated active summits' })
   async list(@Req() req: Request, @Query() query: PublicListSummitsQueryDto) {
     const origin = `${req.protocol}://${req.get('host')}`;
     return this.summitsService.buildPublicListResponse(query, origin);
+  }
+
+  @Get()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public summit listing (alias of GET /website/summits/list)',
+    description:
+      'Same paginated card preview payload as `/website/summits/list` — `coverImageUrl`, `excerpt`, and `preview`.',
+  })
+  @ApiResponse({ status: 200, description: 'Paginated active summits' })
+  async listRoot(@Req() req: Request, @Query() query: PublicListSummitsQueryDto) {
+    return this.list(req, query);
   }
 
   @Get(':slug')

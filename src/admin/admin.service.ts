@@ -17,7 +17,7 @@ import { UpdateManufacturerDto } from './dto/update-manufacturer.dto';
 import {
   VendorUser,
   VendorUserDocument,
-  TeamMemberTeam,
+  BusinessVertical,
 } from '../vendor-users/schemas/vendor-user.schema';
 import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
@@ -186,7 +186,8 @@ export interface TeamMemberListItem {
   mobile: string;
   is_active: boolean;
   displayOrder: number;
-  team: string;
+  businessVertical: string;
+  business_vertical: string;
   sector_ids: number[];
   sectorIds: number[];
   sector_id: number | null;
@@ -687,7 +688,7 @@ export class AdminService {
   }
 
   private invalidateWebsiteTeamMembersListCache(): void {
-    for (const version of ['list-v2', 'list-v3']) {
+    for (const version of ['list-v2', 'list-v3', 'list-v4']) {
       const key = this.redisService.buildKey('website', 'team-members', version);
       this.redisService.del(key).catch((err) => {
         this.logger.warn(
@@ -1372,6 +1373,7 @@ export class AdminService {
   async createArticle(payload: {
     title: string;
     description?: string;
+    shortDescription?: string;
     date: Date;
     image?: string;
     url?: string;
@@ -1381,17 +1383,25 @@ export class AdminService {
   }) {
     const externalUrl = payload.externalUrl === true;
     const description = String(payload.description ?? '').trim();
+    const shortDescription = String(payload.shortDescription ?? '').trim();
     const url = String(payload.url ?? '').trim();
-    if (externalUrl && !url) {
-      throw new BadRequestException('url is required when externalUrl is true');
-    }
-    if (!description) {
+    if (externalUrl) {
+      if (!url) {
+        throw new BadRequestException('url is required when externalUrl is true');
+      }
+      if (!shortDescription) {
+        throw new BadRequestException(
+          'shortDescription is required when externalUrl is true',
+        );
+      }
+    } else if (!description) {
       throw new BadRequestException('description is required');
     }
 
     const doc = new this.articleModel({
       title: String(payload.title ?? '').trim(),
-      description,
+      description: externalUrl ? '' : description,
+      shortDescription: externalUrl ? shortDescription : '',
       date: payload.date,
       image: payload.image,
       article_image: this.resolveArticleImagePath(payload.image),
@@ -1418,6 +1428,7 @@ export class AdminService {
     payload: {
       title?: string;
       description?: string;
+      shortDescription?: string;
       date?: Date;
       image?: string;
       url?: string;
@@ -1436,6 +1447,9 @@ export class AdminService {
     const $set: Record<string, unknown> = {};
     if (payload.title !== undefined) $set.title = String(payload.title).trim();
     if (payload.description !== undefined) $set.description = String(payload.description).trim();
+    if (payload.shortDescription !== undefined) {
+      $set.shortDescription = String(payload.shortDescription).trim();
+    }
     if (payload.date !== undefined) $set.date = payload.date;
     if (payload.image !== undefined) {
       $set.image = payload.image;
@@ -1458,15 +1472,24 @@ export class AdminService {
     const nextExternalUrl =
       payload.externalUrl !== undefined
         ? payload.externalUrl === true
-        : payload.url !== undefined && payload.description === undefined
+        : payload.url !== undefined &&
+            payload.description === undefined &&
+            payload.shortDescription !== undefined
           ? true
           : payload.description !== undefined && payload.url === undefined
             ? false
-            : (current as any).externalUrl === true;
+            : payload.shortDescription !== undefined &&
+                payload.description === undefined
+              ? true
+              : (current as any).externalUrl === true;
     const nextDescription =
       payload.description !== undefined
         ? String(payload.description ?? '').trim()
         : String((current as any).description ?? '').trim();
+    const nextShortDescription =
+      payload.shortDescription !== undefined
+        ? String(payload.shortDescription ?? '').trim()
+        : String((current as any).shortDescription ?? '').trim();
     const nextUrl =
       payload.url !== undefined
         ? String(payload.url ?? '').trim()
@@ -1476,16 +1499,20 @@ export class AdminService {
       if (!nextUrl) {
         throw new BadRequestException('url is required when externalUrl is true');
       }
-      if (!nextDescription) {
-        throw new BadRequestException('description is required');
+      if (!nextShortDescription) {
+        throw new BadRequestException(
+          'shortDescription is required when externalUrl is true',
+        );
       }
-      $set.description = nextDescription;
+      $set.shortDescription = nextShortDescription;
+      $set.description = '';
       $set.url = nextUrl;
       $set.externalUrl = true;
     } else {
       if (!nextDescription) {
         throw new BadRequestException('description is required');
       }
+      $set.shortDescription = '';
       $set.url = '';
       $set.description = nextDescription;
       $set.externalUrl = false;
@@ -1509,12 +1536,22 @@ export class AdminService {
     return updated;
   }
 
+  private resolveArticleShortDescription(a: any): string {
+    const shortDescription = String(a?.shortDescription ?? '').trim();
+    if (shortDescription) return shortDescription;
+    if (a?.externalUrl === true) {
+      return String(a?.description ?? '').trim();
+    }
+    return '';
+  }
+
   private mapArticleListRow(a: any, serialNo: number) {
     return {
       s_no: serialNo,
       id: String(a._id),
       title: String(a.title ?? ''),
       description: String(a.description ?? ''),
+      shortDescription: this.resolveArticleShortDescription(a),
       date:
         a?.date instanceof Date
           ? a.date.toISOString().slice(0, 10)
@@ -1540,7 +1577,7 @@ export class AdminService {
       .find({})
       .sort({ createdAt: -1, _id: -1 })
       .select(
-        'title description date image article_image url externalUrl pdf article_pdf status',
+        'title description shortDescription date image article_image url externalUrl pdf article_pdf status',
       )
       .lean()
       .exec();
@@ -1569,7 +1606,7 @@ export class AdminService {
         .skip((safePage - 1) * safePerPage)
         .limit(safePerPage)
         .select(
-          'title description date image article_image url externalUrl pdf article_pdf status',
+          'title description shortDescription date image article_image url externalUrl pdf article_pdf status',
         )
         .lean()
         .exec(),
@@ -1606,6 +1643,7 @@ export class AdminService {
       id: String((article as any)._id),
       title: String((article as any).title ?? ''),
       description: String((article as any).description ?? ''),
+      shortDescription: this.resolveArticleShortDescription(article),
       date:
         (article as any)?.date instanceof Date
           ? (article as any).date.toISOString().slice(0, 10)
@@ -1975,7 +2013,7 @@ export class AdminService {
       email: string;
       mobile: string;
       displayOrder?: number;
-      team: TeamMemberTeam;
+      businessVertical: BusinessVertical;
       imagePath?: string;
       facebookUrl?: string;
       twitterUrl?: string;
@@ -2016,7 +2054,7 @@ export class AdminService {
       const totalNonDeleted = await this.vendorUserModel
         .countDocuments({
           type: 'staff',
-          team: data.team,
+          businessVertical: data.businessVertical,
           status: { $ne: 2 },
         })
         .exec();
@@ -2032,7 +2070,7 @@ export class AdminService {
           .updateMany(
             {
               type: 'staff',
-              team: data.team,
+              businessVertical: data.businessVertical,
               status: { $ne: 2 },
               displayOrder: { $gte: desiredOrder },
             },
@@ -2054,7 +2092,7 @@ export class AdminService {
         isVerified: true,
         password: passwordHash,
         displayOrder: desiredOrder,
-        team: data.team,
+        businessVertical: data.businessVertical,
         image: data.imagePath,
         facebookUrl: data.facebookUrl,
         twitterUrl: data.twitterUrl,
@@ -2067,8 +2105,12 @@ export class AdminService {
       }
 
       const updatePayload: Record<string, unknown> = { $set };
+      const $unset: Record<string, string> = { team: '' };
       if (data.designation !== undefined && data.designation === '') {
-        updatePayload.$unset = { designation: '' };
+        $unset.designation = '';
+      }
+      if (Object.keys($unset).length > 0) {
+        updatePayload.$unset = $unset;
       }
 
       let updated: VendorUserDocument | null;
@@ -2110,6 +2152,8 @@ export class AdminService {
         vendorUserId: id,
         roleIds: normalizedRoleIds,
         portalAccess: normalizedRoleIds.length > 0,
+        businessVertical: obj.businessVertical,
+        business_vertical: obj.businessVertical,
         showOnWebsite: this.mapTeamMemberShowOnWebsite(obj.showOnWebsite),
       };
     }
@@ -2117,7 +2161,7 @@ export class AdminService {
     const totalNonDeleted = await this.vendorUserModel
       .countDocuments({
         type: 'staff',
-        team: data.team,
+        businessVertical: data.businessVertical,
         status: { $ne: 2 },
       })
       .exec();
@@ -2133,7 +2177,7 @@ export class AdminService {
         .updateMany(
           {
             type: 'staff',
-            team: data.team,
+            businessVertical: data.businessVertical,
             status: { $ne: 2 },
             displayOrder: { $gte: desiredOrder },
           },
@@ -2161,7 +2205,7 @@ export class AdminService {
       twitterUrl: data.twitterUrl,
       linkedinUrl: data.linkedinUrl,
       displayOrder: desiredOrder,
-      team: data.team,
+      businessVertical: data.businessVertical,
       password: passwordHash,
       sector_ids,
       ...(sector_ids.length > 0 ? { sector_id: sector_ids[0] } : {}),
@@ -2213,7 +2257,8 @@ export class AdminService {
         twitterUrl: obj.twitterUrl,
         linkedinUrl: obj.linkedinUrl,
         displayOrder: obj.displayOrder,
-        team: obj.team,
+        businessVertical: obj.businessVertical,
+        business_vertical: obj.businessVertical,
         status: obj.status,
         type: obj.type,
         roleIds: normalizedRoleIds,
@@ -2237,7 +2282,7 @@ export class AdminService {
       })
       .sort({ displayOrder: 1, _id: 1 })
       .select(
-        'name designation email phone status displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
+        'name designation email phone status displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
@@ -2255,7 +2300,8 @@ export class AdminService {
           mobile: m.phone,
           is_active: m.status === 1,
           displayOrder: Number((m as any).displayOrder) || 0,
-          team: String((m as any).team ?? ''),
+          businessVertical: String((m as any).businessVertical ?? ''),
+          business_vertical: String((m as any).businessVertical ?? ''),
           showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
           sector_ids,
         };
@@ -2327,7 +2373,7 @@ export class AdminService {
         .skip(skip)
         .limit(perPage)
         .select(
-          'name designation email phone status displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
+          'name designation email phone status displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
         )
         .lean()
         .exec(),
@@ -2347,7 +2393,8 @@ export class AdminService {
           mobile: m.phone,
           is_active: m.status === 1,
           displayOrder: Number((m as any).displayOrder) || 0,
-          team: String((m as any).team ?? ''),
+          businessVertical: String((m as any).businessVertical ?? ''),
+          business_vertical: String((m as any).businessVertical ?? ''),
           showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
           sector_ids,
         };
@@ -2390,7 +2437,7 @@ export class AdminService {
       .find(query)
       .sort({ displayOrder: 1, _id: 1 })
       .select(
-        'name designation email phone status displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
+        'name designation email phone status displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
@@ -2408,7 +2455,8 @@ export class AdminService {
           mobile: m.phone,
           is_active: m.status === 1,
           displayOrder: Number((m as any).displayOrder) || 0,
-          team: String((m as any).team ?? ''),
+          businessVertical: String((m as any).businessVertical ?? ''),
+          business_vertical: String((m as any).businessVertical ?? ''),
           showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
           sector_ids,
         };
@@ -2433,7 +2481,7 @@ export class AdminService {
         status: { $ne: 2 },
       })
       .select(
-        'name designation email phone status image facebookUrl twitterUrl linkedinUrl displayOrder team showOnWebsite sector_ids sector_id category_ids category_id',
+        'name designation email phone status image facebookUrl twitterUrl linkedinUrl displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
@@ -2458,7 +2506,8 @@ export class AdminService {
         twitterUrl: member.twitterUrl ?? '',
         linkedinUrl: member.linkedinUrl ?? '',
         displayOrder: Number((member as any).displayOrder) || 0,
-        team: String((member as any).team ?? ''),
+        businessVertical: String((member as any).businessVertical ?? ''),
+        business_vertical: String((member as any).businessVertical ?? ''),
         showOnWebsite: this.mapTeamMemberShowOnWebsite((member as any).showOnWebsite),
         sector_ids,
       },
@@ -2835,7 +2884,7 @@ export class AdminService {
       email: string;
       mobile: string;
       displayOrder?: number;
-      team: TeamMemberTeam;
+      businessVertical: BusinessVertical;
       imagePath?: string;
       facebookUrl?: string;
       twitterUrl?: string;
@@ -2935,12 +2984,12 @@ export class AdminService {
       $set.image = data.imagePath;
     }
     $set.displayOrder = desiredOrder;
-    $set.team = data.team;
+    $set.businessVertical = data.businessVertical;
     if (data.showOnWebsite !== undefined) {
       $set.showOnWebsite = data.showOnWebsite;
     }
 
-    const $unset: Record<string, string> = {};
+    const $unset: Record<string, string> = { team: '' };
     if (data.sector_ids !== undefined) {
       const sector_ids = this.assertTeamMemberSectorsValid(data.sector_ids);
       $set.sector_ids = sector_ids;
@@ -3009,7 +3058,8 @@ export class AdminService {
         twitterUrl: obj.twitterUrl,
         linkedinUrl: obj.linkedinUrl,
         displayOrder: obj.displayOrder,
-        team: obj.team,
+        businessVertical: obj.businessVertical,
+        business_vertical: obj.businessVertical,
         status: obj.status,
         type: obj.type,
         roleIds: normalizedRoleIds,
@@ -3526,7 +3576,7 @@ export class AdminService {
 
     const msg = await this.contactMessageModel
       .findById(objectId)
-      .select('name email phoneNumber message')
+      .select('name email phoneNumber message subject createdAt inquiryType')
       .lean()
       .exec();
 
@@ -3539,7 +3589,11 @@ export class AdminService {
       name: String(msg.name ?? ''),
       email: String(msg.email ?? ''),
       phone: String((msg as any).phoneNumber ?? ''),
+      phoneNo: String((msg as any).phoneNumber ?? ''),
+      subject: String((msg as any).subject ?? ''),
       message: String((msg as any).message ?? ''),
+      createdAt: (msg as any).createdAt ?? null,
+      inquiryType: String((msg as any).inquiryType ?? 'contact'),
     };
   }
 

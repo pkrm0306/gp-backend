@@ -146,6 +146,21 @@ export class WebsiteController {
     return this.summitsService.buildPublicListResponse(query, origin);
   }
 
+  @Get('public/summits')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public summits list (alias of GET /website/summits)',
+    description:
+      'Same card preview payload as `GET /website/summits` — cover image and excerpt per summit.',
+  })
+  @ApiResponse({ status: 200, description: 'Paginated summits list' })
+  async listPublicSummitsRoot(
+    @Req() req: Request,
+    @Query() query: PublicListSummitsQueryDto,
+  ) {
+    return this.listPublicSummits(req, query);
+  }
+
   @Get('public/events/list')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

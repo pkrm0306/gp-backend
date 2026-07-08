@@ -43,6 +43,7 @@ import {
   mergeTeamMemberSectorIdsFromFormObject,
   hasExplicitTeamMemberSectorFields,
 } from './utils/merge-team-member-sectors-from-form.util';
+import { getTeamMemberSectorNameById } from './team-member-sectors.constants';
 import {
   type BannerAuthUser,
   resolveBannerVendorScope,
@@ -82,6 +83,7 @@ import {
   DASHBOARD_PERMISSION_CATALOG,
   PERMISSIONS,
 } from '../common/constants/permissions.constants';
+import { BUSINESS_VERTICALS } from '../vendor-users/schemas/vendor-user.schema';
 import {
   GALLERY_MAX_IMAGES,
   GALLERY_TYPES,
@@ -181,6 +183,7 @@ function TeamMemberEditDocs() {
       summary: 'Edit team member',
       description:
         '**POST** or **PATCH** — same handler. Multipart form: **id** (team member from list), name, designation, email, mobile, optional **image** (270×400px recommended), social URLs. ' +
+        '**businessVertical** is required and must be one of: Building Products, Industrial Products, Consumer Products, Facility Services. ' +
         '**Sectors** multiselect — fixed options only (GET **/admin/team-member/sector-options**): Building, Industries, Consumer Products, Facility Services. Send names or ids 1–4 via **sectors**, **sectors[]**, **sector_ids**, etc. Omit sector fields to leave assignment unchanged. Category fields are not accepted. ' +
         'Same JWT workarounds as create (**x-access-token** / **access_token**) if Bearer is dropped on multipart.',
     }),
@@ -206,9 +209,9 @@ function TeamMemberEditDocs() {
           email: { type: 'string' },
           mobile: { type: 'string' },
           displayOrder: { type: 'number', minimum: 1 },
-          team: {
+          businessVertical: {
             type: 'string',
-            enum: ['administrative', 'technical', 'finance', 'marketing'],
+            enum: [...BUSINESS_VERTICALS],
           },
           image: { type: 'string', format: 'binary' },
           facebookUrl: { type: 'string' },
@@ -257,7 +260,14 @@ function TeamMemberEditDocs() {
           },
           sectorIds: { type: 'string' },
         },
-        required: ['id', 'name', 'email', 'mobile', 'displayOrder', 'team'],
+        required: [
+          'id',
+          'name',
+          'email',
+          'mobile',
+          'displayOrder',
+          'businessVertical',
+        ],
       },
     }),
     ApiResponse({
@@ -721,6 +731,15 @@ export class AdminController {
     );
   }
 
+  private readArticleShortDescription(body: any): string {
+    return String(
+      body?.shortDescription ??
+        body?.short_description ??
+        body?.shortDesc ??
+        '',
+    ).trim();
+  }
+
   private parseGalleryType(raw: unknown, required = false): GalleryType | undefined {
     if (raw === undefined || raw === null || String(raw).trim() === '') {
       if (required) {
@@ -835,6 +854,29 @@ export class AdminController {
     return /^[a-fA-F0-9]{24}$/.test(roleId) ? [roleId] : [];
   }
 
+  private resolveBusinessVerticalInput(body: any): unknown {
+    const direct =
+      body?.businessVertical ??
+      body?.business_vertical ??
+      body?.businessvertical ??
+      body?.vertical;
+    if (direct !== undefined && direct !== null && String(direct).trim() !== '') {
+      return direct;
+    }
+
+    try {
+      const sectorIds = mergeTeamMemberSectorIdsFromFormObject(body);
+      if (sectorIds.length > 0) {
+        const name = getTeamMemberSectorNameById(sectorIds[0]);
+        if (name) return name.toLowerCase();
+      }
+    } catch {
+      // Invalid sector payload is handled when sectors are merged for persistence.
+    }
+
+    return undefined;
+  }
+
   private mapGalleryResponse(item: any) {
     const images = Array.isArray(item?.galleryImages)
       ? item.galleryImages
@@ -887,6 +929,9 @@ export class AdminController {
       id,
       title: item?.title ?? '',
       description: item?.description ?? '',
+      shortDescription:
+        item?.shortDescription ??
+        (externalUrl ? item?.description ?? '' : ''),
       date:
         item?.date instanceof Date
           ? item.date.toISOString().slice(0, 10)
@@ -2086,7 +2131,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Create article',
     description:
-      'Creates an article with title, date, image, file/pdf (PDF), externalUrl toggle and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url is required and description is hidden.',
+      'Creates an article with title, date, image, file/pdf (PDF), externalUrl toggle and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url and shortDescription are required and full description is hidden.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -2096,6 +2141,7 @@ export class AdminController {
       properties: {
         title: { type: 'string' },
         description: { type: 'string' },
+        shortDescription: { type: 'string' },
         date: { type: 'string', example: '2026-05-05' },
         externalUrl: { type: 'boolean', default: false },
         image: { type: 'string', format: 'binary' },
@@ -2130,23 +2176,36 @@ export class AdminController {
       throw new BadRequestException('Invalid date (expected ISO date/datetime)');
     }
     const description = String(body?.description ?? '').trim();
+    const shortDescription = this.readArticleShortDescription(body);
     const url = String(body?.url ?? '').trim();
     const explicitExternalUrl = this.parseExternalUrlToggle(
       this.resolveExternalUrlRaw(body),
     );
     const inferredExternalUrl =
       explicitExternalUrl ??
-      (url && !description ? true : description && !url ? false : false);
+      (url && shortDescription && !description
+        ? true
+        : description && !url
+          ? false
+          : url && !description
+            ? true
+            : false);
     const externalUrl = inferredExternalUrl;
     const status = this.parseEventStatus(body?.status);
     const imageFile = files?.image?.[0];
     const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
     if (!imageFile) throw new BadRequestException('image is required');
     if (!pdfFile) throw new BadRequestException('pdf/file is required');
-    if (externalUrl && !url) {
-      throw new BadRequestException('url is required when externalUrl is true');
-    }
-    if (!description) {
+    if (externalUrl) {
+      if (!url) {
+        throw new BadRequestException('url is required when externalUrl is true');
+      }
+      if (!shortDescription) {
+        throw new BadRequestException(
+          'shortDescription is required when externalUrl is true',
+        );
+      }
+    } else if (!description) {
       throw new BadRequestException('description is required');
     }
     const imageUpload = imageFile ? await uploadFile(imageFile, 'articles') : undefined;
@@ -2156,7 +2215,8 @@ export class AdminController {
 
     const data = await this.adminService.createArticle({
       title,
-      description,
+      description: externalUrl ? '' : description,
+      shortDescription: externalUrl ? shortDescription : '',
       date,
       image,
       pdf,
@@ -2222,7 +2282,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit article',
     description:
-      'Edits article fields: title, date, image, file/pdf (PDF), externalUrl toggle, url/description and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url is required and description is hidden.',
+      'Edits article fields: title, date, image, file/pdf (PDF), externalUrl toggle, url/description/shortDescription and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url and shortDescription are required and full description is hidden.',
   })
   @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
   @ApiConsumes('multipart/form-data')
@@ -2232,6 +2292,7 @@ export class AdminController {
       properties: {
         title: { type: 'string' },
         description: { type: 'string' },
+        shortDescription: { type: 'string' },
         date: { type: 'string', example: '2026-05-05' },
         externalUrl: { type: 'boolean' },
         image: { type: 'string', format: 'binary' },
@@ -2280,17 +2341,26 @@ export class AdminController {
     const pdf = pdfUpload?.fileUrl;
     const description =
       body?.description !== undefined ? String(body.description).trim() : undefined;
+    const shortDescription =
+      body?.shortDescription !== undefined ||
+      body?.short_description !== undefined ||
+      body?.shortDesc !== undefined
+        ? this.readArticleShortDescription(body)
+        : undefined;
     const url = body?.url !== undefined ? String(body.url).trim() : undefined;
     const inferredExternalUrl =
       explicitExternalUrl ??
-      (url !== undefined && description === undefined
+      (url !== undefined && description === undefined && shortDescription !== undefined
         ? true
         : description !== undefined && url === undefined
           ? false
-          : undefined);
+          : shortDescription !== undefined && description === undefined
+            ? true
+            : undefined);
     const data = await this.adminService.updateArticle(id, {
       ...(body?.title !== undefined ? { title: body.title } : {}),
       ...(description !== undefined ? { description } : {}),
+      ...(shortDescription !== undefined ? { shortDescription } : {}),
       ...(date !== undefined ? { date } : {}),
       ...(url !== undefined ? { url } : {}),
       ...(inferredExternalUrl !== undefined ? { externalUrl: inferredExternalUrl } : {}),
@@ -2699,6 +2769,7 @@ export class AdminController {
     summary: 'Create team member',
     description:
       'Use **Authorize** (Bearer) as usual. Swagger sometimes drops `Authorization` on multipart uploads — then send the same JWT via **x-access-token** header or **access_token** query param. ' +
+      '**businessVertical** is required and must be one of: Building Products, Industrial Products, Consumer Products, Facility Services. ' +
       '**Sectors** multiselect — fixed options only (GET **/admin/team-member/sector-options**): Building, Industries, Consumer Products, Facility Services. Send **sectors** as JSON array of names or ids 1–4, **sectors[]**, **sector_ids**, etc. Category fields are not accepted.',
   })
   @ApiConsumes('multipart/form-data')
@@ -2722,9 +2793,9 @@ export class AdminController {
         email: { type: 'string' },
         mobile: { type: 'string' },
         displayOrder: { type: 'number', minimum: 1 },
-        team: {
+        businessVertical: {
           type: 'string',
-          enum: ['administrative', 'technical', 'finance', 'marketing'],
+          enum: [...BUSINESS_VERTICALS],
         },
         image: { type: 'string', format: 'binary' },
         facebookUrl: { type: 'string' },
@@ -2779,7 +2850,7 @@ export class AdminController {
           description: 'JSON array string of sector ids',
         },
       },
-      required: ['name', 'email', 'mobile', 'displayOrder', 'team'],
+      required: ['name', 'email', 'mobile', 'displayOrder', 'businessVertical'],
     },
   })
   @ApiResponse({ status: 201, description: 'Team member created successfully' })
@@ -2808,7 +2879,7 @@ export class AdminController {
       email: body.email,
       mobile: body.mobile,
       displayOrder: parsedCreateDisplayOrder,
-      team: body.team ?? body.teamType,
+      businessVertical: this.resolveBusinessVerticalInput(body),
       facebookUrl: body.facebookUrl,
       twitterUrl: body.twitterUrl,
       linkedinUrl: body.linkedinUrl,
@@ -2833,7 +2904,7 @@ export class AdminController {
       email: dto.email,
       mobile: dto.mobile,
       displayOrder: dto.displayOrder,
-      team: dto.team,
+      businessVertical: dto.businessVertical,
       imagePath,
       facebookUrl: dto.facebookUrl,
       twitterUrl: dto.twitterUrl,
@@ -2896,7 +2967,7 @@ export class AdminController {
       email: body.email,
       mobile: body.mobile,
       displayOrder: parsedEditDisplayOrder,
-      team: body.team ?? body.teamType,
+      businessVertical: this.resolveBusinessVerticalInput(body),
       facebookUrl: body.facebookUrl,
       twitterUrl: body.twitterUrl,
       linkedinUrl: body.linkedinUrl,
@@ -2922,7 +2993,7 @@ export class AdminController {
       email: dto.email,
       mobile: dto.mobile,
       displayOrder: dto.displayOrder,
-      team: dto.team,
+      businessVertical: dto.businessVertical,
       imagePath,
       facebookUrl: dto.facebookUrl,
       twitterUrl: dto.twitterUrl,
@@ -3153,7 +3224,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'List team members',
     description:
-      'Returns global team members dataset for admin panel: serial number, name, designation, email, mobile, displayOrder, team, active flag, and id for actions. Excludes soft-deleted members (status 2). Sorted by displayOrder ascending.',
+      'Returns global team members dataset for admin panel: serial number, name, designation, email, mobile, displayOrder, businessVertical, active flag, and id for actions. Excludes soft-deleted members (status 2). Sorted by displayOrder ascending.',
   })
   @ApiResponse({
     status: 200,
@@ -3177,11 +3248,12 @@ export class AdminController {
               email: { type: 'string' },
               mobile: { type: 'string' },
               displayOrder: { type: 'number', example: 1 },
-              team: {
+              businessVertical: {
                 type: 'string',
-                example: 'technical',
-                enum: ['administrative', 'technical', 'finance', 'marketing'],
+                example: 'building products',
+                enum: [...BUSINESS_VERTICALS],
               },
+              business_vertical: { type: 'string', example: 'building products' },
               is_active: { type: 'boolean' },
             },
           },
@@ -3288,7 +3360,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'View contact message',
     description:
-      'Returns one contact message for admin view: name, email, phone, message.',
+      'Returns one contact message for admin view: name, email, phone, subject, message.',
   })
   @ApiParam({
     name: 'id',
@@ -3471,7 +3543,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get team member by id',
     description:
-      'Returns one team member for the **View** modal: name, designation, email, mobile, displayOrder, team, status (**Active** / **Inactive**), image URL, social URLs, **sectors** (fixed: Building, Industries, Consumer Products, Facility Services). Soft-deleted excluded.',
+      'Returns one team member for the **View** modal: name, designation, email, mobile, displayOrder, businessVertical, status (**Active** / **Inactive**), image URL, social URLs, **sectors** (fixed: Building, Industries, Consumer Products, Facility Services). Soft-deleted excluded.',
   })
   @ApiParam({ name: 'id', description: 'Team member MongoDB id' })
   @ApiResponse({ status: 200, description: 'Team member details' })

@@ -259,7 +259,7 @@ export class AdminDashboardKpiService {
       },
       totalInquiries: {
         key: 'totalInquiries',
-        label: 'Total Inquiries',
+        label: 'Contact Inquiries',
         value: totalInquiriesCount,
         subMetrics: {
           thisMonth: inquiriesThisMonth,

@@ -11,7 +11,10 @@ import {
   IsString,
   Min,
 } from 'class-validator';
-import { TEAM_MEMBER_TEAMS, TeamMemberTeam } from '../../vendor-users/schemas/vendor-user.schema';
+import {
+  BUSINESS_VERTICALS,
+  BusinessVertical,
+} from '../../vendor-users/schemas/vendor-user.schema';
 
 export class CreateTeamMemberDto {
   @ApiProperty({ description: 'Team member name' })
@@ -76,9 +79,9 @@ export class CreateTeamMemberDto {
   displayOrder?: number;
 
   @ApiProperty({
-    description: 'Team group',
-    enum: TEAM_MEMBER_TEAMS,
-    example: 'technical',
+    description: 'Business vertical',
+    enum: BUSINESS_VERTICALS,
+    example: 'building products',
   })
   @Transform(({ value }) =>
     value === undefined || value === null
@@ -86,8 +89,8 @@ export class CreateTeamMemberDto {
       : String(value).trim().toLowerCase(),
   )
   @IsString()
-  @IsIn(TEAM_MEMBER_TEAMS)
-  team: TeamMemberTeam;
+  @IsIn(BUSINESS_VERTICALS)
+  businessVertical: BusinessVertical;
 
   @ApiProperty({
     required: false,

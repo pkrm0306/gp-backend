@@ -9,11 +9,13 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
   BadRequestException,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
@@ -97,6 +99,24 @@ export class AdminSummitsController {
     const data = await this.summitsService.getFormMeta(excludeSummitId);
     return {
       message: 'Summit form metadata retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('preview/:slug')
+  @AnyPermissions(PERMISSIONS.SUMMITS_VIEW, PERMISSIONS.EVENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Preview summit by slug (active or inactive)',
+    description:
+      'Same payload as the public detail page (`GET /website/summits/:slug`) but allows inactive/draft summits for admin preview.',
+  })
+  @ApiParam({ name: 'slug', example: 'greenpro-summit-2026' })
+  async previewBySlug(@Req() req: Request, @Param('slug') slug: string) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const data = await this.summitsService.findBySlugForPreview(slug, origin);
+    return {
+      message: 'Summit preview retrieved successfully',
       data,
     };
   }
