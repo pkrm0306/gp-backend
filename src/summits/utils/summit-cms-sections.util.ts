@@ -127,20 +127,68 @@ function validateRequiredField(
   }
 }
 
+function splitLegacyCardText(
+  text: string,
+  knownHeading?: string,
+): { heading: string; description: string } {
+  const trimmed = readTrimmed(text);
+  if (!trimmed) {
+    return { heading: readTrimmed(knownHeading), description: '' };
+  }
+
+  const heading = readTrimmed(knownHeading);
+  if (heading) {
+    const prefix = `${heading} — `;
+    if (trimmed.startsWith(prefix)) {
+      return {
+        heading,
+        description: readTrimmed(trimmed.slice(prefix.length)),
+      };
+    }
+    if (trimmed === heading) {
+      return { heading, description: '' };
+    }
+    return { heading, description: trimmed };
+  }
+
+  const separatorIndex = trimmed.indexOf(' — ');
+  if (separatorIndex > 0) {
+    return {
+      heading: readTrimmed(trimmed.slice(0, separatorIndex)),
+      description: readTrimmed(trimmed.slice(separatorIndex + 3)),
+    };
+  }
+
+  return { heading: '', description: trimmed };
+}
+
 function cardRowFromInput(
   item: unknown,
   index: number,
 ): { id: string; sortOrder: number; heading: string; description: string } {
   const source = (item ?? {}) as Record<string, unknown>;
   const legacyText = readTrimmed(source.text ?? source.point);
-  const heading = readTrimmed(source.heading ?? source.title ?? source.label);
-  const description = readTrimmed(source.description ?? source.text ?? source.point);
+  let heading = readTrimmed(source.heading ?? source.title ?? source.label);
+  let description = readTrimmed(source.description);
+
+  if (!description && legacyText) {
+    const parsed = splitLegacyCardText(legacyText, heading || undefined);
+    heading = heading || parsed.heading;
+    description = parsed.description;
+  } else if (!description) {
+    description = legacyText;
+  } else if (!heading && description.includes(' — ')) {
+    const parsed = splitLegacyCardText(description);
+    heading = parsed.heading;
+    description = parsed.description;
+  }
+
   return {
     id: ensureItemId(source.id as string | undefined),
     sortOrder:
       typeof source.sortOrder === 'number' ? source.sortOrder : index,
     heading,
-    description: description || legacyText,
+    description: description || (heading ? '' : legacyText),
   };
 }
 
@@ -148,14 +196,209 @@ function pointRowFromInput(
   item: unknown,
   index: number,
 ): SummitFocusPointRow {
+  if (typeof item === 'string' || typeof item === 'number') {
+    return {
+      id: ensureItemId(undefined),
+      sortOrder: index,
+      text: readTrimmed(item),
+    };
+  }
+
   const source = (item ?? {}) as Record<string, unknown>;
+  const legacyText = readTrimmed(source.text ?? source.point);
+  const heading = readTrimmed(source.heading ?? source.title ?? source.label);
+  const description = readTrimmed(source.description);
+  const text =
+    legacyText || combineCardText(heading, description) || heading;
+
   return {
     id: ensureItemId(source.id as string | undefined),
     sortOrder:
       typeof source.sortOrder === 'number' ? source.sortOrder : index,
-    text: readTrimmed(
-      source.text ?? source.point ?? source.description ?? source.label,
-    ),
+    text,
+  };
+}
+
+function normalizeFocusPointsFromCard(
+  source: Record<string, unknown>,
+): SummitFocusPointRow[] {
+  const fromPoints = extractNestedArray(source.points, ['items']).map(
+    (point, pointIndex) => pointRowFromInput(point, pointIndex),
+  );
+  const fromItems = extractNestedArray(source.items, []).map((item, itemIndex) =>
+    pointRowFromInput(item, itemIndex),
+  );
+
+  if (fromPoints.length === 0) {
+    return fromItems;
+  }
+  if (fromItems.length === 0) {
+    return fromPoints;
+  }
+
+  const merged: SummitFocusPointRow[] = [];
+  const maxLen = Math.max(fromPoints.length, fromItems.length);
+  for (let index = 0; index < maxLen; index++) {
+    const point = fromPoints[index];
+    const item = fromItems[index];
+    if (point && readTrimmed(point.text)) {
+      merged.push({ ...point, sortOrder: point.sortOrder ?? index });
+      continue;
+    }
+    if (item && readTrimmed(item.text)) {
+      merged.push({
+        id: point?.id ?? item.id,
+        sortOrder: point?.sortOrder ?? item.sortOrder ?? index,
+        text: item.text,
+      });
+      continue;
+    }
+  }
+  return merged.filter((point) => readTrimmed(point.text));
+}
+
+function shouldRegroupFlatAreaPoints(entries: unknown[]): boolean {
+  if (entries.length <= SUMMIT_CMS_CARD_MAX) {
+    return false;
+  }
+  return entries.every((entry) => {
+    if (typeof entry === 'string' || typeof entry === 'number') {
+      return true;
+    }
+    const source = (entry ?? {}) as Record<string, unknown>;
+    const hasNestedPoints =
+      extractNestedArray(source.points, ['items']).length > 0;
+    const heading = readTrimmed(source.heading ?? source.title ?? source.label);
+    return !hasNestedPoints && !heading;
+  });
+}
+
+function reconstructFocusedAreaCardsFromAreaPoints(
+  areaPoints: unknown[],
+): SummitFocusAreaRow[] {
+  const parsed = sortSummitItems(
+    areaPoints.map((item, index) => {
+      const source = (item ?? {}) as Record<string, unknown>;
+      const bullet = pointRowFromInput(source, index);
+      const topicHeading = readTrimmed(
+        source.heading ?? source.title ?? source.label,
+      );
+      return {
+        source,
+        sortOrder:
+          typeof source.sortOrder === 'number' ? source.sortOrder : index,
+        bullet,
+        topicHeading,
+      };
+    }),
+  );
+
+  const topicShaped = parsed.filter(
+    (row) =>
+      row.topicHeading &&
+      readTrimmed(row.bullet.text) &&
+      row.bullet.text !== row.topicHeading,
+  );
+  if (
+    topicShaped.length > 0 &&
+    topicShaped.length === parsed.length &&
+    topicShaped.length <= SUMMIT_CMS_CARD_MAX * 3
+  ) {
+    return topicShaped.slice(0, SUMMIT_CMS_CARD_MAX).map((row, index) => ({
+      id: ensureItemId(row.source.id as string | undefined),
+      sortOrder: row.sortOrder ?? index,
+      heading: row.topicHeading,
+      points: [
+        {
+          id: ensureItemId(undefined),
+          sortOrder: 0,
+          text: row.bullet.text,
+        },
+      ],
+    }));
+  }
+
+  const groups = new Map<number, typeof parsed>();
+  for (const row of parsed) {
+    const groupKey = Math.floor(row.sortOrder / 10);
+    const bucket = groups.get(groupKey) ?? [];
+    bucket.push(row);
+    groups.set(groupKey, bucket);
+  }
+
+  if (groups.size > 1) {
+    return [...groups.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .slice(0, SUMMIT_CMS_CARD_MAX)
+      .map(([groupKey, rows], index) => ({
+        id: ensureItemId(undefined),
+        sortOrder: groupKey,
+        heading: readTrimmed(rows[0]?.topicHeading) || `Topic ${index + 1}`,
+        points: sortSummitItems(
+          rows
+            .map((row, pointIndex) => ({
+              id: ensureItemId(row.source.id as string | undefined),
+              sortOrder: row.sortOrder % 10 || pointIndex,
+              text: row.bullet.text,
+            }))
+            .filter((point) => readTrimmed(point.text)),
+        ).slice(0, SUMMIT_FOCUS_POINTS_MAX),
+      }));
+  }
+
+  const chunks: (typeof parsed)[] = [];
+  for (let index = 0; index < parsed.length; index += SUMMIT_FOCUS_POINTS_MAX) {
+    chunks.push(parsed.slice(index, index + SUMMIT_FOCUS_POINTS_MAX));
+  }
+
+  return chunks.slice(0, SUMMIT_CMS_CARD_MAX).map((rows, index) => ({
+    id: ensureItemId(undefined),
+    sortOrder: index,
+    heading: readTrimmed(rows[0]?.topicHeading) || `Topic ${index + 1}`,
+    points: rows
+      .map((row, pointIndex) => ({
+        id: ensureItemId(row.source.id as string | undefined),
+        sortOrder: pointIndex,
+        text: row.bullet.text,
+      }))
+      .filter((point) => readTrimmed(point.text)),
+  }));
+}
+
+function focusCardFromInput(
+  card: unknown,
+  index: number,
+): SummitFocusAreaRow {
+  const source = (card ?? {}) as Record<string, unknown>;
+  let points = normalizeFocusPointsFromCard(source);
+  if (points.length === 0) {
+    let cardHeading = readTrimmed(
+      source.heading ?? source.title ?? source.label,
+    );
+    let cardDescription = readTrimmed(source.description);
+    const legacyText = readTrimmed(source.text ?? source.point);
+    if (!cardDescription && legacyText) {
+      const parsed = splitLegacyCardText(legacyText, cardHeading || undefined);
+      cardHeading = cardHeading || parsed.heading;
+      cardDescription = parsed.description;
+    }
+    const fallbackText = cardDescription || cardHeading || legacyText;
+    if (fallbackText) {
+      points = [
+        {
+          id: ensureItemId(undefined),
+          sortOrder: 0,
+          text: fallbackText,
+        },
+      ];
+    }
+  }
+  return {
+    id: ensureItemId(source.id as string | undefined),
+    sortOrder:
+      typeof source.sortOrder === 'number' ? source.sortOrder : index,
+    heading: readTrimmed(source.heading ?? source.title ?? source.label),
+    points,
   };
 }
 
@@ -425,6 +668,10 @@ export function normalizeFocusedAreaSection(body: Record<string, unknown>): {
   cards: SummitFocusAreaRow[];
 } {
   const errors: Record<string, string> = {};
+  const legacyFlat = extractNestedArray(
+    body.areaPoints ?? body.focusedAreaPoints ?? body.focused_area_points,
+    [],
+  );
   let rawCards = extractNestedArray(
     body.focusedAreas ??
       body.focused_areas ??
@@ -433,43 +680,16 @@ export function normalizeFocusedAreaSection(body: Record<string, unknown>): {
     ['items', 'cards', 'points'],
   );
 
-  if (!rawCards.length) {
-    const legacyFlat = extractNestedArray(
-      body.areaPoints ?? body.focusedAreaPoints ?? body.focused_area_points,
-      [],
-    );
-    if (legacyFlat.length) {
-      rawCards = legacyFlat.map((point, index) => {
-        const text = readTrimmed(
-          (point as Record<string, unknown>)?.text ??
-            (point as Record<string, unknown>)?.point,
-        );
-        return {
-          id: ensureItemId((point as Record<string, unknown>)?.id as string),
-          sortOrder:
-            typeof (point as Record<string, unknown>)?.sortOrder === 'number'
-              ? ((point as Record<string, unknown>).sortOrder as number)
-              : index,
-          heading: text.slice(0, SUMMIT_CMS_FIELD_MAX) || `Topic ${index + 1}`,
-          points: [{ text }],
-        };
-      });
-    }
+  if (!rawCards.length && legacyFlat.length) {
+    rawCards = reconstructFocusedAreaCardsFromAreaPoints(legacyFlat) as unknown[];
+  } else if (
+    rawCards.length > SUMMIT_CMS_CARD_MAX &&
+    shouldRegroupFlatAreaPoints(rawCards)
+  ) {
+    rawCards = reconstructFocusedAreaCardsFromAreaPoints(rawCards) as unknown[];
   }
 
-  const cards = rawCards.map((card, index) => {
-    const source = (card ?? {}) as Record<string, unknown>;
-    const rawPoints = extractNestedArray(source.points, ['items']);
-    return {
-      id: ensureItemId(source.id as string | undefined),
-      sortOrder:
-        typeof source.sortOrder === 'number' ? source.sortOrder : index,
-      heading: readTrimmed(source.heading ?? source.title ?? source.label),
-      points: rawPoints.map((point, pointIndex) =>
-        pointRowFromInput(point, pointIndex),
-      ),
-    };
-  });
+  const cards = rawCards.map((card, index) => focusCardFromInput(card, index));
 
   if (cards.length > SUMMIT_CMS_CARD_MAX) {
     errors['focused-area.max'] =

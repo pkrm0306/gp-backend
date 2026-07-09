@@ -24,7 +24,7 @@ export function normalizeSummitSpeakersInput(raw: unknown): unknown {
   return raw.map((item) => {
     if (!item || typeof item !== 'object') return item;
     const row = item as Record<string, unknown>;
-    const { keyPoints, keyPoint, tags, ...rest } = row;
+    const { keyPoints, keyPoint, tags, image, imageUrl, ...rest } = row;
     const normalizedTags = normalizeSpeakerTags(tags);
     let normalizedKeyPoint = normalizeSpeakerKeyPoint(keyPoint);
 
@@ -57,6 +57,7 @@ export function normalizeSummitSpeakersInput(raw: unknown): unknown {
 
     return {
       ...rest,
+      imageUrl: String(imageUrl ?? image ?? '').trim(),
       keyPoint: normalizedKeyPoint,
       tags: normalizedTags,
     };

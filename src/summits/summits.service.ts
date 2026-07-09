@@ -295,10 +295,14 @@ export class SummitsService {
       summit.coverImageUrl = summit.banners[0].imageUrl || null;
     }
     if (Array.isArray(summit.speakers)) {
-      summit.speakers = summit.speakers.map((s) => ({
-        ...s,
-        imageUrl: normalizeSummitAssetUrl(s.imageUrl, origin),
-      }));
+      summit.speakers = summit.speakers.map((s) => {
+        const imageUrl = normalizeSummitAssetUrl(s.imageUrl, origin);
+        return {
+          ...s,
+          imageUrl,
+          image: imageUrl,
+        };
+      });
     }
     if (Array.isArray(summit.sponsors)) {
       summit.sponsors = summit.sponsors.map((s) => ({
@@ -855,7 +859,11 @@ export class SummitsService {
         sub: String((item as { sub?: string }).sub ?? ''),
         keyPoint: normalizeSpeakerKeyPoint((item as { keyPoint?: string }).keyPoint),
         tags: normalizeSpeakerTags((item as { tags?: unknown }).tags),
-        imageUrl: String((item as { imageUrl?: string }).imageUrl ?? ''),
+        imageUrl: String(
+          (item as { imageUrl?: string; image?: string }).imageUrl ??
+            (item as { image?: string }).image ??
+            '',
+        ),
       };
     });
   }

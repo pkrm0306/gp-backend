@@ -34,7 +34,10 @@ import {
   resolveManufacturerScopeFilter,
   resolveVendorStatusFilter,
 } from './utils/list-manufacturers-query.util';
-import { resolvePublicUploadUrl, uploadFile } from '../utils/upload-file.util';
+import {
+  resolvePublicUploadUrl,
+  uploadFile,
+} from '../utils/upload-file.util';
 import {
   isAllowedVendorProfileDocumentFile,
   VENDOR_PROFILE_DOCUMENT_VALIDATION_MESSAGE,

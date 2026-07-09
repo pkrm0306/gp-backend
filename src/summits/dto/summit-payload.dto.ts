@@ -136,6 +136,8 @@ class SummitSpeakerDto {
   @IsString({ each: true })
   keyPoints?: string[];
   @IsOptional() @IsString() imageUrl?: string;
+  /** Legacy alias for imageUrl on save. */
+  @IsOptional() @IsString() image?: string;
 }
 
 class SummitSponsorDto {

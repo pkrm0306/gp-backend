@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { resolvePublicUploadUrl } from '../../utils/upload-file.util';
 import type { SummitDocument } from '../schemas/summit.schema';
 import { normalizeSummitStatus } from './summit-status.util';
 import {
@@ -73,6 +74,8 @@ export interface SummitApiResponse {
     tags: string[];
     keyPoints: string[];
     imageUrl: string;
+    /** Legacy alias for imageUrl — some admin forms bind to `image`. */
+    image: string;
   }>;
   agendaTitle: string;
   agendaPoints: SummitAgendaPointRow[];
@@ -129,16 +132,15 @@ export function normalizeSummitAssetUrl(
   raw: string | null | undefined,
   origin?: string,
 ): string {
-  const v = String(raw ?? '').trim();
-  if (!v) return '';
-  if (/^https?:\/\//i.test(v)) return v;
-  if (!origin) {
-    return v.startsWith('/') ? v : `/${v.replace(/^\/+/, '')}`;
-  }
-  if (v.startsWith('/uploads/')) return `${origin}${v}`;
-  if (v.startsWith('uploads/')) return `${origin}/${v}`;
-  if (v.startsWith('/')) return `${origin}${v}`;
-  return v;
+  const baseUrl = String(origin ?? '').trim() || undefined;
+  return resolvePublicUploadUrl(raw, baseUrl) ?? '';
+}
+
+function readStoredSpeakerImageUrl(speaker: {
+  imageUrl?: string | null;
+  image?: string | null;
+}): string {
+  return String(speaker.imageUrl ?? speaker.image ?? '').trim();
 }
 
 function decodeBasicHtmlEntities(text: string): string {
@@ -208,20 +210,20 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
     banners: banners.map((b) => ({
       id: b.id,
       sortOrder: b.sortOrder ?? 0,
-      imageUrl: b.imageUrl ?? '',
+      imageUrl: normalizeSummitAssetUrl(b.imageUrl) || '',
     })),
     industrialPdfs: sortByOrder(doc.industrialPdfs ?? []).map((p) => ({
       id: p.id,
       sortOrder: p.sortOrder ?? 0,
       title: p.title ?? '',
-      fileUrl: p.fileUrl ?? '',
+      fileUrl: normalizeSummitAssetUrl(p.fileUrl) || '',
       fileName: p.fileName ?? '',
     })),
     buildingsPdfs: sortByOrder(doc.buildingsPdfs ?? []).map((p) => ({
       id: p.id,
       sortOrder: p.sortOrder ?? 0,
       title: p.title ?? '',
-      fileUrl: p.fileUrl ?? '',
+      fileUrl: normalizeSummitAssetUrl(p.fileUrl) || '',
       fileName: p.fileName ?? '',
     })),
     aboutGreenPro: {
@@ -245,6 +247,8 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
       const keyPoint = String(s.keyPoint ?? '').trim();
       const designation = String(s.designation ?? s.sub ?? '').trim();
       const organisation = String(s.organisation ?? '').trim();
+      const imageUrl =
+        normalizeSummitAssetUrl(readStoredSpeakerImageUrl(s)) || '';
       return {
         id: s.id,
         sortOrder: s.sortOrder ?? 0,
@@ -256,7 +260,8 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
         keyPoint,
         tags,
         keyPoints: keyPoint ? [keyPoint] : [],
-        imageUrl: s.imageUrl ?? '',
+        imageUrl,
+        image: imageUrl,
       };
     }),
     agendaTitle: agenda.title,
@@ -271,7 +276,7 @@ export function mapSummitToApi(doc: SummitDocument): SummitApiResponse {
       sortOrder: s.sortOrder ?? 0,
       name: s.name ?? '',
       tier: s.tier ?? 'Partner',
-      logoUrl: s.logoUrl ?? '',
+      logoUrl: normalizeSummitAssetUrl(s.logoUrl) || '',
     })),
     createdAt: doc.createdAt?.toISOString?.() ?? new Date().toISOString(),
     updatedAt: doc.updatedAt?.toISOString?.() ?? new Date().toISOString(),
@@ -331,7 +336,8 @@ export function mapSummitToListItem(
     date: doc.date ?? '',
     location: doc.location ?? '',
     status: normalizeSummitStatus(doc.status),
-    coverImageUrl: firstBanner?.imageUrl?.trim() || null,
+    coverImageUrl:
+      normalizeSummitAssetUrl(firstBanner?.imageUrl) || null,
     speakerCount: doc.speakers?.length ?? 0,
     sponsorCount: doc.sponsors?.length ?? 0,
     bannerCount: banners.length,

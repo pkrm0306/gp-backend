@@ -56,6 +56,23 @@ describe('summit-cms-sections.util', () => {
         }),
       ).toThrow(BadRequestException);
     });
+
+    it('accepts API round-trip payloads that only send combined text', () => {
+      const result = normalizeHighlightsSection({
+        highlightsTitle: 'Why Attend',
+        highlights: [
+          {
+            id: '650b2c41-c0d5-4331-a58e-56de49fb1f4f',
+            heading: 'Knowledge sessions',
+            text: 'Knowledge sessions — Learn from industry experts and GreenPro leaders across sectors.',
+          },
+        ],
+      });
+
+      expect(result.items[0].heading).toBe('Knowledge sessions');
+      expect(result.items[0].description).toContain('industry experts');
+      expect(result.items[0].description.length).toBeLessThanOrEqual(75);
+    });
   });
 
   describe('normalizeFocusedAreaSection', () => {
@@ -94,6 +111,93 @@ describe('summit-cms-sections.util', () => {
           ],
         }),
       ).toThrow(BadRequestException);
+    });
+
+    it('accepts focus points sent with heading instead of text', () => {
+      const result = normalizeFocusedAreaSection({
+        focusedAreaTitle: 'Focused Area',
+        focusedAreas: [
+          {
+            heading: 'Building Materials',
+            points: [
+              {
+                id: '6a4f8af52be5dc79ec2a405d',
+                heading: 'Cement, steel, glass and flooring products',
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.cards[0].points[0].text).toContain('Cement');
+    });
+
+    it('merges legacy items strings when points have empty text', () => {
+      const result = normalizeFocusedAreaSection({
+        focusedAreaTitle: 'Focused Area',
+        focusedAreas: [
+          {
+            heading: 'Building Materials',
+            items: ['Cement, steel, glass and flooring products'],
+            points: [{ id: '6a4f8af52be5dc79ec2a405d', text: '' }],
+          },
+        ],
+      });
+
+      expect(result.cards[0].points[0].text).toContain('Cement');
+    });
+
+    it('accepts legacy areaPoints with heading and description', () => {
+      const result = normalizeFocusedAreaSection({
+        focusedAreaTitle: 'Focused Area',
+        areaPoints: [
+          {
+            heading: 'Building Materials',
+            description: 'Cement, steel, glass and flooring products',
+          },
+        ],
+      });
+
+      expect(result.cards).toHaveLength(1);
+      expect(result.cards[0].heading).toBe('Building Materials');
+      expect(result.cards[0].points[0].text).toContain('Cement');
+    });
+
+    it('regroups flat areaPoints from API into topic cards', () => {
+      const result = normalizeFocusedAreaSection({
+        focusedAreaTitle: 'Focused Area',
+        areaPoints: [
+          { id: 'p1', sortOrder: 0, text: 'Cement, steel, glass and flooring products' },
+          { id: 'p2', sortOrder: 1, text: 'Paints, insulation and coatings for buildings' },
+          { id: 'p3', sortOrder: 2, text: 'Sustainable aggregates and wall materials' },
+          { id: 'p4', sortOrder: 10, text: 'Water-efficient fixtures and fittings for projects' },
+          { id: 'p5', sortOrder: 11, text: 'Rainwater harvesting and greywater systems' },
+          { id: 'p6', sortOrder: 12, text: 'Wastewater treatment and reuse technologies' },
+          { id: 'p7', sortOrder: 20, text: 'Solar panels and renewable energy integration' },
+          { id: 'p8', sortOrder: 21, text: 'Energy-efficient HVAC and lighting systems' },
+          { id: 'p9', sortOrder: 22, text: 'Smart building automation and monitoring tools' },
+        ],
+      });
+
+      expect(result.cards).toHaveLength(3);
+      expect(result.cards[0].points).toHaveLength(3);
+      expect(result.cards[1].points).toHaveLength(3);
+      expect(result.cards[2].points).toHaveLength(3);
+    });
+
+    it('drops empty nested points when card items provide text', () => {
+      const result = normalizeFocusedAreaSection({
+        focusedAreaTitle: 'Focused Area',
+        focusedAreas: [
+          {
+            heading: 'Building Materials',
+            items: ['Cement, steel, glass and flooring products'],
+            points: [{ id: '6a4fa4cd88731a032a90cc51', text: '' }],
+          },
+        ],
+      });
+
+      expect(result.cards[0].points[0].text).toContain('Cement');
     });
   });
 
