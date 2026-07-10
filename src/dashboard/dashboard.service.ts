@@ -50,8 +50,9 @@ export class DashboardService {
   ) {}
 
   /**
-   * Vendor dashboard — **Applications & URNs** table for **one URN only**
-   * (all products/EOIs under that URN). Progress uses the same URN scope.
+   * Vendor dashboard — **Applications & URNs** table.
+   * When **urn** is passed, returns products for that batch only.
+   * When **urn** is omitted, returns products across **all** URN batches.
    */
   async listApplicationsAndUrns(
     authUserId: string,
@@ -64,22 +65,28 @@ export class DashboardService {
     );
     await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
 
-    const scopedUrn = await this.resolvePrimaryUrnProduct(
-      vendorObjectId,
-      query.urn?.trim(),
-    );
-    if (!scopedUrn) {
-      return {
-        message: 'Applications and URNs retrieved successfully',
-        data: {
-          urn_no: null,
-          rows: [],
-          totalCount: 0,
-          currentPage: 1,
-          totalPages: 1,
-          limit: Number(query.limit ?? 10),
-        },
-      };
+    const urnFilter = String(query.urn ?? '').trim();
+    let scopedUrn: { urnNo: string; urnStatus: number } | null = null;
+
+    if (urnFilter) {
+      scopedUrn = await this.resolvePrimaryUrnProduct(
+        vendorObjectId,
+        urnFilter,
+      );
+      if (!scopedUrn) {
+        return {
+          message: 'Applications and URNs retrieved successfully',
+          data: {
+            urn_no: urnFilter,
+            urn_status: 0,
+            rows: [],
+            totalCount: 0,
+            currentPage: 1,
+            totalPages: 1,
+            limit: Number(query.limit ?? 10),
+          },
+        };
+      }
     }
 
     const page = Number(query.page ?? 1);
@@ -92,8 +99,10 @@ export class DashboardService {
     const match: Record<string, unknown> = {
       vendorId: vendorObjectId,
       productType: 0,
-      urnNo: scopedUrn.urnNo,
     };
+    if (scopedUrn) {
+      match.urnNo = scopedUrn.urnNo;
+    }
 
     const search = String(query.search ?? '').trim();
     if (search) {
@@ -101,7 +110,7 @@ export class DashboardService {
         search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
         'i',
       );
-      match.$or = [{ eoiNo: re }, { productName: re }];
+      match.$or = [{ eoiNo: re }, { productName: re }, { urnNo: re }];
     }
 
     const [totalCount, products] = await Promise.all([
@@ -109,7 +118,7 @@ export class DashboardService {
       this.productModel
         .find(match)
         .select('productId urnNo eoiNo productName productStatus urnStatus createdDate')
-        .sort({ createdDate: -1, productId: -1 })
+        .sort({ urnNo: -1, createdDate: -1, productId: -1 })
         .skip(skip)
         .limit(perPage)
         .lean()
@@ -131,8 +140,8 @@ export class DashboardService {
     return {
       message: 'Applications and URNs retrieved successfully',
       data: {
-        urn_no: scopedUrn.urnNo,
-        urn_status: scopedUrn.urnStatus,
+        urn_no: scopedUrn?.urnNo ?? null,
+        urn_status: scopedUrn?.urnStatus ?? 0,
         rows,
         totalCount,
         currentPage,
@@ -140,6 +149,29 @@ export class DashboardService {
         limit: perPage,
       },
     };
+  }
+
+  /** Distinct certification URNs for the vendor dashboard URN selector. */
+  async listVendorUrns(
+    authUserId: string,
+    tokenManufacturerId: string | undefined,
+  ): Promise<string[]> {
+    const vendorObjectId = await this.resolveVendorManufacturerObjectId(
+      authUserId,
+      tokenManufacturerId,
+    );
+    await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
+
+    const urns = await this.productModel.distinct('urnNo', {
+      vendorId: vendorObjectId,
+      productType: 0,
+      urnNo: { $exists: true, $nin: [null, ''] },
+    });
+
+    return urns
+      .map((urn) => String(urn ?? '').trim())
+      .filter(Boolean)
+      .sort((a, b) => b.localeCompare(a));
   }
 
   private async resolveVendorManufacturerObjectId(

@@ -37,6 +37,10 @@ import {
   resolveVendorProposalApprovalStatus,
 } from './payment-proposal.util';
 import {
+  buildVendorHistoryStatusClause,
+  resolveVendorDisplayPaymentStatus,
+} from './payment-overdue.util';
+import {
   buildTdsFileMetadata,
   enrichPaymentByUrnResponse,
   isVendorPaymentProofEditable,
@@ -2415,13 +2419,21 @@ export class PaymentsService {
   private buildPaymentListQueryClauses(
     listPaymentsDto: ListPaymentsDto,
     baseMatch: Record<string, unknown>,
-    options?: { skipSearchClause?: boolean },
+    options?: {
+      skipSearchClause?: boolean;
+      vendorHistoryStatusFilter?: boolean;
+    },
   ): Record<string, unknown> {
     const { search, status, paymentType } = listPaymentsDto;
     const andClauses: Record<string, unknown>[] = [baseMatch];
 
     if (status !== undefined && status !== null) {
-      andClauses.push({ paymentStatus: status });
+      andClauses.push(
+        options?.vendorHistoryStatusFilter &&
+          (status === 0 || status === 1 || status === 2)
+          ? buildVendorHistoryStatusClause(status)
+          : { paymentStatus: status },
+      );
     }
     if (paymentType) {
       andClauses.push({ paymentType });
@@ -2486,7 +2498,10 @@ export class PaymentsService {
   private async queryPaymentsPaginated(
     listPaymentsDto: ListPaymentsDto,
     baseMatch: Record<string, unknown>,
-    options?: { skipSearchClause?: boolean },
+    options?: {
+      skipSearchClause?: boolean;
+      vendorHistoryStatusFilter?: boolean;
+    },
   ) {
     const { page = 1, limit = 50, sort = 'desc' } = listPaymentsDto;
     const skip = (page - 1) * limit;
@@ -2508,7 +2523,22 @@ export class PaymentsService {
         .exec(),
     ]);
 
-    const data = formatPaymentRecords(rows as Record<string, unknown>[]);
+    const data = formatPaymentRecords(rows as Record<string, unknown>[]).map(
+      (payment) =>
+        options?.vendorHistoryStatusFilter
+          ? {
+              ...payment,
+              vendorDisplayPaymentStatus: resolveVendorDisplayPaymentStatus(
+                Number(payment.paymentStatus ?? 0),
+                payment.createdDate ?? payment.created_date,
+              ),
+              vendor_display_payment_status: resolveVendorDisplayPaymentStatus(
+                Number(payment.paymentStatus ?? 0),
+                payment.createdDate ?? payment.created_date,
+              ),
+            }
+          : payment,
+    );
     const enriched = await this.enrichPaymentsWithManufacturer(data);
 
     return {
@@ -2615,10 +2645,9 @@ export class PaymentsService {
         urnNos,
       );
 
-      const result = await this.queryPaymentsPaginated(
-        listPaymentsDto,
-        baseMatch,
-      );
+      const result = await this.queryPaymentsPaginated(listPaymentsDto, baseMatch, {
+        vendorHistoryStatusFilter: true,
+      });
 
       return {
         ...result,

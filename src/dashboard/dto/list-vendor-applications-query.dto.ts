@@ -20,7 +20,7 @@ export class ListVendorApplicationsQueryDto {
 
   @ApiPropertyOptional({
     description:
-      'Scope table to this URN only (all EOIs/products under that batch). If omitted, uses the vendor’s latest URN — same as GET /vendor/dashboard progress.',
+      'Scope table to this URN only (all EOIs/products under that batch). If omitted, returns products across all URN batches for this vendor.',
     example: 'URN-20260305124230',
   })
   @IsOptional()
@@ -28,7 +28,7 @@ export class ListVendorApplicationsQueryDto {
   urn?: string;
 
   @ApiPropertyOptional({
-    description: 'Search within the scoped URN (EOI or product name)',
+    description: 'Search EOI, product name, or URN within the current scope',
     example: 'GPPPK',
   })
   @IsOptional()

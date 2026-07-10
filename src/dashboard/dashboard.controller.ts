@@ -211,8 +211,8 @@ export class DashboardController {
   @ApiOperation({
     summary: 'Applications & URNs table (vendor dashboard)',
     description:
-      'Products/EOIs for **one URN only** (not every URN in the account). Pass **urn** to fix the batch; omit **urn** to use the latest URN (same rule as GET /vendor/dashboard **progressTracking**). ' +
-      'Optional **search** filters EOI/product name within that URN. Response includes **urn_no** and **urn_status** for the active batch.',
+      'Products/EOIs for the vendor dashboard table. Pass **urn** to scope to one batch; omit **urn** to return products across **all** URN batches. ' +
+      'Optional **search** filters EOI, product name, or URN within the current scope.',
   })
   @ApiQuery({
     name: 'urn',
@@ -247,5 +247,33 @@ export class DashboardController {
       manufacturerId,
       query,
     );
+  }
+
+  @Get('urns')
+  @ApiOperation({
+    summary: 'List vendor URN batches (dashboard selector)',
+    description:
+      'Returns all distinct certification URNs for the authenticated vendor, newest first. Used by the dashboard global URN selector.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'URN list retrieved',
+  })
+  async listVendorUrns(
+    @CurrentUser()
+    user: { userId?: string; vendorId?: string; manufacturerId?: string },
+  ) {
+    if (!user?.userId) {
+      throw new UnauthorizedException('Unauthorized. Please login.');
+    }
+    const manufacturerId = user.vendorId || user.manufacturerId;
+    const urns = await this.dashboardService.listVendorUrns(
+      user.userId,
+      manufacturerId,
+    );
+    return {
+      message: 'Vendor URNs retrieved successfully',
+      data: { urns },
+    };
   }
 }
