@@ -1,10 +1,9 @@
 import {
-  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model } from 'mongoose';
 import {
   Product,
   ProductDocument,
@@ -136,9 +135,10 @@ export class RenewQuickViewService {
           .findById(renewalCycleId.trim())
           .lean()
           .exec()
+          .catch(() => null)
       : null;
     if (activeCycle && activeCycle.urnNo !== trimmedUrn) {
-      throw new BadRequestException('renewalCycleId does not match this URN');
+      activeCycle = null;
     }
     if (!activeCycle) {
       activeCycle = await this.renewalCycleModel
@@ -165,24 +165,36 @@ export class RenewQuickViewService {
     const { payments: cyclePayments, payment: cyclePayment } =
       buildRenewPaymentsPayload(renewPaymentRows);
 
-    const performanceCycle =
-      await this.processRenewProductPerformanceService.resolveRenewalCycleForRead(
-        trimmedUrn,
-        renewalCycleId ??
-          (activeCycle?._id ? String(activeCycle._id) : undefined),
-      );
-    const performanceRead =
-      await this.processRenewProductPerformanceService.loadRenewProductPerformanceReadPayload(
-        trimmedUrn,
-        String(performanceCycle._id),
-      );
+    /** Quick view must still render when the URN has no renewal cycle yet. */
+    let performanceCycle: RenewalCycleDocument | null = null;
+    let performanceRead: Record<string, unknown> = {
+      product_performance_documents: [],
+    };
+    try {
+      performanceCycle =
+        await this.processRenewProductPerformanceService.resolveRenewalCycleForRead(
+          trimmedUrn,
+          renewalCycleId ??
+            (activeCycle?._id ? String(activeCycle._id) : undefined),
+        );
+      performanceRead =
+        await this.processRenewProductPerformanceService.loadRenewProductPerformanceReadPayload(
+          trimmedUrn,
+          String(performanceCycle._id),
+        );
+    } catch {
+      performanceCycle = null;
+      performanceRead = { product_performance_documents: [] };
+    }
 
-    const strictDocs = Number(performanceCycle.cycleNo) > 1;
+    const strictDocs = Number(performanceCycle?.cycleNo ?? 0) > 1;
     const documentRows = await this.renewDocumentModel
       .find(
-        buildRenewDocumentsQueryFilter(trimmedUrn, performanceCycle._id, {
-          strictCycleOnly: strictDocs,
-        }),
+        buildRenewDocumentsQueryFilter(
+          trimmedUrn,
+          performanceCycle?._id ?? activeCycle?._id,
+          { strictCycleOnly: strictDocs },
+        ),
       )
       .sort({ productDocumentId: -1 })
       .lean()
@@ -202,7 +214,9 @@ export class RenewQuickViewService {
     );
 
     const streamCycleCandidates = strictDocs
-      ? [performanceCycle._id]
+      ? performanceCycle?._id
+        ? [performanceCycle._id]
+        : [null]
       : activeCycle?._id
         ? [activeCycle._id, null]
         : [null];
@@ -307,7 +321,7 @@ export class RenewQuickViewService {
       payments: cyclePayments,
       payment: cyclePayment,
       renewContext: {
-        renewalCycleId: String(contextCycle._id),
+        renewalCycleId: contextCycle?._id ? String(contextCycle._id) : null,
         urnStatus: cycleScopedUrnStatus,
         urn_status: cycleScopedUrnStatus,
         productRenewStatus: first.productRenewStatus,

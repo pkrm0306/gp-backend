@@ -117,4 +117,34 @@ describe('AdminListProductsDto category & building filters', () => {
     expect(dto.validTillMonth).toBe(12);
     expect(dto.validTillYear).toBe(2026);
   });
+
+  it('ignores invalid categoryId instead of returning 400', async () => {
+    const dto = plainToInstance(AdminListProductsDto, {
+      categoryId: 'all',
+      page: 1,
+      limit: 12,
+    });
+    const errors = await validate(dto, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+    expect(errors).toEqual([]);
+    expect(dto.categoryId).toBeUndefined();
+  });
+
+  it('ignores empty categoryId and invalid category_ids entries', async () => {
+    const dto = plainToInstance(AdminListProductsDto, {
+      categoryId: '',
+      category_ids: ['all', 'invalid', '507f1f77bcf86cd799439011'],
+      page: 1,
+      limit: 12,
+    });
+    const errors = await validate(dto, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+    expect(errors).toEqual([]);
+    expect(dto.categoryId).toBeUndefined();
+    expect(dto.category_ids).toEqual(['507f1f77bcf86cd799439011']);
+  });
 });

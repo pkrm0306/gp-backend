@@ -30,6 +30,7 @@ import {
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { isPlatformPortalJwtUser } from '../common/utils/platform-rbac-scope.util';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ListPaymentsDto } from './dto/list-payments.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
@@ -45,9 +46,11 @@ export class PaymentsController {
 
   @Get()
   @ApiOperation({
-    summary: 'Get payments for logged-in vendor',
+    summary: 'Get payments for logged-in vendor or admin/staff',
     description:
-      'Returns a paginated list of **all** payments for the authenticated vendor across **every URN** (registration, certification, renew). Includes rows linked by organization id or any URN on the vendor’s products. Omit `status` to include all payment statuses. Do not pass `search` unless filtering.',
+      '**Vendor/partner:** paginated payments for the authenticated organization across every URN. ' +
+      '**Admin/staff:** same query params as GET /admin/payments/list (platform-wide; optional `manufacturerId` to scope one vendor). ' +
+      'Omit `status` to include all payment statuses.',
   })
   @ApiQuery({
     name: 'page',
@@ -150,6 +153,22 @@ export class PaymentsController {
     @Query() listPaymentsDto: ListPaymentsDto,
   ) {
     try {
+      if (isPlatformPortalJwtUser(user)) {
+        const result = await this.paymentsService.getAdminPayments(
+          listPaymentsDto,
+        );
+        return {
+          message: 'Payments retrieved successfully',
+          data: result.data,
+          pagination: result.pagination,
+          meta: result.meta,
+          totalCount: result.pagination.totalCount,
+          page: result.pagination.page,
+          limit: result.pagination.limit,
+          totalPages: result.pagination.totalPages,
+        };
+      }
+
       const vendorId = user?.manufacturerId || user?.vendorId;
       if (!vendorId) {
         throw new BadRequestException(

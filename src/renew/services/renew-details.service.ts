@@ -257,13 +257,16 @@ export class RenewDetailsService {
     renewalCycleId?: string,
   ): Promise<RenewalCycleDocument | null> {
     if (renewalCycleId?.trim()) {
-      const cycle = await this.renewalCycleModel
-        .findById(renewalCycleId.trim())
-        .exec();
-      if (!cycle || cycle.urnNo !== urnNo) {
-        throw new BadRequestException('renewalCycleId does not match this URN');
+      try {
+        const cycle = await this.renewalCycleModel
+          .findById(renewalCycleId.trim())
+          .exec();
+        if (cycle && cycle.urnNo === urnNo) {
+          return cycle;
+        }
+      } catch {
+        /* invalid ObjectId or lookup failure — fall through to active cycle */
       }
-      return cycle;
     }
     return this.renewalCycleModel
       .findOne({ urnNo, status: RenewalCycleStatus.IN_PROGRESS })
@@ -271,16 +274,33 @@ export class RenewDetailsService {
       .exec();
   }
 
+  private emptyPerformanceReadPayload(
+    renewalCycleId?: string,
+  ): Record<string, unknown> {
+    return {
+      renewalCycleId: renewalCycleId?.trim() || null,
+      product_performance: null,
+      product_performance_test_reports: [],
+      product_performance_documents: [],
+    };
+  }
+
   private async loadRenewBundle(urnNo: string, renewalCycleId?: string) {
     const cycle = await this.resolveActiveCycle(urnNo, renewalCycleId);
     const cycleIdForRead =
       renewalCycleId?.trim() ?? (cycle?._id ? String(cycle._id) : undefined);
 
-    const performanceRead =
-      await this.processRenewProductPerformanceService.loadRenewProductPerformanceReadPayload(
-        urnNo,
-        cycleIdForRead,
-      );
+    /** Admin quick-view / details must still load when no renewal cycle exists yet. */
+    let performanceRead: Record<string, unknown>;
+    try {
+      performanceRead =
+        await this.processRenewProductPerformanceService.loadRenewProductPerformanceReadPayload(
+          urnNo,
+          cycleIdForRead,
+        );
+    } catch {
+      performanceRead = this.emptyPerformanceReadPayload(cycleIdForRead);
+    }
 
     const headerFilter = buildRenewProcessHeaderFilter(urnNo, cycle);
     const strictDocs = Number(cycle?.cycleNo ?? 1) > 1;

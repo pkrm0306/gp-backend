@@ -37,9 +37,13 @@ export function normalizeStringArray(value: unknown): string[] | undefined {
 }
 
 export function normalizeMongoIdArray(value: unknown): string[] | undefined {
-  const arr = normalizeStringArray(value);
-  if (!arr) return undefined;
-  const valid = arr.filter((id) => /^[a-fA-F0-9]{24}$/.test(id));
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const source = Array.isArray(value) ? value : String(value).split(',');
+  const valid = source
+    .map((entry) => normalizeOptionalMongoId(entry))
+    .filter((id): id is string => Boolean(id));
   return valid.length > 0 ? valid : undefined;
 }
 
@@ -49,6 +53,25 @@ export function normalizeOptionalString(value: unknown): string | undefined {
   }
   const v = String(value).trim();
   return v === '' ? undefined : v;
+}
+
+/** Optional Mongo `_id` filter — empty/invalid/sentinel values become `undefined` (no 400). */
+export function normalizeOptionalMongoId(value: unknown): string | undefined {
+  const v = normalizeOptionalString(value);
+  if (!v) {
+    return undefined;
+  }
+  const lower = v.toLowerCase();
+  if (
+    lower === 'all' ||
+    lower === 'null' ||
+    lower === 'undefined' ||
+    lower === 'none' ||
+    lower === 'any'
+  ) {
+    return undefined;
+  }
+  return /^[a-fA-F0-9]{24}$/.test(v) ? v : undefined;
 }
 
 /** Certified valid-till filter: `YYYY-MM` (month + year only). */
@@ -139,7 +162,7 @@ export class AdminListProductsDto {
     example: '507f1f77bcf86cd799439011',
   })
   @IsOptional()
-  @Transform(({ value }) => normalizeOptionalString(value))
+  @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   categoryId?: string;
 
@@ -148,7 +171,7 @@ export class AdminListProductsDto {
     example: '507f1f77bcf86cd799439011',
   })
   @IsOptional()
-  @Transform(({ value }) => normalizeOptionalString(value))
+  @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   category_id?: string;
 
@@ -179,7 +202,7 @@ export class AdminListProductsDto {
     example: '507f1f77bcf86cd799439012',
   })
   @IsOptional()
-  @Transform(({ value }) => normalizeOptionalString(value))
+  @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   manufacturerId?: string;
 
@@ -188,7 +211,7 @@ export class AdminListProductsDto {
     example: '507f1f77bcf86cd799439012',
   })
   @IsOptional()
-  @Transform(({ value }) => normalizeOptionalString(value))
+  @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   manufacturer_id?: string;
 
@@ -453,7 +476,7 @@ export class AdminListProductsDto {
     example: '507f1f77bcf86cd799439010',
   })
   @IsOptional()
-  @Transform(({ value }) => normalizeOptionalString(value))
+  @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   countryId?: string;
 
@@ -462,7 +485,7 @@ export class AdminListProductsDto {
     example: '507f1f77bcf86cd799439010',
   })
   @IsOptional()
-  @Transform(({ value }) => normalizeOptionalString(value))
+  @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   country_id?: string;
 
@@ -471,7 +494,7 @@ export class AdminListProductsDto {
     example: '507f1f77bcf86cd799439013',
   })
   @IsOptional()
-  @Transform(({ value }) => normalizeOptionalString(value))
+  @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   stateId?: string;
 
@@ -756,7 +779,7 @@ export class AdminListProductsDto {
     example: '507f1f77bcf86cd799439011',
   })
   @IsOptional()
-  @Transform(({ value }) => normalizeOptionalString(value))
+  @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   productId?: string;
 }
