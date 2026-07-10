@@ -37,6 +37,29 @@ export interface VendorDashboardCategoryBar {
   count: number;
 }
 
+export interface VendorDashboardProductOutcomePoint {
+  label: string;
+  month: number;
+  year: number;
+  registered: number;
+  certified: number;
+  rejected: number;
+}
+
+export interface VendorDashboardProductOutcomesChart {
+  title: string;
+  subtitle: string;
+  year: number;
+  availableYears: number[];
+  chart: VendorDashboardProductOutcomePoint[];
+  totals: {
+    registered: number;
+    certified: number;
+    rejected: number;
+  };
+  yAxis: { min: number; suggestedMax: number };
+}
+
 export interface VendorDashboardRecentEoiRow {
   productId: number;
   eoiNo: string;
@@ -98,4 +121,5 @@ export interface VendorDashboardOverview {
     days: number;
     items: VendorDashboardRecentActivityItem[];
   };
+  productOutcomesChart: VendorDashboardProductOutcomesChart;
 }

@@ -10,8 +10,17 @@ import {
   activityLifecycleResponsibility,
   nextActivityLifecycleStatus,
 } from '../activity-log/activity-lifecycle.constants';
+import { URN_STATUS_PENDING_ACTIVITY } from '../activity-log/activity-workflow.constants';
 
 export const URN_LIFECYCLE_MAX_STATUS = ACTIVITY_LIFECYCLE_MAX_STATUS;
+
+/** Canonical 12-step certification journey shown in the vendor dashboard. */
+export const CERTIFICATION_JOURNEY_ACTIVITY_IDS = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+] as const;
+
+export const CERTIFICATION_JOURNEY_STEP_COUNT =
+  CERTIFICATION_JOURNEY_ACTIVITY_IDS.length;
 
 export const URN_ACTIVITY_NAMES: Readonly<Record<number, string>> =
   Object.fromEntries(
@@ -97,6 +106,39 @@ export function urnResponsibilityOwner(
   return activityLifecycleResponsibility(status);
 }
 
+/** Pending workflow activity for a URN status, or null when the journey is complete. */
+export function resolvePendingActivityId(urnStatus: number): number | null {
+  if (urnStatus >= URN_LIFECYCLE_MAX_STATUS) return null;
+  const pending = URN_STATUS_PENDING_ACTIVITY[urnStatus];
+  if (pending === undefined) return null;
+  return pending;
+}
+
+/** Map urnStatus to completed / active / pending for each of the 12 journey steps. */
+export function resolveJourneyStepStatuses(
+  urnStatus: number,
+): VendorProgressStepStatus[] {
+  const pendingActivityId = resolvePendingActivityId(urnStatus);
+
+  if (pendingActivityId === null && urnStatus >= URN_LIFECYCLE_MAX_STATUS) {
+    return CERTIFICATION_JOURNEY_ACTIVITY_IDS.map(() => 'completed');
+  }
+
+  const pendingIndex = CERTIFICATION_JOURNEY_ACTIVITY_IDS.indexOf(
+    pendingActivityId as (typeof CERTIFICATION_JOURNEY_ACTIVITY_IDS)[number],
+  );
+
+  if (pendingIndex < 0) {
+    return CERTIFICATION_JOURNEY_ACTIVITY_IDS.map(() => 'pending');
+  }
+
+  return CERTIFICATION_JOURNEY_ACTIVITY_IDS.map((_, displayIndex) => {
+    if (displayIndex < pendingIndex) return 'completed';
+    if (displayIndex === pendingIndex) return 'active';
+    return 'pending';
+  });
+}
+
 /** Normalize old labels to the canonical activity-log responsibility names. */
 export function toVendorPanelResponsibility(
   owner: string | undefined | null,
@@ -159,37 +201,42 @@ function responsibilityForActivityId(
   return toVendorPanelResponsibility(urnResponsibilityOwner(activityId));
 }
 
+function resolveLatestCompletedActivityId(urnStatus: number): number | null {
+  const pendingActivityId = resolvePendingActivityId(urnStatus);
+
+  if (pendingActivityId === null && urnStatus >= URN_LIFECYCLE_MAX_STATUS) {
+    return CERTIFICATION_JOURNEY_ACTIVITY_IDS[
+      CERTIFICATION_JOURNEY_ACTIVITY_IDS.length - 1
+    ];
+  }
+
+  if (pendingActivityId === null) return null;
+
+  const pendingIndex = CERTIFICATION_JOURNEY_ACTIVITY_IDS.indexOf(
+    pendingActivityId as (typeof CERTIFICATION_JOURNEY_ACTIVITY_IDS)[number],
+  );
+  if (pendingIndex <= 0) return null;
+
+  return CERTIFICATION_JOURNEY_ACTIVITY_IDS[pendingIndex - 1];
+}
+
 /**
- * Stepper: milestones 0 … displayEnd (current URN position + next pending step).
- * Status from live products.urnStatus; labels prefer activity_log text.
+ * Always returns all 12 certification journey steps.
+ * Completion is derived from products.urnStatus via URN_STATUS_PENDING_ACTIVITY.
  */
 export function buildDynamicProgressSteps(
   urnStatus: number,
   logs: ActivityLogLike[],
 ): VendorProgressStepRow[] {
   const logById = indexLogsByActivityId(logs);
-  const displayEnd =
-    urnStatus >= URN_LIFECYCLE_MAX_STATUS
-      ? URN_LIFECYCLE_MAX_STATUS
-      : nextUrnActivityId(urnStatus);
+  const statuses = resolveJourneyStepStatuses(urnStatus);
 
-  const steps: VendorProgressStepRow[] = [];
-  for (let id = 0; id <= displayEnd; id += 1) {
-    let status: VendorProgressStepStatus = 'pending';
-    if (urnStatus >= URN_LIFECYCLE_MAX_STATUS || id < urnStatus) {
-      status = 'completed';
-    } else if (id === urnStatus) {
-      status = 'active';
-    }
-
-    steps.push({
-      id,
-      label: labelForActivityId(id, logById),
-      status,
-      responsibility: responsibilityForActivityId(id, logById),
-    });
-  }
-  return steps;
+  return CERTIFICATION_JOURNEY_ACTIVITY_IDS.map((activityId, index) => ({
+    id: activityId,
+    label: labelForActivityId(activityId, logById),
+    status: statuses[index] ?? 'pending',
+    responsibility: responsibilityForActivityId(activityId, logById),
+  }));
 }
 
 export function buildProgressTimeline(
@@ -243,20 +290,10 @@ export function buildVendorProgressTracking(input: {
   const latestLog =
     sortedLogs.length > 0 ? sortedLogs[sortedLogs.length - 1] : null;
 
-  const completedId =
-    urnStatus >= URN_LIFECYCLE_MAX_STATUS
-      ? URN_LIFECYCLE_MAX_STATUS
-      : urnStatus > 0
-        ? previousUrnActivityId(urnStatus)
-        : typeof latestLog?.activities_id === 'number'
-          ? latestLog.activities_id
-          : 0;
+  const completedId = resolveLatestCompletedActivityId(urnStatus);
 
   const latestStepCompleted: VendorProgressActionRow | null =
-    input.urnNo &&
-    (urnStatus > 0 ||
-      urnStatus >= URN_LIFECYCLE_MAX_STATUS ||
-      Boolean(latestLog?.activity))
+    input.urnNo && completedId != null
       ? {
           activity: labelForActivityId(completedId, logById),
           status: 'Done',
@@ -268,26 +305,20 @@ export function buildVendorProgressTracking(input: {
         }
       : null;
 
-  const nextId =
-    typeof latestLog?.next_acitivities_id === 'number'
-      ? latestLog.next_acitivities_id
-      : nextUrnActivityId(urnStatus);
-
-  const nextActivityId =
-    urnStatus < URN_LIFECYCLE_MAX_STATUS ? urnStatus : nextId;
+  const pendingActivityId = resolvePendingActivityId(urnStatus);
   const nextStep: VendorProgressActionRow | null =
-    input.urnNo && urnStatus < URN_LIFECYCLE_MAX_STATUS
+    input.urnNo && pendingActivityId != null
       ? {
           activity: String(
             latestLog?.next_activity?.trim() ||
-              labelForActivityId(urnStatus, logById),
+              labelForActivityId(pendingActivityId, logById),
           ),
           status: 'Pending',
           responsibility: toVendorPanelResponsibility(
             latestLog?.next_responsibility ??
-              urnResponsibilityOwner(urnStatus),
+              responsibilityForActivityId(pendingActivityId, logById),
           ),
-          activitiesId: nextActivityId,
+          activitiesId: pendingActivityId,
         }
       : null;
 

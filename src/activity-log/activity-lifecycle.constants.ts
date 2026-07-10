@@ -55,7 +55,7 @@ export const ACTIVITY_LIFECYCLE_STEPS: Readonly<
     responsibility: 'Admin',
   },
   11: {
-    activity: 'Approve/Reject Certification Fee',
+    activity: 'Product renewal completed',
     responsibility: 'Admin',
   },
 };

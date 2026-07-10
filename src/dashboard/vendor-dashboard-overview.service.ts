@@ -52,6 +52,7 @@ export class VendorDashboardOverviewService {
       productsByCategory,
       recentEois,
       recentActivity,
+      productOutcomesChart,
     ] = await Promise.all([
       this.buildKpiCards(vendorId, baseMatch, now),
       this.buildRegistrationCertificationTrend(vendorId, baseMatch, year),
@@ -59,6 +60,7 @@ export class VendorDashboardOverviewService {
       this.buildProductsByCategory(vendorId, baseMatch),
       this.buildRecentEois(vendorId, baseMatch),
       this.buildRecentActivity(vendorId, now, 7),
+      this.getProductOutcomesChart(vendorId),
     ]);
 
     return {
@@ -68,6 +70,7 @@ export class VendorDashboardOverviewService {
       productsByCategory,
       recentEois,
       recentActivity,
+      productOutcomesChart,
     };
   }
 
@@ -323,6 +326,160 @@ export class VendorDashboardOverviewService {
         ],
       })
       .exec();
+  }
+
+  private static readonly PRODUCT_OUTCOMES_YEAR_WINDOW = 5;
+
+  async getProductOutcomesChart(
+    vendorId: Types.ObjectId,
+    requestedYear?: number,
+  ) {
+    const baseMatch = vendorActiveProductMatch(vendorId);
+    const currentYear = new Date().getFullYear();
+    const availableYears = this.listAvailableProductYears(currentYear);
+    const year = this.resolveChartYear(requestedYear, availableYears, currentYear);
+    return this.buildProductOutcomesChart(baseMatch, year, availableYears);
+  }
+
+  private resolveChartYear(
+    requestedYear: number | undefined,
+    availableYears: number[],
+    currentYear: number,
+  ): number {
+    if (
+      typeof requestedYear === 'number' &&
+      Number.isFinite(requestedYear) &&
+      availableYears.includes(requestedYear)
+    ) {
+      return requestedYear;
+    }
+    return availableYears[0] ?? currentYear;
+  }
+
+  private listAvailableProductYears(currentYear: number): number[] {
+    const years: number[] = [];
+    for (let index = 0; index < VendorDashboardOverviewService.PRODUCT_OUTCOMES_YEAR_WINDOW; index += 1) {
+      years.push(currentYear - index);
+    }
+    return years;
+  }
+
+  private async buildProductOutcomesChart(
+    baseMatch: Record<string, unknown>,
+    year: number,
+    availableYears: number[],
+  ) {
+    const start = new Date(Date.UTC(year, 0, 1));
+    const end = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
+
+    const [registrationRows, certificationRows, rejectionRows] = await Promise.all([
+      this.productModel
+        .aggregate<{ _id: number; count: number }>([
+          {
+            $match: {
+              ...baseMatch,
+              createdDate: { $gte: start, $lte: end },
+            },
+          },
+          { $group: { _id: { $month: '$createdDate' }, count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.productModel
+        .aggregate<{ _id: number; count: number }>([
+          {
+            $match: {
+              ...baseMatch,
+              productStatus: PRODUCT_STATUS_CERTIFIED,
+              certifiedDate: { $gte: start, $lte: end, $ne: null },
+            },
+          },
+          {
+            $group: { _id: { $month: '$certifiedDate' }, count: { $sum: 1 } },
+          },
+        ])
+        .exec(),
+      this.productModel
+        .aggregate<{ _id: number; count: number }>([
+          {
+            $match: {
+              ...baseMatch,
+              productStatus: PRODUCT_STATUS_REJECTED,
+              $or: [
+                { rejectedAt: { $gte: start, $lte: end, $ne: null } },
+                {
+                  $and: [
+                    { $or: [{ rejectedAt: null }, { rejectedAt: { $exists: false } }] },
+                    { createdDate: { $gte: start, $lte: end } },
+                  ],
+                },
+              ],
+            },
+          },
+          {
+            $group: {
+              _id: {
+                $month: { $ifNull: ['$rejectedAt', '$createdDate'] },
+              },
+              count: { $sum: 1 },
+            },
+          },
+        ])
+        .exec(),
+    ]);
+
+    const registered = new Map<number, number>();
+    const certified = new Map<number, number>();
+    const rejected = new Map<number, number>();
+
+    for (const row of registrationRows) {
+      registered.set(Number(row._id), row.count ?? 0);
+    }
+    for (const row of certificationRows) {
+      certified.set(Number(row._id), row.count ?? 0);
+    }
+    for (const row of rejectionRows) {
+      rejected.set(Number(row._id), row.count ?? 0);
+    }
+
+    const chart = Array.from({ length: 12 }, (_, index) => {
+      const month = index + 1;
+      return {
+        label: monthShortLabel(month),
+        month,
+        year,
+        registered: registered.get(month) ?? 0,
+        certified: certified.get(month) ?? 0,
+        rejected: rejected.get(month) ?? 0,
+      };
+    });
+
+    const totals = chart.reduce(
+      (acc, point) => ({
+        registered: acc.registered + point.registered,
+        certified: acc.certified + point.certified,
+        rejected: acc.rejected + point.rejected,
+      }),
+      { registered: 0, certified: 0, rejected: 0 },
+    );
+
+    const maxValue = chart.reduce(
+      (max, point) =>
+        Math.max(max, point.registered + point.certified + point.rejected),
+      0,
+    );
+
+    return {
+      title: 'Product outcomes',
+      subtitle: `Registered, certified, and rejected products in ${year}`,
+      year,
+      availableYears,
+      chart,
+      totals,
+      yAxis: {
+        min: 0,
+        suggestedMax: suggestAxisMax(maxValue),
+      },
+    };
   }
 
   private async buildRegistrationCertificationTrend(

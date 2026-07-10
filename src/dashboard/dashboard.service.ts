@@ -174,6 +174,71 @@ export class DashboardService {
       .sort((a, b) => b.localeCompare(a));
   }
 
+  /**
+   * Progress tracking for every URN batch in one request (dashboard carousel).
+   */
+  async listAllUrnProgressTracking(
+    authUserId: string,
+    tokenManufacturerId: string | undefined,
+  ): Promise<{ urns: string[]; progress: ReturnType<typeof buildVendorProgressTracking>[] }> {
+    const vendorObjectId = await this.resolveVendorManufacturerObjectId(
+      authUserId,
+      tokenManufacturerId,
+    );
+    await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
+
+    const products = await this.productModel
+      .find({
+        vendorId: vendorObjectId,
+        productType: 0,
+        urnNo: { $exists: true, $nin: [null, ''] },
+      })
+      .select('urnNo urnStatus productId')
+      .sort({ urnNo: -1, productId: -1 })
+      .lean()
+      .exec();
+
+    const urnStatusByUrn = new Map<string, number>();
+    for (const product of products) {
+      const urn = String(product.urnNo ?? '').trim();
+      if (!urn || urnStatusByUrn.has(urn)) continue;
+      urnStatusByUrn.set(urn, Number(product.urnStatus ?? 0));
+    }
+
+    const urns = Array.from(urnStatusByUrn.keys()).sort((a, b) =>
+      b.localeCompare(a),
+    );
+
+    if (urns.length === 0) {
+      return { urns: [], progress: [] };
+    }
+
+    const activityLogs = await this.activityLogModel
+      .find({ vendor_id: vendorObjectId, urn_no: { $in: urns } })
+      .sort({ created_at: 1 })
+      .lean()
+      .exec();
+
+    const logsByUrn = new Map<string, typeof activityLogs>();
+    for (const log of activityLogs) {
+      const urn = String(log.urn_no ?? '').trim();
+      if (!urn) continue;
+      const existing = logsByUrn.get(urn) ?? [];
+      existing.push(log);
+      logsByUrn.set(urn, existing);
+    }
+
+    const progress = urns.map((urnNo) =>
+      buildVendorProgressTracking({
+        urnNo,
+        urnStatus: urnStatusByUrn.get(urnNo) ?? 0,
+        activityLogs: logsByUrn.get(urnNo) ?? [],
+      }),
+    );
+
+    return { urns, progress };
+  }
+
   private async resolveVendorManufacturerObjectId(
     authUserId: string,
     tokenManufacturerId?: string,

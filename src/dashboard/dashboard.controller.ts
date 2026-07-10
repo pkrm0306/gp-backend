@@ -173,6 +173,51 @@ export class DashboardController {
     );
   }
 
+  @Get('product-outcomes-chart')
+  @ApiOperation({
+    summary: 'Yearly product outcomes bar chart',
+    description:
+      'Monthly counts of registered, certified, and rejected products for the selected year. ' +
+      'Pass **year** to filter (defaults to the current year).',
+  })
+  @ApiQuery({
+    name: 'year',
+    required: false,
+    type: Number,
+    example: 2026,
+  })
+  @ApiResponse({ status: 200, description: 'Product outcomes chart data retrieved' })
+  async getProductOutcomesChart(
+    @CurrentUser()
+    user: {
+      userId?: string;
+      vendorId?: string;
+      manufacturerId?: string;
+    },
+    @Query('year') year?: string,
+  ) {
+    if (!user?.userId) {
+      throw new UnauthorizedException('Unauthorized. Please login.');
+    }
+
+    const vendorObjectId =
+      await this.dashboardService.resolveVendorObjectIdForOverview(
+        user.userId,
+        user.vendorId || user.manufacturerId,
+      );
+
+    const parsedYear = year != null && String(year).trim() !== '' ? Number(year) : undefined;
+    const data = await this.dashboardOverview.getProductOutcomesChart(
+      vendorObjectId,
+      Number.isFinite(parsedYear) ? parsedYear : undefined,
+    );
+
+    return {
+      message: 'Product outcomes chart retrieved successfully',
+      data,
+    };
+  }
+
   @Get('overview')
   @ApiOperation({
     summary: 'Vendor dashboard overview (KPIs, charts, recent EOIs, activity)',
@@ -247,6 +292,35 @@ export class DashboardController {
       manufacturerId,
       query,
     );
+  }
+
+  @Get('urn-progress')
+  @ApiOperation({
+    summary: 'Certification progress for all URN batches',
+    description:
+      'Returns progressTracking for every distinct URN batch in one payload. Used by the dashboard journey carousel when no URN filter is selected.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'URN progress list retrieved',
+  })
+  async listAllUrnProgress(
+    @CurrentUser()
+    user: { userId?: string; vendorId?: string; manufacturerId?: string },
+  ) {
+    if (!user?.userId) {
+      throw new UnauthorizedException('Unauthorized. Please login.');
+    }
+    const manufacturerId = user.vendorId || user.manufacturerId;
+    const { urns, progress } =
+      await this.dashboardService.listAllUrnProgressTracking(
+        user.userId,
+        manufacturerId,
+      );
+    return {
+      message: 'Vendor URN progress retrieved successfully',
+      data: { urns, progress },
+    };
   }
 
   @Get('urns')
