@@ -336,7 +336,8 @@ export class AuthService {
     }
     const manufacturerOk = Number(m.manufacturerStatus) === 1;
     const vendorOk = Number(m.vendor_status) === 1;
-    if (!manufacturerOk || !vendorOk) {
+    const accountDeleted = Boolean(m.accountDeletedAt);
+    if (!manufacturerOk || !vendorOk || accountDeleted) {
       throw new UnauthorizedException(
         'Vendor portal access is not available. Your organization must be active.',
       );

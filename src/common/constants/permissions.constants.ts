@@ -68,6 +68,12 @@ export const PERMISSIONS = {
   TEAM_MEMBERS_UPDATE: 'team-members:update',
   TEAM_MEMBERS_DELETE: 'team-members:delete',
 
+  GRIEVANCES_VIEW: 'grievances:view',
+  GRIEVANCES_UPDATE: 'grievances:update',
+
+  ACCOUNT_DELETION_VIEW: 'account-deletion:view',
+  ACCOUNT_DELETION_UPDATE: 'account-deletion:update',
+
   PROFILE_VIEW: 'profile:view',
   PROFILE_UPDATE: 'profile:update',
 

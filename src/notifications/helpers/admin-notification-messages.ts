@@ -199,4 +199,30 @@ export const AdminNotificationMessages = {
       actorName: email,
     };
   },
+
+  grievanceCreated(
+    manufacturerName: string,
+    grievanceNo: string,
+    subject: string,
+    category?: string,
+  ) {
+    const categorySuffix = category?.trim() ? ` (${category.trim()})` : '';
+    return {
+      title: `Grievance Raised — ${manufacturerName}`,
+      message: `${manufacturerName} raised grievance ${grievanceNo}${categorySuffix}: ${subject}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  accountDeletionRequested(
+    manufacturerName: string,
+    requestNo: string,
+    reason: string,
+  ) {
+    return {
+      title: `Account Deletion Requested — ${manufacturerName}`,
+      message: `${manufacturerName} submitted account deletion request ${requestNo} (${reason})`,
+      actorName: manufacturerName,
+    };
+  },
 };

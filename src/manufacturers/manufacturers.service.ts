@@ -34,6 +34,7 @@ import {
   resolveManufacturerScopeFilter,
   resolveVendorStatusFilter,
 } from './utils/list-manufacturers-query.util';
+import { matchPublicWebsiteManufacturerVisibility } from './constants/public-website-manufacturer-visibility.filter';
 import {
   resolvePublicUploadUrl,
   uploadFile,
@@ -215,6 +216,10 @@ export class ManufacturersService {
       .findOne({
         vendor_email: emailRx,
         _id: { $ne: manufacturerId },
+        $or: [
+          { accountDeletedAt: { $exists: false } },
+          { accountDeletedAt: null },
+        ],
       })
       .select('_id')
       .lean();
@@ -224,7 +229,7 @@ export class ManufacturersService {
     }
 
     const usersQuery = this.vendorUserModel
-      .find({ email: emailRx })
+      .find({ email: emailRx, status: { $ne: 2 } })
       .select('_id manufacturerId vendorId')
       .lean();
     if (session) usersQuery.session(session);
@@ -377,7 +382,13 @@ export class ManufacturersService {
     const emailRx = this.vendorEmailCaseInsensitiveRegex(normalized);
 
     const mfgQuery = this.manufacturerModel
-      .findOne({ vendor_email: emailRx })
+      .findOne({
+        vendor_email: emailRx,
+        $or: [
+          { accountDeletedAt: { $exists: false } },
+          { accountDeletedAt: null },
+        ],
+      })
       .select('_id')
       .lean();
     if (session) mfgQuery.session(session);
@@ -385,7 +396,10 @@ export class ManufacturersService {
       throw new ConflictException(this.vendorEmailDuplicateMessage());
     }
 
-    const userFilter: Record<string, unknown> = { email: emailRx };
+    const userFilter: Record<string, unknown> = {
+      email: emailRx,
+      status: { $ne: 2 },
+    };
     if (Types.ObjectId.isValid(userId)) {
       userFilter._id = { $ne: new Types.ObjectId(userId) };
     }
@@ -517,6 +531,7 @@ export class ManufacturersService {
       vendor_email?: string | null;
       vendor_phone?: string | null;
       vendor_status?: number | null;
+      accountDeletedAt?: Date | null;
       createdAt?: Date;
       updatedAt?: Date;
     },
@@ -541,6 +556,10 @@ export class ManufacturersService {
     const resolvedManufacturerImage = this.resolveManufacturerImageUrl(
       m.manufacturerImage,
     );
+    const accountDeletedAt = m.accountDeletedAt
+      ? new Date(m.accountDeletedAt)
+      : null;
+    const accountDeleted = Boolean(accountDeletedAt);
 
     return {
       _id: m._id,
@@ -563,6 +582,8 @@ export class ManufacturersService {
       vendor_status: vSt,
       vendorStatusLabel: vendorStatusLabel(vSt),
       statusToggle: vSt === 1 ? ('On' as const) : ('Off' as const),
+      accountDeleted,
+      accountDeletedAt,
       manufacturer_product_count: options.manufacturer_product_count,
       manufacturer_vendor_count: options.manufacturer_vendor_count,
       ...(options.productCount !== undefined
@@ -736,8 +757,14 @@ export class ManufacturersService {
     if (!normalized) {
       return null;
     }
+    const notSoftDeleted = {
+      $or: [
+        { accountDeletedAt: { $exists: false } },
+        { accountDeletedAt: null },
+      ],
+    };
     const exact = await this.manufacturerModel
-      .findOne({ vendor_email: normalized })
+      .findOne({ vendor_email: normalized, ...notSoftDeleted })
       .exec();
     if (exact) {
       return exact;
@@ -747,6 +774,7 @@ export class ManufacturersService {
         vendor_email: {
           $regex: new RegExp(`^${escapeRegex(normalized)}$`, 'i'),
         },
+        ...notSoftDeleted,
       })
       .exec();
   }
@@ -777,6 +805,10 @@ export class ManufacturersService {
     return this.manufacturerModel
       .findOne({
         manufacturerName: { $regex: companyNameExactRegex(normalized) },
+        $or: [
+          { accountDeletedAt: { $exists: false } },
+          { accountDeletedAt: null },
+        ],
       })
       .exec();
   }
@@ -1957,6 +1989,7 @@ export class ManufacturersService {
     if (!manufacturer) {
       throw new NotFoundException('Manufacturer not found');
     }
+    this.assertManufacturerAccountNotDeleted(manufacturer);
     const wasUnverified = (manufacturer.manufacturerStatus ?? 0) !== 1;
 
     const updated = await this.manufacturerModel
@@ -2041,6 +2074,17 @@ export class ManufacturersService {
     }
   }
 
+  /** Soft-deleted accounts (DPDP Complete) must never be reactivated. */
+  private assertManufacturerAccountNotDeleted(
+    manufacturer: ManufacturerDocument | { accountDeletedAt?: Date | null },
+  ): void {
+    if (manufacturer.accountDeletedAt) {
+      throw new ConflictException(
+        'This manufacturer account was deleted and cannot be reactivated.',
+      );
+    }
+  }
+
   /**
    * Toggles vendor active/inactive for verified manufacturer.
    * Keeps manufacturerStatus pinned at 1.
@@ -2055,6 +2099,7 @@ export class ManufacturersService {
       if (!manufacturer) {
         throw new NotFoundException('Manufacturer not found');
       }
+      this.assertManufacturerAccountNotDeleted(manufacturer);
       const wasUnverified = (manufacturer.manufacturerStatus ?? 0) !== 1;
       const currentVendor = manufacturer.vendor_status ?? 0;
       const newVendor = currentVendor === 1 ? 0 : 1;
@@ -2100,7 +2145,10 @@ export class ManufacturersService {
 
       return updated;
     } catch (error: any) {
-      if (error instanceof NotFoundException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ConflictException
+      ) {
         throw error;
       }
       if (error.name === 'CastError') {
@@ -2126,6 +2174,7 @@ export class ManufacturersService {
       if (!manufacturer) {
         throw new NotFoundException('Manufacturer not found');
       }
+      this.assertManufacturerAccountNotDeleted(manufacturer);
       if ((manufacturer.manufacturerStatus ?? 0) !== 1) {
         throw new ConflictException(
           'Only verified manufacturers can be toggled',
@@ -2181,6 +2230,81 @@ export class ManufacturersService {
         error.message || 'Failed to update vendor status',
       );
     }
+  }
+
+  /**
+   * Soft-delete a manufacturer after an Account Deletion request is Completed:
+   * - Sets vendor_status = 0 and accountDeletedAt (blocks login / JWT access)
+   * - Frees vendor_email / vendor_phone (and portal user emails) for re-registration
+   * - Invalidates sessions
+   * Certified products stay in DB but are hidden from the public website via visibility filters.
+   */
+  async softDeleteAccountAfterDeletionRequest(
+    id: string,
+  ): Promise<ManufacturerDocument> {
+    const manufacturerId = new Types.ObjectId(id);
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerId)
+      .exec();
+
+    if (!manufacturer) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+
+    if (manufacturer.accountDeletedAt) {
+      return manufacturer;
+    }
+
+    const stamp = Date.now();
+    const idStr = manufacturerId.toString();
+    const originalEmail = this.normalizeVendorEmail(manufacturer.vendor_email);
+    const originalPhone = String(manufacturer.vendor_phone ?? '').trim();
+    const freedEmail = `deleted.${idStr}.${stamp}@account-deleted.local`;
+    const freedPhone = `DEL-${idStr.slice(-8)}-${stamp}`.slice(0, 32);
+
+    const updated = await this.manufacturerModel
+      .findByIdAndUpdate(
+        manufacturerId,
+        {
+          vendor_status: 0,
+          accountDeletedAt: new Date(),
+          deletedVendorEmail: originalEmail || undefined,
+          deletedVendorPhone: originalPhone || undefined,
+          vendor_email: freedEmail,
+          vendor_phone: freedPhone,
+          updatedAt: new Date(),
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+
+    const portalUsers = await this.vendorUserModel
+      .find({
+        $or: [{ manufacturerId }, { vendorId: manufacturerId }],
+        type: { $in: ['vendor', 'partner'] },
+      })
+      .select('_id email phone')
+      .exec();
+
+    for (let i = 0; i < portalUsers.length; i++) {
+      const user = portalUsers[i];
+      await this.vendorUserModel
+        .findByIdAndUpdate(user._id, {
+          status: 2,
+          email: `deleted.user.${idStr}.${i}.${stamp}@account-deleted.local`,
+          phone: `DELU-${idStr.slice(-6)}-${i}-${stamp}`.slice(0, 32),
+          updatedAt: new Date(),
+        })
+        .exec();
+    }
+
+    await this.authService.invalidateSessionsForManufacturer(idStr);
+
+    return updated;
   }
 
   private async countForManufacturer(manufacturerId: Types.ObjectId) {
@@ -2502,7 +2626,7 @@ export class ManufacturersService {
 
   /**
    * Public website manufacturers listing: only manufacturers with at least one certified,
-   * non–soft-deleted product.
+   * non–soft-deleted product, excluding inactive / account-deleted manufacturers.
    */
   async findAllPaginatedForWebsitePublic(query: ListManufacturersQueryDto) {
     const manufacturerIds = await this.productModel
@@ -2524,7 +2648,32 @@ export class ManufacturersService {
       };
     }
 
-    return this.findAllPaginated(query, manufacturerIds, {
+    const visibleManufacturerIds = await this.manufacturerModel
+      .find({
+        _id: { $in: manufacturerIds },
+        ...matchPublicWebsiteManufacturerVisibility(''),
+      })
+      .select('_id')
+      .lean()
+      .exec()
+      .then((rows) => rows.map((r) => r._id as Types.ObjectId));
+
+    if (!visibleManufacturerIds.length) {
+      const page = query.page ?? 1;
+      const limit = query.limit ?? 10;
+      return {
+        message: 'Manufacturers retrieved successfully',
+        data: [],
+        total: 0,
+        totalCount: 0,
+        page,
+        limit,
+        totalPages: 0,
+        currentPage: page,
+      };
+    }
+
+    return this.findAllPaginated(query, visibleManufacturerIds, {
       useWebsitePublicCertifiedProductCount: true,
     });
   }

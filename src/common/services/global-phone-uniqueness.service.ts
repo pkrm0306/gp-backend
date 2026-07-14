@@ -83,7 +83,15 @@ export class GlobalPhoneUniquenessService {
     const mfgClauses = buildPhoneFieldMatchClauses('vendor_phone', phone);
     if (mfgClauses.length) {
       const mfgFilter: Record<string, unknown> = {
-        $or: mfgClauses,
+        $and: [
+          { $or: mfgClauses },
+          {
+            $or: [
+              { accountDeletedAt: { $exists: false } },
+              { accountDeletedAt: null },
+            ],
+          },
+        ],
       };
       if (excludeMfgOid) {
         mfgFilter._id = { $ne: excludeMfgOid };

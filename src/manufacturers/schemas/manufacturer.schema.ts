@@ -70,6 +70,21 @@ export class Manufacturer {
   @Prop({ default: 0 })
   vendor_status: number;
 
+  /**
+   * Soft account deletion (DPDP). When set, portal access is blocked, products are hidden
+   * from the public website, and login email/phone are released for re-registration.
+   */
+  @Prop()
+  accountDeletedAt?: Date;
+
+  /** Original login email preserved after soft deletion freed `vendor_email`. */
+  @Prop()
+  deletedVendorEmail?: string;
+
+  /** Original login phone preserved after soft deletion freed `vendor_phone`. */
+  @Prop()
+  deletedVendorPhone?: string;
+
   /** Headcount / scale band collected at vendor self-registration (e.g. "1-10", "11-50"). */
   @Prop()
   companySize?: string;

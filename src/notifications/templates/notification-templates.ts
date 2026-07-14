@@ -449,4 +449,112 @@ export const NOTIFICATION_TEMPLATES: Record<
       notifyType: 'PRODUCT_NAME_CHANGE_DECISION',
     },
   },
+  [NotificationTemplateCode.GRIEVANCE_RESPONDED]: {
+    code: NotificationTemplateCode.GRIEVANCE_RESPONDED,
+    email: {
+      subject: 'GreenPro — Grievance {{grievanceNo}} response received',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Admin has responded to your grievance <strong>{{grievanceNo}}</strong>.</p>
+        <p><strong>Subject:</strong> {{subject}}</p>
+        <p><strong>Category:</strong> {{category}}</p>
+        <p>Please sign in to the portal to review the response.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Admin responded to grievance {{grievanceNo}} ({{subject}}). Please review it in the portal.',
+    },
+    inApp: {
+      title: 'Grievance response received',
+      content:
+        'Admin responded to grievance {{grievanceNo}}: {{subject}}. Please review it in the portal.',
+      type: 'info',
+      notifyType: 'GRIEVANCE_RESPONDED',
+    },
+  },
+  [NotificationTemplateCode.GRIEVANCE_CLOSED]: {
+    code: NotificationTemplateCode.GRIEVANCE_CLOSED,
+    email: {
+      subject: 'GreenPro — Grievance {{grievanceNo}} closed',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your grievance <strong>{{grievanceNo}}</strong> has been closed.</p>
+        <p><strong>Subject:</strong> {{subject}}</p>
+        <p><strong>Category:</strong> {{category}}</p>
+        <p>Please sign in to the portal for details.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Grievance {{grievanceNo}} ({{subject}}) has been closed. Please review it in the portal.',
+    },
+    inApp: {
+      title: 'Grievance closed',
+      content:
+        'Grievance {{grievanceNo}} ({{subject}}) has been closed. Please review it in the portal.',
+      type: 'success',
+      notifyType: 'GRIEVANCE_CLOSED',
+    },
+  },
+  [NotificationTemplateCode.ACCOUNT_DELETION_APPROVED]: {
+    code: NotificationTemplateCode.ACCOUNT_DELETION_APPROVED,
+    email: {
+      subject: 'GreenPro — Account deletion request {{requestNo}} approved',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your account deletion request <strong>{{requestNo}}</strong> has been approved.</p>
+        <p><strong>Reason:</strong> {{reason}}</p>
+        <p>This does not automatically delete your account. Our team will process the request as per policy.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Account deletion request {{requestNo}} has been approved. This does not automatically delete your account.',
+    },
+    inApp: {
+      title: 'Account deletion request approved',
+      content:
+        'Request {{requestNo}} ({{reason}}) was approved. Account deletion is processed offline and is not automatic.',
+      type: 'info',
+      notifyType: 'ACCOUNT_DELETION_APPROVED',
+    },
+  },
+  [NotificationTemplateCode.ACCOUNT_DELETION_REJECTED]: {
+    code: NotificationTemplateCode.ACCOUNT_DELETION_REJECTED,
+    email: {
+      subject: 'GreenPro — Account deletion request {{requestNo}} rejected',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your account deletion request <strong>{{requestNo}}</strong> has been rejected.</p>
+        <p><strong>Reason:</strong> {{reason}}</p>
+        <p><strong>Remarks:</strong> {{adminRemarks}}</p>
+        <p>Please sign in to the portal for details.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Account deletion request {{requestNo}} was rejected. Remarks: {{adminRemarks}}.',
+    },
+    inApp: {
+      title: 'Account deletion request rejected',
+      content:
+        'Request {{requestNo}} was rejected. Remarks: {{adminRemarks}}.',
+      type: 'warning',
+      notifyType: 'ACCOUNT_DELETION_REJECTED',
+    },
+  },
+  [NotificationTemplateCode.ACCOUNT_DELETION_COMPLETED]: {
+    code: NotificationTemplateCode.ACCOUNT_DELETION_COMPLETED,
+    email: {
+      subject: 'GreenPro — Account deletion request {{requestNo}} completed',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your account deletion request <strong>{{requestNo}}</strong> has been marked completed in our workflow.</p>
+        <p><strong>Reason:</strong> {{reason}}</p>
+        <p>Please contact support if you have questions.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Account deletion request {{requestNo}} has been marked completed.',
+    },
+    inApp: {
+      title: 'Account deletion request completed',
+      content:
+        'Request {{requestNo}} ({{reason}}) has been marked completed in the deletion workflow.',
+      type: 'success',
+      notifyType: 'ACCOUNT_DELETION_COMPLETED',
+    },
+  },
 };

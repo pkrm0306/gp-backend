@@ -59,6 +59,8 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { RawMaterialsSharedModule } from './common/raw-materials/raw-materials-shared.module';
 import { RenewalModule } from './renew/renewal.module';
 import { CronModule } from './cron/cron.module';
+import { GrievancesModule } from './grievances/grievances.module';
+import { AccountDeletionModule } from './account-deletion/account-deletion.module';
 
 @Module({
   imports: [
@@ -130,6 +132,8 @@ import { CronModule } from './cron/cron.module';
     ZohoModule,
     RenewalModule,
     CronModule,
+    GrievancesModule,
+    AccountDeletionModule,
   ],
 })
 export class AppModule implements NestModule {

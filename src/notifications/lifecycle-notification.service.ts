@@ -989,4 +989,178 @@ export class LifecycleNotificationService {
       async: true,
     });
   }
+
+  /** Admin feed when a manufacturer raises a DPDP grievance. */
+  async notifyGrievanceCreated(params: {
+    manufacturerId: string;
+    grievanceId: string;
+    grievanceNo: string;
+    subject: string;
+    category?: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
+    const copy = AdminNotificationMessages.grievanceCreated(
+      manufacturerName,
+      params.grievanceNo,
+      params.subject,
+      params.category,
+    );
+    await this.notifyAdminFeedAndEmail({
+      copy,
+      referenceType: 'grievance',
+      referenceId: params.grievanceId,
+      type: 'info',
+      source: 'manufacturer',
+      emailSubject: `GreenPro — Grievance ${params.grievanceNo} from ${manufacturerName}`,
+      emailHtmlExtra: `
+        <p>${this.escapeHtml(copy.message)}</p>
+        <p><strong>Grievance No:</strong> ${this.escapeHtml(params.grievanceNo)}</p>
+        <p><strong>Subject:</strong> ${this.escapeHtml(params.subject)}</p>
+        ${
+          params.category?.trim()
+            ? `<p><strong>Category:</strong> ${this.escapeHtml(params.category.trim())}</p>`
+            : ''
+        }
+        <p>Please review this grievance in the admin portal.</p>
+      `,
+    });
+  }
+
+  /** Vendor notification when admin saves a response. */
+  async notifyGrievanceResponded(params: {
+    manufacturerId: string;
+    grievanceNo: string;
+    subject: string;
+    category?: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.GRIEVANCE_RESPONDED,
+      {
+        grievanceNo: params.grievanceNo,
+        subject: params.subject,
+        category: params.category?.trim() || '—',
+      },
+      `grievance=${params.grievanceNo}`,
+    );
+  }
+
+  /** Vendor notification when a grievance is closed. */
+  async notifyGrievanceClosed(params: {
+    manufacturerId: string;
+    grievanceNo: string;
+    subject: string;
+    category?: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.GRIEVANCE_CLOSED,
+      {
+        grievanceNo: params.grievanceNo,
+        subject: params.subject,
+        category: params.category?.trim() || '—',
+      },
+      `grievance=${params.grievanceNo}`,
+    );
+  }
+
+  /** Admin feed when a vendor submits an account deletion request. */
+  async notifyAccountDeletionRequested(params: {
+    manufacturerId: string;
+    requestId: string;
+    requestNo: string;
+    reason: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
+    const copy = AdminNotificationMessages.accountDeletionRequested(
+      manufacturerName,
+      params.requestNo,
+      params.reason,
+    );
+    await this.notifyAdminFeedAndEmail({
+      copy,
+      referenceType: 'account_deletion',
+      referenceId: params.requestId,
+      type: 'info',
+      source: 'manufacturer',
+      emailSubject: `GreenPro — Account deletion ${params.requestNo} from ${manufacturerName}`,
+      emailHtmlExtra: `
+        <p>${this.escapeHtml(copy.message)}</p>
+        <p><strong>Request No:</strong> ${this.escapeHtml(params.requestNo)}</p>
+        <p><strong>Reason:</strong> ${this.escapeHtml(params.reason)}</p>
+        <p>Please review this request in the admin portal. Do not permanently delete accounts from this workflow alone.</p>
+      `,
+    });
+  }
+
+  async notifyAccountDeletionApproved(params: {
+    manufacturerId: string;
+    requestNo: string;
+    reason: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.ACCOUNT_DELETION_APPROVED,
+      {
+        requestNo: params.requestNo,
+        reason: params.reason,
+      },
+      `accountDeletion=${params.requestNo}`,
+    );
+  }
+
+  async notifyAccountDeletionRejected(params: {
+    manufacturerId: string;
+    requestNo: string;
+    reason: string;
+    adminRemarks?: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.ACCOUNT_DELETION_REJECTED,
+      {
+        requestNo: params.requestNo,
+        reason: params.reason,
+        adminRemarks: params.adminRemarks?.trim() || '—',
+      },
+      `accountDeletion=${params.requestNo}`,
+    );
+  }
+
+  async notifyAccountDeletionCompleted(params: {
+    manufacturerId: string;
+    requestNo: string;
+    reason: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.ACCOUNT_DELETION_COMPLETED,
+      {
+        requestNo: params.requestNo,
+        reason: params.reason,
+      },
+      `accountDeletion=${params.requestNo}`,
+    );
+  }
 }

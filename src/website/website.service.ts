@@ -30,6 +30,7 @@ import { ManufacturerInquiryDto } from './dto/manufacturer-inquiry.dto';
 import { resolveManufacturerInquiryPhone } from '../common/utils/normalize-phone-with-country-code.util';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
+import { matchPublicWebsiteManufacturerVisibility } from '../manufacturers/constants/public-website-manufacturer-visibility.filter';
 import { AdminService } from '../admin/admin.service';
 import { GalleryService } from '../gallery/gallery.service';
 import { ProductRegistrationService } from '../product-registration/product-registration.service';
@@ -733,7 +734,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'flat',
-      'v10',
+      'v11',
       this.shortHash(this.stableJsonStringify({ ...(dto as object), origin })),
     );
     try {
@@ -867,32 +868,11 @@ export class WebsiteService {
 
   /** Matches public website manufacturer visibility (see website `isPublicManufacturerWebsiteVisible`). */
   private matchPublicWebsiteManufacturerVisibility(): Record<string, unknown> {
-    return {
-      $and: [
-        {
-          $or: [
-            { 'manufacturer.manufacturerStatus': { $exists: false } },
-            { 'manufacturer.manufacturerStatus': null },
-            { 'manufacturer.manufacturerStatus': 1 },
-            { 'manufacturer.manufacturerStatus': true },
-          ],
-        },
-        {
-          $nor: [
-            { 'manufacturer.vendor_status': 0 },
-            { 'manufacturer.vendor_status': '0' },
-            { 'manufacturer.vendor_status': false },
-            { 'manufacturer.vendorStatus': 0 },
-            { 'manufacturer.vendorStatus': '0' },
-            { 'manufacturer.vendorStatus': false },
-          ],
-        },
-      ],
-    };
+    return matchPublicWebsiteManufacturerVisibility();
   }
 
   async getPublicWebsiteStats() {
-    const cacheKey = this.redisService.buildKey('website', 'public', 'stats', 'v6');
+    const cacheKey = this.redisService.buildKey('website', 'public', 'stats', 'v7');
     try {
       const cached = await this.redisService.get<{
         message: string;
@@ -961,7 +941,23 @@ export class WebsiteService {
           ])
           .exec(),
         this.categoryModel.countDocuments({}).exec(),
-        this.productModel.countDocuments(matchWebsitePublicCertifiedProducts()).exec(),
+        this.productModel
+          .aggregate<{ count: number }>([
+            { $match: matchWebsitePublicCertifiedProducts() },
+            {
+              $lookup: {
+                from: 'manufacturers',
+                localField: 'manufacturerId',
+                foreignField: '_id',
+                as: 'manufacturer',
+              },
+            },
+            { $unwind: '$manufacturer' },
+            { $match: this.matchPublicWebsiteManufacturerVisibility() },
+            { $count: 'count' },
+          ])
+          .exec()
+          .then((rows) => rows[0]?.count ?? 0),
       ]);
 
     const facet = facetResult[0] ?? {

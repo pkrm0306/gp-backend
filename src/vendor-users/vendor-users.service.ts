@@ -46,7 +46,7 @@ export class VendorUsersService {
       return null;
     }
     const exact = await this.vendorUserModel
-      .findOne({ email: normalized })
+      .findOne({ email: normalized, status: { $ne: 2 } })
       .exec();
     if (exact) {
       return exact;
@@ -54,6 +54,7 @@ export class VendorUsersService {
     return this.vendorUserModel
       .findOne({
         email: { $regex: new RegExp(`^${escapeRegex(normalized)}$`, 'i') },
+        status: { $ne: 2 },
       })
       .exec();
   }

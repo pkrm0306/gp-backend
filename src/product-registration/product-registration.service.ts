@@ -64,6 +64,7 @@ import {
 } from './constants/active-product.filter';
 import { matchExpiredProducts } from './constants/expired-product.filter';
 import { matchWebsitePublicActiveCertifiedProducts } from './constants/website-public-product.filter';
+import { matchPublicWebsiteManufacturerVisibility } from '../manufacturers/constants/public-website-manufacturer-visibility.filter';
 import { invalidateProductListingsCache as invalidateAllProductListingsCache } from './helpers/invalidate-product-listings-cache.util';
 import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
@@ -3571,6 +3572,13 @@ export class ProductRegistrationService {
       throw new NotFoundException('Certified product not found');
     }
 
+    const manufacturerVisible = await this.isManufacturerVisibleOnPublicWebsite(
+      row.manufacturerId,
+    );
+    if (!manufacturerVisible) {
+      throw new NotFoundException('Certified product not found');
+    }
+
     const productImageRaw = row.productImage ? String(row.productImage).trim() : '';
     const productImage = productImageRaw
       ? resolveStoredUploadUrl(productImageRaw) || productImageRaw
@@ -3595,6 +3603,24 @@ export class ProductRegistrationService {
       manufacturer,
       manufacturer_details: manufacturer,
     };
+  }
+
+  private async isManufacturerVisibleOnPublicWebsite(
+    manufacturerId: unknown,
+  ): Promise<boolean> {
+    const id = String(manufacturerId ?? '').trim();
+    if (!id || !Types.ObjectId.isValid(id)) {
+      return false;
+    }
+    const m = await this.manufacturerModel
+      .findOne({
+        _id: new Types.ObjectId(id),
+        ...matchPublicWebsiteManufacturerVisibility(''),
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return Boolean(m);
   }
 
   /**
@@ -3880,6 +3906,9 @@ export class ProductRegistrationService {
           },
         },
         {
+          $match: matchPublicWebsiteManufacturerVisibility(),
+        },
+        {
           $lookup: {
             from: 'categories',
             localField: 'categoryId',
@@ -4138,7 +4167,9 @@ export class ProductRegistrationService {
     }
 
     const { page, limit, skip, sortOrder, rowBase, urnSortField } =
-      this.buildAdminListRowBase(listDto, locationProductIds);
+      this.buildAdminListRowBase(listDto, locationProductIds, {
+        requirePublicWebsiteManufacturerVisibility: true,
+      });
 
     let pipeline: any[] = [...rowBase];
     const trimmedProductId = String(productId ?? '').trim();
@@ -8308,6 +8339,7 @@ export class ProductRegistrationService {
   private buildAdminListRowBase(
     dto: AdminListProductsDto,
     locationProductIds: Types.ObjectId[] | null = null,
+    options?: { requirePublicWebsiteManufacturerVisibility?: boolean },
   ): {
     page: number;
     limit: number;
@@ -8420,6 +8452,13 @@ export class ProductRegistrationService {
           preserveNullAndEmptyArrays: true,
         },
       },
+    );
+    if (options?.requirePublicWebsiteManufacturerVisibility) {
+      basePipeline.push({
+        $match: matchPublicWebsiteManufacturerVisibility(),
+      });
+    }
+    basePipeline.push(
       {
         $lookup: {
           from: 'categories',
@@ -9157,6 +9196,9 @@ export class ProductRegistrationService {
             path: '$manufacturer',
             preserveNullAndEmptyArrays: false,
           },
+        },
+        {
+          $match: matchPublicWebsiteManufacturerVisibility(),
         },
         {
           $project: {
