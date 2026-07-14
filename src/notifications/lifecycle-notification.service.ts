@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import { NotificationHelper } from './notification.helper';
 import {
   NotificationChannel,
@@ -78,7 +78,14 @@ export class LifecycleNotificationService {
     });
   }
 
-  private sendVendorEmailInBackground(
+  /** Email + in-app when `userId` is present. Sign-up/OTP must not use this helper. */
+  private vendorNotifyChannels(userId?: string): NotificationChannel[] {
+    return userId?.trim()
+      ? [NotificationChannel.EMAIL, NotificationChannel.IN_APP]
+      : [NotificationChannel.EMAIL];
+  }
+
+  private sendVendorNotificationInBackground(
     recipient: {
       userId?: string;
       email?: string;
@@ -90,19 +97,27 @@ export class LifecycleNotificationService {
     logContext?: string,
   ): void {
     const email = recipient?.email?.trim();
-    if (!email) {
+    const userId = recipient?.userId?.trim();
+    if (!email && !userId) {
       if (logContext) {
         this.logger.warn(
-          `[sendVendorEmailInBackground] Skipping ${template} — no vendor email (${logContext})`,
+          `[sendVendorNotificationInBackground] Skipping ${template} — no vendor email/userId (${logContext})`,
         );
       }
       return;
     }
+    if (!email) {
+      if (logContext) {
+        this.logger.warn(
+          `[sendVendorNotificationInBackground] ${template} — email missing; sending in-app only (${logContext})`,
+        );
+      }
+    }
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
     this.notificationHelper.sendInBackground({
-      type: [NotificationChannel.EMAIL],
+      type: this.vendorNotifyChannels(userId),
       template,
-      userId: recipient?.userId,
+      userId,
       email,
       payload: { manufacturerName, vendorName: manufacturerName, ...payload },
       async: true,
@@ -196,7 +211,7 @@ export class LifecycleNotificationService {
     const label = resolveManufacturerDisplayName({ manufacturerName, email });
 
     const notifyResult = await this.notificationHelper.send({
-      type: [NotificationChannel.EMAIL],
+      type: this.vendorNotifyChannels(userId),
       template: NotificationTemplateCode.VENDOR_REGISTRATION_COMPLETE,
       userId,
       email,
@@ -270,7 +285,7 @@ export class LifecycleNotificationService {
         vendorName: params.manufacturerName,
       };
     }
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.URN_INITIAL_APPROVED,
       {
@@ -296,7 +311,7 @@ export class LifecycleNotificationService {
     const reason =
       String(params.reason ?? '').trim() ||
       'Your registration was not approved at the initial review stage.';
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.URN_REGISTRATION_REJECTED,
       {
@@ -332,7 +347,7 @@ export class LifecycleNotificationService {
 
     if (recipient?.email || recipient?.userId) {
       this.notificationHelper.sendInBackground({
-        type: [NotificationChannel.EMAIL],
+        type: this.vendorNotifyChannels(recipient.userId),
         template: NotificationTemplateCode.URN_SUBMITTED_FOR_REVIEW,
         userId: recipient.userId,
         email: recipient.email,
@@ -346,7 +361,7 @@ export class LifecycleNotificationService {
       });
     } else {
       this.logger.warn(
-        `[notifyUrnSubmittedForReview] Skipping vendor email — no recipient for urn=${params.urnNo}`,
+        `[notifyUrnSubmittedForReview] Skipping vendor notify — no recipient for urn=${params.urnNo}`,
       );
     }
 
@@ -379,7 +394,7 @@ export class LifecycleNotificationService {
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
 
     this.notificationHelper.sendInBackground({
-      type: [NotificationChannel.EMAIL],
+      type: this.vendorNotifyChannels(recipient.userId),
       template: NotificationTemplateCode.CERTIFICATION_PAYMENT_SUBMITTED,
       userId: recipient.userId,
       email: recipient.email,
@@ -418,7 +433,7 @@ export class LifecycleNotificationService {
       return;
     }
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.CERTIFICATION_PAYMENT_APPROVED,
       {
@@ -457,7 +472,7 @@ export class LifecycleNotificationService {
       this.manufacturerLabelFromRecipient(recipient) ||
       context?.manufacturerName ||
       'Manufacturer';
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.MANUFACTURER_APPROVED,
       {},
@@ -477,7 +492,7 @@ export class LifecycleNotificationService {
     const recipient =
       await this.recipientService.resolveByManufacturerId(manufacturerId);
     const name = this.manufacturerLabelFromRecipient(recipient);
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.MANUFACTURER_INACTIVE,
       {},
@@ -528,7 +543,7 @@ export class LifecycleNotificationService {
         : params.paymentType === 'renew'
           ? 'Renewal fee'
           : 'Registration fee';
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.PAYMENT_PROPOSAL_READY,
       {
@@ -551,7 +566,7 @@ export class LifecycleNotificationService {
       params.manufacturerId,
     );
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.PRODUCT_APPROVED,
       {
@@ -583,7 +598,7 @@ export class LifecycleNotificationService {
       params.manufacturerId,
     );
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.PRODUCT_REJECTED,
       {
@@ -670,7 +685,7 @@ export class LifecycleNotificationService {
     const email = params.vendorEmail || recipient?.email;
     if (email) {
       this.notificationHelper.sendInBackground({
-        type: [NotificationChannel.EMAIL],
+        type: this.vendorNotifyChannels(recipient?.userId),
         template: NotificationTemplateCode.PRODUCT_ENQUIRY_VENDOR,
         userId: recipient?.userId,
         email,
@@ -776,7 +791,7 @@ export class LifecycleNotificationService {
       params.manufacturerId,
     );
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.sendVendorEmailInBackground(recipient, NotificationTemplateCode.URN_MERGED, {
+    this.sendVendorNotificationInBackground(recipient, NotificationTemplateCode.URN_MERGED, {
       sourceUrnNo: params.sourceUrnNo,
       targetUrnNo: params.targetUrnNo,
       movedCount: String(params.movedCount),
@@ -810,7 +825,7 @@ export class LifecycleNotificationService {
       params.manufacturerId,
     );
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.RENEWAL_SUBMITTED,
       { urnNo: params.urnNo },
@@ -839,7 +854,7 @@ export class LifecycleNotificationService {
       params.decision === 'approved'
         ? 'Your renewal has been approved for final review.'
         : 'Your renewal forms were sent back for corrections. Please update and resubmit.';
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.RENEWAL_DECISION,
       { urnNo: params.urnNo, decisionMessage },
@@ -864,7 +879,7 @@ export class LifecycleNotificationService {
       params.manufacturerId,
     );
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.sendVendorEmailInBackground(
+    this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.RENEWAL_COMPLETED,
       { urnNo: params.urnNo },
@@ -877,6 +892,101 @@ export class LifecycleNotificationService {
       referenceType: 'renewal_completed',
       referenceId: params.urnNo,
       type: 'success',
+    });
+  }
+
+  /**
+   * In-app only for certification expiry emails that use custom HTML via cron.
+   * Cron still owns the email body; this creates the matching vendor bell row.
+   */
+  notifyVendorCertificationExpiryInApp(params: {
+    manufacturerId: string;
+    productName: string;
+    eoiNo: string;
+    reminderStage: string;
+    vendorEmail?: string;
+    manufacturerName?: string;
+  }): void {
+    void this.recipientService
+      .resolveByManufacturerId(params.manufacturerId)
+      .then((recipient) => {
+        const userId = recipient?.userId?.trim();
+        if (!userId) {
+          this.logger.warn(
+            `[notifyVendorCertificationExpiryInApp] Skipping — no userId for manufacturer=${params.manufacturerId}`,
+          );
+          return;
+        }
+        const manufacturerName =
+          params.manufacturerName ||
+          this.manufacturerLabelFromRecipient(recipient);
+        this.notificationHelper.sendInBackground({
+          type: [NotificationChannel.IN_APP],
+          template: NotificationTemplateCode.CERTIFICATION_EXPIRY_REMINDER,
+          userId,
+          email: recipient?.email ?? params.vendorEmail,
+          payload: {
+            manufacturerName,
+            productName: params.productName,
+            eoiNo: params.eoiNo,
+            reminderStage: params.reminderStage,
+          },
+          async: true,
+        });
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `[notifyVendorCertificationExpiryInApp] failed: ${(err as Error).message}`,
+        ),
+      );
+  }
+
+  async notifyProductNameChangeDecision(params: {
+    manufacturerId: string;
+    email: string;
+    manufacturerName: string;
+    urnNo: string;
+    eoiNo: string;
+    currentName: string;
+    requestedName: string;
+    decision: 'approved' | 'rejected';
+    remarks?: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    const email = params.email?.trim() || recipient?.email;
+    const userId = recipient?.userId;
+    if (!email && !userId) {
+      return;
+    }
+    const decisionLabel =
+      params.decision === 'approved' ? 'Approved' : 'Rejected';
+    const decisionDetail =
+      params.decision === 'approved'
+        ? `Updated Product Name: ${params.requestedName}`
+        : `Product Name (unchanged): ${params.currentName}`;
+    const remarksBlock =
+      params.decision === 'rejected' && params.remarks?.trim()
+        ? `Admin Remarks: ${params.remarks.trim()}`
+        : '';
+
+    this.notificationHelper.sendInBackground({
+      type: this.vendorNotifyChannels(userId),
+      template: NotificationTemplateCode.PRODUCT_NAME_CHANGE_DECISION,
+      userId,
+      email,
+      payload: {
+        manufacturerName: params.manufacturerName,
+        urnNo: params.urnNo,
+        eoiNo: params.eoiNo,
+        currentName: params.currentName,
+        requestedName: params.requestedName,
+        decisionLabel,
+        decisionDetail,
+        remarksBlock,
+      },
+      async: true,
     });
   }
 }

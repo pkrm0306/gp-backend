@@ -14,9 +14,9 @@ import { URN_STATUS_PENDING_ACTIVITY } from '../activity-log/activity-workflow.c
 
 export const URN_LIFECYCLE_MAX_STATUS = ACTIVITY_LIFECYCLE_MAX_STATUS;
 
-/** Canonical 12-step certification journey shown in the vendor dashboard. */
+/** Canonical 11-step certification journey shown in the vendor dashboard (excludes renewal). */
 export const CERTIFICATION_JOURNEY_ACTIVITY_IDS = [
-  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
 ] as const;
 
 export const CERTIFICATION_JOURNEY_STEP_COUNT =

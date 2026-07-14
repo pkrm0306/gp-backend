@@ -6,9 +6,10 @@ import {
 } from './vendor-progress.util';
 
 describe('vendor-progress.util', () => {
-  it('always returns 12 certification journey steps', () => {
+  it('always returns 11 certification journey steps (renewal excluded)', () => {
     const steps = buildDynamicProgressSteps(0, []);
     expect(steps).toHaveLength(CERTIFICATION_JOURNEY_STEP_COUNT);
+    expect(steps.some((step) => /renewal/i.test(step.label))).toBe(false);
   });
 
   it('marks only completed steps for urnStatus 3', () => {
@@ -38,8 +39,8 @@ describe('vendor-progress.util', () => {
       activityLogs: [],
     });
 
-    expect(tracking.progressSteps).toHaveLength(12);
-    expect(tracking.percentComplete).toBe(25);
+    expect(tracking.progressSteps).toHaveLength(CERTIFICATION_JOURNEY_STEP_COUNT);
+    expect(tracking.percentComplete).toBe(27);
     expect(tracking.nextStep?.activitiesId).toBe(3);
     expect(tracking.latestStepCompleted?.activitiesId).toBe(2);
   });

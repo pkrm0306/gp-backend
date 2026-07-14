@@ -332,28 +332,38 @@ export class VendorDashboardOverviewService {
 
   async getProductOutcomesChart(
     vendorId: Types.ObjectId,
-    requestedYear?: number,
+    requestedYears?: number[],
+    urnNo?: string,
   ) {
     const baseMatch = vendorActiveProductMatch(vendorId);
+    const scopedUrn = urnNo?.trim() || null;
+    if (scopedUrn) {
+      baseMatch.urnNo = scopedUrn;
+    }
     const currentYear = new Date().getFullYear();
     const availableYears = this.listAvailableProductYears(currentYear);
-    const year = this.resolveChartYear(requestedYear, availableYears, currentYear);
-    return this.buildProductOutcomesChart(baseMatch, year, availableYears);
+    const years = this.resolveChartYears(requestedYears, availableYears, currentYear);
+    return this.buildProductOutcomesChart(
+      baseMatch,
+      years,
+      availableYears,
+      scopedUrn,
+    );
   }
 
-  private resolveChartYear(
-    requestedYear: number | undefined,
+  private resolveChartYears(
+    requestedYears: number[] | undefined,
     availableYears: number[],
     currentYear: number,
-  ): number {
-    if (
-      typeof requestedYear === 'number' &&
-      Number.isFinite(requestedYear) &&
-      availableYears.includes(requestedYear)
-    ) {
-      return requestedYear;
-    }
-    return availableYears[0] ?? currentYear;
+  ): number[] {
+    const fallback = availableYears[0] ?? currentYear;
+    const source =
+      requestedYears?.length && requestedYears.every((year) => Number.isFinite(year))
+        ? requestedYears
+        : [fallback];
+    const valid = source.filter((year) => availableYears.includes(year));
+    const resolved = valid.length > 0 ? valid : [fallback];
+    return Array.from(new Set(resolved)).sort((a, b) => a - b);
   }
 
   private listAvailableProductYears(currentYear: number): number[] {
@@ -366,9 +376,93 @@ export class VendorDashboardOverviewService {
 
   private async buildProductOutcomesChart(
     baseMatch: Record<string, unknown>,
-    year: number,
+    years: number[],
     availableYears: number[],
+    urnNo: string | null = null,
   ) {
+    const registered = new Map<number, number>();
+    const certified = new Map<number, number>();
+    const rejected = new Map<number, number>();
+
+    for (const year of years) {
+      const yearMaps = await this.aggregateYearOutcomeMaps(baseMatch, year);
+      for (let month = 1; month <= 12; month += 1) {
+        registered.set(month, (registered.get(month) ?? 0) + (yearMaps.registered.get(month) ?? 0));
+        certified.set(month, (certified.get(month) ?? 0) + (yearMaps.certified.get(month) ?? 0));
+        rejected.set(month, (rejected.get(month) ?? 0) + (yearMaps.rejected.get(month) ?? 0));
+      }
+    }
+
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1;
+    const maxMonth =
+      years.length === 1 && years[0] === currentYear ? currentMonth : 12;
+
+    const chart = Array.from({ length: maxMonth }, (_, index) => {
+      const month = index + 1;
+      return {
+        label: monthShortLabel(month),
+        month,
+        year: years[0],
+        registered: registered.get(month) ?? 0,
+        certified: certified.get(month) ?? 0,
+        rejected: rejected.get(month) ?? 0,
+      };
+    });
+
+    const totals = chart.reduce(
+      (acc, point) => ({
+        registered: acc.registered + point.registered,
+        certified: acc.certified + point.certified,
+        rejected: acc.rejected + point.rejected,
+      }),
+      { registered: 0, certified: 0, rejected: 0 },
+    );
+
+    const maxValue = chart.reduce(
+      (max, point) =>
+        Math.max(max, point.registered + point.certified + point.rejected),
+      0,
+    );
+
+    const yearLabel = this.formatChartYearLabel(years);
+
+    return {
+      title: 'Product outcomes',
+      subtitle: urnNo
+        ? `Registered, certified, and rejected products for ${urnNo} in ${yearLabel}`
+        : `Registered, certified, and rejected products across all URN batches in ${yearLabel}`,
+      year: years[years.length - 1],
+      years,
+      urnNo,
+      availableYears,
+      chart,
+      totals,
+      yAxis: {
+        min: 0,
+        suggestedMax: suggestAxisMax(maxValue),
+      },
+    };
+  }
+
+  private formatChartYearLabel(years: number[]): string {
+    if (years.length <= 1) {
+      return String(years[0] ?? new Date().getFullYear());
+    }
+    if (years.length === 2) {
+      return `${years[0]} and ${years[1]}`;
+    }
+    return `${years.slice(0, -1).join(', ')}, and ${years[years.length - 1]}`;
+  }
+
+  private async aggregateYearOutcomeMaps(
+    baseMatch: Record<string, unknown>,
+    year: number,
+  ): Promise<{
+    registered: Map<number, number>;
+    certified: Map<number, number>;
+    rejected: Map<number, number>;
+  }> {
     const start = new Date(Date.UTC(year, 0, 1));
     const end = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
 
@@ -441,45 +535,7 @@ export class VendorDashboardOverviewService {
       rejected.set(Number(row._id), row.count ?? 0);
     }
 
-    const chart = Array.from({ length: 12 }, (_, index) => {
-      const month = index + 1;
-      return {
-        label: monthShortLabel(month),
-        month,
-        year,
-        registered: registered.get(month) ?? 0,
-        certified: certified.get(month) ?? 0,
-        rejected: rejected.get(month) ?? 0,
-      };
-    });
-
-    const totals = chart.reduce(
-      (acc, point) => ({
-        registered: acc.registered + point.registered,
-        certified: acc.certified + point.certified,
-        rejected: acc.rejected + point.rejected,
-      }),
-      { registered: 0, certified: 0, rejected: 0 },
-    );
-
-    const maxValue = chart.reduce(
-      (max, point) =>
-        Math.max(max, point.registered + point.certified + point.rejected),
-      0,
-    );
-
-    return {
-      title: 'Product outcomes',
-      subtitle: `Registered, certified, and rejected products in ${year}`,
-      year,
-      availableYears,
-      chart,
-      totals,
-      yAxis: {
-        min: 0,
-        suggestedMax: suggestAxisMax(maxValue),
-      },
-    };
+    return { registered, certified, rejected };
   }
 
   private async buildRegistrationCertificationTrend(
@@ -561,7 +617,11 @@ export class VendorDashboardOverviewService {
     baseMatch: Record<string, unknown>,
     now: Date,
   ) {
-    const [pending, underReview, certified, rejected] = await Promise.all([
+    const renewalHorizon = new Date(now);
+    renewalHorizon.setMonth(renewalHorizon.getMonth() + 2);
+
+    const [pending, underReview, certified, rejected, pendingRenewal] =
+      await Promise.all([
       this.productModel
         .countDocuments({ ...baseMatch, productStatus: PRODUCT_STATUS_PENDING })
         .exec(),
@@ -581,6 +641,13 @@ export class VendorDashboardOverviewService {
         .exec(),
       this.productModel
         .countDocuments({ ...baseMatch, productStatus: PRODUCT_STATUS_REJECTED })
+        .exec(),
+      this.productModel
+        .countDocuments({
+          ...baseMatch,
+          productStatus: PRODUCT_STATUS_CERTIFIED,
+          validtillDate: { $gt: now, $lte: renewalHorizon },
+        })
         .exec(),
     ]);
 
@@ -609,12 +676,18 @@ export class VendorDashboardOverviewService {
         count: rejected,
         color: '#EF4444',
       },
+      {
+        key: 'pendingRenewal' as const,
+        label: 'Pending Renewal',
+        count: pendingRenewal,
+        color: '#8B5CF6',
+      },
     ];
 
     return {
       title: 'Product Status',
       subtitle: 'Distribution overview',
-      total: chart.reduce((sum, slice) => sum + slice.count, 0),
+      total: pending + underReview + certified + rejected,
       chart,
     };
   }

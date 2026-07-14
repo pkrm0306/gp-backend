@@ -20,6 +20,8 @@ export type VendorApplicationRow = {
   overall_variant: VendorApplicationOverallVariant;
   product_status: number;
   urn_status: number;
+  /** ISO date string when certification expires; used for pending-renewal KPIs. */
+  validtill_date: string | null;
 };
 
 export function mapProductApproval(
@@ -61,6 +63,13 @@ export function formatUrnForDisplay(urnNo: string | null | undefined): string | 
   return v.length > 0 ? v : null;
 }
 
+function formatValidTillDate(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  const d = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
 export function buildVendorApplicationRow(input: {
   productId: number;
   urnNo?: string | null;
@@ -68,6 +77,7 @@ export function buildVendorApplicationRow(input: {
   productName: string;
   productStatus: number;
   urnStatus: number;
+  validtillDate?: Date | string | null;
 }): VendorApplicationRow {
   const product_status = Number(input.productStatus ?? 0);
   const urn_status = Number(input.urnStatus ?? 0);
@@ -85,5 +95,6 @@ export function buildVendorApplicationRow(input: {
     overall_variant,
     product_status,
     urn_status,
+    validtill_date: formatValidTillDate(input.validtillDate),
   };
 }

@@ -990,7 +990,9 @@ export class AuthService {
     });
 
     this.notificationHelper.sendInBackground({
-      type: [NotificationChannel.EMAIL],
+      type: user._id
+        ? [NotificationChannel.EMAIL, NotificationChannel.IN_APP]
+        : [NotificationChannel.EMAIL],
       template: NotificationTemplateCode.PASSWORD_RESET,
       userId: user._id.toString(),
       email: submittedEmail,

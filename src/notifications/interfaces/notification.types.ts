@@ -29,6 +29,7 @@ export enum NotificationTemplateCode {
   RENEWAL_SUBMITTED = 'RENEWAL_SUBMITTED',
   RENEWAL_DECISION = 'RENEWAL_DECISION',
   RENEWAL_COMPLETED = 'RENEWAL_COMPLETED',
+  PRODUCT_NAME_CHANGE_DECISION = 'PRODUCT_NAME_CHANGE_DECISION',
 }
 
 export type NotificationPayload = Record<string, unknown>;

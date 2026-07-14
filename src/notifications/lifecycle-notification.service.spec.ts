@@ -28,15 +28,49 @@ describe('LifecycleNotificationService', () => {
     });
   });
 
-  it('sends email-only for URN initial approval', async () => {
+  it('sends email + in-app for URN initial approval', async () => {
     await service.notifyUrnInitialApproved({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
     });
     expect(sendInBackground).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: [NotificationChannel.EMAIL],
+        type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
         template: NotificationTemplateCode.URN_INITIAL_APPROVED,
+      }),
+    );
+  });
+
+  it('sends email-only for signup (USER_CREATED)', async () => {
+    await service.notifyNewVendorRegistered({
+      userId: '507f1f77bcf86cd799439011',
+      email: 'vendor@example.com',
+      name: 'Acme Vendor',
+      companyName: 'Acme Co',
+      password: 'secret',
+      otp: '123456',
+    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: [NotificationChannel.EMAIL],
+        template: NotificationTemplateCode.USER_CREATED,
+      }),
+    );
+    expect(createFeedNotification).not.toHaveBeenCalled();
+  });
+
+  it('sends email-only for OTP resend', async () => {
+    await service.notifyVendorOtpResent({
+      userId: '507f1f77bcf86cd799439011',
+      email: 'vendor@example.com',
+      name: 'Acme Vendor',
+      otp: '654321',
+      expiresInMinutes: 10,
+    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: [NotificationChannel.EMAIL],
+        template: NotificationTemplateCode.OTP_VERIFICATION,
       }),
     );
   });
@@ -54,11 +88,17 @@ describe('LifecycleNotificationService', () => {
     expect(send).toHaveBeenCalled();
   });
 
-  it('creates single admin feed on registration complete (OTP verified)', async () => {
+  it('creates single admin feed on registration complete (OTP verified) and dual-channels vendor', async () => {
     await service.notifyVendorRegistrationComplete(
       '507f1f77bcf86cd799439011',
       'vendor@example.com',
       'Acme Co',
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
+        template: NotificationTemplateCode.VENDOR_REGISTRATION_COMPLETE,
+      }),
     );
     expect(createFeedNotification).toHaveBeenCalledTimes(1);
     expect(createFeedNotification).toHaveBeenCalledWith(
@@ -83,6 +123,7 @@ describe('LifecycleNotificationService', () => {
     });
     expect(sendInBackground).toHaveBeenCalledWith(
       expect.objectContaining({
+        type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
         template: NotificationTemplateCode.URN_SUBMITTED_FOR_REVIEW,
       }),
     );

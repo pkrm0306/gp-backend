@@ -1328,21 +1328,24 @@ export class ProductRegistrationService {
       const eoiNo = pd?.eoiNo ?? row.eoiNo;
       const existingPlants = row.plants as Array<Record<string, unknown>> | undefined;
 
-      let plants =
-        Array.isArray(existingPlants) && existingPlants.length > 0
-          ? existingPlants
-          : urnPlants.filter((plant) => {
-              if (productOid && String(plant.productId) === String(productOid)) {
-                return true;
-              }
-              if (eoiNo && String(plant.eoiNo) === String(eoiNo)) {
-                return true;
-              }
-              return false;
-            });
-
-      if (plants.length === 0 && rows.length === 1) {
-        plants = urnPlants;
+      let plants: Array<Record<string, unknown>> = [];
+      if (urnPlants.length > 0) {
+        if (rows.length === 1) {
+          plants = urnPlants;
+        } else {
+          const filtered = urnPlants.filter((plant) => {
+            if (productOid && String(plant.productId) === String(productOid)) {
+              return true;
+            }
+            if (eoiNo && String(plant.eoiNo) === String(eoiNo)) {
+              return true;
+            }
+            return false;
+          });
+          plants = filtered.length > 0 ? filtered : urnPlants;
+        }
+      } else if (Array.isArray(existingPlants) && existingPlants.length > 0) {
+        plants = existingPlants;
       }
 
       const rowManufacturer = this.formatProductDetailsManufacturer(
@@ -4714,6 +4717,7 @@ export class ProductRegistrationService {
       this.sendProductChangeDecisionEmail({
         email: vendorEmail,
         manufacturerName,
+        manufacturerId: String(updated.manufacturerId ?? ''),
         urnNo: String(updated.urnNo ?? ''),
         eoiNo: String(updated.eoiNo ?? ''),
         currentName: String(updated.currentName ?? ''),
@@ -4724,6 +4728,7 @@ export class ProductRegistrationService {
       this.sendProductChangeDecisionEmail({
         email: vendorEmail,
         manufacturerName,
+        manufacturerId: String(updated.manufacturerId ?? ''),
         urnNo: String(updated.urnNo ?? ''),
         eoiNo: String(updated.eoiNo ?? ''),
         currentName: String(updated.currentName ?? ''),
@@ -4739,6 +4744,7 @@ export class ProductRegistrationService {
   private sendProductChangeDecisionEmail(params: {
     email: string;
     manufacturerName: string;
+    manufacturerId: string;
     urnNo: string;
     eoiNo: string;
     currentName: string;
@@ -4746,62 +4752,7 @@ export class ProductRegistrationService {
     decision: 'approved' | 'rejected';
     remarks?: string;
   }): void {
-    const to = String(params.email ?? '').trim();
-    if (!to) {
-      return;
-    }
-
-    const decisionLabel =
-      params.decision === 'approved' ? 'Approved' : 'Rejected';
-    const subject = `GreenPro — Product Name Change Request ${decisionLabel}`;
-
-    const remarksBlock =
-      params.decision === 'rejected'
-        ? `<p><strong>Admin Remarks:</strong> ${this.escapeHtml(
-            params.remarks || '',
-          )}</p>`
-        : '';
-
-    const nameResultBlock =
-      params.decision === 'approved'
-        ? `<p><strong>Updated Product Name:</strong> ${this.escapeHtml(
-            params.requestedName,
-          )}</p>`
-        : `<p><strong>Product Name (unchanged):</strong> ${this.escapeHtml(
-            params.currentName,
-          )}</p>`;
-
-    const html = `
-      <p>Dear ${this.escapeHtml(params.manufacturerName || 'Vendor')},</p>
-      <p>Your product name change request has been <strong>${decisionLabel}</strong>.</p>
-      <p><strong>URN:</strong> ${this.escapeHtml(params.urnNo)}</p>
-      <p><strong>EOI No:</strong> ${this.escapeHtml(params.eoiNo)}</p>
-      <p><strong>Current Name:</strong> ${this.escapeHtml(params.currentName)}</p>
-      <p><strong>Requested Name:</strong> ${this.escapeHtml(params.requestedName)}</p>
-      ${nameResultBlock}
-      ${remarksBlock}
-      <p>Regards,<br/>GreenPro Admin</p>
-    `;
-
-    const text = [
-      `Dear ${params.manufacturerName || 'Vendor'},`,
-      `Your product name change request has been ${decisionLabel}.`,
-      `URN: ${params.urnNo}`,
-      `EOI No: ${params.eoiNo}`,
-      `Current Name: ${params.currentName}`,
-      `Requested Name: ${params.requestedName}`,
-      params.decision === 'approved'
-        ? `Updated Product Name: ${params.requestedName}`
-        : `Product Name (unchanged): ${params.currentName}`,
-      params.decision === 'rejected' ? `Admin Remarks: ${params.remarks || ''}` : '',
-      'Regards, GreenPro Admin',
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-    this.emailService.sendInBackground(() =>
-      this.emailService.sendEmail(to, subject, html, text),
-    );
+    void this.lifecycleNotification.notifyProductNameChangeDecision(params);
   }
 
   private escapeHtml(input: string): string {
@@ -6273,15 +6224,16 @@ export class ProductRegistrationService {
         },
       });
 
-      // Stage 5: $lookup - Join product_plants (optional states/countries for renew details)
+      // Stage 5: $lookup - Join product_plants (all plants for this URN, not only primary EOI row)
       pipeline.push(
         this.buildProductPlantsLookupStage({
           enrichPlantsWithGeo,
-          matchPlantsByUrn: enrichPlantsWithGeo,
+          matchPlantsByUrn: true,
         }),
       );
 
       // Stage 6: $lookup - Join with payment_details collection (by urn_no)
+      // Match trailing-slash URN variants and prefer the latest row per type.
       pipeline.push({
         $lookup: {
           from: 'payment_details',
@@ -6289,11 +6241,10 @@ export class ProductRegistrationService {
           pipeline: [
             {
               $match: {
-                $expr: {
-                  $eq: ['$urnNo', '$$urnNo'],
-                },
+                $expr: urnLookupMatchExpr(),
               },
             },
+            { $sort: { updatedDate: -1, createdDate: -1, paymentId: -1 } },
           ],
           as: 'payments',
         },
@@ -8139,8 +8090,14 @@ export class ProductRegistrationService {
         },
       );
 
+      const rowsWithPlants =
+        await this.enrichUrnDetailRowsWithManufacturerAndPlants(
+          trimmedUrnNo,
+          formattedResults,
+        );
+
       return enrichUrnDetailRowsWithSharedProcessData(
-        formattedResults.map((row) => ({
+        rowsWithPlants.map((row) => ({
           ...row,
           siteVisits,
           product_details_list: productDetailsList,

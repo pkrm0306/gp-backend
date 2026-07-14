@@ -28,6 +28,8 @@ import { AdminSystemNotificationService } from './helpers/admin-system-notificat
 import { LifecycleNotificationService } from './lifecycle-notification.service';
 import { ProductDocumentUploadNotificationHelper } from './helpers/product-document-upload-notification.helper';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
+import { UserNotificationsService } from './user-notifications.service';
+import { VendorNotificationsController } from './vendor-notifications.controller';
 
 @Global()
 @Module({
@@ -40,7 +42,7 @@ import { VendorUsersModule } from '../vendor-users/vendor-users.module';
       { name: Manufacturer.name, schema: ManufacturerSchema },
     ]),
   ],
-  controllers: [],
+  controllers: [VendorNotificationsController],
   providers: [
     EmailService,
     SequenceHelper,
@@ -62,6 +64,7 @@ import { VendorUsersModule } from '../vendor-users/vendor-users.module';
     AdminSystemNotificationService,
     LifecycleNotificationService,
     ProductDocumentUploadNotificationHelper,
+    UserNotificationsService,
   ],
   exports: [
     NotificationHelper,
@@ -70,6 +73,7 @@ import { VendorUsersModule } from '../vendor-users/vendor-users.module';
     LifecycleNotificationService,
     ProductDocumentUploadNotificationHelper,
     NotificationRecipientService,
+    UserNotificationsService,
   ],
 })
 export class NotificationsModule {}

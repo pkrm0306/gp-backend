@@ -185,6 +185,21 @@ export class DashboardController {
     required: false,
     type: Number,
     example: 2026,
+    description: 'Single year filter (legacy). Prefer **years** for multi-year selection.',
+  })
+  @ApiQuery({
+    name: 'years',
+    required: false,
+    type: String,
+    example: '2024,2025,2026',
+    description: 'Comma-separated years to include in the chart.',
+  })
+  @ApiQuery({
+    name: 'urn',
+    required: false,
+    type: String,
+    description: 'Scope chart to a single URN batch. Omit for all batches.',
+    example: 'URN-20260305124230',
   })
   @ApiResponse({ status: 200, description: 'Product outcomes chart data retrieved' })
   async getProductOutcomesChart(
@@ -195,6 +210,8 @@ export class DashboardController {
       manufacturerId?: string;
     },
     @Query('year') year?: string,
+    @Query('years') years?: string,
+    @Query('urn') urn?: string,
   ) {
     if (!user?.userId) {
       throw new UnauthorizedException('Unauthorized. Please login.');
@@ -206,10 +223,24 @@ export class DashboardController {
         user.vendorId || user.manufacturerId,
       );
 
-    const parsedYear = year != null && String(year).trim() !== '' ? Number(year) : undefined;
+    let parsedYears: number[] | undefined;
+    if (years != null && String(years).trim() !== '') {
+      parsedYears = String(years)
+        .split(',')
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value) && value > 0);
+    } else if (year != null && String(year).trim() !== '') {
+      const parsedYear = Number(year);
+      if (Number.isFinite(parsedYear) && parsedYear > 0) {
+        parsedYears = [parsedYear];
+      }
+    }
+
+    const scopedUrn = urn?.trim() || undefined;
     const data = await this.dashboardOverview.getProductOutcomesChart(
       vendorObjectId,
-      Number.isFinite(parsedYear) ? parsedYear : undefined,
+      parsedYears,
+      scopedUrn,
     );
 
     return {

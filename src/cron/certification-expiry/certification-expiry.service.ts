@@ -304,6 +304,18 @@ export class CertificationExpiryService {
           await this.writeLog(product, 'deactivationMail', notifyDate);
           result.sent += 1;
           this.notifyExpiryAdmin(product, 'deactivation', true);
+          this.lifecycleNotification.notifyVendorCertificationExpiryInApp({
+            manufacturerId: String(product.vendorId),
+            productName: String(
+              product.productName ?? product.eoiNo ?? product.urnNo,
+            ),
+            eoiNo: String(product.eoiNo ?? ''),
+            reminderStage: 'Product deactivated due to certification expiry',
+            vendorEmail: product.vendorEmail,
+            manufacturerName: String(
+              product.manufacturerName ?? product.vendorName ?? '',
+            ),
+          });
         } catch (error) {
           result.failed += 1;
           result.errors.push(this.errorEntry(product, error));
@@ -421,6 +433,21 @@ export class CertificationExpiryService {
             : 'deactivation';
       const includeAdminEmail = jobType !== 'before2month';
       this.notifyExpiryAdmin(product, expiryStage, includeAdminEmail);
+      this.lifecycleNotification.notifyVendorCertificationExpiryInApp({
+        manufacturerId: String(product.vendorId),
+        productName: String(product.productName ?? product.eoiNo ?? product.urnNo),
+        eoiNo: String(product.eoiNo ?? ''),
+        reminderStage:
+          expiryStage === '60-day'
+            ? '60-day expiry reminder'
+            : expiryStage === 'weekly'
+              ? 'Weekly expiry reminder'
+              : 'Product deactivated due to certification expiry',
+        vendorEmail: product.vendorEmail,
+        manufacturerName: String(
+          product.manufacturerName ?? product.vendorName ?? '',
+        ),
+      });
     } catch (error) {
       result.failed += 1;
       result.errors.push(this.errorEntry(product, error));

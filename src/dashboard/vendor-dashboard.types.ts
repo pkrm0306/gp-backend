@@ -50,6 +50,7 @@ export interface VendorDashboardProductOutcomesChart {
   title: string;
   subtitle: string;
   year: number;
+  urnNo: string | null;
   availableYears: number[];
   chart: VendorDashboardProductOutcomePoint[];
   totals: {

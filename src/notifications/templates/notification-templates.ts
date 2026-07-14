@@ -147,6 +147,13 @@ export const NOTIFICATION_TEMPLATES: Record<
       `,
       text: 'URN {{urnNo}} registration approved. Sign in to review the registration fee proposal.',
     },
+    inApp: {
+      title: 'URN approved for registration',
+      content:
+        'URN {{urnNo}} was approved. Review the registration fee proposal in the portal.',
+      type: 'success',
+      notifyType: 'URN_INITIAL_APPROVED',
+    },
   },
   [NotificationTemplateCode.URN_REGISTRATION_REJECTED]: {
     code: NotificationTemplateCode.URN_REGISTRATION_REJECTED,
@@ -160,6 +167,12 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'URN {{urnNo}} registration was not approved. {{reason}}',
+    },
+    inApp: {
+      title: 'URN registration not approved',
+      content: 'URN {{urnNo}} was not approved. {{reason}}',
+      type: 'warning',
+      notifyType: 'URN_REGISTRATION_REJECTED',
     },
   },
   [NotificationTemplateCode.URN_SUBMITTED_FOR_REVIEW]: {
@@ -213,6 +226,12 @@ export const NOTIFICATION_TEMPLATES: Record<
       `,
       text: 'Certification payment approved for {{urnNo}}.',
     },
+    inApp: {
+      title: 'Certification payment approved',
+      content: 'Certification payment for URN {{urnNo}} was approved.',
+      type: 'success',
+      notifyType: 'CERTIFICATION_PAYMENT_APPROVED',
+    },
   },
   [NotificationTemplateCode.MANUFACTURER_APPROVED]: {
     code: NotificationTemplateCode.MANUFACTURER_APPROVED,
@@ -225,6 +244,13 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Your GreenPro manufacturer account has been approved.',
+    },
+    inApp: {
+      title: 'Manufacturer account approved',
+      content:
+        'Your manufacturer account is verified. You can continue product registration.',
+      type: 'success',
+      notifyType: 'MANUFACTURER_APPROVED',
     },
   },
   [NotificationTemplateCode.MANUFACTURER_INACTIVE]: {
@@ -239,6 +265,13 @@ export const NOTIFICATION_TEMPLATES: Record<
       `,
       text: 'Your GreenPro manufacturer account is inactive.',
     },
+    inApp: {
+      title: 'Manufacturer account inactive',
+      content:
+        'Your manufacturer account is inactive. Portal access is suspended until reactivation.',
+      type: 'warning',
+      notifyType: 'MANUFACTURER_INACTIVE',
+    },
   },
   [NotificationTemplateCode.MANUFACTURER_REJECTED]: {
     code: NotificationTemplateCode.MANUFACTURER_REJECTED,
@@ -250,6 +283,12 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Contact GreenPro support if you believe this is an error.</p>
       `,
       text: 'Your unverified GreenPro registration was removed.',
+    },
+    inApp: {
+      title: 'Registration not approved',
+      content: 'Your unverified registration was not approved and has been removed.',
+      type: 'warning',
+      notifyType: 'MANUFACTURER_REJECTED',
     },
   },
   [NotificationTemplateCode.PAYMENT_PROPOSAL_READY]: {
@@ -265,6 +304,13 @@ export const NOTIFICATION_TEMPLATES: Record<
       `,
       text: '{{paymentTypeLabel}} proposal ready for {{urnNo}}. Sign in to review.',
     },
+    inApp: {
+      title: 'Payment proposal ready',
+      content:
+        '{{paymentTypeLabel}} proposal for URN {{urnNo}} is ready. Review it in the portal.',
+      type: 'info',
+      notifyType: 'PAYMENT_PROPOSAL_READY',
+    },
   },
   [NotificationTemplateCode.PRODUCT_ENQUIRY_VENDOR]: {
     code: NotificationTemplateCode.PRODUCT_ENQUIRY_VENDOR,
@@ -279,6 +325,12 @@ export const NOTIFICATION_TEMPLATES: Record<
       `,
       text: 'New enquiry from {{visitorName}} ({{visitorEmail}}).',
     },
+    inApp: {
+      title: 'New product enquiry',
+      content: 'New enquiry from {{visitorName}} ({{visitorEmail}}).',
+      type: 'info',
+      notifyType: 'PRODUCT_ENQUIRY_VENDOR',
+    },
   },
   [NotificationTemplateCode.CERTIFICATION_EXPIRY_REMINDER]: {
     code: NotificationTemplateCode.CERTIFICATION_EXPIRY_REMINDER,
@@ -292,6 +344,13 @@ export const NOTIFICATION_TEMPLATES: Record<
       `,
       text: 'Certification expiry reminder for {{eoiNo}}.',
     },
+    inApp: {
+      title: 'Certification expiry reminder',
+      content:
+        'Certification for {{productName}} ({{eoiNo}}) is approaching expiry. {{reminderStage}}',
+      type: 'warning',
+      notifyType: 'CERTIFICATION_EXPIRY_REMINDER',
+    },
   },
   [NotificationTemplateCode.URN_MERGED]: {
     code: NotificationTemplateCode.URN_MERGED,
@@ -304,6 +363,13 @@ export const NOTIFICATION_TEMPLATES: Record<
       `,
       text: 'URN {{sourceUrnNo}} merged into {{targetUrnNo}}.',
     },
+    inApp: {
+      title: 'URN merge completed',
+      content:
+        'URN {{sourceUrnNo}} was merged into {{targetUrnNo}}. {{movedCount}} product(s) moved.',
+      type: 'info',
+      notifyType: 'URN_MERGED',
+    },
   },
   [NotificationTemplateCode.RENEWAL_SUBMITTED]: {
     code: NotificationTemplateCode.RENEWAL_SUBMITTED,
@@ -314,6 +380,12 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Your renewal process forms for URN <strong>{{urnNo}}</strong> have been submitted for GreenPro review.</p>
       `,
       text: 'Renewal submitted for {{urnNo}}.',
+    },
+    inApp: {
+      title: 'Renewal submitted',
+      content: 'Renewal forms for URN {{urnNo}} were submitted for review.',
+      type: 'info',
+      notifyType: 'RENEWAL_SUBMITTED',
     },
   },
   [NotificationTemplateCode.RENEWAL_DECISION]: {
@@ -326,6 +398,12 @@ export const NOTIFICATION_TEMPLATES: Record<
       `,
       text: 'Renewal update for {{urnNo}}: {{decisionMessage}}',
     },
+    inApp: {
+      title: 'Renewal update',
+      content: 'Renewal for URN {{urnNo}}: {{decisionMessage}}',
+      type: 'info',
+      notifyType: 'RENEWAL_DECISION',
+    },
   },
   [NotificationTemplateCode.RENEWAL_COMPLETED]: {
     code: NotificationTemplateCode.RENEWAL_COMPLETED,
@@ -337,6 +415,38 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Renewal completed for {{urnNo}}.',
+    },
+    inApp: {
+      title: 'Renewal completed',
+      content:
+        'Renewal for URN {{urnNo}} is complete. Validity dates are updated in the portal.',
+      type: 'success',
+      notifyType: 'RENEWAL_COMPLETED',
+    },
+  },
+  [NotificationTemplateCode.PRODUCT_NAME_CHANGE_DECISION]: {
+    code: NotificationTemplateCode.PRODUCT_NAME_CHANGE_DECISION,
+    email: {
+      subject: 'GreenPro — Product Name Change Request {{decisionLabel}}',
+      html: `
+        <p>Dear {{manufacturerName}},</p>
+        <p>Your product name change request has been <strong>{{decisionLabel}}</strong>.</p>
+        <p><strong>URN:</strong> {{urnNo}}</p>
+        <p><strong>EOI No:</strong> {{eoiNo}}</p>
+        <p><strong>Current Name:</strong> {{currentName}}</p>
+        <p><strong>Requested Name:</strong> {{requestedName}}</p>
+        <p>{{decisionDetail}}</p>
+        <p>{{remarksBlock}}</p>
+        <p>Regards,<br/>GreenPro Admin</p>
+      `,
+      text: 'Product name change for {{urnNo}} was {{decisionLabel}}.',
+    },
+    inApp: {
+      title: 'Product name change {{decisionLabel}}',
+      content:
+        'Name change for {{urnNo}} ({{currentName}} → {{requestedName}}) was {{decisionLabel}}.',
+      type: 'info',
+      notifyType: 'PRODUCT_NAME_CHANGE_DECISION',
     },
   },
 };

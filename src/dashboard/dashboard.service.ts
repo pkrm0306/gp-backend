@@ -117,7 +117,9 @@ export class DashboardService {
       this.productModel.countDocuments(match).exec(),
       this.productModel
         .find(match)
-        .select('productId urnNo eoiNo productName productStatus urnStatus createdDate')
+        .select(
+          'productId urnNo eoiNo productName productStatus urnStatus validtillDate createdDate',
+        )
         .sort({ urnNo: -1, createdDate: -1, productId: -1 })
         .skip(skip)
         .limit(perPage)
@@ -134,6 +136,7 @@ export class DashboardService {
         productName: p.productName,
         productStatus: p.productStatus,
         urnStatus: p.urnStatus,
+        validtillDate: (p as { validtillDate?: Date | string | null }).validtillDate,
       }),
     }));
 
