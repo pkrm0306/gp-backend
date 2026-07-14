@@ -26,7 +26,7 @@ export interface VendorDashboardTrendPoint {
 }
 
 export interface VendorDashboardStatusSlice {
-  key: 'certified' | 'pending' | 'underReview' | 'rejected';
+  key: 'certified' | 'pending' | 'underReview' | 'rejected' | 'pendingRenewal';
   label: string;
   count: number;
   color: string;
