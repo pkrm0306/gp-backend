@@ -272,6 +272,16 @@ export class AdminService {
         query.region,
       );
     }
+
+    const manufacturerRaw = (query.manufacturerId || query.vendorId || '').trim();
+    let manufacturerObjectId: Types.ObjectId | undefined;
+    if (manufacturerRaw) {
+      if (!Types.ObjectId.isValid(manufacturerRaw)) {
+        throw new BadRequestException('manufacturerId/vendorId must be a valid ObjectId');
+      }
+      manufacturerObjectId = new Types.ObjectId(manufacturerRaw);
+    }
+
     return {
       dateRange,
       granularity,
@@ -279,6 +289,8 @@ export class AdminService {
       region: query.region,
       productStatusFilter: query.productStatus,
       manufacturerIdsForRegion,
+      manufacturerObjectId,
+      status: query.status,
     };
   }
 

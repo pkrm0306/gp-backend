@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, ClientSession, Types } from 'mongoose';
+import { createHash } from 'crypto';
 import { VendorUser, VendorUserDocument } from './schemas/vendor-user.schema';
 import * as bcrypt from 'bcryptjs';
 import { assertVendorUserManufacturerRules } from './utils/vendor-user-manufacturer-rules.util';
@@ -152,10 +153,62 @@ export class VendorUsersService {
     return user.save();
   }
 
+  /**
+   * Verify a plaintext password against the stored hash.
+   * Supports bcrypt (current) and legacy MySQL MD5 hashes from migration.
+   */
   async comparePassword(
     password: string,
     hashedPassword: string,
   ): Promise<boolean> {
-    return bcrypt.compare(password, hashedPassword);
+    const stored = String(hashedPassword ?? '').trim();
+    const plain = String(password ?? '');
+    if (!stored || plain === '') {
+      return false;
+    }
+
+    if (this.isBcryptHash(stored)) {
+      return bcrypt.compare(plain, stored);
+    }
+
+    if (this.isMd5Hash(stored)) {
+      return this.md5Hex(plain) === stored.toLowerCase();
+    }
+
+    return false;
+  }
+
+  /**
+   * After a successful login with a legacy MD5 password, re-hash to bcrypt
+   * so subsequent logins use the modern hash without forcing a password change.
+   */
+  async upgradeLegacyPasswordIfNeeded(
+    userId: string,
+    plainPassword: string,
+    currentHash: string,
+  ): Promise<boolean> {
+    if (!this.isMd5Hash(String(currentHash ?? '').trim())) {
+      return false;
+    }
+    const passwordHash = await bcrypt.hash(plainPassword, 10);
+    await this.vendorUserModel
+      .findByIdAndUpdate(userId, {
+        $set: { password: passwordHash },
+        $unset: { legacyPasswordHash: 1, legacyPasswordAlgo: 1 },
+      })
+      .exec();
+    return true;
+  }
+
+  private isBcryptHash(value: string): boolean {
+    return /^\$2[aby]?\$\d{2}\$/.test(value);
+  }
+
+  private isMd5Hash(value: string): boolean {
+    return /^[a-f0-9]{32}$/i.test(value);
+  }
+
+  private md5Hex(value: string): string {
+    return createHash('md5').update(value, 'utf8').digest('hex');
   }
 }

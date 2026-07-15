@@ -121,6 +121,11 @@ export interface AppliedDashboardFilters {
   productStatus: string | null;
   categoryId: string | null;
   region: string | null;
+  manufacturerId?: string | null;
+  vendorId?: string | null;
+  status?: string | null;
+  from?: string | null;
+  to?: string | null;
   granularity: string;
   dateRange: { from: string; to: string } | null;
   manufacturersScope: string;

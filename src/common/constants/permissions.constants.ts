@@ -11,30 +11,52 @@ export const PERMISSIONS = {
   CATEGORIES_ADD: 'categories:add',
   CATEGORIES_UPDATE: 'categories:update',
   CATEGORIES_DELETE: 'categories:delete',
+  CATEGORIES_STATUS: 'categories:status',
 
   SECTORS_VIEW: 'sectors:view',
   SECTORS_ADD: 'sectors:add',
   SECTORS_UPDATE: 'sectors:update',
   SECTORS_DELETE: 'sectors:delete',
+  SECTORS_STATUS: 'sectors:status',
 
   STANDARDS_VIEW: 'standards:view',
   STANDARDS_ADD: 'standards:add',
   STANDARDS_UPDATE: 'standards:update',
   STANDARDS_DELETE: 'standards:delete',
+  STANDARDS_STATUS: 'standards:status',
 
   MANUFACTURERS_VIEW: 'manufacturers:view',
   MANUFACTURERS_ADD: 'manufacturers:add',
   MANUFACTURERS_UPDATE: 'manufacturers:update',
   MANUFACTURERS_DELETE: 'manufacturers:delete',
+  MANUFACTURERS_STATUS: 'manufacturers:status',
+  MANUFACTURERS_VERIFIED_VIEW: 'manufacturers:verified:view',
+  MANUFACTURERS_VERIFIED_UPDATE: 'manufacturers:verified:update',
+  MANUFACTURERS_VERIFIED_STATUS: 'manufacturers:verified:status',
+  MANUFACTURERS_UNVERIFIED_VIEW: 'manufacturers:unverified:view',
+  MANUFACTURERS_UNVERIFIED_UPDATE: 'manufacturers:unverified:update',
+  MANUFACTURERS_UNVERIFIED_DELETE: 'manufacturers:unverified:delete',
+  MANUFACTURERS_UNVERIFIED_STATUS: 'manufacturers:unverified:status',
 
   PRODUCTS_VIEW: 'products:view',
   /** Submenu / nested route; implied by {@link PERMISSIONS.PRODUCTS_VIEW}. */
   PRODUCTS_CERTIFIED_VIEW: 'products:certified:view',
+  PRODUCTS_CERTIFIED_DETAILS_VIEW: 'products:certified:details:view',
   /** Submenu / nested route; implied by {@link PERMISSIONS.PRODUCTS_VIEW}. */
   PRODUCTS_UNCERTIFIED_VIEW: 'products:uncertified:view',
+  PRODUCTS_UNCERTIFIED_ADD: 'products:uncertified:add',
+  PRODUCTS_UNCERTIFIED_UPDATE: 'products:uncertified:update',
+  PRODUCTS_UNCERTIFIED_DELETE: 'products:uncertified:delete',
+  PRODUCTS_EXPIRED_VIEW: 'products:expired:view',
+  PRODUCTS_EXPIRED_DETAILS_VIEW: 'products:expired:details:view',
+  PRODUCTS_EXPIRED_STATUS: 'products:expired:status',
+  PRODUCTS_REJECTED_VIEW: 'products:rejected:view',
+  PRODUCTS_REJECTED_DETAILS_VIEW: 'products:rejected:details:view',
+  PRODUCTS_REJECTED_STATUS: 'products:rejected:status',
   PRODUCTS_ADD: 'products:add',
   PRODUCTS_UPDATE: 'products:update',
   PRODUCTS_DELETE: 'products:delete',
+  PRODUCTS_STATUS: 'products:status',
 
   PAYMENTS_VIEW: 'payments:view',
   PAYMENTS_ADD: 'payments:add',
@@ -45,6 +67,7 @@ export const PERMISSIONS = {
   EVENTS_ADD: 'events:add',
   EVENTS_UPDATE: 'events:update',
   EVENTS_DELETE: 'events:delete',
+  EVENTS_STATUS: 'events:status',
 
   SUMMITS_VIEW: 'summits:view',
   SUMMITS_ADD: 'summits:add',
@@ -62,11 +85,13 @@ export const PERMISSIONS = {
   BANNERS_ADD: 'banners:add',
   BANNERS_UPDATE: 'banners:update',
   BANNERS_DELETE: 'banners:delete',
+  BANNERS_STATUS: 'banners:status',
 
   TEAM_MEMBERS_VIEW: 'team-members:view',
   TEAM_MEMBERS_ADD: 'team-members:add',
   TEAM_MEMBERS_UPDATE: 'team-members:update',
   TEAM_MEMBERS_DELETE: 'team-members:delete',
+  TEAM_MEMBERS_STATUS: 'team-members:status',
 
   GRIEVANCES_VIEW: 'grievances:view',
   GRIEVANCES_UPDATE: 'grievances:update',
@@ -76,9 +101,28 @@ export const PERMISSIONS = {
 
   PROFILE_VIEW: 'profile:view',
   PROFILE_UPDATE: 'profile:update',
+  PROFILE_CHANGE_PASSWORD: 'profile:change-password',
+  PROFILE_NOTIFICATIONS: 'profile:notifications',
 
   RBAC_ROLES_MANAGE: 'rbac:roles:manage',
+  RBAC_ROLES_VIEW: 'rbac:roles:view',
+  RBAC_ROLES_ADD: 'rbac:roles:add',
+  RBAC_ROLES_UPDATE: 'rbac:roles:update',
+  RBAC_ROLES_DELETE: 'rbac:roles:delete',
+  RBAC_ROLES_STATUS: 'rbac:roles:status',
   RBAC_STAFF_MANAGE: 'rbac:staff:manage',
+
+  ARTICLES_VIEW: 'articles:view',
+  ARTICLES_ADD: 'articles:add',
+  ARTICLES_UPDATE: 'articles:update',
+  ARTICLES_DELETE: 'articles:delete',
+  ARTICLES_STATUS: 'articles:status',
+
+  GALLERY_VIEW: 'gallery:view',
+  GALLERY_ADD: 'gallery:add',
+  GALLERY_UPDATE: 'gallery:update',
+  GALLERY_DELETE: 'gallery:delete',
+  GALLERY_STATUS: 'gallery:status',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

@@ -105,3 +105,9 @@ PaymentDetailsSchema.index(
     name: 'uniq_renew_payment_per_cycle',
   },
 );
+
+/** Admin dashboard payment status / recent payments / revenue facets */
+PaymentDetailsSchema.index({ paymentStatus: 1, updatedDate: -1 });
+PaymentDetailsSchema.index({ paymentStatus: 1, createdDate: -1 });
+PaymentDetailsSchema.index({ vendorId: 1, paymentStatus: 1, updatedDate: -1 });
+PaymentDetailsSchema.index({ vendorId: 1, paymentStatus: 1, createdDate: -1 });

@@ -9,6 +9,7 @@ import { AdminDashboardWidgetsService } from './dashboard/admin-dashboard-widget
 import { AdminDashboardCertificationTimingService } from './dashboard/admin-dashboard-certification-timing.service';
 import { AdminDashboardSustainabilityService } from './dashboard/admin-dashboard-sustainability.service';
 import { AdminDashboardVisitorAnalyticsService } from './dashboard/admin-dashboard-visitor-analytics.service';
+import { AdminDashboardOptimizedService } from './dashboard/admin-dashboard-optimized.service';
 import { AdminRevenueDashboardService } from './dashboard/admin-revenue-dashboard.service';
 import { AdminService } from './admin.service';
 import {
@@ -146,6 +147,7 @@ import {
     AdminDashboardCertificationTimingService,
     AdminDashboardSustainabilityService,
     AdminDashboardVisitorAnalyticsService,
+    AdminDashboardOptimizedService,
     AdminRevenueDashboardService,
     EmailService,
     PermissionsGuard,

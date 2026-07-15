@@ -15,7 +15,10 @@ import {
 } from '../../manufacturers/schemas/manufacturer.schema';
 import { PRODUCT_STATUS_CERTIFIED } from '../../renew/constants/product-status.constants';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
-import { buildProductSnapshotMatch } from '../utils/dashboard-metrics-filters.util';
+import {
+  buildProductSnapshotMatch,
+  resolveManufacturerScopeIds,
+} from '../utils/dashboard-metrics-filters.util';
 import { roundRevenueAmount } from '../utils/admin-dashboard-revenue.util';
 import { AdminDashboardKpiService } from './admin-dashboard-kpi.service';
 import { AdminDashboardStatsService } from './admin-dashboard-stats.service';
@@ -344,10 +347,9 @@ export class AdminDashboardWidgetsService {
   private buildPaymentVendorScope(
     filters: ResolvedDashboardFilters,
   ): Record<string, unknown> {
-    if (!filters.manufacturerIdsForRegion?.length) {
-      return {};
-    }
-    return { vendorId: { $in: filters.manufacturerIdsForRegion } };
+    const ids = resolveManufacturerScopeIds(filters);
+    if (!ids) return {};
+    return { vendorId: { $in: ids } };
   }
 
   private async loadManufacturerNameMap(

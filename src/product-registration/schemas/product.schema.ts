@@ -141,3 +141,14 @@ ProductSchema.index({ manufacturerId: 1, is_deleted: 1, eoiNo: 1 });
 ProductSchema.index({ manufacturerId: 1, productStatus: 1, is_deleted: 1 });
 ProductSchema.index({ vendorId: 1, is_deleted: 1, productStatus: 1, createdDate: -1 });
 ProductSchema.index({ vendorId: 1, is_deleted: 1, urnNo: 1 });
+
+/** Admin dashboard aggregations / activity center */
+ProductSchema.index({ is_deleted: 1, productStatus: 1, createdDate: -1 });
+ProductSchema.index({ is_deleted: 1, productStatus: 1, urnStatus: 1 });
+ProductSchema.index({ is_deleted: 1, productStatus: 1, validtillDate: 1 });
+ProductSchema.index({
+  is_deleted: 1,
+  categoryId: 1,
+  manufacturerId: 1,
+  productStatus: 1,
+});

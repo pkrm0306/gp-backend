@@ -141,6 +141,46 @@ export class DashboardMetricsQueryDto {
   @Transform(({ value }) => trimOptional(value) ?? 'monthly')
   @IsIn(['monthly', 'weekly', 'quarterly'])
   granularity?: 'monthly' | 'weekly' | 'quarterly' = 'monthly';
+
+  /** Explicit custom range start (ISO date). Overrides period when both `from` and `to` are set. */
+  @ApiPropertyOptional({ example: '2026-01-01', description: 'ISO date or datetime' })
+  @IsOptional()
+  @Transform(({ value }) => trimOptional(value))
+  @IsString()
+  from?: string;
+
+  /** Explicit custom range end (ISO date). Overrides period when both `from` and `to` are set. */
+  @ApiPropertyOptional({ example: '2026-03-31' })
+  @IsOptional()
+  @Transform(({ value }) => trimOptional(value))
+  @IsString()
+  to?: string;
+
+  /** Manufacturer / vendor MongoDB _id — scopes products, payments, and manufacturer KPIs. */
+  @ApiPropertyOptional({ description: 'Manufacturer MongoDB ObjectId' })
+  @IsOptional()
+  @Transform(({ value }) => trimOptional(value))
+  @IsString()
+  manufacturerId?: string;
+
+  /** Alias for manufacturerId (vendor portal / payment vendorId). */
+  @ApiPropertyOptional({ description: 'Alias of manufacturerId' })
+  @IsOptional()
+  @Transform(({ value }) => trimOptional(value))
+  @IsString()
+  vendorId?: string;
+
+  /**
+   * Generic status filter used by activity / pending panels.
+   * Prefer `productStatus` for product KPIs; this is a freer string for activity feeds.
+   */
+  @ApiPropertyOptional({
+    description: 'Generic status token (pending, verified, paid, etc.)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => trimOptional(value)?.toLowerCase())
+  @IsString()
+  status?: string;
 }
 
 export class DashboardRecentProductsQueryDto {

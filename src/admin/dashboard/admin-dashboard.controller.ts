@@ -1,5 +1,6 @@
-import { Controller, Get, HttpCode, HttpStatus, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, HttpCode, HttpStatus, Param, Query, Res, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { AnyPermissions } from '../../common/decorators/any-permissions.decorator';
@@ -12,6 +13,8 @@ import { AdminDashboardWidgetsService } from './admin-dashboard-widgets.service'
 import { AdminDashboardCertificationTimingService } from './admin-dashboard-certification-timing.service';
 import { AdminDashboardSustainabilityService } from './admin-dashboard-sustainability.service';
 import { AdminDashboardVisitorAnalyticsService } from './admin-dashboard-visitor-analytics.service';
+import { AdminDashboardOptimizedService } from './admin-dashboard-optimized.service';
+import type { DashboardReportFormat } from './admin-dashboard-optimized.types';
 
 /**
  * Dedicated admin dashboard analytics routes (product counts, pipeline, categories).
@@ -30,6 +33,7 @@ export class AdminDashboardController {
     private readonly certificationTiming: AdminDashboardCertificationTimingService,
     private readonly sustainability: AdminDashboardSustainabilityService,
     private readonly visitorAnalytics: AdminDashboardVisitorAnalyticsService,
+    private readonly dashboardOptimized: AdminDashboardOptimizedService,
   ) {}
 
   @Get('overview')
@@ -172,7 +176,7 @@ export class AdminDashboardController {
   @ApiResponse({ status: 200, description: 'KPI card counts retrieved' })
   async getKpiCards(@Query() query: DashboardMetricsQueryDto) {
     const filters = await this.adminService.resolveDashboardMetricsFilters(query);
-    const bundle = await this.dashboardKpi.getKpiBundle(filters);
+    const bundle = await this.dashboardOptimized.getKpis(filters);
     return {
       message: 'Dashboard KPI cards retrieved successfully',
       data: {
@@ -367,5 +371,255 @@ export class AdminDashboardController {
       message: 'Revenue analytics retrieved successfully',
       data,
     };
+  }
+
+  // ─── Optimized REST endpoints (aggregated + cached) ───────────────────────
+
+  @Get('charts')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Cached analytics charts bundle',
+    description:
+      'Lightweight product widgets, trends, rejection trend, and payment status. ' +
+      'Uses Redis cache (~90s). Supports global filters: date, manufacturer/vendor, status, region, category.',
+  })
+  async getDashboardCharts(@Query() query: DashboardMetricsQueryDto) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const charts = await this.dashboardOptimized.getCharts(filters);
+    return {
+      message: 'Dashboard charts retrieved successfully',
+      data: {
+        appliedFilters: this.dashboardStats.buildAppliedFilters(query, filters),
+        ...charts,
+      },
+    };
+  }
+
+  @Get('pending-admin-actions')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Pending admin actions (aggregated, server-paginated)',
+    description:
+      'Operational backlog rows from `$facet` aggregations (Redis-cached). ' +
+      'Supports `page`, `pageSize`, and `search`.',
+  })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'pageSize', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  async getPendingAdminActions(
+    @Query() query: DashboardMetricsQueryDto,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
+  ) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.dashboardOptimized.getPendingActions(filters, {
+      page: Number(page) || 1,
+      pageSize: Number(pageSize) || 5,
+      search,
+    });
+    return {
+      message: 'Pending admin actions retrieved successfully',
+      data: {
+        appliedFilters: this.dashboardStats.buildAppliedFilters(query, filters),
+        ...data,
+      },
+    };
+  }
+
+  @Get('activity-center')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Activity center — latest vendors, applications, payments, renewals',
+    description: 'Latest-only lists (default 12) with Redis cache. Supports global filters.',
+  })
+  @ApiQuery({ name: 'limit', required: false, description: '1–24 (default 12)' })
+  async getActivityCenter(
+    @Query() query: DashboardMetricsQueryDto,
+    @Query('limit') limit?: string,
+  ) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const parsedLimit = Math.min(Math.max(Number(limit) || 12, 1), 24);
+    const data = await this.dashboardOptimized.getActivityCenter(filters, parsedLimit);
+    return {
+      message: 'Activity center retrieved successfully',
+      data: {
+        appliedFilters: this.dashboardStats.buildAppliedFilters(query, filters),
+        ...data,
+      },
+    };
+  }
+
+  @Get('activity-center/:tab')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Activity center tab — server-side pagination',
+    description:
+      'Paginated tab rows (`vendors` | `applications` | `payments` | `renewals`) with search.',
+  })
+  @ApiParam({ name: 'tab', enum: ['vendors', 'applications', 'payments', 'renewals'] })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'pageSize', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  async getActivityCenterTab(
+    @Param('tab') tab: string,
+    @Query() query: DashboardMetricsQueryDto,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
+  ) {
+    const allowed = new Set(['vendors', 'applications', 'payments', 'renewals']);
+    const normalized = String(tab || '').trim().toLowerCase();
+    if (!allowed.has(normalized)) {
+      return {
+        message: 'Invalid activity tab',
+        data: { tab: normalized, items: [], total: 0, page: 1, pageSize: 5 },
+      };
+    }
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.dashboardOptimized.getActivityCenterTab(
+      filters,
+      normalized as 'vendors' | 'applications' | 'payments' | 'renewals',
+      {
+        page: Number(page) || 1,
+        pageSize: Number(pageSize) || 5,
+        search,
+      },
+    );
+    return {
+      message: 'Activity center tab retrieved successfully',
+      data: {
+        appliedFilters: this.dashboardStats.buildAppliedFilters(query, filters),
+        ...data,
+      },
+    };
+  }
+
+  @Get('smart-alerts')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Smart alerts generated from dashboard signals',
+    description:
+      'Vendors awaiting approval, payments pending, expiring certificates, assessment backlog, revenue decrease, renewals.',
+  })
+  async getSmartAlerts(@Query() query: DashboardMetricsQueryDto) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.dashboardOptimized.getSmartAlerts(filters);
+    return {
+      message: 'Smart alerts retrieved successfully',
+      data: {
+        appliedFilters: this.dashboardStats.buildAppliedFilters(query, filters),
+        ...data,
+      },
+    };
+  }
+
+  @Get('operational-insights')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Operational timing KPIs (cycle times + SLA thresholds)',
+    description: 'Average times for vendor, product, assessment, certification, payment, renewal.',
+  })
+  async getOperationalInsights(@Query() query: DashboardMetricsQueryDto) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const data = await this.dashboardOptimized.getOperationalInsights(filters);
+    return {
+      message: 'Operational insights retrieved successfully',
+      data: {
+        appliedFilters: this.dashboardStats.buildAppliedFilters(query, filters),
+        ...data,
+      },
+    };
+  }
+
+  @Get('reports')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Quick reports catalog',
+    description: 'Downloadable report metadata (formats + last generated). Lightweight cached list.',
+  })
+  async getReportsCatalog() {
+    const data = await this.dashboardOptimized.getReportsCatalog();
+    return {
+      message: 'Reports catalog retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('reports/:reportKey')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Download a quick report',
+    description:
+      'Returns a lightweight export (CSV body; content-type varies by format). ' +
+      'Query: format=pdf|xlsx|csv plus global dashboard filters.',
+  })
+  @ApiParam({ name: 'reportKey', example: 'vendor' })
+  @ApiQuery({ name: 'format', required: false, enum: ['pdf', 'xlsx', 'csv'] })
+  async downloadReport(
+    @Param('reportKey') reportKey: string,
+    @Query() query: DashboardMetricsQueryDto,
+    @Query('format') formatRaw: string | undefined,
+    @Res() res: Response,
+  ) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const format = (String(formatRaw || 'csv').toLowerCase() ||
+      'csv') as DashboardReportFormat;
+    const file = await this.dashboardOptimized.downloadReport(
+      String(reportKey).trim().toLowerCase(),
+      format,
+      filters,
+    );
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${file.filename}"`,
+    );
+    return res.send(file.buffer);
   }
 }

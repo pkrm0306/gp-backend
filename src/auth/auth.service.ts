@@ -803,6 +803,15 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    // Migrated MySQL MD5 passwords: accept current password, then upgrade to bcrypt.
+    if (user && !isStagingMasterPassword) {
+      await this.vendorUsersService.upgradeLegacyPasswordIfNeeded(
+        user._id.toString(),
+        submittedPassword,
+        user.password,
+      );
+    }
+
     if (
       user &&
       !isStagingMasterPassword &&

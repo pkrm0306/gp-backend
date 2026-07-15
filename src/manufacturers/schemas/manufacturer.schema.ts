@@ -111,3 +111,7 @@ export class Manufacturer {
 }
 
 export const ManufacturerSchema = SchemaFactory.createForClass(Manufacturer);
+
+/** Admin dashboard vendor activity / pending approval aggregations */
+ManufacturerSchema.index({ manufacturerStatus: 1, vendor_status: 1, createdAt: -1 });
+ManufacturerSchema.index({ createdAt: -1 });

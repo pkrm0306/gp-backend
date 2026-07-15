@@ -21,6 +21,10 @@ export interface ResolvedDashboardFilters {
   region?: 'north' | 'south' | 'east' | 'west';
   productStatusFilter?: DashboardMetricsQueryDto['productStatus'];
   manufacturerIdsForRegion?: Types.ObjectId[];
+  /** Explicit manufacturer/vendor scope from query.manufacturerId | vendorId. */
+  manufacturerObjectId?: Types.ObjectId;
+  /** Free-form status token for activity panels. */
+  status?: string;
 }
 
 const MONTH_SHORT = [
@@ -146,15 +150,33 @@ function endOfCalendarYear(year: number, now: Date): Date {
 
 /**
  * Resolves the product date window for dashboard filters.
- * Priority: month → quarter → year (+ period) → period alone → no filter.
+ * Priority: explicit from/to → month → quarter → year (+ period) → period alone → no filter.
  */
 export function resolveDashboardDateRange(
   query: Pick<
     DashboardMetricsQueryDto,
-    'period' | 'year' | 'month' | 'quarter'
+    'period' | 'year' | 'month' | 'quarter' | 'from' | 'to'
   >,
   now = new Date(),
 ): DashboardDateRange | undefined {
+  const fromRaw = query.from ? String(query.from).trim() : '';
+  const toRaw = query.to ? String(query.to).trim() : '';
+  if (fromRaw && toRaw) {
+    const from = new Date(fromRaw);
+    const to = new Date(toRaw);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('from/to must be valid ISO dates');
+    }
+    if (from > to) {
+      throw new BadRequestException('from must be before or equal to to');
+    }
+    // Inclusive end-of-day when date-only (no time component)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(toRaw)) {
+      to.setHours(23, 59, 59, 999);
+    }
+    return { from, to };
+  }
+
   const selectedYear = query.year ?? now.getFullYear();
 
   if (query.month !== undefined) {
@@ -346,6 +368,12 @@ export function buildAppliedDashboardFilters(
     productStatus: query.productStatus ?? null,
     categoryId: query.categoryId ?? null,
     region: query.region ?? null,
+    manufacturerId:
+      query.manufacturerId ?? query.vendorId ?? resolved.manufacturerObjectId?.toString() ?? null,
+    vendorId: query.vendorId ?? query.manufacturerId ?? null,
+    status: query.status ?? resolved.status ?? null,
+    from: query.from ?? null,
+    to: query.to ?? null,
     granularity: resolved.granularity,
     dateRange: resolved.dateRange
       ? {
@@ -363,16 +391,33 @@ export function buildAppliedDashboardFilters(
   };
 }
 
+/** Resolve manufacturer ObjectId list for product/payment/manufacturer scoping. */
+export function resolveManufacturerScopeIds(
+  filters: ResolvedDashboardFilters,
+): Types.ObjectId[] | undefined {
+  if (filters.manufacturerObjectId) {
+    if (filters.manufacturerIdsForRegion?.length) {
+      const allowed = filters.manufacturerIdsForRegion.some(
+        (id) => id.toString() === filters.manufacturerObjectId!.toString(),
+      );
+      return allowed ? [filters.manufacturerObjectId] : [];
+    }
+    return [filters.manufacturerObjectId];
+  }
+  return filters.manufacturerIdsForRegion;
+}
+
 /**
  * Manufacturer KPI cards use current platform snapshot (status counts),
- * optionally scoped by region only — not by registration date.
+ * optionally scoped by region / manufacturer — not by registration date.
  */
 export function buildManufacturerSnapshotMatch(
   filters: ResolvedDashboardFilters,
 ): Record<string, unknown> {
   const match: Record<string, unknown> = {};
-  if (filters.manufacturerIdsForRegion?.length) {
-    match._id = { $in: filters.manufacturerIdsForRegion };
+  const ids = resolveManufacturerScopeIds(filters);
+  if (ids) {
+    match._id = { $in: ids };
   }
   return match;
 }
@@ -392,8 +437,9 @@ export function buildProductSnapshotMatch(
   if (filters.categoryObjectId) {
     match.categoryId = filters.categoryObjectId;
   }
-  if (filters.manufacturerIdsForRegion?.length) {
-    match.manufacturerId = { $in: filters.manufacturerIdsForRegion };
+  const manufacturerIds = resolveManufacturerScopeIds(filters);
+  if (manufacturerIds) {
+    match.manufacturerId = { $in: manufacturerIds };
   }
 
   const statusFilter = filters.productStatusFilter;
