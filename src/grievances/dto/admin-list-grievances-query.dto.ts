@@ -9,6 +9,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { IsFromDateNotLaterThanToDate } from '../../common/validators/date-range.validator';
 import { GrievanceStatus } from '../schemas/grievance.schema';
 
 export class AdminListGrievancesQueryDto {
@@ -59,5 +60,6 @@ export class AdminListGrievancesQueryDto {
   })
   @IsOptional()
   @IsDateString()
+  @IsFromDateNotLaterThanToDate()
   to?: string;
 }

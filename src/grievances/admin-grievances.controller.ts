@@ -99,6 +99,10 @@ export class AdminGrievancesController {
   @ApiBody({ type: RespondGrievanceDto })
   @ApiResponse({ status: 200, description: 'Grievance response saved' })
   @ApiResponse({ status: 400, description: 'Validation error' })
+  @ApiResponse({
+    status: 409,
+    description: 'Grievance is closed and cannot be modified',
+  })
   @ApiResponse({ status: 404, description: 'Grievance not found' })
   async respond(
     @CurrentUser() user: { userId?: string; id?: string },

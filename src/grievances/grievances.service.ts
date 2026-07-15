@@ -1,8 +1,9 @@
 import {
-  BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
@@ -11,6 +12,7 @@ import {
   ManufacturerDocument,
 } from '../manufacturers/schemas/manufacturer.schema';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import { assertFromDateNotLaterThanToDate } from '../common/validators/date-range.validator';
 import { AdminListGrievancesQueryDto } from './dto/admin-list-grievances-query.dto';
 import { CreateGrievanceDto } from './dto/create-grievance.dto';
 import { RespondGrievanceDto } from './dto/respond-grievance.dto';
@@ -84,6 +86,8 @@ export class GrievancesService {
   private buildAdminListFilter(
     query: AdminListGrievancesQueryDto,
   ): FilterQuery<GrievanceDocument> {
+    assertFromDateNotLaterThanToDate(query.from, query.to);
+
     const and: FilterQuery<GrievanceDocument>[] = [];
 
     if (query.search?.trim()) {
@@ -364,7 +368,9 @@ export class GrievancesService {
     }
 
     if (grievance.status === GrievanceStatus.Closed) {
-      throw new BadRequestException('This grievance is already closed');
+      throw new ConflictException(
+        'This grievance is closed and cannot be modified',
+      );
     }
 
     const existingResponse = String(grievance.adminResponse ?? '').trim();

@@ -10,6 +10,14 @@ import {
 import { ACCOUNT_DELETION_REASONS } from '../schemas/account-deletion-request.schema';
 
 export class CreateAccountDeletionRequestDto {
+  @ApiPropertyOptional({
+    description: 'Fixed request type for account deletion workflow.',
+    example: 'Account deletion',
+  })
+  @IsOptional()
+  @IsString()
+  requestType?: string;
+
   @ApiProperty({
     enum: ACCOUNT_DELETION_REASONS,
     example: 'No longer using the platform',

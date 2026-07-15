@@ -12,6 +12,7 @@ import {
   ManufacturerDocument,
 } from '../manufacturers/schemas/manufacturer.schema';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import { assertFromDateNotLaterThanToDate } from '../common/validators/date-range.validator';
 import { AdminListAccountDeletionQueryDto } from './dto/admin-list-account-deletion-query.dto';
 import { CreateAccountDeletionRequestDto } from './dto/create-account-deletion-request.dto';
 import { ReviewAccountDeletionRequestDto } from './dto/review-account-deletion-request.dto';
@@ -86,6 +87,8 @@ export class AccountDeletionService {
   private buildAdminListFilter(
     query: AdminListAccountDeletionQueryDto,
   ): FilterQuery<AccountDeletionRequestDocument> {
+    assertFromDateNotLaterThanToDate(query.from, query.to);
+
     const and: FilterQuery<AccountDeletionRequestDocument>[] = [];
 
     if (query.search?.trim()) {

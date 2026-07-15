@@ -9,6 +9,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { IsFromDateNotLaterThanToDate } from '../../common/validators/date-range.validator';
 import { AccountDeletionStatus } from '../schemas/account-deletion-request.schema';
 
 export class AdminListAccountDeletionQueryDto {
@@ -59,5 +60,6 @@ export class AdminListAccountDeletionQueryDto {
   })
   @IsOptional()
   @IsDateString()
+  @IsFromDateNotLaterThanToDate()
   to?: string;
 }

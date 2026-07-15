@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
@@ -415,7 +416,18 @@ describe('GrievancesService', () => {
           },
           adminUserId,
         ),
-      ).rejects.toThrow(/already closed/i);
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      await expect(
+        service.respondForAdmin(
+          grievanceId,
+          {
+            adminResponse: 'Too late',
+            status: GrievanceStatus.Responded,
+          },
+          adminUserId,
+        ),
+      ).rejects.toThrow(/closed and cannot be modified/i);
     });
 
     it('throws NotFound when grievance missing', async () => {
