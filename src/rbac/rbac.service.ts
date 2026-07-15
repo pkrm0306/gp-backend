@@ -446,17 +446,38 @@ export class RbacService {
       .exec();
     if (!role) throw new NotFoundException('Role not found');
 
-    const activeMappingsCount = await this.mappingModel
-      .countDocuments({
+    const activeMappings = await this.mappingModel
+      .find({
         ...this.rbacScope(manufacturerId),
         roleId: roleObjectId,
         status: 1,
       })
+      .select('vendorUserId')
+      .lean()
       .exec();
-    if (activeMappingsCount > 0) {
-      throw new BadRequestException(
-        'Cannot delete role while assigned to staff. Reassign/remove mappings first.',
-      );
+
+    if (activeMappings.length > 0) {
+      const mappedUserIds = activeMappings.map((m) => m.vendorUserId);
+      const activeUsersCount = await this.vendorUserModel
+        .countDocuments({
+          _id: { $in: mappedUserIds },
+          status: { $ne: 2 },
+        })
+        .exec();
+
+      if (activeUsersCount > 0) {
+        throw new BadRequestException(
+          'Cannot delete role while assigned to staff. Reassign/remove mappings first.',
+        );
+      }
+
+      await this.mappingModel
+        .deleteMany({
+          ...this.rbacScope(manufacturerId),
+          roleId: roleObjectId,
+          vendorUserId: { $in: mappedUserIds },
+        })
+        .exec();
     }
 
     const res = await this.roleModel

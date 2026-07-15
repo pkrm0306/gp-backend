@@ -3131,6 +3131,14 @@ export class AdminService {
         .exec();
     }
 
+    await this.rbacService
+      .unassignStaffRole(undefined, teamMemberId)
+      .catch((err) => {
+        this.logger.warn(
+          `Failed to clean up role mappings for deleted team member ${teamMemberId}: ${(err as Error)?.message || 'unknown'}`,
+        );
+      });
+
     const obj: any = updated.toObject();
     delete obj.password;
     delete obj.otp;
