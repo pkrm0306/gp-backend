@@ -86,7 +86,14 @@ export class RenewDocumentsService {
     documentIdParam: string,
     query: DeleteRenewDocumentQuery,
     deletedByUserId: string | Types.ObjectId,
-  ): Promise<{ documentId: number; urnNo: string; sectionKey: string }> {
+  ): Promise<{
+    documentId: number;
+    urnNo: string;
+    sectionKey: string;
+    documentTag?: string;
+    fileName?: string;
+    documentStatus: 'deleted';
+  }> {
     if (!query.renewalCycleId?.trim()) {
       throw new BadRequestException(
         'renewalCycleId is required for renewal document delete',
@@ -198,6 +205,12 @@ export class RenewDocumentsService {
       documentId: document.productDocumentId,
       urnNo: document.urnNo,
       sectionKey: document.documentForm,
+      documentTag: document.documentTag ?? undefined,
+      fileName:
+        document.documentOriginalName?.trim() ||
+        document.documentName?.trim() ||
+        undefined,
+      documentStatus: 'deleted',
     };
   }
 }

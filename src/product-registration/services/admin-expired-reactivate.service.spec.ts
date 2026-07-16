@@ -89,7 +89,23 @@ describe('AdminExpiredReactivateService', () => {
     );
     expect(productStatusAuditCreate).toHaveBeenCalled();
     expect(auditRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'expired_reactivate_product' }),
+      expect.objectContaining({
+        action: 'expired_reactivate_product',
+        description: 'Expired product reactivated to certified',
+        old_values: {
+          fromStatus: PRODUCT_STATUS_DISCONTINUED,
+          productStatus: PRODUCT_STATUS_DISCONTINUED,
+        },
+        new_values: {
+          toStatus: PRODUCT_STATUS_CERTIFIED,
+          productStatus: PRODUCT_STATUS_CERTIFIED,
+          urnNo,
+          eoiNo: 'GPPMI003026',
+        },
+        metadata: expect.objectContaining({
+          business_event_type: 'expired_to_certified',
+        }),
+      }),
     );
   });
 
@@ -137,6 +153,66 @@ describe('AdminExpiredReactivateService', () => {
     expect(result.success).toBe(true);
     expect(result.fromStatus).toBe(PRODUCT_STATUS_CERTIFIED);
     expect(updateOne).toHaveBeenCalled();
+    // Soft-expired: audit shows Expired → Certified (workflow), while
+    // product_status_audit keeps raw Certified fromStatus.
+    expect(productStatusAuditCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromStatus: PRODUCT_STATUS_CERTIFIED,
+        toStatus: PRODUCT_STATUS_CERTIFIED,
+      }),
+    );
+    expect(auditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: 'Expired product reactivated to certified',
+        old_values: {
+          fromStatus: PRODUCT_STATUS_DISCONTINUED,
+          productStatus: PRODUCT_STATUS_DISCONTINUED,
+        },
+        new_values: expect.objectContaining({
+          toStatus: PRODUCT_STATUS_CERTIFIED,
+          productStatus: PRODUCT_STATUS_CERTIFIED,
+        }),
+        metadata: expect.objectContaining({
+          soft_expired: true,
+          business_event_type: 'expired_to_certified',
+        }),
+      }),
+    );
+  });
+
+  it('records Expired→Certified audit when validity is retained (future validtill)', async () => {
+    const futureTill = new Date();
+    futureTill.setFullYear(futureTill.getFullYear() + 2);
+    findOneExec.mockResolvedValue({
+      _id: productObjectId,
+      eoiNo: 'GPPMI003026',
+      productStatus: PRODUCT_STATUS_DISCONTINUED,
+      validtillDate: futureTill,
+    });
+
+    await service.reactivateProduct(
+      urnNo,
+      productObjectId.toHexString(),
+      adminUserId,
+    );
+
+    expect(auditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: 'Expired product reactivated to certified',
+        old_values: {
+          fromStatus: PRODUCT_STATUS_DISCONTINUED,
+          productStatus: PRODUCT_STATUS_DISCONTINUED,
+        },
+        new_values: expect.objectContaining({
+          toStatus: PRODUCT_STATUS_CERTIFIED,
+          productStatus: PRODUCT_STATUS_CERTIFIED,
+        }),
+        metadata: expect.objectContaining({
+          business_event_type: 'expired_to_certified',
+          validity_extended: false,
+        }),
+      }),
+    );
   });
 
   it('throws 404 when product is missing', async () => {
@@ -199,10 +275,26 @@ describe('AdminExpiredReactivateService', () => {
         expect.objectContaining({
           action: 'expired_reactivate_urn',
           entity_name: 'GPPMI003026',
+          description: 'Expired product on URN reactivated to certified',
+          old_values: {
+            fromStatus: PRODUCT_STATUS_DISCONTINUED,
+            productStatus: PRODUCT_STATUS_DISCONTINUED,
+          },
+          new_values: expect.objectContaining({
+            toStatus: PRODUCT_STATUS_CERTIFIED,
+            productStatus: PRODUCT_STATUS_CERTIFIED,
+            eoiNo: 'GPPMI003026',
+          }),
         }),
         expect.objectContaining({
           action: 'expired_reactivate_urn',
           entity_name: 'GPPMI003027',
+          description: 'Expired product on URN reactivated to certified',
+          old_values: {
+            fromStatus: PRODUCT_STATUS_DISCONTINUED,
+            productStatus: PRODUCT_STATUS_DISCONTINUED,
+          },
+          metadata: expect.objectContaining({ soft_expired: true }),
         }),
       ]),
     );

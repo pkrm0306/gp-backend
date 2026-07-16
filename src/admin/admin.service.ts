@@ -44,6 +44,7 @@ import {
   EVENT_ID_COUNTER_KEY,
 } from '../events/schemas/event-id-counter.schema';
 import { EmailService } from '../common/services/email.service';
+import { AdminSystemNotificationService } from '../notifications/helpers/admin-system-notification.service';
 import {
   ContactReplyThread,
   ContactReplyThreadDocument,
@@ -52,6 +53,12 @@ import {
   NewsletterSubscriber,
   NewsletterSubscriberDocument,
 } from '../website/schemas/newsletter-subscriber.schema';
+import {
+  NEWSLETTER_SUBSCRIBER_COLLECTIONS,
+  absorbNewsletterSubscriberRows,
+  newsletterSubscriberActivityDate,
+  sortNewsletterSubscribersByActivity,
+} from '../website/utils/newsletter-subscribers-query.util';
 import {
   ContactMessage,
   ContactMessageDocument,
@@ -160,6 +167,16 @@ function escapeHtml(input: string): string {
     .replace(/'/g, '&#039;');
 }
 
+/** Same label format as website subscribe confirmation emails. */
+function formatSubscribedForLabel(value: unknown): string {
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => String(v ?? '').trim()).filter(Boolean);
+    return parts.length > 0 ? parts.join(', ') : 'Newsletter';
+  }
+  const asString = String(value ?? '').trim();
+  return asString || 'Newsletter';
+}
+
 function resolveOptionalEventUrl(value: unknown): string | undefined {
   const trimmed = String(value ?? '').trim();
   return trimmed || undefined;
@@ -241,6 +258,7 @@ export class AdminService {
     @InjectModel(PaymentDetails.name)
     private paymentDetailsModel: Model<PaymentDetailsDocument>,
     private readonly emailService: EmailService,
+    private readonly adminSystemNotification: AdminSystemNotificationService,
     private readonly rbacService: RbacService,
     private readonly redisService: RedisService,
     private readonly categoriesService: CategoriesService,
@@ -845,14 +863,9 @@ export class AdminService {
     referenceId?: string;
     actorName?: string;
   }) {
-    await this.notificationModel.create({
-      title: input.title,
-      message: input.message,
-      type: input.type ?? 'info',
+    await this.adminSystemNotification.createFeedNotification({
+      ...input,
       source: input.source ?? 'admin',
-      referenceType: input.referenceType,
-      referenceId: input.referenceId,
-      actorName: input.actorName,
     });
   }
 
@@ -1761,54 +1774,17 @@ export class AdminService {
     const brand = 'GreenPro';
     const subject = `Reply from ${brand}`;
     const cleanReply = String(payload.replyMessage ?? '').trim();
-    const apiBase = String(process.env.API_BASE_URL ?? '')
-      .trim()
-      .replace(/\/+$/, '');
-    const logoUrl = String(
-      process.env.GREENPRO_LOGO_URL ??
-        (apiBase ? `${apiBase}/uploads/greenpro-logo.svg` : ''),
-    ).trim();
     const htmlBody = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>${subject}</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827; max-width: 640px; margin: 0 auto; padding: 20px;">
-          <div style="padding: 0 0 14px 0; border-bottom: 1px solid #e5e7eb;">
-            ${
-              logoUrl
-                ? `<img src="${escapeHtml(logoUrl)}" alt="${brand}" style="display:block; max-height:48px; width:auto; margin:0 0 10px 0;" />`
-                : `<div style="font-size: 20px; font-weight: 800; color: #16a34a;">${brand}</div>`
-            }
-            <div style="font-size: 14px; font-weight: 600; color: #111827;">Support</div>
-          </div>
-
-          <div style="padding: 16px 0 0 0;">
-            <p style="margin: 0 0 12px 0;">Hello,</p>
-            <p style="margin: 0 0 12px 0;">Please find our response below.</p>
-            <div style="white-space: pre-wrap; margin: 0 0 16px 0;">${escapeHtml(cleanReply)}</div>
-
-            <p style="margin: 0;">Regards,<br />${brand} Support Team</p>
-            <p style="margin: 12px 0 0 0; font-size: 12px; color: #6b7280;">
-              This is an automated email. Please do not reply to this message.
-            </p>
-          </div>
-        </body>
-      </html>
+      <p>Hello,</p>
+      <p>Please find our response below.</p>
+      <div style="white-space:pre-wrap; margin:0 0 16px 0; background:#f9fafb; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">${escapeHtml(cleanReply)}</div>
+      <p>Regards,<br />${brand} Support Team</p>
     `;
 
     const textBody = `Hello,\n\nPlease find our response below.\n\n${cleanReply}\n\nRegards,\n${brand} Support Team`;
 
     this.emailService.sendInBackground(() =>
-      this.emailService.sendEmail(
-        payload.email,
-        subject,
-        htmlBody,
-        textBody,
-      ),
+      this.emailService.sendEmail(payload.email, subject, htmlBody, textBody),
     );
 
     return { to: payload.email, subject };
@@ -1843,44 +1819,12 @@ export class AdminService {
     const name = String((contact as any).name ?? '').trim();
     const greeting = name ? `Hi ${name},` : 'Hello,';
     const cleanReply = String(replyMessage ?? '').trim();
-    const apiBase = String(process.env.API_BASE_URL ?? '')
-      .trim()
-      .replace(/\/+$/, '');
-    const logoUrl = String(
-      process.env.GREENPRO_LOGO_URL ??
-        (apiBase ? `${apiBase}/uploads/greenpro-logo.svg` : ''),
-    ).trim();
 
     const htmlBody = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <title>${escapeHtml(subject)}</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827; max-width: 640px; margin: 0 auto; padding: 20px;">
-          <div style="padding: 0 0 14px 0; border-bottom: 1px solid #e5e7eb;">
-            ${
-              logoUrl
-                ? `<img src="${escapeHtml(logoUrl)}" alt="GreenPro" style="display:block; max-height:48px; width:auto; margin:0 0 10px 0;" />`
-                : `<div style="font-size: 20px; font-weight: 800; color: #16a34a;">GreenPro</div>`
-            }
-            <div style="font-size: 14px; font-weight: 600; color: #111827;">Support</div>
-          </div>
-
-          <div style="padding: 16px 0 0 0;">
-            <p style="margin: 0 0 12px 0;">${escapeHtml(greeting)}</p>
-            <p style="margin: 0 0 12px 0;">Thank you for contacting us. Please find our response below.</p>
-            <div style="white-space: pre-wrap; margin: 0 0 16px 0;">${escapeHtml(cleanReply)}</div>
-
-            <p style="margin: 0;">Regards,<br />GreenPro Support Team</p>
-            <p style="margin: 12px 0 0 0; font-size: 12px; color: #6b7280;">
-              This is an automated email. Please do not reply to this message.
-            </p>
-          </div>
-        </body>
-      </html>
+      <p>${escapeHtml(greeting)}</p>
+      <p>Thank you for contacting us. Please find our response below.</p>
+      <div style="white-space:pre-wrap; margin:0 0 16px 0; background:#f9fafb; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">${escapeHtml(cleanReply)}</div>
+      <p>Regards,<br />GreenPro Support Team</p>
     `;
 
     const textBody = `${greeting}\n\nThank you for contacting us. Please find our response below.\n\n${cleanReply}\n\nRegards,\nGreenPro Support Team`;
@@ -3158,11 +3102,9 @@ export class AdminService {
     row: Record<string, unknown>,
     serialNo: number,
   ) {
-    const subscribedFor =
-      Array.isArray(row.subscribedFor) && row.subscribedFor.length > 0
-        ? (row.subscribedFor as string[]).join(', ')
-        : 'Newsletter';
-    const createdRaw = row.createdAt;
+    const subscribedFor = formatSubscribedForLabel(row.subscribedFor);
+    const activity = newsletterSubscriberActivityDate(row);
+    const createdRaw = activity ?? row.createdAt;
     const createdAt =
       createdRaw instanceof Date
         ? createdRaw.toISOString().slice(0, 10)
@@ -3185,23 +3127,49 @@ export class AdminService {
 
   /** Admin subscribers list — always reads MongoDB (no stale Redis empty cache). */
   async listNewsletterSubscribers() {
-    const rows = await this.newsletterSubscriberModel
-      .find(
-        {},
-        {
-          email: 1,
-          subscribedFor: 1,
-          status: 1,
-          createdAt: 1,
-        },
-      )
-      .sort({ createdAt: -1, _id: -1 })
-      .lean()
-      .exec();
+    const rows = await this.loadNewsletterSubscriberDocs();
 
     return (rows ?? []).map((row, idx) =>
       this.formatNewsletterSubscriberRow(row as Record<string, unknown>, idx + 1),
     );
+  }
+
+  /**
+   * Reads `newslettersubscribers` plus any stray `newsletter_subscribers` docs.
+   * Sorted by last activity so website re-subscribes appear at the top.
+   */
+  private async loadNewsletterSubscriberDocs(): Promise<Record<string, unknown>[]> {
+    const projection = {
+      email: 1,
+      subscribedFor: 1,
+      status: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    const byEmail = new Map<string, Record<string, unknown>>();
+
+    const primary = await this.newsletterSubscriberModel
+      .find({}, projection)
+      .lean()
+      .exec();
+    absorbNewsletterSubscriberRows(byEmail, primary ?? []);
+
+    const primaryName = this.newsletterSubscriberModel.collection.name;
+    for (const name of NEWSLETTER_SUBSCRIBER_COLLECTIONS) {
+      if (name === primaryName) continue;
+      try {
+        const altRows = await this.newsletterSubscriberModel.db
+          .collection(name)
+          .find({}, { projection })
+          .toArray();
+        absorbNewsletterSubscriberRows(byEmail, altRows ?? []);
+      } catch {
+        // Collection may not exist.
+      }
+    }
+
+    return sortNewsletterSubscribersByActivity(Array.from(byEmail.values()));
   }
 
   async deleteNewsletterSubscriber(subscriberId: string) {
@@ -3210,13 +3178,10 @@ export class AdminService {
       throw new BadRequestException('Subscriber id is required');
     }
 
-    // Preferred: delete by MongoDB _id
+    // Preferred: delete by MongoDB _id (check both collections)
     if (Types.ObjectId.isValid(raw)) {
-      const res = await this.newsletterSubscriberModel
-        .deleteOne({ _id: new Types.ObjectId(raw) })
-        .exec();
-
-      if (res.deletedCount === 0) {
+      const deleted = await this.deleteNewsletterByObjectId(raw);
+      if (!deleted) {
         throw new NotFoundException('Subscriber not found');
       }
 
@@ -3233,27 +3198,44 @@ export class AdminService {
     }
 
     const idx = asNumber - 1;
-    const ids = await this.newsletterSubscriberModel
-      .find({}, { _id: 1 })
-      .sort({ createdAt: -1, _id: -1 })
-      .lean()
-      .exec();
-
-    const target = ids?.[idx]?._id ? String(ids[idx]._id) : null;
+    const rows = await this.loadNewsletterSubscriberDocs();
+    const target = rows?.[idx]?._id ? String(rows[idx]._id) : null;
     if (!target) {
       throw new NotFoundException('Subscriber not found');
     }
 
-    const res = await this.newsletterSubscriberModel
-      .deleteOne({ _id: new Types.ObjectId(target) })
-      .exec();
-
-    if (res.deletedCount === 0) {
+    const deleted = await this.deleteNewsletterByObjectId(target);
+    if (!deleted) {
       throw new NotFoundException('Subscriber not found');
     }
 
     await this.invalidateNewsletterSubscribersCache();
     return { id: target };
+  }
+
+  private async deleteNewsletterByObjectId(id: string): Promise<boolean> {
+    const objectId = new Types.ObjectId(id);
+    const primary = await this.newsletterSubscriberModel
+      .deleteOne({ _id: objectId })
+      .exec();
+    if (primary.deletedCount > 0) return true;
+
+    try {
+      const primaryName = this.newsletterSubscriberModel.collection.name;
+      for (const altName of [
+        'newslettersubscribers',
+        'newsletter_subscribers',
+      ]) {
+        if (altName === primaryName) continue;
+        const alt = await this.newsletterSubscriberModel.db
+          .collection(altName)
+          .deleteOne({ _id: objectId });
+        if ((alt.deletedCount ?? 0) > 0) return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   private async resolveNewsletterSubscriberId(
@@ -3272,13 +3254,8 @@ export class AdminService {
     }
 
     const idx = asNumber - 1;
-    const ids = await this.newsletterSubscriberModel
-      .find({}, { _id: 1 })
-      .sort({ createdAt: -1, _id: -1 })
-      .lean()
-      .exec();
-
-    const target = ids?.[idx]?._id ? String(ids[idx]._id) : null;
+    const rows = await this.loadNewsletterSubscriberDocs();
+    const target = rows?.[idx]?._id ? String(rows[idx]._id) : null;
     if (!target) throw new NotFoundException('Subscriber not found');
     return target;
   }
@@ -3294,19 +3271,23 @@ export class AdminService {
     status?: string,
   ) {
     const targetId = await this.resolveNewsletterSubscriberId(identifier);
+    const objectId = new Types.ObjectId(targetId);
 
     const desired =
       status !== undefined ? String(status).trim().toLowerCase() : undefined;
     let newStatus: number | null = null;
 
-    if (desired === undefined || desired === '') {
-      const current = await this.newsletterSubscriberModel
-        .findById(new Types.ObjectId(targetId))
+    const current =
+      (await this.newsletterSubscriberModel
+        .findById(objectId)
         .select('status')
         .lean()
-        .exec();
-      if (!current) throw new NotFoundException('Subscriber not found');
+        .exec()) ||
+      (await this.findNewsletterStatusInAltCollection(objectId));
 
+    if (!current) throw new NotFoundException('Subscriber not found');
+
+    if (desired === undefined || desired === '') {
       const cur = Number(current.status) === 1 ? 1 : 0;
       newStatus = cur === 1 ? 0 : 1;
     } else {
@@ -3319,23 +3300,78 @@ export class AdminService {
       }
     }
 
-    const updated = await this.newsletterSubscriberModel
-      .findByIdAndUpdate(
-        new Types.ObjectId(targetId),
-        { $set: { status: newStatus, updatedAt: new Date() } },
-        { new: true },
-      )
-      .lean()
-      .exec();
+    let updated: Record<string, unknown> | null =
+      ((await this.newsletterSubscriberModel
+        .findByIdAndUpdate(
+          objectId,
+          { $set: { status: newStatus, updatedAt: new Date() } },
+          { new: true },
+        )
+        .lean()
+        .exec()) as Record<string, unknown> | null) ?? null;
+
+    if (!updated) {
+      updated = await this.updateNewsletterStatusInAltCollection(
+        objectId,
+        newStatus,
+      );
+    }
 
     if (!updated) throw new NotFoundException('Subscriber not found');
 
     await this.invalidateNewsletterSubscribersCache();
+    return this.formatNewsletterSubscriberRow(
+      updated as Record<string, unknown>,
+      1,
+    );
+  }
 
-    return {
-      id: targetId,
-      status: Number(updated.status) === 1 ? 'active' : 'inactive',
-    };
+  private async findNewsletterStatusInAltCollection(
+    objectId: Types.ObjectId,
+  ): Promise<{ status?: number } | null> {
+    try {
+      const primaryName = this.newsletterSubscriberModel.collection.name;
+      for (const altName of [
+        'newslettersubscribers',
+        'newsletter_subscribers',
+      ]) {
+        if (altName === primaryName) continue;
+        const row = await this.newsletterSubscriberModel.db
+          .collection(altName)
+          .findOne({ _id: objectId }, { projection: { status: 1 } });
+        if (row) return row as { status?: number };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async updateNewsletterStatusInAltCollection(
+    objectId: Types.ObjectId,
+    newStatus: number,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const primaryName = this.newsletterSubscriberModel.collection.name;
+      for (const altName of [
+        'newslettersubscribers',
+        'newsletter_subscribers',
+      ]) {
+        if (altName === primaryName) continue;
+        const res = await this.newsletterSubscriberModel.db
+          .collection(altName)
+          .findOneAndUpdate(
+            { _id: objectId },
+            { $set: { status: newStatus, updatedAt: new Date() } },
+            { returnDocument: 'after' },
+          );
+        const updated = (res as any)?.value ?? (res as any) ?? null;
+        if (updated) return updated as Record<string, unknown>;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**

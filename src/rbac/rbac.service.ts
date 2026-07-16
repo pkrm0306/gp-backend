@@ -200,8 +200,20 @@ export class RbacService {
       return 'inquiries:delete';
     }
 
+    // Designation (UI) module key `rbac-roles` must map to backend `rbac:roles:*`.
+    // Frontend historically saved both `rbac-roles:view` and `rbac:roles:view`.
+    const dotted = raw.replace(/\./g, ':');
+    if (dotted === 'rbac-roles:manage' || dotted === 'rbac:roles:manage') {
+      return 'rbac:roles:manage';
+    }
+    const rbacRolesDash = /^rbac-roles:(view|add|update|delete|status)$/;
+    const dashMatch = dotted.match(rbacRolesDash);
+    if (dashMatch) {
+      return `rbac:roles:${dashMatch[1]}`;
+    }
+
     // Generic normalization for old dot-style keys.
-    return raw.replace(/\./g, ':');
+    return dotted;
   }
 
   /**
@@ -875,7 +887,8 @@ export class RbacService {
     );
     try {
       const cached = await this.redisService.get<string[]>(cacheKey);
-      if (Array.isArray(cached)) return cached;
+      // Re-canonicalize so older cached keys like `rbac-roles:view` map to `rbac:roles:view`.
+      if (Array.isArray(cached)) return this.normalizePermissions(cached);
     } catch (error) {
       this.logger.warn(
         `RBAC staff-permissions cache read failed: ${(error as Error)?.message || 'unknown error'}`,

@@ -2383,6 +2383,20 @@ export class ProductRegistrationService {
         }
 
         await this.invalidateProductListingsCache();
+
+        this.lifecycleNotification
+          .notifyProductRegistered({
+            manufacturerId,
+            urnNo,
+            eoiNo,
+            productName: registerProductDto.productName,
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `[registerProduct] Admin notification failed for ${urnNo}: ${(err as Error).message}`,
+            ),
+          );
+
         return {
           ...savedProduct.toObject(),
           plants: plants.map((p) => p.toObject()),
@@ -2568,6 +2582,25 @@ export class ProductRegistrationService {
           `[Bulk Product Registration] Registered ${results.length} products in ${Date.now() - bulkStartedAt}ms (URN ${urnNo})`,
         );
         await this.invalidateProductListingsCache();
+
+        const productNames = results
+          .map((row) => String(row?.productName ?? '').trim())
+          .filter(Boolean);
+        const eoiNos = results.map((row) => String(row?.eoiNo ?? '').trim());
+        this.lifecycleNotification
+          .notifyProductRegistered({
+            manufacturerId,
+            urnNo,
+            productNames:
+              productNames.length > 0 ? productNames : ['Product'],
+            eoiNos,
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `[registerBulkProducts] Admin notification failed for ${urnNo}: ${(err as Error).message}`,
+            ),
+          );
+
         return {
           urnNo,
           registeredCount: results.length,
@@ -4745,45 +4778,45 @@ export class ProductRegistrationService {
         .exec();
       await this.invalidateProductListingsCache();
 
-      this.sendProductChangeDecisionEmail({
-        email: vendorEmail,
-        manufacturerName,
-        manufacturerId: String(updated.manufacturerId ?? ''),
-        urnNo: String(updated.urnNo ?? ''),
-        eoiNo: String(updated.eoiNo ?? ''),
-        currentName: String(updated.currentName ?? ''),
-        requestedName: String(updated.requestedName ?? ''),
-        decision: 'approved',
-      });
+      this.lifecycleNotification
+        .notifyProductNameChangeDecision({
+          manufacturerId: String(updated.manufacturerId ?? ''),
+          requestId: String(updated._id ?? requestObjectId),
+          email: vendorEmail,
+          urnNo: String(updated.urnNo ?? ''),
+          eoiNo: String(updated.eoiNo ?? ''),
+          currentName: String(updated.currentName ?? ''),
+          requestedName: String(updated.requestedName ?? ''),
+          decision: 'approved',
+          manufacturerName,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `[reviewProductChangeRequest] Decision notification failed: ${(err as Error).message}`,
+          ),
+        );
     } else if (nextStatus === 'rejected') {
-      this.sendProductChangeDecisionEmail({
-        email: vendorEmail,
-        manufacturerName,
-        manufacturerId: String(updated.manufacturerId ?? ''),
-        urnNo: String(updated.urnNo ?? ''),
-        eoiNo: String(updated.eoiNo ?? ''),
-        currentName: String(updated.currentName ?? ''),
-        requestedName: String(updated.requestedName ?? ''),
-        decision: 'rejected',
-        remarks: remarksRaw ?? '',
-      });
+      this.lifecycleNotification
+        .notifyProductNameChangeDecision({
+          manufacturerId: String(updated.manufacturerId ?? ''),
+          requestId: String(updated._id ?? requestObjectId),
+          email: vendorEmail,
+          urnNo: String(updated.urnNo ?? ''),
+          eoiNo: String(updated.eoiNo ?? ''),
+          currentName: String(updated.currentName ?? ''),
+          requestedName: String(updated.requestedName ?? ''),
+          decision: 'rejected',
+          manufacturerName,
+          remarks: remarksRaw ?? '',
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `[reviewProductChangeRequest] Decision notification failed: ${(err as Error).message}`,
+          ),
+        );
     }
 
     return this.mapProductChangeRequest(updated);
-  }
-
-  private sendProductChangeDecisionEmail(params: {
-    email: string;
-    manufacturerName: string;
-    manufacturerId: string;
-    urnNo: string;
-    eoiNo: string;
-    currentName: string;
-    requestedName: string;
-    decision: 'approved' | 'rejected';
-    remarks?: string;
-  }): void {
-    void this.lifecycleNotification.notifyProductNameChangeDecision(params);
   }
 
   private escapeHtml(input: string): string {
@@ -5058,15 +5091,41 @@ export class ProductRegistrationService {
               ),
             );
         }
-        const [manufacturerName, vendorEmail] = await Promise.all([
+        const [manufacturerName, vendorEmail, urnProducts] = await Promise.all([
           this.resolveManufacturerDisplayName(existingProduct.manufacturerId),
           this.resolveManufacturerVendorEmail(existingProduct.manufacturerId),
+          this.productModel
+            .find(
+              matchActiveProducts({
+                urnNo: trimmedUrn,
+                $or: [
+                  { manufacturerId: existingProduct.manufacturerId },
+                  { vendorId: existingProduct.manufacturerId },
+                ],
+              }),
+            )
+            .select({ productName: 1, eoiNo: 1 })
+            .lean()
+            .exec(),
         ]);
+        const productNames = (urnProducts ?? [])
+          .map((row) => String((row as { productName?: string }).productName ?? '').trim())
+          .filter(Boolean);
+        const eoiNos = (urnProducts ?? []).map((row) =>
+          String((row as { eoiNo?: string }).eoiNo ?? '').trim(),
+        );
         this.lifecycleNotification
           .notifyUrnSubmittedForReview({
             manufacturerId: existingProduct.manufacturerId.toString(),
             urnNo: trimmedUrn,
             productName: existingProduct.productName,
+            productNames:
+              productNames.length > 0
+                ? productNames
+                : existingProduct.productName
+                  ? [String(existingProduct.productName)]
+                  : [],
+            eoiNos,
             manufacturerName,
             vendorEmail,
           })

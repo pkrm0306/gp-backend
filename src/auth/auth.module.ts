@@ -11,6 +11,7 @@ import { VendorUsersModule } from '../vendor-users/vendor-users.module';
 import { CaptchaService } from '../common/services/captcha.service';
 import { RbacModule } from '../rbac/rbac.module';
 import { ZohoModule } from '../zoho/zoho.module';
+import { WebsiteAnalyticsModule } from '../website/website-analytics.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { ZohoModule } from '../zoho/zoho.module';
     VendorUsersModule,
     RbacModule,
     ZohoModule,
+    WebsiteAnalyticsModule,
   ],
   controllers: [AuthController],
   providers: [

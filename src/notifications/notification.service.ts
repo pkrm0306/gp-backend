@@ -191,6 +191,7 @@ export class NotificationService {
       template: request.template,
       payload: request.payload ?? {},
       recipient,
+      cc: request.cc,
       inAppOverrides: request.inApp,
     };
 

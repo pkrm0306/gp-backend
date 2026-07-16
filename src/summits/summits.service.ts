@@ -420,10 +420,13 @@ export class SummitsService {
       }
       case 'banners':
         doc.banners = this.normalizeBanners(body.banners);
+        doc.markModified('banners');
         break;
       case 'downloads':
         doc.industrialPdfs = this.normalizePdfs(body.industrialPdfs);
         doc.buildingsPdfs = this.normalizePdfs(body.buildingsPdfs);
+        doc.markModified('industrialPdfs');
+        doc.markModified('buildingsPdfs');
         break;
       case 'about-greenpro':
         doc.aboutGreenPro = this.normalizeRichText(body);
@@ -610,9 +613,11 @@ export class SummitsService {
     }
     if (payload.industrialPdfs !== undefined) {
       doc.industrialPdfs = this.normalizePdfs(payload.industrialPdfs);
+      doc.markModified('industrialPdfs');
     }
     if (payload.buildingsPdfs !== undefined) {
       doc.buildingsPdfs = this.normalizePdfs(payload.buildingsPdfs);
+      doc.markModified('buildingsPdfs');
     }
     if (payload.aboutGreenPro !== undefined) {
       doc.aboutGreenPro = this.normalizeRichText(payload.aboutGreenPro);

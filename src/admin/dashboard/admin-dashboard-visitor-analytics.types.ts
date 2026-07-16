@@ -22,6 +22,8 @@ export interface AdminDashboardVisitorAnalytics {
   title: string;
   subtitle: string;
   granularity: 'monthly' | 'weekly' | 'quarterly';
+  /** `website` when events are collected from the public site; `estimated` for legacy Mongo proxy. */
+  source?: 'website' | 'estimated';
   series: VisitorAnalyticsSeriesMeta[];
   chart: VisitorAnalyticsChartPoint[];
   totals: {

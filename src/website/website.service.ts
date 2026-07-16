@@ -42,6 +42,8 @@ import { PublicListArticlesQueryDto } from './dto/public-list-articles-query.dto
 import { PublicListGalleryQueryDto } from './dto/public-list-gallery-query.dto';
 import { EmailService } from '../common/services/email.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import { AdminSystemNotificationService } from '../notifications/helpers/admin-system-notification.service';
+import { WebsiteAnalyticsService } from './website-analytics.service';
 import {
   Notification,
   NotificationDocument,
@@ -63,6 +65,12 @@ import {
   matchWebsitePublicCertifiedProducts,
 } from '../product-registration/constants/website-public-product.filter';
 import { resolveStoredUploadUrl } from '../utils/upload-file.util';
+import {
+  NEWSLETTER_SUBSCRIBER_COLLECTIONS,
+  absorbNewsletterSubscriberRows,
+  newsletterSubscriberActivityDate,
+  sortNewsletterSubscribersByActivity,
+} from './utils/newsletter-subscribers-query.util';
 
 function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
   const prefs: string[] = [];
@@ -70,6 +78,16 @@ function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
   if (dto.events) prefs.push('Events');
   if (prefs.length === 0) prefs.push('Newsletter');
   return prefs;
+}
+
+/** Same label shown in admin Subscribers list and in confirmation emails. */
+function formatSubscribedForLabel(value: unknown): string {
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => String(v ?? '').trim()).filter(Boolean);
+    return parts.length > 0 ? parts.join(', ') : 'Newsletter';
+  }
+  const asString = String(value ?? '').trim();
+  return asString || 'Newsletter';
 }
 
 function formatDateYYYYMMDD(value: unknown): string {
@@ -125,8 +143,10 @@ export class WebsiteService {
     private readonly productRegistrationService: ProductRegistrationService,
     private emailService: EmailService,
     private readonly lifecycleNotification: LifecycleNotificationService,
+    private readonly adminSystemNotification: AdminSystemNotificationService,
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
+    private readonly websiteAnalytics: WebsiteAnalyticsService,
   ) {}
 
   private getWebsitePublicListCacheTtlSeconds(): number {
@@ -1073,14 +1093,9 @@ export class WebsiteService {
     referenceId?: string;
     actorName?: string;
   }) {
-    await this.notificationModel.create({
-      title: input.title,
-      message: input.message,
-      type: input.type ?? 'info',
+    await this.adminSystemNotification.createFeedNotification({
+      ...input,
       source: input.source ?? 'website',
-      referenceType: input.referenceType,
-      referenceId: input.referenceId,
-      actorName: input.actorName,
     });
   }
 
@@ -1113,6 +1128,15 @@ export class WebsiteService {
       .lean()
       .exec();
 
+    // Remove split-brain rows left in the old collection name.
+    try {
+      await this.subscriberModel.db
+        .collection('newsletter_subscribers')
+        .deleteMany({ email });
+    } catch {
+      // ignore
+    }
+
     await this.invalidateNewsletterSubscribersCache();
 
     // Shape response like your admin table rows
@@ -1129,78 +1153,62 @@ export class WebsiteService {
       actorName: email,
     });
 
+    void this.websiteAnalytics
+      .recordSignUp({
+        visitorKey: email,
+        signUpType: 'newsletter',
+        path: '/newsletter',
+      })
+      .catch(() => undefined);
+
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendNewsletterSubscribeEmail(email, subscribedFor),
+    );
+
     return {
       email: saved.email,
       greenProducts,
       events,
       createdDate,
       is_active: true,
+      subscribedFor: formatSubscribedForLabel(subscribedFor),
+      subscribeFor: formatSubscribedForLabel(subscribedFor),
+      status: 'active',
     };
   }
 
   /**
    * Admin list endpoint backing `GET /api/website/newsletter`.
-   *
-   * Sample Mongo (Mongoose) query used:
-   *   this.subscriberModel.find({}, { email: 1, subscribedFor: 1, status: 1, createdAt: 1 })
-   *     .sort({ createdAt: -1 })
-   *     .lean()
-   *     .exec();
+   * Always reads MongoDB (and any legacy collection) so new website signups appear immediately.
    */
   async getNewsletterSubscribers() {
-    const cacheKey = this.redisService.buildKey('website', 'newsletter', 'subscribers');
     try {
-      const cached = await this.redisService.get<
-        Array<{
-          id: number;
-          email: string;
-          subscribedFor: string;
-          createdAt: string;
-          status: string;
-        }>
-      >(cacheKey);
-      if (Array.isArray(cached) && cached.length > 0) {
-        return cached;
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Newsletter subscribers cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+      const rows = await this.loadNewsletterSubscriberDocs();
+
+      const data = (rows ?? []).map((r, idx) => {
+        const subscribedFor = formatSubscribedForLabel(r.subscribedFor);
+        const activity = newsletterSubscriberActivityDate(r);
+        const dateStr = formatDateYYYYMMDD(activity ?? r.createdAt);
+        return {
+          id: r._id ? String(r._id) : String(idx + 1),
+          s_no: idx + 1,
+          email: String(r.email ?? ''),
+          subscribedFor,
+          subscribeFor: subscribedFor,
+          createdAt: dateStr,
+          createdDate: dateStr,
+          updatedAt: formatDateYYYYMMDD(r.updatedAt ?? activity ?? r.createdAt),
+          status: Number(r.status) === 1 ? 'active' : 'inactive',
+          is_active: Number(r.status) === 1,
+        };
+      });
+
+      // Refresh cache asynchronously (list itself never serves stale Redis data).
+      const cacheKey = this.redisService.buildKey(
+        'website',
+        'newsletter',
+        'subscribers',
       );
-    }
-
-    try {
-      const rows = await this.subscriberModel
-        .find(
-          {},
-          {
-            email: 1,
-            subscribedFor: 1,
-            status: 1,
-            createdAt: 1,
-          },
-        )
-        .sort({ createdAt: -1 })
-        .lean()
-        .exec();
-
-      const data = (rows ?? []).map((r, idx) => ({
-        id: r._id ? String(r._id) : String(idx + 1),
-        s_no: idx + 1,
-        email: String(r.email ?? ''),
-        subscribedFor:
-          Array.isArray(r.subscribedFor) && r.subscribedFor.length > 0
-            ? r.subscribedFor.join(', ')
-            : 'Newsletter',
-        subscribeFor:
-          Array.isArray(r.subscribedFor) && r.subscribedFor.length > 0
-            ? r.subscribedFor.join(', ')
-            : 'Newsletter',
-        createdAt: formatDateYYYYMMDD(r.createdAt),
-        createdDate: formatDateYYYYMMDD(r.createdAt),
-        status: Number(r.status) === 1 ? 'active' : 'inactive',
-        is_active: Number(r.status) === 1,
-      }));
-
       this.redisService
         .set(cacheKey, data, this.getWebsitePublicListCacheTtlSeconds())
         .catch((error) => {
@@ -1215,6 +1223,45 @@ export class WebsiteService {
         e?.message || 'Failed to fetch newsletter subscriptions',
       );
     }
+  }
+
+  /**
+   * Reads `newslettersubscribers` (canonical in Atlas) plus any stray
+   * `newsletter_subscribers` docs. Re-subscribes sort by latest activity
+   * (updatedAt / createdAt), not the original signup date.
+   */
+  private async loadNewsletterSubscriberDocs(): Promise<Record<string, unknown>[]> {
+    const projection = {
+      email: 1,
+      subscribedFor: 1,
+      status: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    const byEmail = new Map<string, Record<string, unknown>>();
+
+    const primary = await this.subscriberModel
+      .find({}, projection)
+      .lean()
+      .exec();
+    absorbNewsletterSubscriberRows(byEmail, primary ?? []);
+
+    const primaryName = this.subscriberModel.collection.name;
+    for (const name of NEWSLETTER_SUBSCRIBER_COLLECTIONS) {
+      if (name === primaryName) continue;
+      try {
+        const altRows = await this.subscriberModel.db
+          .collection(name)
+          .find({}, { projection })
+          .toArray();
+        absorbNewsletterSubscriberRows(byEmail, altRows ?? []);
+      } catch {
+        // Collection may not exist.
+      }
+    }
+
+    return sortNewsletterSubscribersByActivity(Array.from(byEmail.values()));
   }
 
   /**
@@ -1466,7 +1513,9 @@ export class WebsiteService {
     const subject =
       dto.subject && String(dto.subject).trim()
         ? String(dto.subject).trim()
-        : `Your inquiry to ${manufacturerName || 'GreenPro Manufacturer'}`;
+        : `Thanks, we received your inquiry${
+            manufacturerName ? ` — ${manufacturerName}` : ''
+          }`;
 
     const safe = (s: string) =>
       s
@@ -1498,36 +1547,19 @@ export class WebsiteService {
               <p style="margin:0;"><strong>Phone:</strong> ${visitorPhone}</p>
             </div>`;
 
+    // Content fragment only — EmailService wraps with the shared GreenPro template
+    // (same layout as newsletter subscribe confirmation emails).
     const htmlBody = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <title>Inquiry Received</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #111; max-width: 640px; margin: 0 auto; padding: 20px;">
-          <div style="background:#16a34a; color:#fff; padding:16px 20px; border-radius:8px 8px 0 0;">
-            <h2 style="margin:0;">Thanks, we received your inquiry</h2>
-          </div>
-          <div style="border:1px solid #e5e7eb; border-top:0; padding:20px; border-radius:0 0 8px 8px;">
-            <p style="margin-top:0;">Hi ${safe(dto.name)},</p>
-            <p>We’ve recorded your inquiry and included the manufacturer details below for your reference.</p>
+      <p>Hi ${safe(dto.name)},</p>
+      <p>We’ve recorded your inquiry and included the manufacturer details below for your reference.</p>
 ${visitorDetailsBlock}
 
-            <h3 style="margin:18px 0 8px;">Manufacturer Details</h3>
-            <div style="background:#fff; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">
-              <p style="margin:0;"><strong>Name:</strong> ${safe(manufacturerName || vendorName || 'N/A')}</p>
-              <p style="margin:8px 0 0;"><strong>Email:</strong> ${safe(vendorEmail || 'N/A')}</p>
-              <p style="margin:8px 0 0;"><strong>Phone:</strong> ${safe(vendorPhone || 'N/A')}</p>
-            </div>
-
-            <p style="margin:18px 0 0; color:#6b7280; font-size:12px;">
-              This email was generated automatically by GreenPro.
-            </p>
-          </div>
-        </body>
-      </html>
+      <h3 style="margin:18px 0 8px;">Manufacturer Details</h3>
+      <div style="background:#f9fafb; padding:14px; border-radius:8px; border:1px solid #e5e7eb;">
+        <p style="margin:0;"><strong>Name:</strong> ${safe(manufacturerName || vendorName || 'N/A')}</p>
+        <p style="margin:8px 0 0;"><strong>Email:</strong> ${safe(vendorEmail || 'N/A')}</p>
+        <p style="margin:8px 0 0;"><strong>Phone:</strong> ${safe(vendorPhone || 'N/A')}</p>
+      </div>
     `;
 
     await this.lifecycleNotification

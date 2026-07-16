@@ -113,6 +113,12 @@ function resolveUrnStatusAuditAction(
           : 'Certification / URN sent back to vendor',
     };
   }
+  if (typeStr === 'urn_status' && toNum === 6) {
+    return {
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      description: 'Submitted for final review',
+    };
+  }
   if (
     typeStr === 'urn_status' &&
     (toNum === 2 || toNum === 11 || toNum === 14)

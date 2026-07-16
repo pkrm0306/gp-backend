@@ -10,6 +10,8 @@ export interface NotificationDispatchContext {
   template: NotificationTemplateCode;
   payload: NotificationPayload;
   recipient: NotificationRecipient;
+  /** Optional email CC (merged with always-on ADMIN_MAIL_CC in the email channel). */
+  cc?: string | string[];
   /** Per-channel overrides from the send request */
   inAppOverrides?: {
     title?: string;

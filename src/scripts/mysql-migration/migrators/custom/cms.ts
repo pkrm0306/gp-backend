@@ -155,7 +155,7 @@ function mapSubscriptionType(type: number): string[] {
 
 async function migrateSubscriptions(ctx: MigrationContext): Promise<MigrationResult> {
   const mysqlTable = 'subscription_list';
-  const mongoCollection = 'newsletter_subscribers';
+  const mongoCollection = 'newslettersubscribers';
   const rows = await fetchAllMysqlRows(ctx.mysql, mysqlTable, 'subscription_id');
   const docs: Record<string, unknown>[] = [];
 

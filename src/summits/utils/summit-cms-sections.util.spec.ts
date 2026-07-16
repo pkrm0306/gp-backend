@@ -147,6 +147,28 @@ describe('summit-cms-sections.util', () => {
       expect(result.cards[0].points[0].text).toContain('Cement');
     });
 
+    it('accepts topic cards sent under areaPoints with nested points', () => {
+      const result = normalizeFocusedAreaSection({
+        focusedAreaTitle: 'Focused Area',
+        areaPoints: [
+          {
+            id: 'card-1',
+            heading: 'Building Materials',
+            points: [
+              'Cement, steel, glass and flooring products',
+              'Paints, insulation and coatings for buildings',
+            ],
+          },
+        ],
+      });
+
+      expect(result.cards).toHaveLength(1);
+      expect(result.cards[0].heading).toBe('Building Materials');
+      expect(result.cards[0].points).toHaveLength(2);
+      expect(result.cards[0].points[0].text).toContain('Cement');
+      expect(result.cards[0].points[1].text).toContain('Paints');
+    });
+
     it('accepts legacy areaPoints with heading and description', () => {
       const result = normalizeFocusedAreaSection({
         focusedAreaTitle: 'Focused Area',
@@ -235,6 +257,19 @@ describe('summit-cms-sections.util', () => {
           ],
         }),
       ).toThrow(BadRequestException);
+    });
+
+    it('accepts agenda points posted as a top-level agenda array', () => {
+      const result = normalizeAgendaSectionInput({
+        agendaTitle: "GreenPro's Core Agenda",
+        agenda: [
+          { id: 'a1', text: 'Opening remarks and welcome address for summit' },
+          { id: 'a2', text: 'Panel discussion on sustainable building materials' },
+        ],
+      });
+
+      expect(result.points).toHaveLength(2);
+      expect(result.points[0].description).toContain('Opening remarks');
     });
 
     it('accepts legacy text-only bullet rows without heading', () => {

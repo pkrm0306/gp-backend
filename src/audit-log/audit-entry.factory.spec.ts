@@ -268,7 +268,14 @@ describe('AuditEntryFactory', () => {
       urnNo: 'urn-1',
       paymentType: 'registration',
       vendorProposalApprovalStatus: 2,
+      decision: 'rejected',
       proposalRejectionRemarks: 'Please revise amount',
+    });
+    expect(entry.old_values).toEqual({
+      urnNo: 'urn-1',
+      paymentType: 'registration',
+      vendorProposalApprovalStatus: 0,
+      decision: 'pending',
     });
     expect(entry.metadata).toMatchObject({
       business_event_type: 'vendor_proposal_review',
@@ -409,6 +416,24 @@ describe('AuditEntryFactory', () => {
   it('skips non-mutating and excluded routes', () => {
     expect(factory.shouldAudit('GET', '/payments')).toBe(false);
     expect(factory.shouldAudit('POST', '/auth/refresh')).toBe(false);
+    expect(
+      factory.shouldAudit(
+        'POST',
+        '/api/cron/certification-expiry/deactivation-mail',
+      ),
+    ).toBe(false);
+    expect(
+      factory.shouldAudit(
+        'PATCH',
+        '/api/admin/products/expired-reactivate/product',
+      ),
+    ).toBe(false);
+    expect(
+      factory.shouldAudit(
+        'PATCH',
+        '/api/admin/products/expired-reactivate/urn',
+      ),
+    ).toBe(false);
     expect(factory.shouldAudit('POST', '/payments')).toBe(true);
     expect(factory.shouldAudit('DELETE', '/categories/1')).toBe(true);
   });

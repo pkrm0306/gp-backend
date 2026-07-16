@@ -3,7 +3,9 @@ import { NotificationTemplateCode } from './interfaces/notification.types';
 import { NotificationChannel } from './interfaces/notification.types';
 
 describe('LifecycleNotificationService', () => {
-  const send = jest.fn().mockResolvedValue({ results: [] });
+  const send = jest.fn().mockResolvedValue({
+    results: [{ channel: NotificationChannel.EMAIL, success: true }],
+  });
   const sendInBackground = jest.fn();
   const resolveByManufacturerId = jest.fn();
   const createFeedNotification = jest.fn();
@@ -28,15 +30,21 @@ describe('LifecycleNotificationService', () => {
     });
   });
 
-  it('sends email + in-app for URN initial approval', async () => {
+  it('sends email + in-app for URN initial approval and notifies admin', async () => {
     await service.notifyUrnInitialApproved({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
         template: NotificationTemplateCode.URN_INITIAL_APPROVED,
+      }),
+    );
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'urn_initial_approved',
+        ccGroups: ['TEAM_LEADS'],
       }),
     );
   });
@@ -75,7 +83,7 @@ describe('LifecycleNotificationService', () => {
     );
   });
 
-  it('does not create admin feed on register (only after OTP verify)', async () => {
+  it('notifies admin when vendor registers (OTP email)', async () => {
     await service.notifyNewVendorRegistered({
       userId: '507f1f77bcf86cd799439011',
       email: 'vendor@example.com',
@@ -84,11 +92,32 @@ describe('LifecycleNotificationService', () => {
       password: 'secret',
       otp: '123456',
     });
-    expect(createFeedNotification).not.toHaveBeenCalled();
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'vendor_registration_otp',
+        ccGroups: ['SHEshi'],
+      }),
+    );
     expect(send).toHaveBeenCalled();
   });
 
-  it('creates single admin feed on registration complete (OTP verified) and dual-channels vendor', async () => {
+  it('does not create admin feed on register failure path only after success', async () => {
+    send.mockResolvedValueOnce({
+      results: [{ channel: NotificationChannel.EMAIL, success: false, error: 'fail' }],
+    });
+    await expect(
+      service.notifyNewVendorRegistered({
+        userId: '507f1f77bcf86cd799439011',
+        email: 'vendor@example.com',
+        name: 'Acme Vendor',
+        companyName: 'Acme Co',
+        password: 'secret',
+        otp: '123456',
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('creates single admin feed on registration complete (OTP verified)', async () => {
     await service.notifyVendorRegistrationComplete(
       '507f1f77bcf86cd799439011',
       'vendor@example.com',
@@ -103,32 +132,84 @@ describe('LifecycleNotificationService', () => {
     expect(createFeedNotification).toHaveBeenCalledTimes(1);
     expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'New Registration',
+        title: 'Registration Complete',
         message: expect.stringContaining('Acme Co'),
         type: 'success',
         referenceType: 'vendor_registration',
+        emailSubject: expect.stringContaining('Registration Complete'),
+        ccGroups: ['SHEshi'],
       }),
     );
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subject: expect.stringContaining('Registration Complete'),
-      }),
-    );
+    expect(sendAdminAlertEmailInBackground).not.toHaveBeenCalled();
   });
 
-  it('sends vendor + admin alert on submit for review', async () => {
+  it('sends admin alert when vendor registers a product', async () => {
+    await service.notifyProductRegistered({
+      manufacturerId: '507f1f77bcf86cd799439011',
+      urnNo: 'URN-1',
+      eoiNo: 'GP001',
+      productName: 'Widget',
+    });
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'product_registered',
+        message: expect.stringContaining('"Widget"'),
+        emailSubject: expect.stringContaining('Product registered'),
+        emailHtmlExtra: expect.stringContaining('Widget'),
+        ccGroups: ['TEAM_LEADS'],
+      }),
+    );
+    expect(createFeedNotification.mock.calls[0][0].emailHtmlExtra).toContain(
+      'Vendor registered',
+    );
+    expect(createFeedNotification.mock.calls[0][0].emailHtmlExtra).toContain(
+      'Product name list',
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('sends admin alert with all product names for bulk registration', async () => {
+    await service.notifyProductRegistered({
+      manufacturerId: '507f1f77bcf86cd799439011',
+      urnNo: 'URN-2',
+      productNames: ['Widget', 'Gadget', 'Device'],
+      eoiNos: ['EOI-1', 'EOI-2', 'EOI-3'],
+    });
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'product_registered',
+        title: expect.stringContaining('Products Registered'),
+        message: expect.stringMatching(/Widget.*Gadget.*Device/),
+        emailSubject: expect.stringContaining('Products registered'),
+        emailHtmlExtra: expect.stringMatching(/Widget[\s\S]*Gadget[\s\S]*Device/),
+        ccGroups: ['TEAM_LEADS'],
+      }),
+    );
+    expect(createFeedNotification.mock.calls[0][0].emailHtmlExtra).toContain(
+      'EOI-2',
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('sends admin-only alert on submit for review', async () => {
     await service.notifyUrnSubmittedForReview({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
+      productNames: ['Widget', 'Gadget'],
+      eoiNos: ['EOI-1', 'EOI-2'],
+      manufacturerName: 'Acme Co',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(sendInBackground).not.toHaveBeenCalled();
+    expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
-        template: NotificationTemplateCode.URN_SUBMITTED_FOR_REVIEW,
+        referenceType: 'urn_submitted_for_review',
+        emailSubject: expect.stringContaining('Vendor sent URN URN-1 for review'),
+        emailHtmlExtra: expect.stringMatching(
+          /Vendor sent this URN for review[\s\S]*Widget[\s\S]*Gadget/,
+        ),
+        ccGroups: ['TEAM_LEADS'],
       }),
     );
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
   });
 
   it('still notifies admin when vendor recipient is missing on submit for review', async () => {
@@ -143,27 +224,25 @@ describe('LifecycleNotificationService', () => {
       expect.objectContaining({
         title: expect.stringContaining('Acme Co'),
         referenceType: 'urn_submitted_for_review',
-      }),
-    );
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subject: expect.stringContaining('URN-1'),
+        emailSubject: expect.stringContaining('URN-1'),
+        emailHtmlExtra: expect.stringContaining('Vendor sent this URN for review'),
       }),
     );
   });
 
-  it('sends vendor email on urn registration rejected', async () => {
+  it('sends vendor email only on urn registration rejected', async () => {
     await service.notifyUrnRegistrationRejected({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
       productName: 'Widget',
       reason: 'Incomplete documents',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.URN_REGISTRATION_REJECTED,
       }),
     );
+    expect(createFeedNotification).not.toHaveBeenCalled();
   });
 
   it('sends admin feed + email on manufacturer approved', async () => {
@@ -171,15 +250,14 @@ describe('LifecycleNotificationService', () => {
       manufacturerName: 'Acme Co',
       vendorEmail: 'vendor@example.com',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.MANUFACTURER_APPROVED,
       }),
     );
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+    expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        subject: expect.stringContaining('Manufacturer verified'),
+        emailSubject: expect.stringContaining('Manufacturer verified'),
         ccGroups: ['SHEshi'],
       }),
     );
@@ -187,23 +265,61 @@ describe('LifecycleNotificationService', () => {
 
   it('sends admin feed + email on manufacturer inactive', async () => {
     await service.notifyManufacturerInactive('507f1f77bcf86cd799439011');
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.MANUFACTURER_INACTIVE,
       }),
     );
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ccGroups: ['SHEshi'],
+      }),
+    );
   });
 
-  it('sends admin-only on manufacturer rejected', async () => {
+  it('sends vendor email + admin feed on manufacturer rejected', async () => {
+    await service.notifyManufacturerRejected(
+      'Rejected Co',
+      '507f1f77bcf86cd799439011',
+      { vendorEmail: 'rejected@example.com' },
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: [NotificationChannel.EMAIL],
+        template: NotificationTemplateCode.MANUFACTURER_REJECTED,
+        email: 'rejected@example.com',
+      }),
+    );
+    expect(createFeedNotification).toHaveBeenCalled();
+  });
+
+  it('skips vendor email on manufacturer rejected when no vendorEmail', async () => {
     await service.notifyManufacturerRejected('Rejected Co', '507f1f77bcf86cd799439011');
-    expect(sendInBackground).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
   });
 
-  it('sends vendor email on payment proposal ready', async () => {
+  it('sends vendor email on plant merged and notifies admin', async () => {
+    await service.notifyPlantMerged({
+      manufacturerId: '507f1f77bcf86cd799439011',
+      urnNo: 'URN-1',
+      eoiNo: 'EOI-1',
+      productName: 'Widget',
+      mergeSummary: '2 plant(s) were merged into "Main Plant".',
+    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: NotificationTemplateCode.PLANT_MERGED,
+      }),
+    );
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'plant_merge',
+      }),
+    );
+  });
+
+  it('sends vendor email on payment proposal ready and notifies admin', async () => {
     await service.notifyPaymentProposalReady({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
@@ -211,10 +327,15 @@ describe('LifecycleNotificationService', () => {
       paymentType: 'registration',
       quoteTotal: 1000,
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.PAYMENT_PROPOSAL_READY,
         payload: expect.objectContaining({ paymentTypeLabel: 'Registration fee' }),
+      }),
+    );
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'payment_proposal_registration',
       }),
     );
   });
@@ -225,28 +346,26 @@ describe('LifecycleNotificationService', () => {
       urnNo: 'URN-1',
       productName: 'Widget',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.PRODUCT_APPROVED,
       }),
     );
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
   });
 
-  it('sends vendor + admin on product rejected', async () => {
+  it('sends vendor email only on product rejected', async () => {
     await service.notifyProductRejected({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
       productName: 'Widget',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.PRODUCT_REJECTED,
       }),
     );
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
+    expect(createFeedNotification).not.toHaveBeenCalled();
   });
 
   it('sends admin feed + email on document uploaded with team lead CC', async () => {
@@ -254,8 +373,7 @@ describe('LifecycleNotificationService', () => {
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
     });
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+    expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({ ccGroups: ['TEAM_LEADS'] }),
     );
   });
@@ -266,13 +384,12 @@ describe('LifecycleNotificationService', () => {
       urnNo: 'URN-1',
       paymentId: 9,
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.CERTIFICATION_PAYMENT_APPROVED,
       }),
     );
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+    expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({ ccGroups: ['TEAM_LEADS'] }),
     );
   });
@@ -292,8 +409,7 @@ describe('LifecycleNotificationService', () => {
         template: NotificationTemplateCode.PRODUCT_ENQUIRY_VENDOR,
       }),
     );
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+    expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({ ccGroups: ['SHEshi'] }),
     );
   });
@@ -305,13 +421,12 @@ describe('LifecycleNotificationService', () => {
       targetUrnNo: 'URN-B',
       movedCount: 3,
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.URN_MERGED,
       }),
     );
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
+    expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({ ccGroups: ['TEAM_LEADS'] }),
     );
   });
@@ -321,13 +436,12 @@ describe('LifecycleNotificationService', () => {
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.RENEWAL_SUBMITTED,
       }),
     );
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
   });
 
   it('sends vendor + admin on renewal decision', async () => {
@@ -336,13 +450,12 @@ describe('LifecycleNotificationService', () => {
       urnNo: 'URN-1',
       decision: 'sent_back',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.RENEWAL_DECISION,
       }),
     );
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
   });
 
   it('sends vendor + admin on renewal completed', async () => {
@@ -350,16 +463,15 @@ describe('LifecycleNotificationService', () => {
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
     });
-    expect(sendInBackground).toHaveBeenCalledWith(
+    expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.RENEWAL_COMPLETED,
       }),
     );
     expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalled();
   });
 
-  it('creates admin feed only for 60-day expiry reminder', async () => {
+  it('creates admin feed + email for 60-day expiry reminder', async () => {
     await service.notifyCertificationExpiryAdmin({
       manufacturerName: 'Acme Co',
       urnNo: 'URN-1',
@@ -367,8 +479,12 @@ describe('LifecycleNotificationService', () => {
       stage: '60-day',
       includeAdminEmail: false,
     });
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).not.toHaveBeenCalled();
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'certification_expiry_60-day',
+        ccGroups: ['SHEshi'],
+      }),
+    );
   });
 
   it('creates admin feed + email for weekly expiry reminder', async () => {
@@ -379,9 +495,11 @@ describe('LifecycleNotificationService', () => {
       stage: 'weekly',
       includeAdminEmail: true,
     });
-    expect(createFeedNotification).toHaveBeenCalled();
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
-      expect.objectContaining({ ccGroups: ['SHEshi'] }),
+    expect(createFeedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceType: 'certification_expiry_weekly',
+        ccGroups: ['SHEshi'],
+      }),
     );
   });
 
@@ -404,13 +522,8 @@ describe('LifecycleNotificationService', () => {
         referenceType: 'product_name_change_request',
         referenceId: '66545c2f3d4f04cc8ec2ab99',
         actorName: 'Acme Co',
-      }),
-    );
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subject: expect.stringContaining('Product Name Change Request'),
-        html: expect.stringContaining('Brand naming correction'),
-        text: expect.stringContaining('New Product'),
+        emailSubject: expect.stringContaining('Product Name Change Request'),
+        emailHtmlExtra: expect.stringContaining('Brand naming correction'),
         ccGroups: ['SHEshi'],
       }),
     );
@@ -426,13 +539,9 @@ describe('LifecycleNotificationService', () => {
       expect.objectContaining({
         title: 'Password Reset',
         referenceType: 'password_reset',
-      }),
-    );
-    expect(sendAdminAlertEmailInBackground).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subject: expect.stringContaining('Password Reset'),
         ccGroups: ['SHEshi'],
       }),
     );
+    expect(sendAdminAlertEmailInBackground).not.toHaveBeenCalled();
   });
 });

@@ -24,6 +24,7 @@ import {
   assertJsonSafe,
   toAuditLogResponseDto,
 } from './dto/audit-log-response.dto';
+import { formatAuditInstant } from './audit-date.util';
 import { Types } from 'mongoose';
 
 @ApiTags('Admin Audit Log')
@@ -60,8 +61,8 @@ export class AuditLogAdminController {
     };
     const meta = {
       ...pagination,
-      from: result.from.toISOString(),
-      to: result.to.toISOString(),
+      from: formatAuditInstant(result.from),
+      to: formatAuditInstant(result.to),
     };
     return assertJsonSafe({
       success: true,
@@ -97,8 +98,8 @@ export class AuditLogAdminController {
       pagination: result.pagination,
       meta: {
         ...result.pagination,
-        from: result.from.toISOString(),
-        to: result.to.toISOString(),
+        from: formatAuditInstant(result.from),
+        to: formatAuditInstant(result.to),
       },
     });
   }

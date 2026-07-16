@@ -8,7 +8,6 @@ import {
   RenewalCycle,
   RenewalCycleSchema,
 } from '../renew/schemas/renewal-cycle.schema';
-import { EmailService } from '../common/services/email.service';
 import { CronController } from './cron.controller';
 import { CronSecretGuard } from './guards/cron-secret.guard';
 import {
@@ -29,7 +28,6 @@ import { CertificationExpiryService } from './certification-expiry/certification
   ],
   controllers: [CronController],
   providers: [
-    EmailService,
     CronSecretGuard,
     CertificationExpiryQueryService,
     CertificationExpiryTemplateService,

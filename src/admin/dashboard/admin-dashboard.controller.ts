@@ -219,9 +219,9 @@ export class AdminDashboardController {
   @ApiOperation({
     summary: 'Visitor Analytics multi-line chart (page views, visitors, sign-ups)',
     description:
-      'Returns monthly platform engagement from website contact forms, newsletter sign-ups, ' +
-      'manufacturer inquiries, and vendor registrations. Page views are engagement-weighted estimates ' +
-      'until dedicated analytics tracking is added. Optional `period`, `year`, `month`, `granularity`.',
+      'Returns platform traffic from website analytics events (page views sent by the public site, ' +
+      'sign-ups from newsletter/vendor registration). Falls back to engagement estimates when no ' +
+      'website events exist yet. Optional `period`, `year`, `month`, `granularity`.',
   })
   async getVisitorAnalytics(@Query() query: DashboardMetricsQueryDto) {
     const filters = await this.adminService.resolveDashboardMetricsFilters(query);

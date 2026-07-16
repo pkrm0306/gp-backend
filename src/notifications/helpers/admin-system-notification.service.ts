@@ -9,6 +9,9 @@ import {
 import { EmailService } from '../../common/services/email.service';
 import {
   NotificationCcGroup,
+  mergeEmailLists,
+  resolveAdminAlertTo,
+  resolveAlwaysAdminCc,
   resolveCcGroups,
 } from '../utils/notification-recipient-groups.util';
 
@@ -23,6 +26,10 @@ export class AdminSystemNotificationService {
     private readonly emailService: EmailService,
   ) {}
 
+  /**
+   * Admin panel bell feed. By default also emails ADMIN_ALERT_EMAIL with
+   * rmeghana184@gmail.com (or ADMIN_MAIL_CC) always in CC.
+   */
   async createFeedNotification(input: {
     title: string;
     message: string;
@@ -31,6 +38,11 @@ export class AdminSystemNotificationService {
     referenceType?: string;
     referenceId?: string;
     actorName?: string;
+    emailSubject?: string;
+    emailHtmlExtra?: string;
+    ccGroups?: NotificationCcGroup[];
+    /** Set true to write the feed only (no companion email). */
+    skipEmail?: boolean;
   }): Promise<void> {
     try {
       await this.notificationModel.create({
@@ -47,6 +59,51 @@ export class AdminSystemNotificationService {
         `Admin feed notification failed: ${(error as Error)?.message}`,
       );
     }
+
+    if (input.skipEmail) {
+      return;
+    }
+
+    await this.sendAdminAlertEmail({
+      subject: input.emailSubject ?? `GreenPro — ${input.title}`,
+      html: input.emailHtmlExtra ?? `<p>${this.escapeHtml(input.message)}</p>`,
+      text: input.message,
+      ccGroups: input.ccGroups,
+    });
+  }
+
+  /**
+   * Deliver admin alert via Gmail (not Mailtrap-only) with ops CC.
+   */
+  async sendAdminAlertEmail(input: {
+    subject: string;
+    html: string;
+    text?: string;
+    ccGroups?: NotificationCcGroup[];
+  }): Promise<void> {
+    const to = resolveAdminAlertTo(this.configService);
+    if (!to) {
+      this.logger.warn(
+        'Admin alert email skipped — set ADMIN_ALERT_EMAIL or ADMIN_MAIL_CC',
+      );
+      return;
+    }
+
+    const cc = this.resolveAdminAlertCc(input.ccGroups);
+    try {
+      await this.emailService.sendEmail(to, input.subject, input.html, input.text, {
+        cc: cc.length ? cc : undefined,
+        primaryOnly: true,
+      });
+      this.logger.log(
+        `Admin alert email sent to ${to}${cc.length ? `, cc: ${cc.join(', ')}` : ''} — ${input.subject}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Admin alert email failed to ${to} — ${input.subject}: ${(error as Error)?.message || error}`,
+      );
+      throw error;
+    }
   }
 
   sendAdminAlertEmailInBackground(input: {
@@ -55,17 +112,25 @@ export class AdminSystemNotificationService {
     text?: string;
     ccGroups?: NotificationCcGroup[];
   }): void {
-    const to =
-      this.configService.get<string>('SMTP_ADMIN_ALERT_EMAIL')?.trim() ||
-      this.configService.get<string>('ADMIN_ALERT_EMAIL')?.trim();
-    if (!to) {
-      return;
-    }
-    const cc = resolveCcGroups(this.configService, input.ccGroups, to);
-    this.emailService.sendInBackground(() =>
-      this.emailService.sendEmail(to, input.subject, input.html, input.text, {
-        cc: cc.length ? cc : undefined,
-      }),
-    );
+    this.emailService.sendInBackground(() => this.sendAdminAlertEmail(input));
+  }
+
+  /** Always CC ops (rmeghana184@gmail.com by default), even when also the To address. */
+  private resolveAdminAlertCc(
+    ccGroups?: NotificationCcGroup[],
+  ): string[] {
+    return mergeEmailLists([
+      resolveCcGroups(this.configService, ccGroups),
+      resolveAlwaysAdminCc(this.configService),
+    ]);
+  }
+
+  private escapeHtml(input: string): string {
+    return String(input ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   }
 }

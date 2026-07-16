@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsOptional, IsString, Length } from 'class-validator';
+import { IsIn, IsOptional, IsString, Length } from 'class-validator';
+import { GALLERY_TYPES } from '../../gallery/schemas/gallery.schema';
 
 function emptyToUndefined(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -24,6 +25,21 @@ export class UpdateGalleryDto {
   @IsString()
   @Transform(({ value }) => emptyToUndefined(value))
   eventDate?: string;
+
+  @ApiPropertyOptional({
+    example: 'Site Visits',
+    enum: GALLERY_TYPES,
+    description:
+      'Gallery tab/type for edit form dropdown. Only Training & Workshops, Site Visits, Recognition.',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => emptyToUndefined(value))
+  @IsIn([...GALLERY_TYPES], {
+    message:
+      'galleryType must be one of: Training & Workshops, Site Visits, Recognition',
+  })
+  galleryType?: (typeof GALLERY_TYPES)[number];
 
   @ApiPropertyOptional({ example: '<p>Gallery description</p>' })
   @IsOptional()

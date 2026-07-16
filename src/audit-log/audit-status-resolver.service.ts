@@ -20,6 +20,17 @@ const URN_STATUS_LABELS: Record<number, string> = {
   17: 'Renewal Final Verification Pending',
 };
 
+/** Prefer these when the snapshot is tagged as a renewal workflow. */
+const RENEWAL_URN_STATUS_DISPLAY_LABELS: Record<number, string> = {
+  11: 'Renewal Completed',
+  12: 'Renewal Payment Pending',
+  13: 'Renewal Payment Submitted',
+  14: 'Renewal Payment Approved',
+  15: 'Check Process Forms',
+  16: 'Vendor Response Pending',
+  17: 'Final Verification Pending',
+};
+
 const PAYMENT_STATUS_LABELS: Record<number, string> = {
   0: 'Payment Pending',
   1: 'Paid',
@@ -60,9 +71,17 @@ const PROCESS_WORKFLOW_STATUS_LABELS: Record<number, string> = {
   3: 'Rejected',
 };
 
-const URN_STATUS_KEYS = new Set(['updatestatusto', 'urnstatus']);
+const URN_STATUS_KEYS = new Set([
+  'updatestatusto',
+  'urnstatus',
+  'previousurnstatus',
+]);
 const PAYMENT_STATUS_KEYS = new Set(['paymentstatus']);
-const PRODUCT_STATUS_KEYS = new Set(['productstatus']);
+const PRODUCT_STATUS_KEYS = new Set([
+  'productstatus',
+  'fromstatus',
+  'tostatus',
+]);
 const PRODUCT_RENEW_STATUS_KEYS = new Set(['productrenewstatus']);
 const PROPOSAL_STATUS_KEYS = new Set([
   'vendorproposalapprovalstatus',
@@ -78,9 +97,22 @@ const WORKFLOW_STATUS_KEYS = new Set([
 
 @Injectable()
 export class AuditStatusResolver {
-  resolve(key: string, value: unknown): string | undefined {
+  resolve(
+    key: string,
+    value: unknown,
+    options?: { workflow?: string | null },
+  ): string | undefined {
     const normalizedKey = this.normalizeKey(key);
     if (URN_STATUS_KEYS.has(normalizedKey)) {
+      const workflow = String(options?.workflow ?? '')
+        .trim()
+        .toLowerCase();
+      if (workflow === 'renewal') {
+        return (
+          this.labelFromMap(RENEWAL_URN_STATUS_DISPLAY_LABELS, value) ??
+          this.labelFromMap(URN_STATUS_LABELS, value)
+        );
+      }
       return this.labelFromMap(URN_STATUS_LABELS, value);
     }
     if (PAYMENT_STATUS_KEYS.has(normalizedKey)) {
@@ -118,16 +150,19 @@ export class AuditStatusResolver {
     );
   }
 
+  private toStatusNumber(value: unknown): number {
+    return typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : NaN;
+  }
+
   private labelFromMap(
     labels: Record<number, string>,
     value: unknown,
   ): string | undefined {
-    const status =
-      typeof value === 'number'
-        ? value
-        : typeof value === 'string' && value.trim() !== ''
-          ? Number(value)
-          : NaN;
+    const status = this.toStatusNumber(value);
     if (!Number.isInteger(status)) {
       return undefined;
     }

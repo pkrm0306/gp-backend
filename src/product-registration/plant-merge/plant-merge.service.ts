@@ -44,6 +44,7 @@ import { hasInProgressRenewalCycle } from '../helpers/renewal-cycle-eligibility.
 import {
   syncProductPlantCount,
 } from '../helpers/sync-product-plant-count.util';
+import { LifecycleNotificationService } from '../../notifications/lifecycle-notification.service';
 
 export type PlantMergeSectionPlan = {
   collection: string;
@@ -104,6 +105,7 @@ export class PlantMergeService {
     private readonly plantMergeAuditModel: Model<PlantMergeAuditDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly activityLogService: ActivityLogService,
+    private readonly lifecycleNotification: LifecycleNotificationService,
   ) {}
 
   async preview(
@@ -283,6 +285,20 @@ export class PlantMergeService {
         logError instanceof Error ? logError.stack : String(logError),
       );
     }
+
+    this.lifecycleNotification
+      .notifyPlantMerged({
+        manufacturerId: String(context.product.manufacturerId),
+        urnNo: context.product.urnNo,
+        eoiNo: context.product.eoiNo,
+        productName: context.product.productName,
+        mergeSummary: `${sourceObjectIds.length} plant(s) were merged into "${targetPlantName}".`,
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `Plant merge notification failed: ${(err as Error).message}`,
+        ),
+      );
 
     return {
       success: true,

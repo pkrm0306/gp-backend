@@ -10,6 +10,7 @@ import { AuditLookupResolver } from './audit-lookup-resolver.service';
 import { AuditRouteMapper } from './audit-route-map';
 import { AuditStatusResolver } from './audit-status-resolver.service';
 import { AuditValueTransformer } from './audit-value-transformer.service';
+import { AuditPayloadPresenter } from './audit-payload-presenter.service';
 import {
   Category,
   CategorySchema,
@@ -55,6 +56,7 @@ import {
     AuditRouteMapper,
     AuditStatusResolver,
     AuditValueTransformer,
+    AuditPayloadPresenter,
     AuditLogService,
     { provide: APP_INTERCEPTOR, useClass: AuditHttpInterceptor },
   ],

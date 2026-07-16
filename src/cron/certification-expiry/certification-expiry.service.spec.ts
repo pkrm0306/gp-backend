@@ -7,6 +7,11 @@ import {
 import { todayIsoInTimeZone, toIsoDateInTimeZone } from '../utils/cron-date.util';
 import { computeGraceEndDate } from '../../product-registration/helpers/certification-dates.util';
 import type { EligibleExpiryProduct } from './certification-expiry.types';
+import { AUDIT_ACTION } from '../../audit-log/audit-actions';
+import {
+  AUDIT_ACTION_TYPE,
+  AUDIT_MODULE,
+} from '../../audit-log/audit-friendlies';
 
 function makeProduct(
   productId: number,
@@ -39,6 +44,8 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
   let renderDeactivationEmail: jest.Mock;
   let getDeactivationEligibleProducts: jest.Mock;
   let renewalFindLeanExec: jest.Mock;
+  let auditRecord: jest.Mock;
+  let auditRecordMany: jest.Mock;
 
   beforeEach(() => {
     updateMany = jest
@@ -52,6 +59,8 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
     renderDeactivationEmail = jest.fn().mockResolvedValue('<p>deactivated</p>');
     getDeactivationEligibleProducts = jest.fn().mockResolvedValue([]);
     renewalFindLeanExec = jest.fn().mockResolvedValue(null);
+    auditRecord = jest.fn().mockResolvedValue(undefined);
+    auditRecordMany = jest.fn().mockResolvedValue(undefined);
 
     const productModel = {
       updateMany,
@@ -91,7 +100,11 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
       cronEmailLogModel as never,
       {
         notifyCertificationExpiryAdmin: jest.fn().mockResolvedValue(undefined),
+        notifyVendorCertificationExpiryInApp: jest
+          .fn()
+          .mockReturnValue(undefined),
       } as never,
+      { record: auditRecord, recordMany: auditRecordMany } as never,
     );
   });
 
@@ -129,6 +142,85 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
     expect(sendEmail).toHaveBeenCalledTimes(3);
   });
 
+  it('writes success audit entries for deactivated products via AuditLogService', async () => {
+    const products = [makeProduct(1), makeProduct(2)];
+    getDeactivationEligibleProducts.mockResolvedValue(products);
+    productFindLeanExec.mockResolvedValue(
+      products.map((p) => ({
+        productId: p.productId,
+        productStatus: PRODUCT_STATUS_CERTIFIED,
+      })),
+    );
+    updateMany.mockResolvedValue({ matchedCount: 2, modifiedCount: 2 });
+
+    await service.runDeactivationMail();
+
+    expect(auditRecordMany).toHaveBeenCalledTimes(1);
+    const entries = auditRecordMany.mock.calls[0][0] as Array<
+      Record<string, unknown>
+    >;
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toEqual(
+      expect.objectContaining({
+        action: AUDIT_ACTION.CERTIFICATION_EXPIRY_DEACTIVATION,
+        outcome: 'success',
+        module: AUDIT_MODULE.PRODUCT,
+        action_type: AUDIT_ACTION_TYPE.UPDATE,
+        entity_name: 'EOI-1',
+        performed_by: expect.objectContaining({
+          user_id: 'system:cron:certification-expiry',
+          name: 'System',
+        }),
+        actor: expect.objectContaining({
+          user_id: 'system:cron:certification-expiry',
+          role: 'system',
+        }),
+        old_values: expect.objectContaining({
+          productStatus: PRODUCT_STATUS_CERTIFIED,
+        }),
+        new_values: expect.objectContaining({
+          productStatus: PRODUCT_STATUS_DISCONTINUED,
+          urnNo: 'URN-1',
+          eoiNo: 'EOI-1',
+        }),
+        http_method: 'POST',
+        route: '/api/cron/certification-expiry/deactivation-mail',
+        status_code: 200,
+        metadata: expect.objectContaining({
+          audit_event_id: expect.stringMatching(
+            /^certification-expiry:deactivation:1:deactivate-/,
+          ),
+          business_event_type: 'certification_expiry_deactivation',
+          business_outcome: 'product_deactivated',
+          job_type: 'deactivationMail',
+        }),
+      }),
+    );
+    expect(entries[1]).toEqual(
+      expect.objectContaining({
+        entity_name: 'EOI-2',
+        resource: expect.objectContaining({
+          type: 'product',
+          id: '2',
+          urn_no: 'URN-2',
+        }),
+      }),
+    );
+  });
+
+  it('does not write success audits when no products were modified', async () => {
+    const product = makeProduct(5);
+    getDeactivationEligibleProducts.mockResolvedValue([product]);
+    productFindLeanExec.mockResolvedValue([
+      { productId: 5, productStatus: PRODUCT_STATUS_CERTIFIED },
+    ]);
+    updateMany.mockResolvedValue({ matchedCount: 0, modifiedCount: 0 });
+
+    await service.runDeactivationMail();
+
+    expect(auditRecordMany).not.toHaveBeenCalled();
+  });
+
   it('commits status before sending any vendor email', async () => {
     const products = [makeProduct(10), makeProduct(11)];
     getDeactivationEligibleProducts.mockResolvedValue(products);
@@ -164,7 +256,9 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
 
   it('skips products already logged and discontinued (idempotency)', async () => {
     const product = makeProduct(42);
-    const graceEndIso = toIsoDateInTimeZone(computeGraceEndDate(product.validtillDate!));
+    const graceEndIso = toIsoDateInTimeZone(
+      computeGraceEndDate(product.validtillDate!),
+    );
     const notifyDate = `deactivate-${graceEndIso}`;
 
     getDeactivationEligibleProducts.mockResolvedValue([product]);
@@ -177,6 +271,7 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
 
     expect(updateMany).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();
+    expect(auditRecordMany).not.toHaveBeenCalled();
     expect(result.skipped).toBe(1);
     expect(result.planned).toBe(0);
     expect(result.deactivated).toBe(0);
@@ -202,6 +297,7 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
 
     const first = await service.runDeactivationMail();
     expect(first.deactivated).toBe(2);
+    expect(auditRecordMany).toHaveBeenCalledTimes(1);
 
     cronLogFindLeanExec.mockResolvedValue(
       products.map((p) => ({
@@ -217,11 +313,13 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
     );
     updateMany.mockClear();
     sendEmail.mockClear();
+    auditRecordMany.mockClear();
 
     const second = await service.runDeactivationMail();
 
     expect(updateMany).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();
+    expect(auditRecordMany).not.toHaveBeenCalled();
     expect(second.skipped).toBe(2);
     expect(second.deactivated).toBe(0);
   });
@@ -236,9 +334,11 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
       })),
     );
     updateMany.mockResolvedValue({ matchedCount: 2, modifiedCount: 2 });
-    sendEmail
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error('SMTP down'));
+    sendEmail.mockImplementation(async (to: string) => {
+      if (String(to).includes('vendor22@')) {
+        throw new Error('SMTP down');
+      }
+    });
 
     const result = await service.runDeactivationMail();
 
@@ -248,6 +348,71 @@ describe('CertificationExpiryService.runDeactivationMail', () => {
     expect(result.failed).toBe(1);
     expect(result.success).toBe(false);
     expect(result.errors).toHaveLength(1);
+    expect(auditRecordMany).toHaveBeenCalledTimes(1);
+    expect(auditRecord).toHaveBeenCalledTimes(1);
+    expect(auditRecord.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        action: AUDIT_ACTION.CERTIFICATION_EXPIRY_DEACTIVATION,
+        outcome: 'failure',
+        entity_name: 'EOI-22',
+        description:
+          'Deactivation mail failed after product status was discontinued',
+        metadata: expect.objectContaining({
+          business_outcome: 'deactivation_mail_failed',
+          error_message: 'SMTP down',
+          audit_event_id: expect.stringMatching(
+            /^certification-expiry:deactivation-mail-failure:22:/,
+          ),
+        }),
+      }),
+    );
+  });
+
+  it('writes a job failure audit when the deactivation handler throws', async () => {
+    getDeactivationEligibleProducts.mockRejectedValue(
+      new Error('query unavailable'),
+    );
+
+    const result = await service.runDeactivationMail();
+
+    expect(result.success).toBe(false);
+    expect(result.errors[0]?.message).toBe('query unavailable');
+    expect(auditRecordMany).not.toHaveBeenCalled();
+    expect(auditRecord).toHaveBeenCalledTimes(1);
+    expect(auditRecord.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        action: AUDIT_ACTION.CERTIFICATION_EXPIRY_DEACTIVATION,
+        outcome: 'failure',
+        entity_name: 'deactivationMail',
+        description: 'Certification expiry deactivation mail job failed',
+        actor: expect.objectContaining({ role: 'system' }),
+        metadata: expect.objectContaining({
+          business_outcome: 'job_failed',
+          error_message: 'query unavailable',
+        }),
+      }),
+    );
+  });
+
+  it('uses deterministic audit_event_id values for deactivated products', async () => {
+    const product = makeProduct(99);
+    const notifyDate = `deactivate-${toIsoDateInTimeZone(
+      computeGraceEndDate(product.validtillDate!),
+    )}`;
+    getDeactivationEligibleProducts.mockResolvedValue([product]);
+    productFindLeanExec.mockResolvedValue([
+      { productId: 99, productStatus: PRODUCT_STATUS_CERTIFIED },
+    ]);
+    updateMany.mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
+
+    await service.runDeactivationMail();
+
+    const entries = auditRecordMany.mock.calls[0][0] as Array<{
+      metadata: { audit_event_id: string };
+    }>;
+    expect(entries[0].metadata.audit_event_id).toBe(
+      `certification-expiry:deactivation:99:${notifyDate}`,
+    );
   });
 });
 
@@ -283,6 +448,7 @@ describe('CertificationExpiryService.planDeactivationBatch', () => {
       {
         notifyCertificationExpiryAdmin: jest.fn().mockResolvedValue(undefined),
       } as never,
+      { record: jest.fn(), recordMany: jest.fn() } as never,
     );
   });
 

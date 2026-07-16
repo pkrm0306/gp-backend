@@ -1,6 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsNotEmpty, IsOptional, IsString, Length } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Length,
+} from 'class-validator';
+import { GALLERY_TYPES } from '../../gallery/schemas/gallery.schema';
 
 export class CreateGalleryDto {
   @ApiProperty({ example: 'Green Summit 2026' })
@@ -18,6 +25,21 @@ export class CreateGalleryDto {
   @IsNotEmpty()
   @Transform(({ value }) => String(value ?? '').trim())
   eventDate: string;
+
+  @ApiProperty({
+    example: 'Training & Workshops',
+    enum: GALLERY_TYPES,
+    description:
+      'Gallery tab/type for add form dropdown. Only Training & Workshops, Site Visits, Recognition.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => String(value ?? '').trim())
+  @IsIn([...GALLERY_TYPES], {
+    message:
+      'galleryType must be one of: Training & Workshops, Site Visits, Recognition',
+  })
+  galleryType: (typeof GALLERY_TYPES)[number];
 
   @ApiPropertyOptional({ example: '<p>Gallery description</p>' })
   @IsOptional()

@@ -1,0 +1,43 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NotificationTemplateCode = exports.NotificationChannel = void 0;
+var NotificationChannel;
+(function (NotificationChannel) {
+    NotificationChannel["EMAIL"] = "email";
+    NotificationChannel["IN_APP"] = "in_app";
+    /** Future — register handler when implemented */
+    NotificationChannel["SMS"] = "sms";
+    NotificationChannel["WHATSAPP"] = "whatsapp";
+    NotificationChannel["PUSH"] = "push";
+})(NotificationChannel || (exports.NotificationChannel = NotificationChannel = {}));
+var NotificationTemplateCode;
+(function (NotificationTemplateCode) {
+    NotificationTemplateCode["PRODUCT_APPROVED"] = "PRODUCT_APPROVED";
+    NotificationTemplateCode["PRODUCT_REJECTED"] = "PRODUCT_REJECTED";
+    NotificationTemplateCode["USER_CREATED"] = "USER_CREATED";
+    NotificationTemplateCode["PASSWORD_RESET"] = "PASSWORD_RESET";
+    NotificationTemplateCode["OTP_VERIFICATION"] = "OTP_VERIFICATION";
+    NotificationTemplateCode["VENDOR_REGISTRATION_COMPLETE"] = "VENDOR_REGISTRATION_COMPLETE";
+    NotificationTemplateCode["URN_INITIAL_APPROVED"] = "URN_INITIAL_APPROVED";
+    NotificationTemplateCode["URN_REGISTRATION_REJECTED"] = "URN_REGISTRATION_REJECTED";
+    NotificationTemplateCode["URN_SUBMITTED_FOR_REVIEW"] = "URN_SUBMITTED_FOR_REVIEW";
+    NotificationTemplateCode["CERTIFICATION_PAYMENT_SUBMITTED"] = "CERTIFICATION_PAYMENT_SUBMITTED";
+    NotificationTemplateCode["CERTIFICATION_PAYMENT_APPROVED"] = "CERTIFICATION_PAYMENT_APPROVED";
+    NotificationTemplateCode["MANUFACTURER_APPROVED"] = "MANUFACTURER_APPROVED";
+    NotificationTemplateCode["MANUFACTURER_INACTIVE"] = "MANUFACTURER_INACTIVE";
+    NotificationTemplateCode["MANUFACTURER_REJECTED"] = "MANUFACTURER_REJECTED";
+    NotificationTemplateCode["PAYMENT_PROPOSAL_READY"] = "PAYMENT_PROPOSAL_READY";
+    NotificationTemplateCode["PRODUCT_ENQUIRY_VENDOR"] = "PRODUCT_ENQUIRY_VENDOR";
+    NotificationTemplateCode["CERTIFICATION_EXPIRY_REMINDER"] = "CERTIFICATION_EXPIRY_REMINDER";
+    NotificationTemplateCode["URN_MERGED"] = "URN_MERGED";
+    NotificationTemplateCode["PLANT_MERGED"] = "PLANT_MERGED";
+    NotificationTemplateCode["RENEWAL_SUBMITTED"] = "RENEWAL_SUBMITTED";
+    NotificationTemplateCode["RENEWAL_DECISION"] = "RENEWAL_DECISION";
+    NotificationTemplateCode["RENEWAL_COMPLETED"] = "RENEWAL_COMPLETED";
+    NotificationTemplateCode["PRODUCT_NAME_CHANGE_DECISION"] = "PRODUCT_NAME_CHANGE_DECISION";
+    NotificationTemplateCode["GRIEVANCE_RESPONDED"] = "GRIEVANCE_RESPONDED";
+    NotificationTemplateCode["GRIEVANCE_CLOSED"] = "GRIEVANCE_CLOSED";
+    NotificationTemplateCode["ACCOUNT_DELETION_APPROVED"] = "ACCOUNT_DELETION_APPROVED";
+    NotificationTemplateCode["ACCOUNT_DELETION_REJECTED"] = "ACCOUNT_DELETION_REJECTED";
+    NotificationTemplateCode["ACCOUNT_DELETION_COMPLETED"] = "ACCOUNT_DELETION_COMPLETED";
+})(NotificationTemplateCode || (exports.NotificationTemplateCode = NotificationTemplateCode = {}));

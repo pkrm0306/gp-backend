@@ -26,6 +26,7 @@ import type {
   AdminDashboardVisitorAnalytics,
   VisitorAnalyticsChartPoint,
 } from './admin-dashboard-visitor-analytics.types';
+import { WebsiteAnalyticsService } from '../../website/website-analytics.service';
 
 type BucketId = {
   year?: number;
@@ -61,9 +62,29 @@ export class AdminDashboardVisitorAnalyticsService {
     private readonly notificationModel: Model<NotificationDocument>,
     @InjectModel(Manufacturer.name)
     private readonly manufacturerModel: Model<ManufacturerDocument>,
+    private readonly websiteAnalytics: WebsiteAnalyticsService,
   ) {}
 
   async getVisitorAnalytics(
+    filters: ResolvedDashboardFilters,
+  ): Promise<AdminDashboardVisitorAnalytics> {
+    const hasWebsiteEvents = await this.websiteAnalytics.hasAnyEvents();
+    if (hasWebsiteEvents) {
+      const chart = await this.websiteAnalytics.getChartPoints(filters);
+      return this.buildResponse(chart, filters.granularity ?? 'monthly', 'website', {
+        pageViews:
+          'Page views recorded by the public website and stored via POST /website/analytics/collect.',
+        visitors:
+          'Unique anonymous visitor sessions (visitorId) per period from website analytics events.',
+        signUps:
+          'Sign-up events from newsletter subscriptions, vendor registrations, and website sign_up beacons.',
+      });
+    }
+
+    return this.getEstimatedVisitorAnalytics(filters);
+  }
+
+  private async getEstimatedVisitorAnalytics(
     filters: ResolvedDashboardFilters,
   ): Promise<AdminDashboardVisitorAnalytics> {
     const now = new Date();
@@ -171,6 +192,22 @@ export class AdminDashboardVisitorAnalyticsService {
       signUps: bucket.signUps,
     }));
 
+    return this.buildResponse(chart, granularity, 'estimated', {
+      pageViews:
+        'Estimated from recorded public website engagements until the website analytics beacon is deployed.',
+      visitors:
+        'Unique visitor identities per bucket (distinct contact/newsletter emails and manufacturer inquiry submitters).',
+      signUps:
+        'New newsletter subscribers plus new manufacturer (vendor portal) registrations.',
+    });
+  }
+
+  private buildResponse(
+    chart: VisitorAnalyticsChartPoint[],
+    granularity: DashboardGranularity,
+    source: 'website' | 'estimated',
+    methodology: AdminDashboardVisitorAnalytics['methodology'],
+  ): AdminDashboardVisitorAnalytics {
     const totals = chart.reduce(
       (acc, point) => ({
         pageViews: acc.pageViews + point.pageViews,
@@ -190,6 +227,7 @@ export class AdminDashboardVisitorAnalyticsService {
       title: 'Visitor Analytics',
       subtitle: 'Platform traffic and engagement',
       granularity,
+      source,
       series: SERIES_META,
       chart,
       totals,
@@ -197,14 +235,7 @@ export class AdminDashboardVisitorAnalyticsService {
         min: 0,
         suggestedMax: this.suggestYMax(maxValue),
       },
-      methodology: {
-        pageViews:
-          'Estimated from recorded public website engagements (contact forms, newsletter sign-ups, manufacturer inquiries, vendor registrations), weighted at 3 views per interaction.',
-        visitors:
-          'Unique visitor identities per bucket (distinct contact/newsletter emails and manufacturer inquiry submitters).',
-        signUps:
-          'New newsletter subscribers plus new manufacturer (vendor portal) registrations.',
-      },
+      methodology,
     };
   }
 

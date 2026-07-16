@@ -15,6 +15,7 @@ import { Notification } from '../common/schemas/notification.schema';
 import { Article } from '../articles/schemas/article.schema';
 import { EmailService } from '../common/services/email.service';
 import { RbacService } from '../rbac/rbac.service';
+import { AdminSystemNotificationService } from '../notifications/helpers/admin-system-notification.service';
 
 function queryMock<T>(result: T) {
   return {
@@ -67,6 +68,10 @@ describe('AdminService Banner Functionality', () => {
         { provide: getModelToken(Notification.name), useValue: {} },
         { provide: getModelToken(Article.name), useValue: {} },
         { provide: EmailService, useValue: {} },
+        {
+          provide: AdminSystemNotificationService,
+          useValue: { createFeedNotification: jest.fn() },
+        },
         { provide: RbacService, useValue: {} },
       ],
     }).compile();

@@ -1,7 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
-import { EmailService } from '../common/services/email.service';
+import { EmailModule } from '../common/email.module';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
 import {
   UserNotification,
@@ -35,6 +35,7 @@ import { VendorNotificationsController } from './vendor-notifications.controller
 @Module({
   imports: [
     ConfigModule,
+    EmailModule,
     VendorUsersModule,
     MongooseModule.forFeature([
       { name: UserNotification.name, schema: UserNotificationSchema },
@@ -44,7 +45,6 @@ import { VendorNotificationsController } from './vendor-notifications.controller
   ],
   controllers: [VendorNotificationsController],
   providers: [
-    EmailService,
     SequenceHelper,
     NotificationTemplateRegistry,
     EmailNotificationChannel,
@@ -73,6 +73,7 @@ import { VendorNotificationsController } from './vendor-notifications.controller
     LifecycleNotificationService,
     ProductDocumentUploadNotificationHelper,
     NotificationRecipientService,
+    AdminSystemNotificationService,
     UserNotificationsService,
   ],
 })

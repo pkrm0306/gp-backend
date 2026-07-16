@@ -7,20 +7,14 @@ import {
   CreateAuditLogDto,
 } from './dto/create-audit-log.dto';
 import { QueryAuditLogDto } from './dto/query-audit-log.dto';
-import { AuditLookupResolver } from './audit-lookup-resolver.service';
 import { AuditValueTransformer } from './audit-value-transformer.service';
+import {
+  AuditPayloadPresenter,
+  type AuditLogRow,
+} from './audit-payload-presenter.service';
 import { auditModuleDisplayName } from './audit-friendlies';
 import { buildAuditActorUserFilter } from './audit-log-user-filter.util';
-import {
-  omitSuppressedAuditResponseChanges,
-  omitSuppressedAuditResponseFields,
-} from './audit-response-suppressed-fields';
-
-type AuditLogRow = AuditLog & {
-  old_values?: Record<string, unknown>;
-  new_values?: Record<string, unknown>;
-  changes?: Record<string, unknown>;
-};
+import { resolveAuditQueryRange } from './audit-date.util';
 
 export interface AuditFilterOption {
   value: string;
@@ -50,38 +44,20 @@ export class AuditLogService {
   constructor(
     @InjectModel(AuditLog.name)
     private readonly auditLogModel: Model<AuditLogDocument>,
-    private readonly lookupResolver: AuditLookupResolver,
     private readonly valueTransformer: AuditValueTransformer,
+    private readonly payloadPresenter: AuditPayloadPresenter,
   ) {}
 
   /**
    * Append-only insert. Never throws to callers for persistence failures.
+   * Duplicate `metadata.audit_event_id` is swallowed (idempotent concurrent writes).
    */
   async record(
     entry: CreateAuditLogDto,
     options: AuditRecordOptions = {},
   ): Promise<void> {
     try {
-      const doc: Partial<AuditLog> = {
-        occurred_at: entry.occurred_at ?? new Date(),
-        action: entry.action,
-        outcome: entry.outcome,
-        module: entry.module,
-        action_type: entry.action_type,
-        entity_name: entry.entity_name,
-        description: entry.description,
-        performed_by: entry.performed_by,
-        old_values: this.valueTransformer.sanitizeSnapshot(entry.old_values),
-        new_values: this.valueTransformer.sanitizeSnapshot(entry.new_values),
-        http_method: entry.http_method,
-        route: entry.route,
-        status_code: entry.status_code,
-        actor: entry.actor,
-        resource: entry.resource,
-        request: entry.request,
-        changes: this.valueTransformer.sanitizeChanges(entry.changes),
-        metadata: entry.metadata,
-      };
+      const doc = this.toPersistDocument(entry);
       if (options.session) {
         await this.auditLogModel.create([doc], { session: options.session });
       } else {
@@ -107,26 +83,7 @@ export class AuditLogService {
   ): Promise<void> {
     if (!entries.length) return;
     try {
-      const docs = entries.map((entry) => ({
-        occurred_at: entry.occurred_at ?? new Date(),
-        action: entry.action,
-        outcome: entry.outcome,
-        module: entry.module,
-        action_type: entry.action_type,
-        entity_name: entry.entity_name,
-        description: entry.description,
-        performed_by: entry.performed_by,
-        old_values: this.valueTransformer.sanitizeSnapshot(entry.old_values),
-        new_values: this.valueTransformer.sanitizeSnapshot(entry.new_values),
-        http_method: entry.http_method,
-        route: entry.route,
-        status_code: entry.status_code,
-        actor: entry.actor,
-        resource: entry.resource,
-        request: entry.request,
-        changes: this.valueTransformer.sanitizeChanges(entry.changes),
-        metadata: entry.metadata,
-      }));
+      const docs = entries.map((entry) => this.toPersistDocument(entry));
       if (options.session) {
         await this.auditLogModel.insertMany(docs, {
           session: options.session,
@@ -137,6 +94,10 @@ export class AuditLogService {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      if (this.isDuplicateKeyError(e)) {
+        this.logger.debug(`[AuditLog] bulk duplicate event skipped: ${msg}`);
+        return;
+      }
       if (options.throwOnError) {
         throw e;
       }
@@ -168,7 +129,9 @@ export class AuditLogService {
         .exec(),
       this.auditLogModel.countDocuments(filter).exec(),
     ]);
-    const items = await this.enrichRows(itemsRaw as AuditLogRow[]);
+    const items = await this.payloadPresenter.presentMany(
+      itemsRaw as AuditLogRow[],
+    );
     return {
       items: items as AuditLog[],
       total,
@@ -325,20 +288,32 @@ export class AuditLogService {
     if (!raw) {
       return null;
     }
-    const row = raw as AuditLogRow;
-    const productValues = this.lookupResolver.onlyModels(
-      this.lookupResolver.collectValues([
-        row.old_values,
-        row.new_values,
-        ...this.changeValueSnapshots(row.changes),
-      ]),
-      ['product'],
-    );
-    const labels =
-      productValues.size > 0
-        ? await this.lookupResolver.resolveLookupLabels(productValues)
-        : new Map<string, string>();
-    return this.transformStoredRow(row, labels) as AuditLog;
+    return (await this.payloadPresenter.presentOne(raw as AuditLogRow, {
+      lookupScope: 'product',
+    })) as AuditLog | null;
+  }
+
+  private toPersistDocument(entry: CreateAuditLogDto): Partial<AuditLog> {
+    return {
+      occurred_at: entry.occurred_at ?? new Date(),
+      action: entry.action,
+      outcome: entry.outcome,
+      module: entry.module,
+      action_type: entry.action_type,
+      entity_name: entry.entity_name,
+      description: entry.description,
+      performed_by: entry.performed_by,
+      old_values: this.valueTransformer.sanitizeSnapshot(entry.old_values),
+      new_values: this.valueTransformer.sanitizeSnapshot(entry.new_values),
+      http_method: entry.http_method,
+      route: entry.route,
+      status_code: entry.status_code,
+      actor: entry.actor,
+      resource: entry.resource,
+      request: entry.request,
+      changes: this.valueTransformer.sanitizeChanges(entry.changes),
+      metadata: entry.metadata,
+    };
   }
 
   private buildFilter(query: QueryAuditLogDto): {
@@ -371,11 +346,10 @@ export class AuditLogService {
     if (query.urn_no) {
       filter['resource.urn_no'] = query.urn_no;
     }
-    const to = query.to ? new Date(query.to) : new Date();
-    const from = query.from ? new Date(query.from) : new Date(to);
-    if (!query.from) {
-      from.setMonth(from.getMonth() - 1);
-    }
+    const { from, to } = resolveAuditQueryRange({
+      from: query.from,
+      to: query.to,
+    });
     filter.occurred_at = { $gte: from, $lte: to };
     return { filter, from, to };
   }
@@ -408,96 +382,6 @@ export class AuditLogService {
         label: labelFor(row._id) ?? row._id,
         count: row.count,
       }));
-  }
-
-  private async enrichRows(rows: AuditLogRow[]): Promise<AuditLogRow[]> {
-    const valuesByModel = this.lookupResolver.collectValues(
-      rows.flatMap((row) => [
-        row.old_values,
-        row.new_values,
-        ...this.changeValueSnapshots(row.changes),
-      ]),
-    );
-    const labels = await this.lookupResolver.resolveLookupLabels(valuesByModel);
-    return rows.map((row) => this.stripResponseSuppressedFields({
-      ...row,
-      old_values: this.enrichValues(row.old_values, labels),
-      new_values: this.enrichValues(row.new_values, labels),
-      changes: this.enrichChanges(row.changes, labels),
-    }));
-  }
-
-  /** Hide internal process-tab status flags from API output only. */
-  private stripResponseSuppressedFields(row: AuditLogRow): AuditLogRow {
-    return {
-      ...row,
-      old_values: omitSuppressedAuditResponseFields(row.old_values),
-      new_values: omitSuppressedAuditResponseFields(row.new_values),
-      changes: omitSuppressedAuditResponseChanges(row.changes),
-    };
-  }
-
-  private enrichValues(
-    values: Record<string, unknown> | undefined,
-    labels: Map<string, string>,
-  ): Record<string, unknown> | undefined {
-    return this.valueTransformer.transformDisplayValues(values, (key, value) =>
-      this.lookupResolver.resolveLabel(labels, key, value),
-    );
-  }
-
-  private enrichChanges(
-    changes: Record<string, unknown> | undefined,
-    labels: Map<string, string>,
-  ): Record<string, unknown> | undefined {
-    return this.valueTransformer.transformDisplayChanges(
-      changes,
-      (key, value) => this.lookupResolver.resolveLabel(labels, key, value),
-    );
-  }
-
-  private transformStoredRow(
-    row: AuditLogRow,
-    labels: Map<string, string>,
-  ): AuditLogRow {
-    return this.stripResponseSuppressedFields({
-      ...row,
-      old_values: this.valueTransformer.transformDisplayValues(
-        row.old_values,
-        (key, value) => this.lookupResolver.resolveLabel(labels, key, value),
-      ),
-      new_values: this.valueTransformer.transformDisplayValues(
-        row.new_values,
-        (key, value) => this.lookupResolver.resolveLabel(labels, key, value),
-      ),
-      changes: this.valueTransformer.transformDisplayChanges(
-        row.changes,
-        (key, value) => this.lookupResolver.resolveLabel(labels, key, value),
-      ),
-    });
-  }
-
-  private changeValueSnapshots(
-    changes: Record<string, unknown> | undefined,
-  ): Array<Record<string, unknown>> {
-    if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
-      return [];
-    }
-    const before: Record<string, unknown> = {};
-    const after: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(changes)) {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        continue;
-      }
-      const pair = value as { before?: unknown; after?: unknown };
-      if (pair.before !== undefined) {
-        before[key] = pair.before;
-      }
-      if (pair.after !== undefined) {
-        after[key] = pair.after;
-      }
-    }
-    return [before, after].filter((snapshot) => Object.keys(snapshot).length);
   }
 
   private isDuplicateKeyError(error: unknown): boolean {

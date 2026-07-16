@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { AuditStatusResolver } from './audit-status-resolver.service';
 import { isAuditIgnoredField } from './audit-ignore-fields';
+import { formatAuditDisplayDateTime, formatAuditInstant, isAuditDateFieldKey } from './audit-date.util';
+import {
+  isSupportingDocumentAttachmentFlagKey,
+  resolveSupportingDocumentAttachmentLabel,
+} from './audit-supporting-documents.util';
 
 export type AuditPrimitiveSnapshot = Record<string, unknown>;
 
@@ -35,6 +40,10 @@ const AUDIT_ENUM_LABELS: Record<string, Record<string, string>> = {
   decision: {
     approved: 'Approved',
     rejected: 'Rejected',
+  },
+  workflow: {
+    certification: 'Certification',
+    renewal: 'Renewal',
   },
   updatestatustype: {
     urn_status: 'URN Status',
@@ -157,26 +166,39 @@ export class AuditValueTransformer {
   transformDisplayValues(
     values: AuditPrimitiveSnapshot | undefined,
     resolveLookup: (key: string, value: unknown) => string | undefined,
+    options?: { workflow?: string | null },
   ): AuditPrimitiveSnapshot | undefined {
     if (!values || typeof values !== 'object' || Array.isArray(values)) {
       return values;
     }
-    const out = this.transformDisplayRecord(values, resolveLookup);
+    const out = this.transformDisplayRecord(values, resolveLookup, options);
     return Object.keys(out).length ? out : undefined;
   }
 
   private transformDisplayRecord(
     values: Record<string, unknown>,
     resolveLookup: (key: string, value: unknown) => string | undefined,
+    options?: { workflow?: string | null },
   ): AuditPrimitiveSnapshot {
+    const workflow =
+      (typeof values['workflow'] === 'string' ? values['workflow'] : undefined) ??
+      options?.workflow ??
+      undefined;
     const out: AuditPrimitiveSnapshot = {};
     for (const [key, value] of Object.entries(values)) {
       if (isAuditIgnoredField(key)) {
         continue;
       }
-      const statusLabel = this.statusResolver.resolve(key, value);
+      const statusLabel = this.statusResolver.resolve(key, value, { workflow });
       if (statusLabel) {
         out[key] = statusLabel;
+        continue;
+      }
+      const attachmentLabel = isSupportingDocumentAttachmentFlagKey(key)
+        ? resolveSupportingDocumentAttachmentLabel(value)
+        : undefined;
+      if (attachmentLabel) {
+        out[key] = attachmentLabel;
         continue;
       }
       const enumLabel = this.enumLabel(key, value);
@@ -193,6 +215,7 @@ export class AuditValueTransformer {
         key,
         value,
         resolveLookup,
+        typeof workflow === 'string' ? workflow : undefined,
       );
       if (transformed !== undefined) {
         out[key] = transformed;
@@ -302,18 +325,37 @@ export class AuditValueTransformer {
     key: string,
     value: unknown,
     resolveLookup: (key: string, value: unknown) => string | undefined,
+    workflow?: string,
   ): unknown {
+    const attachmentLabel = isSupportingDocumentAttachmentFlagKey(key)
+      ? resolveSupportingDocumentAttachmentLabel(value)
+      : undefined;
     const scalarLabel =
-      this.statusResolver.resolve(key, value) ??
+      this.statusResolver.resolve(key, value, { workflow }) ??
+      attachmentLabel ??
       this.enumLabel(key, value) ??
       resolveLookup(key, value);
     if (scalarLabel) {
       return scalarLabel;
     }
-    if (!value || typeof value !== 'object') {
-      return value;
+    if (typeof value === 'boolean') {
+      return value ? 'Yes' : 'No';
     }
     if (value instanceof Date) {
+      return (
+        formatAuditDisplayDateTime(value) ??
+        formatAuditInstant(value) ??
+        value.toISOString()
+      );
+    }
+    if (
+      typeof value === 'string' &&
+      isAuditDateFieldKey(key) &&
+      value.trim()
+    ) {
+      return formatAuditDisplayDateTime(value) ?? value;
+    }
+    if (!value || typeof value !== 'object') {
       return value;
     }
     if (Array.isArray(value)) {
@@ -325,7 +367,7 @@ export class AuditValueTransformer {
           );
         }
         return (
-          this.statusResolver.resolve(key, item) ??
+          this.statusResolver.resolve(key, item, { workflow }) ??
           this.enumLabel(key, item) ??
           resolveLookup(key, item) ??
           item

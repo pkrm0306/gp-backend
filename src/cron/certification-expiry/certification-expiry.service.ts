@@ -41,8 +41,26 @@ import {
   DeactivationBatchItem,
   EligibleExpiryProduct,
 } from './certification-expiry.types';
+import { AuditLogService } from '../../audit-log/audit-log.service';
+import { AUDIT_ACTION } from '../../audit-log/audit-actions';
+import {
+  AUDIT_ACTION_TYPE,
+  AUDIT_MODULE,
+} from '../../audit-log/audit-friendlies';
+import type { CreateAuditLogDto } from '../../audit-log/dto/create-audit-log.dto';
 
 const DEACTIVATION_EMAIL_CONCURRENCY = 5;
+const DEACTIVATION_MAIL_ROUTE =
+  '/api/cron/certification-expiry/deactivation-mail';
+const CRON_ACTOR_USER_ID = 'system:cron:certification-expiry';
+const CRON_PERFORMED_BY = {
+  user_id: CRON_ACTOR_USER_ID,
+  name: 'System',
+} as const;
+const CRON_ACTOR = {
+  user_id: CRON_ACTOR_USER_ID,
+  role: 'system',
+} as const;
 
 @Injectable()
 export class CertificationExpiryService {
@@ -60,6 +78,7 @@ export class CertificationExpiryService {
     @InjectModel(CronEmailLog.name)
     private readonly cronEmailLogModel: Model<CronEmailLogDocument>,
     private readonly lifecycleNotification: LifecycleNotificationService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private notifyExpiryAdmin(
@@ -191,6 +210,10 @@ export class CertificationExpiryService {
         result.modifiedCount = updateResult.modifiedCount ?? 0;
         result.deactivated = result.modifiedCount;
 
+        if ((result.modifiedCount ?? 0) > 0) {
+          await this.writeDeactivationSuccessAudits(toDeactivate, now);
+        }
+
         await this.sendDeactivationNotifications(
           toDeactivate,
           { regYear, currentYear },
@@ -319,9 +342,152 @@ export class CertificationExpiryService {
         } catch (error) {
           result.failed += 1;
           result.errors.push(this.errorEntry(product, error));
+          await this.writeDeactivationMailFailureAudit(
+            product,
+            notifyDate,
+            error,
+          );
         }
       },
     );
+  }
+
+  private deactivationAuditEventId(
+    productId: number,
+    notifyDate: string,
+  ): string {
+    return `certification-expiry:deactivation:${productId}:${notifyDate}`;
+  }
+
+  private async writeDeactivationSuccessAudits(
+    batch: DeactivationBatchItem[],
+    occurredAt: Date,
+  ): Promise<void> {
+    if (!batch.length) {
+      return;
+    }
+    const entries: CreateAuditLogDto[] = batch.map(({ product, notifyDate }) =>
+      this.buildDeactivationAuditEntry({
+        product,
+        notifyDate,
+        occurredAt,
+        outcome: 'success',
+        description:
+          'Product deactivated due to certification expiry (deactivation mail job)',
+        businessOutcome: 'product_deactivated',
+        statusCode: 200,
+      }),
+    );
+    await this.auditLogService.recordMany(entries);
+  }
+
+  private async writeDeactivationMailFailureAudit(
+    product: EligibleExpiryProduct,
+    notifyDate: string,
+    error: unknown,
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.auditLogService.record(
+      this.buildDeactivationAuditEntry({
+        product,
+        notifyDate,
+        occurredAt: new Date(),
+        outcome: 'failure',
+        description:
+          'Deactivation mail failed after product status was discontinued',
+        businessOutcome: 'deactivation_mail_failed',
+        statusCode: 500,
+        errorMessage: message,
+        // Unique per attempt so mail retries remain auditable without
+        // colliding with the deterministic deactivation success event id.
+        auditEventId: `certification-expiry:deactivation-mail-failure:${product.productId}:${notifyDate}:${Date.now()}`,
+      }),
+    );
+  }
+
+  private async writeDeactivationJobFailureAudit(
+    error: unknown,
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.auditLogService.record({
+      occurred_at: new Date(),
+      action: AUDIT_ACTION.CERTIFICATION_EXPIRY_DEACTIVATION,
+      outcome: 'failure',
+      module: AUDIT_MODULE.PRODUCT,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      entity_name: 'deactivationMail',
+      description: 'Certification expiry deactivation mail job failed',
+      performed_by: { ...CRON_PERFORMED_BY },
+      actor: { ...CRON_ACTOR },
+      http_method: 'POST',
+      route: DEACTIVATION_MAIL_ROUTE,
+      status_code: 500,
+      metadata: {
+        audit_event_id: `certification-expiry:deactivation-job-failure:${Date.now()}`,
+        business_event_type: 'certification_expiry_deactivation',
+        business_outcome: 'job_failed',
+        job_type: 'deactivationMail',
+        error_message: message,
+      },
+    });
+  }
+
+  private buildDeactivationAuditEntry(input: {
+    product: EligibleExpiryProduct;
+    notifyDate: string;
+    occurredAt: Date;
+    outcome: 'success' | 'failure';
+    description: string;
+    businessOutcome: string;
+    statusCode: number;
+    errorMessage?: string;
+    auditEventId?: string;
+  }): CreateAuditLogDto {
+    const { product, notifyDate } = input;
+    const validTillIso =
+      product.validtillDate != null
+        ? new Date(product.validtillDate).toISOString()
+        : undefined;
+    return {
+      occurred_at: input.occurredAt,
+      action: AUDIT_ACTION.CERTIFICATION_EXPIRY_DEACTIVATION,
+      outcome: input.outcome,
+      module: AUDIT_MODULE.PRODUCT,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      entity_name: String(product.eoiNo || product.urnNo),
+      description: input.description,
+      performed_by: { ...CRON_PERFORMED_BY },
+      actor: { ...CRON_ACTOR },
+      resource: {
+        type: 'product',
+        id: String(product.productId),
+        urn_no: product.urnNo,
+      },
+      old_values: {
+        productStatus: PRODUCT_STATUS_CERTIFIED,
+        urnNo: product.urnNo,
+        eoiNo: product.eoiNo,
+      },
+      new_values: {
+        productStatus: PRODUCT_STATUS_DISCONTINUED,
+        urnNo: product.urnNo,
+        eoiNo: product.eoiNo,
+        ...(validTillIso ? { validtillDate: validTillIso } : {}),
+      },
+      http_method: 'POST',
+      route: DEACTIVATION_MAIL_ROUTE,
+      status_code: input.statusCode,
+      metadata: {
+        audit_event_id:
+          input.auditEventId ??
+          this.deactivationAuditEventId(product.productId, notifyDate),
+        business_event_type: 'certification_expiry_deactivation',
+        business_outcome: input.businessOutcome,
+        job_type: 'deactivationMail',
+        notify_date: notifyDate,
+        ...(input.errorMessage ? { error_message: input.errorMessage } : {}),
+      },
+    };
   }
 
   private async mapWithConcurrency<T>(
@@ -373,6 +539,9 @@ export class CertificationExpiryService {
       result.errors.push({
         message: error instanceof Error ? error.message : String(error),
       });
+      if (jobType === 'deactivationMail') {
+        await this.writeDeactivationJobFailureAudit(error);
+      }
     }
     const emailOff =
       String(this.configService.get<string>('EMAIL_DISABLED') ?? 'false').toLowerCase() ===

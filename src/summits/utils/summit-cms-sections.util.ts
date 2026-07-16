@@ -680,8 +680,20 @@ export function normalizeFocusedAreaSection(body: Record<string, unknown>): {
     ['items', 'cards', 'points'],
   );
 
+  const areaPointsLookLikeCards = legacyFlat.some((entry) => {
+    if (!isPlainObject(entry)) return false;
+    return (
+      extractNestedArray(entry.points, ['items']).length > 0 ||
+      extractNestedArray(entry.items, []).length > 0
+    );
+  });
+
   if (!rawCards.length && legacyFlat.length) {
-    rawCards = reconstructFocusedAreaCardsFromAreaPoints(legacyFlat) as unknown[];
+    // Admin CMS sends topic cards under `areaPoints` (heading + nested points).
+    // Treat those as cards; only use the flat-bullet regrouper for legacy rows.
+    rawCards = areaPointsLookLikeCards
+      ? legacyFlat
+      : (reconstructFocusedAreaCardsFromAreaPoints(legacyFlat) as unknown[]);
   } else if (
     rawCards.length > SUMMIT_CMS_CARD_MAX &&
     shouldRegroupFlatAreaPoints(rawCards)
@@ -756,6 +768,7 @@ export function normalizeAgendaSectionInput(body: Record<string, unknown>): {
   const errors: Record<string, string> = {};
   const rawPoints = extractNestedArray(
     body.agendaPoints ??
+      (Array.isArray(body.agenda) ? body.agenda : undefined) ??
       (isPlainObject(body.agenda) ? body.agenda.points : undefined) ??
       (isPlainObject(body.agenda) ? body.agenda.items : undefined),
     ['items', 'points'],

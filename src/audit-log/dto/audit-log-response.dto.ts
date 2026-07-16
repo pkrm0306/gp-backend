@@ -1,14 +1,10 @@
 import { auditModuleDisplayName } from '../audit-friendlies';
-import {
-  omitSuppressedAuditResponseChanges,
-  omitSuppressedAuditResponseFields,
-} from '../audit-response-suppressed-fields';
+import { formatAuditInstant } from '../audit-date.util';
 
 export type AuditJsonObject = Record<string, unknown>;
 
 export interface AuditLogResponseDto extends AuditJsonObject {
   id: string | null;
-  _id?: unknown;
   occurred_at: string | null;
   action: string | null;
   outcome: string | null;
@@ -32,6 +28,11 @@ export interface AuditLogResponseDto extends AuditJsonObject {
   user_display: string | null;
 }
 
+/**
+ * Allowlisted API shape for a presented audit row.
+ * Field filtering / humanization must already be applied by AuditPayloadPresenter.
+ * Spreading raw documents is intentionally avoided so framework fields never leak.
+ */
 export function toAuditLogResponseDto(
   row: AuditJsonObject,
 ): AuditLogResponseDto {
@@ -39,19 +40,10 @@ export function toAuditLogResponseDto(
   const actor = objectOrNull(row['actor']);
   const actionType = stringOrNull(row['action_type']);
   const module = stringOrNull(row['module']);
-  const oldValues = omitSuppressedAuditResponseFields(
-    objectOrNull(row['old_values']) ?? undefined,
-  );
-  const newValues = omitSuppressedAuditResponseFields(
-    objectOrNull(row['new_values']) ?? undefined,
-  );
-  const changes = omitSuppressedAuditResponseChanges(
-    objectOrNull(row['changes']) ?? undefined,
-  );
+
   const dto: AuditLogResponseDto = {
-    ...row,
-    id: idString(row['_id']),
-    occurred_at: dateStringOrNull(row['occurred_at']),
+    id: idString(row['_id'] ?? row['id']),
+    occurred_at: formatAuditInstant(row['occurred_at']),
     action: stringOrNull(row['action']),
     outcome: stringOrNull(row['outcome']),
     module,
@@ -61,8 +53,8 @@ export function toAuditLogResponseDto(
     entity_name: stringOrNull(row['entity_name']),
     description: stringOrNull(row['description']),
     performed_by: performedBy,
-    old_values: oldValues ?? null,
-    new_values: newValues ?? null,
+    old_values: objectOrNull(row['old_values']),
+    new_values: objectOrNull(row['new_values']),
     http_method: stringOrNull(row['http_method']),
     route: stringOrNull(row['route']),
     status_code:
@@ -70,7 +62,7 @@ export function toAuditLogResponseDto(
     actor,
     resource: objectOrNull(row['resource']),
     request: objectOrNull(row['request']),
-    changes: changes ?? null,
+    changes: objectOrNull(row['changes']),
     metadata: objectOrNull(row['metadata']),
     user_display: userDisplay(performedBy, actor),
   };
@@ -97,7 +89,7 @@ function normalizeJsonValue(value: unknown): unknown {
     return value.toString();
   }
   if (value instanceof Date) {
-    return value.toISOString();
+    return formatAuditInstant(value);
   }
   if (!value || typeof value !== 'object') {
     return value;
@@ -137,17 +129,6 @@ function idString(value: unknown): string | null {
     return null;
   }
   return String(value);
-}
-
-function dateStringOrNull(value: unknown): string | null {
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
-  }
-  return null;
 }
 
 function stringOrNull(value: unknown): string | null {

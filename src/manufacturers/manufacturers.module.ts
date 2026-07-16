@@ -24,7 +24,6 @@ import { AdminManufacturerActionsController } from './manufacturers.admin.contro
 import { VendorController } from './vendor.controller';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { EmailService } from '../common/services/email.service';
 import { AuthModule } from '../auth/auth.module';
 import { ZohoModule } from '../zoho/zoho.module';
 
@@ -53,7 +52,6 @@ import { ZohoModule } from '../zoho/zoho.module';
     ManufacturersService,
     ManufacturerIdGenerationService,
     PermissionsGuard,
-    EmailService,
   ],
   exports: [ManufacturersService, ManufacturerIdGenerationService],
 })

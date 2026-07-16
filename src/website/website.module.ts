@@ -33,11 +33,12 @@ import { ProductRegistrationModule } from '../product-registration/product-regis
 import { AdminModule } from '../admin/admin.module';
 import { GalleryModule } from '../gallery/gallery.module';
 import { SummitsModule } from '../summits/summits.module';
-import { EmailService } from '../common/services/email.service';
 import {
   Notification,
   NotificationSchema,
 } from '../common/schemas/notification.schema';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { WebsiteAnalyticsModule } from './website-analytics.module';
 
 @Module({
   imports: [
@@ -57,8 +58,10 @@ import {
     AdminModule,
     GalleryModule,
     SummitsModule,
+    NotificationsModule,
+    WebsiteAnalyticsModule,
   ],
   controllers: [WebsiteController],
-  providers: [WebsiteService, EmailService],
+  providers: [WebsiteService],
 })
 export class WebsiteModule {}

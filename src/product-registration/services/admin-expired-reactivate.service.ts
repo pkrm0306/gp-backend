@@ -106,9 +106,7 @@ export class AdminExpiredReactivateService {
       product.validtillDate,
       now,
     );
-    const description = validityExtended
-      ? 'Reactivated expired product to certified; validtillDate extended by 1 year'
-      : 'Reactivated expired product to certified; existing validtillDate retained';
+    const description = 'Expired product reactivated to certified';
 
     await this.productModel.updateOne(
       { _id: product._id },
@@ -123,7 +121,8 @@ export class AdminExpiredReactivateService {
       adminObjectId,
       now,
       validtillDate: update.validtillDate,
-      fromStatus,
+      validityExtended,
+      rawFromStatus: fromStatus,
       route: '/api/admin/products/expired-reactivate/product',
       auditAction: AUDIT_ACTION.EXPIRED_REACTIVATE_PRODUCT,
       description,
@@ -198,7 +197,7 @@ export class AdminExpiredReactivateService {
         urnNo: trimmedUrn,
         fromStatus: plan.fromStatus,
         toStatus: PRODUCT_STATUS_CERTIFIED,
-        reason: 'Reactivated expired product to certified via URN bulk action',
+        reason: 'Expired product on URN reactivated to certified',
         changedBy: adminObjectId,
         changedAt: now,
       })),
@@ -206,27 +205,19 @@ export class AdminExpiredReactivateService {
     );
 
     await this.auditLogService.recordMany(
-      plans.map((plan) => ({
-        occurred_at: now,
-        action: AUDIT_ACTION.EXPIRED_REACTIVATE_URN,
-        outcome: 'success' as const,
-        module: AUDIT_MODULE.PRODUCT,
-        action_type: AUDIT_ACTION_TYPE.UPDATE,
-        entity_name: String(plan.product.eoiNo),
-        description:
-          'Reactivated expired product to certified via URN bulk action',
-        performed_by: { user_id: adminUserId },
-        old_values: { productStatus: plan.fromStatus },
-        new_values: {
-          productStatus: PRODUCT_STATUS_CERTIFIED,
-          validtillDate: plan.update.validtillDate.toISOString(),
+      plans.map((plan) =>
+        this.buildExpiredToCertifiedAuditEntry({
+          occurredAt: now,
+          auditAction: AUDIT_ACTION.EXPIRED_REACTIVATE_URN,
+          adminUserId,
           urnNo: trimmedUrn,
           eoiNo: String(plan.product.eoiNo),
-        },
-        http_method: 'PATCH',
-        route: '/api/admin/products/expired-reactivate/urn',
-        status_code: 200,
-      })),
+          rawFromStatus: plan.fromStatus,
+          validityExtended: plan.validityExtended,
+          route: '/api/admin/products/expired-reactivate/urn',
+          description: 'Expired product on URN reactivated to certified',
+        }),
+      ),
     );
 
     await invalidateProductListingsCache(this.redisService, this.logger);
@@ -346,40 +337,103 @@ export class AdminExpiredReactivateService {
     adminObjectId: Types.ObjectId;
     now: Date;
     validtillDate: Date;
-    fromStatus: number;
+    validityExtended: boolean;
+    rawFromStatus: number;
     route: string;
     auditAction: string;
     description: string;
   }): Promise<void> {
+    // Operational status trail keeps the raw DB fromStatus (immutable fact).
     await this.productStatusAuditModel.create({
       productId: input.productObjectId,
       urnNo: input.urnNo,
-      fromStatus: input.fromStatus,
+      fromStatus: input.rawFromStatus,
       toStatus: PRODUCT_STATUS_CERTIFIED,
       reason: input.description,
       changedBy: input.adminObjectId,
       changedAt: input.now,
     });
 
-    await this.auditLogService.record({
-      occurred_at: input.now,
+    await this.auditLogService.record(
+      this.buildExpiredToCertifiedAuditEntry({
+        occurredAt: input.now,
+        auditAction: input.auditAction,
+        adminUserId: input.adminUserId,
+        urnNo: input.urnNo,
+        eoiNo: input.eoiNo,
+        rawFromStatus: input.rawFromStatus,
+        validityExtended: input.validityExtended,
+        route: input.route,
+        description: input.description,
+      }),
+    );
+  }
+
+  /**
+   * Business audit for Expired → Certified.
+   * Soft-expired rows (still productStatus=Certified in DB but past validtill)
+   * are recorded as Expired → Certified so history matches the workflow.
+   */
+  private buildExpiredToCertifiedAuditEntry(input: {
+    occurredAt: Date;
+    auditAction: string;
+    adminUserId: string;
+    urnNo: string;
+    eoiNo: string;
+    rawFromStatus: number;
+    validityExtended: boolean;
+    route: string;
+    description: string;
+  }) {
+    const workflowFromStatus = this.auditWorkflowFromStatus(
+      input.rawFromStatus,
+    );
+    return {
+      occurred_at: input.occurredAt,
       action: input.auditAction,
-      outcome: 'success',
+      outcome: 'success' as const,
       module: AUDIT_MODULE.PRODUCT,
       action_type: AUDIT_ACTION_TYPE.UPDATE,
       entity_name: input.eoiNo,
       description: input.description,
       performed_by: { user_id: input.adminUserId },
-      old_values: { productStatus: input.fromStatus },
+      old_values: {
+        fromStatus: workflowFromStatus,
+        productStatus: workflowFromStatus,
+      },
       new_values: {
+        toStatus: PRODUCT_STATUS_CERTIFIED,
         productStatus: PRODUCT_STATUS_CERTIFIED,
-        validtillDate: input.validtillDate.toISOString(),
         urnNo: input.urnNo,
         eoiNo: input.eoiNo,
       },
       http_method: 'PATCH',
       route: input.route,
       status_code: 200,
-    });
+      metadata: {
+        business_event_type: 'expired_to_certified',
+        validity_extended: input.validityExtended,
+        ...(input.rawFromStatus !== workflowFromStatus
+          ? { soft_expired: true }
+          : {}),
+      },
+      resource: {
+        type: 'Product',
+        id: input.eoiNo,
+        urn_no: input.urnNo,
+      },
+    };
+  }
+
+  /** Map eligibility to the Expired→Certified business transition. */
+  private auditWorkflowFromStatus(rawFromStatus: number): number {
+    if (rawFromStatus === PRODUCT_STATUS_DISCONTINUED) {
+      return PRODUCT_STATUS_DISCONTINUED;
+    }
+    // Soft-expired (Certified past validtill) is still an Expired → Certified workflow.
+    if (rawFromStatus === PRODUCT_STATUS_CERTIFIED) {
+      return PRODUCT_STATUS_DISCONTINUED;
+    }
+    return rawFromStatus;
   }
 }

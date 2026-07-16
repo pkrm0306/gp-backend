@@ -40,6 +40,7 @@ import {
   type PartnerPhoneFields,
 } from './utils/partner-phone.util';
 import { EmailService } from '../common/services/email.service';
+import { resolveAdminAlertTo } from '../notifications/utils/notification-recipient-groups.util';
 import {
   Manufacturer,
   ManufacturerDocument,
@@ -139,9 +140,7 @@ export class PartnersService {
       password: string;
     },
   ): void {
-    const adminEmail =
-      this.configService.get<string>('SMTP_ADMIN_ALERT_EMAIL')?.trim() ||
-      this.configService.get<string>('ADMIN_ALERT_EMAIL')?.trim();
+    const adminEmail = resolveAdminAlertTo(this.configService);
 
     this.emailService.sendInBackground(async () => {
       const manufacturer = await this.manufacturerModel

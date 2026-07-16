@@ -11,6 +11,7 @@ import { PlantMergeUrnPreviewService } from './plant-merge-urn-preview.service';
 import { SequenceHelper } from '../../helpers/sequence.helper';
 import { ActivityLogService } from '../../../activity-log/activity-log.service';
 import { RedisService } from '../../../common/redis/redis.service';
+import { LifecycleNotificationService } from '../../../notifications/lifecycle-notification.service';
 import { PLANT_MERGE_URN_PREVIEW_STATUS } from '../plant-merge-urn-preview.constants';
 import { PLANT_MERGE_STATUS, PLANT_MERGE_STRATEGY_URN_COPY } from '../plant-merge.constants';
 
@@ -163,6 +164,12 @@ describe('PlantMergeUrnExecuteService', () => {
         { provide: SequenceHelper, useValue: sequenceHelper },
         { provide: ActivityLogService, useValue: activityLogService },
         { provide: RedisService, useValue: redisService },
+        {
+          provide: LifecycleNotificationService,
+          useValue: {
+            notifyPlantMerged: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 

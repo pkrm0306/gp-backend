@@ -34,6 +34,7 @@ import {
   PLANT_MERGE_URN_EXECUTE_PRODUCT_SELECT,
 } from '../helpers/plant-merge-product-lookup.util';
 import { PlantMergeUrnValidationResult } from './plant-merge-urn-validation.service';
+import { LifecycleNotificationService } from '../../../notifications/lifecycle-notification.service';
 
 export type PlantMergeUrnExecutePairResult = {
   sourceEoiNo: string;
@@ -90,6 +91,7 @@ export class PlantMergeUrnExecuteService {
     private readonly sequenceHelper: SequenceHelper,
     private readonly activityLogService: ActivityLogService,
     private readonly redisService: RedisService,
+    private readonly lifecycleNotification: LifecycleNotificationService,
   ) {}
 
   async execute(
@@ -222,6 +224,20 @@ export class PlantMergeUrnExecuteService {
           logError instanceof Error ? logError.stack : String(logError),
         );
       }
+
+      this.lifecycleNotification
+        .notifyPlantMerged({
+          manufacturerId: String(context.targetProduct.manufacturerId),
+          urnNo: result.targetUrnNo,
+          eoiNo: result.targetEoiNo,
+          productName: result.productName,
+          mergeSummary: `${result.plantsCopied} plant(s) were copied from URN ${sourceUrnNo} / EOI ${result.sourceEoiNo} into URN ${result.targetUrnNo} / EOI ${result.targetEoiNo}.`,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `Plant merge notification failed for EOI ${result.sourceEoiNo}: ${(err as Error).message}`,
+          ),
+        );
     }
 
     await invalidateProductListingsCache(this.redisService, this.logger);

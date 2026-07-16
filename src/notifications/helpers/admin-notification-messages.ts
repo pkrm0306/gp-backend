@@ -35,6 +35,88 @@ export const AdminNotificationMessages = {
     };
   },
 
+  vendorRegistrationOtpSent(manufacturerName: string, email: string) {
+    return {
+      title: `Vendor Registration OTP — ${manufacturerName}`,
+      message: `Registration OTP email was sent to ${email} for ${manufacturerName}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  vendorOtpResent(manufacturerName: string, email: string) {
+    return {
+      title: `Vendor OTP Resent — ${manufacturerName}`,
+      message: `Verification OTP was resent to ${email} for ${manufacturerName}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  urnInitialApproved(
+    manufacturerName: string,
+    urnNo: string,
+    productName?: string,
+  ) {
+    const productLabel = productName?.trim() ? ` (${productName})` : '';
+    return {
+      title: `URN Initial Approval — ${manufacturerName}`,
+      message: `URN ${urnNo}${productLabel} was approved for ${manufacturerName}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  urnRegistrationRejected(
+    manufacturerName: string,
+    urnNo: string,
+    productName?: string,
+  ) {
+    const productLabel = productName?.trim() ? ` "${productName}"` : '';
+    return {
+      title: `URN Registration Rejected — ${manufacturerName}`,
+      message: `URN ${urnNo}${productLabel} registration was rejected for ${manufacturerName}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  paymentProposalReady(
+    manufacturerName: string,
+    urnNo: string,
+    paymentTypeLabel: string,
+    paymentId: string,
+  ) {
+    return {
+      title: `${paymentTypeLabel} Proposal — ${manufacturerName}`,
+      message: `${paymentTypeLabel} payment proposal (ref ${paymentId}) is ready for URN ${urnNo} — ${manufacturerName}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  plantMerged(
+    manufacturerName: string,
+    urnNo: string,
+    mergeSummary: string,
+  ) {
+    return {
+      title: `Plant Merge — ${manufacturerName}`,
+      message: `Manufacturing plant merge on URN ${urnNo} for ${manufacturerName}: ${mergeSummary}`,
+      actorName: manufacturerName,
+    };
+  },
+
+  productNameChangeDecision(
+    manufacturerName: string,
+    urnNo: string,
+    currentName: string,
+    requestedName: string,
+    decision: 'approved' | 'rejected',
+  ) {
+    const verb = decision === 'approved' ? 'approved' : 'rejected';
+    return {
+      title: `Product Name Change ${decision === 'approved' ? 'Approved' : 'Rejected'} — ${manufacturerName}`,
+      message: `Name change request on URN ${urnNo} was ${verb}: "${currentName}" → "${requestedName}"`,
+      actorName: manufacturerName,
+    };
+  },
+
   documentUploaded(manufacturerName: string) {
     return {
       title: `Document Uploaded By ${manufacturerName}`,
@@ -59,10 +141,48 @@ export const AdminNotificationMessages = {
     };
   },
 
-  urnSubmittedForReview(manufacturerName: string, urnNo: string) {
+  urnSubmittedForReview(
+    manufacturerName: string,
+    urnNo: string,
+    productNames: string[] = [],
+  ) {
+    const names = productNames
+      .map((n) => String(n ?? '').trim())
+      .filter(Boolean);
+    const productBit =
+      names.length === 0
+        ? ''
+        : names.length === 1
+          ? ` (product: "${names[0]}")`
+          : ` (${names.length} products)`;
     return {
       title: `URN Submitted For Review By ${manufacturerName}`,
-      message: `${manufacturerName} submitted URN ${urnNo} for review. Please review the portal.`,
+      message: `${manufacturerName} sent URN ${urnNo} for review${productBit}. Please review the portal.`,
+      actorName: manufacturerName,
+    };
+  },
+
+  productRegistered(
+    manufacturerName: string,
+    urnNo: string,
+    productNames: string[],
+    eoiNo?: string,
+  ) {
+    const names = productNames
+      .map((n) => String(n ?? '').trim())
+      .filter(Boolean);
+    const quoted =
+      names.length === 0
+        ? 'a product'
+        : names.length === 1
+          ? `"${names[0]}"`
+          : `${names.length} products: ${names.map((n) => `"${n}"`).join(', ')}`;
+    const eoiSuffix =
+      eoiNo?.trim() && names.length <= 1 ? ` (EOI ${eoiNo.trim()})` : '';
+    const pluralTitle = names.length > 1 ? 'Products Registered' : 'Product Registered';
+    return {
+      title: `${pluralTitle} — ${manufacturerName}`,
+      message: `${manufacturerName} registered ${quoted} on URN ${urnNo}${eoiSuffix}`,
       actorName: manufacturerName,
     };
   },

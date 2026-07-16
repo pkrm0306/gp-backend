@@ -15,6 +15,7 @@ import { VendorUser } from '../vendor-users/schemas/vendor-user.schema';
 import { AuditLookupResolver } from './audit-lookup-resolver.service';
 import { AuditStatusResolver } from './audit-status-resolver.service';
 import { AuditValueTransformer } from './audit-value-transformer.service';
+import { AuditPayloadPresenter } from './audit-payload-presenter.service';
 
 describe('AuditLogService', () => {
   let service: AuditLogService;
@@ -69,6 +70,7 @@ describe('AuditLogService', () => {
         AuditLookupResolver,
         AuditStatusResolver,
         AuditValueTransformer,
+        AuditPayloadPresenter,
         {
           provide: getModelToken(AuditLog.name),
           useValue: {

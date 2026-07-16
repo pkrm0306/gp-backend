@@ -59,7 +59,6 @@ import {
 import { UrnTabReviewService } from './urn-tab-review.service';
 import { CertificationLifecycleService } from './certification-lifecycle.service';
 import { ZohoModule } from '../zoho/zoho.module';
-import { EmailService } from '../common/services/email.service';
 import {
   ProductStatusAudit,
   ProductStatusAuditSchema,
@@ -131,7 +130,6 @@ import {
     UrnTabReviewService,
     CertificationLifecycleService,
     VendorCertificateService,
-    EmailService,
     AdminExpiredReactivateService,
     AdminRejectedRestoreService,
     AdminCertifiedRejectService,

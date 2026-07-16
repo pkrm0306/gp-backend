@@ -54,10 +54,12 @@ export class NotificationRecipientService {
       String(manufacturer.vendor_name ?? '').trim() ||
       companyName;
 
+    // Prefer manufacturer.vendor_email (canonical login) so admin email updates reach vendors.
     const email =
+      vendorEmail ||
       String(user?.email ?? '')
         .trim()
-        .toLowerCase() || vendorEmail;
+        .toLowerCase();
 
     if (!email) {
       return null;
@@ -86,9 +88,17 @@ export class NotificationRecipientService {
     const base = manufacturerId
       ? await this.resolveByManufacturerId(manufacturerId)
       : null;
+    const email =
+      base?.email ||
+      String(user.email ?? '')
+        .trim()
+        .toLowerCase();
+    if (!email) {
+      return null;
+    }
     return {
       userId: user._id.toString(),
-      email: user.email?.trim().toLowerCase(),
+      email,
       vendorName: base?.vendorName || user.name,
       companyName: base?.companyName,
     };

@@ -371,6 +371,20 @@ export const NOTIFICATION_TEMPLATES: Record<
       notifyType: 'URN_MERGED',
     },
   },
+  [NotificationTemplateCode.PLANT_MERGED]: {
+    code: NotificationTemplateCode.PLANT_MERGED,
+    email: {
+      subject: 'GreenPro — Manufacturing plant merge completed ({{urnNo}})',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>GreenPro completed a manufacturing plant merge for {{productName}} on URN <strong>{{urnNo}}</strong>{{eoiSuffix}}.</p>
+        <p>{{mergeSummary}}</p>
+        <p>Please review plant details in the vendor portal.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Manufacturing plant merge completed for {{urnNo}}. {{mergeSummary}}',
+    },
+  },
   [NotificationTemplateCode.RENEWAL_SUBMITTED]: {
     code: NotificationTemplateCode.RENEWAL_SUBMITTED,
     email: {

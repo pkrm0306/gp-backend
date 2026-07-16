@@ -104,3 +104,85 @@ describe('AuditValueTransformer serialization', () => {
     });
   });
 });
+
+describe('AuditValueTransformer supporting documents display', () => {
+  let transformer: AuditValueTransformer;
+
+  beforeEach(() => {
+    transformer = new AuditValueTransformer(new AuditStatusResolver());
+  });
+
+  it('converts manufacturing attachment flags to Yes/No labels', () => {
+    const displayed = transformer.transformDisplayValues(
+      {
+        urnNo: 'URN-1',
+        energyConservationSupportingDocuments: 1,
+        energyConsumptionDocuments: '0',
+        energyConservationSupportingDocumentsFileName:
+          'Energy Conservation Pack',
+      },
+      () => undefined,
+    );
+
+    expect(displayed).toEqual({
+      urnNo: 'URN-1',
+      energyConservationSupportingDocuments: 'Yes',
+      energyConsumptionDocuments: 'No',
+      energyConservationSupportingDocumentsFileName: 'Energy Conservation Pack',
+    });
+  });
+
+  it('converts sibling module attachment flags and change pairs', () => {
+    const displayed = transformer.transformDisplayValues(
+      {
+        wmSupportingDocuments: 1,
+        seaSupportingDocuments: 0,
+        innovationImplementationDocuments: true,
+      },
+      () => undefined,
+    );
+    expect(displayed).toEqual({
+      wmSupportingDocuments: 'Yes',
+      seaSupportingDocuments: 'No',
+      innovationImplementationDocuments: 'Yes',
+    });
+
+    const changes = transformer.transformDisplayChanges(
+      {
+        energyConservationSupportingDocuments: { before: 0, after: 1 },
+        qmSupportingDocuments: { before: '1', after: '0' },
+      },
+      () => undefined,
+    );
+    expect(changes).toEqual({
+      energyConservationSupportingDocuments: { before: 'No', after: 'Yes' },
+      qmSupportingDocuments: { before: 'Yes', after: 'No' },
+    });
+  });
+
+  it('keeps safeFileSnapshot document metadata for stored audits', () => {
+    const files = transformer.safeFileSnapshot({
+      files: [
+        {
+          fieldname: 'energyConservationSupportingDocumentsFile',
+          originalname: 'boiler-efficiency.pdf',
+          mimetype: 'application/pdf',
+          size: 2048,
+          filename: '',
+          path: '',
+        } as Express.Multer.File,
+      ],
+    });
+
+    expect(files).toEqual([
+      {
+        field: 'energyConservationSupportingDocumentsFile',
+        original_name: 'boiler-efficiency.pdf',
+        mimetype: 'application/pdf',
+        size: 2048,
+        stored_name: '',
+        storage_path: '',
+      },
+    ]);
+  });
+});

@@ -3,7 +3,11 @@ import { Document } from 'mongoose';
 
 export type NewsletterSubscriberDocument = NewsletterSubscriber & Document;
 
-@Schema({ timestamps: true })
+/**
+ * Existing Atlas/prod data uses Mongoose’s default pluralized name
+ * (`newslettersubscribers`), not `newsletter_subscribers`.
+ */
+@Schema({ timestamps: true, collection: 'newslettersubscribers' })
 export class NewsletterSubscriber {
   @Prop({
     required: true,

@@ -15,6 +15,11 @@ export interface SendNotificationRequest {
   email?: string;
   emails?: string[];
   payload?: NotificationPayload;
+  /**
+   * Optional email CC list (vendor lifecycle mails always merge ADMIN_MAIL_CC
+   * in EmailNotificationChannel even when this is omitted).
+   */
+  cc?: string | string[];
   /** Optional in-app field overrides (template defaults still apply) */
   inApp?: {
     title?: string;

@@ -103,12 +103,39 @@ describe('AdminController Banner Endpoints', () => {
       { vendorId: 'v1' },
       'b1',
       { title: 'Updated', description: 'Desc', sequenceNumber: 2, status: 'inactive' },
+      {} as any,
       undefined,
     );
 
     expect(adminServiceMock.updateBanner).toHaveBeenCalledWith('v1', 'b1', {
       title: 'Updated',
       status: 'inactive',
+      sequenceNumber: 2,
+      description: 'Desc',
+    });
+    expect(res.message).toBe('Banner updated successfully');
+  });
+
+  it('edits banner while ignoring resent existing imageUrl', async () => {
+    adminServiceMock.updateBanner.mockResolvedValue({ id: 'b1', title: 'Updated' } as any);
+
+    const res = await controller.editBanner(
+      { vendorId: 'v1' },
+      'b1',
+      {
+        title: 'Updated',
+        description: 'Desc',
+        sequenceNumber: 2,
+        status: 'active',
+        imageUrl: 'https://cdn.example.com/existing-banner.jpg',
+      },
+      {} as any,
+      undefined,
+    );
+
+    expect(adminServiceMock.updateBanner).toHaveBeenCalledWith('v1', 'b1', {
+      title: 'Updated',
+      status: 'active',
       sequenceNumber: 2,
       description: 'Desc',
     });

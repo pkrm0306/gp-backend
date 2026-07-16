@@ -59,6 +59,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { RawMaterialsSharedModule } from './common/raw-materials/raw-materials-shared.module';
 import { RenewalModule } from './renew/renewal.module';
 import { CronModule } from './cron/cron.module';
+import { EmailModule } from './common/email.module';
 import { GrievancesModule } from './grievances/grievances.module';
 import { AccountDeletionModule } from './account-deletion/account-deletion.module';
 
@@ -68,6 +69,7 @@ import { AccountDeletionModule } from './account-deletion/account-deletion.modul
       isGlobal: true,
       envFilePath: '.env',
     }),
+    EmailModule,
     RedisModule,
     NotificationsModule,
     RawMaterialsSharedModule,

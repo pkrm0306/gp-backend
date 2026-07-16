@@ -48,9 +48,6 @@ export class EmailNotificationChannel implements NotificationChannelHandler {
     }
   }
 
-  /**
-   * Reuses existing EmailService HTML builders for parity; templates used for other codes.
-   */
   private async dispatchEmail(
     template: NotificationTemplateCode,
     email: string,
@@ -83,6 +80,7 @@ export class EmailNotificationChannel implements NotificationChannelHandler {
       resolved.subject,
       resolved.html,
       resolved.text,
+      { primaryOnly: true, skipAdminCc: true },
     );
   }
 }

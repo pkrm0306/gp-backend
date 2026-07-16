@@ -13,8 +13,6 @@ import { RbacService } from './rbac.service';
 import { RbacController } from './rbac.controller';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { EmailService } from '../common/services/email.service';
-
 @Module({
   imports: [
     VendorUsersModule,
@@ -24,7 +22,7 @@ import { EmailService } from '../common/services/email.service';
       { name: VendorUser.name, schema: VendorUserSchema },
     ]),
   ],
-  providers: [RbacService, PermissionsGuard, EmailService],
+  providers: [RbacService, PermissionsGuard],
   controllers: [RbacController],
   exports: [RbacService],
 })

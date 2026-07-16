@@ -29,6 +29,8 @@ import { PublicListArticlesQueryDto } from './dto/public-list-articles-query.dto
 import { PublicListGalleryQueryDto } from './dto/public-list-gallery-query.dto';
 import { PublicListSummitsQueryDto } from '../summits/dto/public-list-summits-query.dto';
 import { SummitsService } from '../summits/summits.service';
+import { WebsiteAnalyticsService } from './website-analytics.service';
+import { WebsiteAnalyticsCollectDto } from './dto/website-analytics-collect.dto';
 
 @ApiTags('Website')
 @Controller('website')
@@ -37,6 +39,7 @@ export class WebsiteController {
     private readonly websiteService: WebsiteService,
     private readonly categoriesService: CategoriesService,
     private readonly summitsService: SummitsService,
+    private readonly websiteAnalytics: WebsiteAnalyticsService,
   ) {}
 
   @Get('public/manufacturers')
@@ -326,6 +329,21 @@ export class WebsiteController {
     @Body() dto: PublicManufacturerCategoriesDto,
   ) {
     return this.websiteService.getCategoriesByManufacturerPublic(dto);
+  }
+
+  @Post('analytics/collect')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary: 'Collect public website analytics events',
+    description:
+      'Accepts batched page_view and sign_up events from the public website. ' +
+      'Used to power the admin Visitor Analytics dashboard.',
+  })
+  @ApiBody({ type: WebsiteAnalyticsCollectDto })
+  @ApiResponse({ status: 202, description: 'Events accepted' })
+  async collectAnalytics(@Body() dto: WebsiteAnalyticsCollectDto) {
+    const data = await this.websiteAnalytics.collect(dto);
+    return { message: 'Analytics recorded', data };
   }
 
   @Post('newsletter')

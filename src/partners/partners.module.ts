@@ -11,8 +11,6 @@ import {
   ManufacturerSchema,
 } from '../manufacturers/schemas/manufacturer.schema';
 import { GlobalPhoneUniquenessModule } from '../common/services/global-phone-uniqueness.module';
-import { EmailService } from '../common/services/email.service';
-
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -22,7 +20,7 @@ import { EmailService } from '../common/services/email.service';
     GlobalPhoneUniquenessModule,
   ],
   controllers: [PartnersController],
-  providers: [PartnersService, EmailService],
+  providers: [PartnersService],
   exports: [PartnersService],
 })
 export class PartnersModule {}

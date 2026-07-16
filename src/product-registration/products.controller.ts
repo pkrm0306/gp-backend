@@ -12,6 +12,7 @@ import {
   UploadedFile,
   UseInterceptors,
   StreamableFile,
+  Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -745,24 +746,36 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Download all plant certificates for the vendor portfolio',
     description:
-      'Vendor-only. Merges one certificate per manufacturing plant across **all** certified EOIs (e.g. 52 EOIs / 189 plants → one PDF with 189 pages, or ZIP with separate files).',
+      'Vendor-only. Always returns a ZIP with one PDF per manufacturing plant across **active** certified EOIs ' +
+      '(productStatus = 2, not past validtillDate) — same scope as the vendor certified list. ' +
+      'Merged PDF is not used for portfolio downloads (it truncates around ~200 pages).',
   })
-  @ApiResponse({ status: 200, description: 'Merged certificate PDF or ZIP download' })
+  @ApiResponse({ status: 200, description: 'ZIP of plant certificate PDFs' })
   async downloadVendorAllCertifiedCertificates(
     @CurrentUser() user: { manufacturerId?: string },
-    @Query('format') format?: 'merged' | 'zip',
+    @Query('format') _format?: 'merged' | 'zip',
+    @Res({ passthrough: true }) res?: { setHeader: (k: string, v: string) => void },
   ): Promise<StreamableFile> {
     if (!user?.manufacturerId) {
       throw new BadRequestException('Manufacturer ID not found in token');
     }
-    const resolvedFormat = format === 'zip' ? 'zip' : 'merged';
     const file =
       await this.vendorCertificateService.downloadVendorAllCertifiedCertificates(
         user.manufacturerId,
-        resolvedFormat,
+        'zip',
       );
+    if (res) {
+      if (file.certificateCount != null) {
+        res.setHeader('X-GreenPro-Certificate-Count', String(file.certificateCount));
+      }
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        'Content-Disposition, Content-Type, X-GreenPro-Certificate-Count',
+      );
+    }
     return new StreamableFile(file.buffer, {
-      type: file.contentType,
+      type: 'application/zip',
       disposition: `attachment; filename="${file.fileName}"`,
     });
   }

@@ -86,6 +86,7 @@ import {
 import { BUSINESS_VERTICALS } from '../vendor-users/schemas/vendor-user.schema';
 import {
   GALLERY_MAX_IMAGES,
+  GALLERY_TYPE_OPTIONS,
   GALLERY_TYPES,
   GalleryType,
 } from '../gallery/schemas/gallery.schema';
@@ -771,8 +772,11 @@ export class AdminController {
       training: 'Training & Workshops',
       workshops: 'Training & Workshops',
       workshop: 'Training & Workshops',
+      'site visits': 'Site Visits',
+      'site visit': 'Site Visits',
       'site audits': 'Site Visits',
       'site audit': 'Site Visits',
+      recognition: 'Recognition',
       awards: 'Recognition',
       award: 'Recognition',
       summits: 'Recognition',
@@ -1133,7 +1137,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit banner',
     description:
-      'Edits a banner for the logged-in vendor. New image: multipart **image**, **bannerImage**, **banner_image**, or **file**. New URL: **imageUrl**. Server sets **imageSource** only when the image changes.',
+      'Edits a banner for the logged-in vendor. To replace the image, upload multipart **image**, **bannerImage**, **banner_image**, or **file**. Existing `imageUrl` / `videoUrl` values resent by the form are ignored (image/video kept as-is).',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id (from banner list)' })
   @ApiConsumes('multipart/form-data')
@@ -1146,7 +1150,11 @@ export class AdminController {
         bannerImage: { type: 'string', format: 'binary' },
         banner_image: { type: 'string', format: 'binary' },
         file: { type: 'string', format: 'binary' },
-        imageUrl: { type: 'string', description: 'Optional if image uploaded' },
+        imageUrl: {
+          type: 'string',
+          description:
+            'Ignored on edit without a new file upload (keeps the current image).',
+        },
         title: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
         sequenceNumber: { type: 'number', example: 1 },
@@ -1155,7 +1163,7 @@ export class AdminController {
           type: 'string',
           enum: ['binary_upload', 'manual_url'],
           description:
-            'Optional; when `image` or `imageUrl` is sent, server updates stored image source.',
+            'Optional; updated only when a new image file is uploaded.',
         },
       },
     },
@@ -1174,25 +1182,15 @@ export class AdminController {
 
     const uploadedFile = pickBannerImageFile(files);
     const uploadedVideo = pickBannerVideoFile(files);
-    if (String(body.imageUrl ?? '').trim() && !uploadedFile) {
-      throw new BadRequestException(
-        'Banner image must be uploaded from your device. Image URLs are not accepted.',
-      );
-    }
-    if (String(body.videoUrl ?? body.video_url ?? '').trim()) {
-      throw new BadRequestException(
-        'Banner video must be uploaded from your device. Video URLs are not accepted.',
-      );
-    }
     const clearVideo = parseBannerClearVideoFlag(body);
 
+    // Edit forms often re-send the current stored image/video URL. Keep the
+    // existing media unless a new multipart file is uploaded.
     const dto = plainToClass(EditBannerDto, {
-      imageUrl: body.imageUrl,
       title: body.title ?? body.heading,
       status: body.status,
       sequenceNumber: body.sequenceNumber,
       description: body.description,
-      imageSource: body.imageSource,
       videoDurationSeconds: body.videoDurationSeconds,
     });
 
@@ -1208,7 +1206,6 @@ export class AdminController {
       !uploadedFile &&
       !uploadedVideo &&
       !clearVideo &&
-      dto.imageUrl === undefined &&
       dto.title === undefined &&
       dto.status === undefined &&
       dto.sequenceNumber === undefined &&
@@ -1219,24 +1216,13 @@ export class AdminController {
 
     const imageUrl = uploadedFile
       ? (await uploadFile(uploadedFile, 'banners')).fileUrl
-      : dto.imageUrl;
+      : undefined;
     const videoUrl = await resolveUploadedBannerVideoUrl(
       uploadedVideo,
       mergeBannerVideoDurationBody(req.body, body, dto),
     );
-    let imageSource: 'binary_upload' | 'manual_url' | undefined;
-    if (uploadedFile) {
-      imageSource = 'binary_upload';
-    } else if (
-      dto.imageUrl !== undefined &&
-      dto.imageUrl !== null &&
-      String(dto.imageUrl).trim() !== ''
-    ) {
-      imageSource = 'manual_url';
-    }
     const data = await this.adminService.updateBanner(vendorScope, id, {
-      ...(imageUrl ? { imageUrl } : {}),
-      ...(imageSource !== undefined ? { imageSource } : {}),
+      ...(imageUrl ? { imageUrl, imageSource: 'binary_upload' as const } : {}),
       ...(clearVideo ? { clearVideo: true } : {}),
       ...(videoUrl ? { videoUrl, videoSource: 'binary_upload' as const } : {}),
       ...(dto.title !== undefined ? { title: dto.title } : {}),
@@ -1618,7 +1604,8 @@ export class AdminController {
   @ApiOperation({
     summary: 'Create gallery item',
     description:
-      'Creates a gallery item. Fields accepted: title, description, date, galleryType, image.',
+      'Creates a gallery item. Fields accepted: title, description, date, galleryType, image. ' +
+      'galleryType dropdown must only use: Training & Workshops, Site Visits, Recognition.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -1731,7 +1718,8 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit gallery item',
     description:
-      'Edits a gallery item by id. Fields accepted: title, description, date, galleryType, image.',
+      'Edits a gallery item by id. Fields accepted: title, description, date, galleryType, image. ' +
+      'galleryType dropdown must only use: Training & Workshops, Site Visits, Recognition.',
   })
   @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
   @ApiConsumes('multipart/form-data')
@@ -1937,6 +1925,41 @@ export class AdminController {
       message: 'Events retrieved successfully',
       pagination: result.pagination,
       data: result.data,
+    };
+  }
+
+  @Get('gallery/types')
+  @Permissions(PERMISSIONS.EVENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Gallery type options for add/edit dropdown',
+    description:
+      'Returns only the gallery tabs allowed in admin add/edit: Training & Workshops, Site Visits, Recognition.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Gallery type options',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              value: { type: 'string', enum: [...GALLERY_TYPES] },
+              label: { type: 'string', enum: [...GALLERY_TYPES] },
+            },
+          },
+        },
+      },
+    },
+  })
+  async listGalleryTypes() {
+    return {
+      message: 'Gallery types retrieved successfully',
+      data: GALLERY_TYPE_OPTIONS,
     };
   }
 

@@ -11,6 +11,13 @@ import {
   AuditPrimitiveSnapshot,
   AuditValueTransformer,
 } from './audit-value-transformer.service';
+import { RENEWAL_URN_STATUS } from '../renew/constants/renewal-urn-status.constants';
+import {
+  buildUrnTabReviewAuditValues,
+  DOCUMENT_REVIEW_BUSINESS_EVENT,
+  formatUrnTabReviewAuditDescription,
+  type DocumentReviewDecision,
+} from './audit-document-review.util';
 
 type AuditActor = {
   user_id?: string;
@@ -31,6 +38,7 @@ type AuditBusinessEventSummary = {
   action_type?: string;
   entity_name?: string;
   description?: string;
+  old_values?: AuditPrimitiveSnapshot;
   new_values?: AuditPrimitiveSnapshot;
   resource?: AuditResource;
   metadata?: Record<string, unknown>;
@@ -89,6 +97,9 @@ export class AuditEntryFactory {
     if (params.outcome !== 'success') {
       return true;
     }
+    if (this.isRenewUrnStatusNoop(params.req, params.pathNorm)) {
+      return false;
+    }
     const bulk = this.rawMaterialsBulkRow(
       params.method,
       params.pathNorm,
@@ -136,19 +147,28 @@ export class AuditEntryFactory {
     );
     const bodySnapshot = this.valueTransformer.safeBodySnapshot(body);
     const responseSnapshot =
-      outcome === 'success' && ['PATCH', 'PUT'].includes(method.toUpperCase())
+      outcome === 'success' &&
+      this.shouldCaptureResponseSnapshot(method, pathNorm)
         ? this.valueTransformer.safeResponseSnapshot(req.__auditResponseBody)
         : undefined;
     const fileSnapshot = this.valueTransformer.safeFileSnapshot(req);
     const explicitNewValues = req.__auditNewValues;
-    const rawNewValues =
-      businessEvent?.new_values ??
-      explicitNewValues ??
-      responseSnapshot ??
-      this.valueTransformer.mergeSnapshots(friendly.new_values, bodySnapshot);
+    const mergedRequestValues = this.valueTransformer.mergeSnapshots(
+      friendly.new_values,
+      bodySnapshot,
+    );
+    const rawNewValues = this.resolveNewValuesSnapshot({
+      pathNorm,
+      businessNewValues: businessEvent?.new_values,
+      explicitNewValues,
+      responseSnapshot,
+      mergedRequestValues,
+    });
     const newValues = this.valueTransformer.sanitizeSnapshot(rawNewValues);
     const oldValues = this.valueTransformer.sanitizeSnapshot(
-      req.__auditOldValues ?? friendly.old_values,
+      businessEvent?.old_values ??
+        req.__auditOldValues ??
+        friendly.old_values,
     );
     const metadata: Record<string, unknown> = {
       duration_ms: Date.now() - startedAt,
@@ -237,6 +257,9 @@ export class AuditEntryFactory {
     ) {
       return AUDIT_ACTION.PRODUCT_URN_STATUS_UPDATED;
     }
+    if (m === 'PATCH' && /\/urn-tab-review$/i.test(pathNorm)) {
+      return AUDIT_ACTION.URN_TAB_REVIEW_DECISION;
+    }
     if (m === 'POST' && pathNorm.endsWith('/activity-log')) {
       return AUDIT_ACTION.ACTIVITY_LOG_CREATED;
     }
@@ -250,6 +273,16 @@ export class AuditEntryFactory {
     const m = method.toUpperCase();
     const routes: Array<{ method: string; regex: RegExp }> = [
       { method: 'POST', regex: /^\/auth\/refresh$/i },
+      // Domain audits are written by CertificationExpiryService (avoid duplicate HTTP rows).
+      {
+        method: 'POST',
+        regex: /\/api\/cron\/certification-expiry\/deactivation-mail$/i,
+      },
+      // Domain audits are written by AdminExpiredReactivateService.
+      {
+        method: 'PATCH',
+        regex: /\/api\/admin\/products\/expired-reactivate\/(?:product|urn)$/i,
+      },
       { method: '*', regex: /^\/website(?:\/|$)/i },
     ];
     return routes.some(
@@ -271,8 +304,171 @@ export class AuditEntryFactory {
     return (
       this.rawMaterialsBulkSummary(method, pathNorm, req) ??
       this.vendorProposalSummary(method, pathNorm, req) ??
+      this.urnTabReviewSummary(method, pathNorm, req) ??
+      this.renewalPaymentSummary(method, pathNorm, req) ??
+      this.finalReviewSubmitSummary(method, pathNorm, req) ??
+      this.renewalDocumentSummary(method, pathNorm, req) ??
+      this.certificationPaymentSummary(method, pathNorm, req) ??
       this.productContentOrUploadSummary(method, pathNorm, req)
     );
+  }
+
+  private shouldCaptureResponseSnapshot(
+    method: string,
+    pathNorm: string,
+  ): boolean {
+    const m = method.toUpperCase();
+    if (m === 'PATCH' || m === 'PUT') {
+      return true;
+    }
+    if (m === 'POST' || m === 'DELETE') {
+      return this.isDocumentMutationPath(pathNorm);
+    }
+    return false;
+  }
+
+  private isDocumentMutationPath(pathNorm: string): boolean {
+    return (
+      /\/renew\/(?:documents|process-)/i.test(pathNorm) ||
+      /\/process-(?:manufacturing|waste-management|life-cycle-approach|product-stewardship|innovation)/i.test(
+        pathNorm,
+      )
+    );
+  }
+
+  private resolveNewValuesSnapshot(params: {
+    pathNorm: string;
+    businessNewValues?: Record<string, unknown>;
+    explicitNewValues?: Record<string, unknown>;
+    responseSnapshot?: Record<string, unknown>;
+    mergedRequestValues?: Record<string, unknown>;
+  }): Record<string, unknown> | undefined {
+    if (params.businessNewValues) {
+      return params.businessNewValues;
+    }
+    if (params.explicitNewValues) {
+      return params.explicitNewValues;
+    }
+    // Document mutations: merge request + response so file names from either side survive.
+    if (this.isDocumentMutationPath(params.pathNorm)) {
+      return (
+        this.valueTransformer.mergeSnapshots(
+          params.mergedRequestValues,
+          params.responseSnapshot,
+        ) ??
+        params.responseSnapshot ??
+        params.mergedRequestValues
+      );
+    }
+    // Legacy: prefer response over body for general PATCH/PUT.
+    return params.responseSnapshot ?? params.mergedRequestValues;
+  }
+
+  /**
+   * Renewal document delete + product-performance save business summaries.
+   */
+  private renewalDocumentSummary(
+    method: string,
+    pathNorm: string,
+    req: AuditableRequest,
+  ): AuditBusinessEventSummary | undefined {
+    const m = method.toUpperCase();
+    const response = this.responseRoot(req.__auditResponseBody);
+    const body = this.bodyObj(req);
+    const query = this.queryObj(req);
+
+    if (m === 'DELETE' && /\/renew\/documents\/[^/]+$/i.test(pathNorm)) {
+      const urnNo =
+        this.stringField(response, 'urnNo') ??
+        this.stringField(query, 'urnNo');
+      const sectionKey =
+        this.stringField(response, 'sectionKey') ??
+        this.stringField(query, 'sectionKey');
+      const fileName =
+        this.stringField(response, 'fileName') ??
+        this.stringField(response, 'documentOriginalName');
+      const documentTag = this.stringField(response, 'documentTag');
+      const documentId =
+        this.numberField(response, 'documentId') ??
+        Number(pathNorm.split('/').filter(Boolean).pop());
+      return {
+        auditEventId: `renewal-document:delete:${this.hashId(
+          `${(urnNo || 'unknown').toLowerCase()}:${documentId || 'unknown'}`,
+        )}`,
+        module: AUDIT_MODULE.DOCUMENT,
+        action_type: AUDIT_ACTION_TYPE.DELETE,
+        entity_name: urnNo,
+        description: 'Renewal document deleted',
+        new_values: {
+          ...(urnNo ? { urnNo } : {}),
+          ...(sectionKey ? { sectionKey } : {}),
+          ...(documentTag ? { documentTag } : {}),
+          ...(fileName ? { fileName } : {}),
+          documentStatus: 'deleted',
+        },
+        resource: urnNo
+          ? { type: 'Document', id: String(documentId || urnNo), urn_no: urnNo }
+          : undefined,
+        metadata: {
+          business_event_type: 'renewal_document',
+          renewal_document_event: 'delete',
+        },
+      };
+    }
+
+    if (
+      m === 'POST' &&
+      /\/renew\/process-product-performance$/i.test(pathNorm)
+    ) {
+      const urnNo =
+        this.stringField(response, 'urnNo') ?? this.stringField(body, 'urnNo');
+      const cycleId =
+        this.stringField(response, 'renewalCycleId') ??
+        this.stringField(body, 'renewalCycleId') ??
+        'unknown';
+      const files = this.valueTransformer.safeFileSnapshot(req) ?? [];
+      const testReports =
+        response?.['testReports'] ??
+        body?.['testReports'] ??
+        body?.['test_reports'];
+      const hasUploads = files.length > 0;
+      return {
+        auditEventId: `renewal-document:product-performance:${this.hashId(
+          `${(urnNo || 'unknown').toLowerCase()}:${cycleId.toLowerCase()}:${hasUploads ? 'upload' : 'update'}`,
+        )}`,
+        module: AUDIT_MODULE.PROCESS,
+        action_type: hasUploads
+          ? AUDIT_ACTION_TYPE.CREATE
+          : AUDIT_ACTION_TYPE.UPDATE,
+        entity_name: urnNo,
+        description: 'Renewal product performance saved',
+        new_values: {
+          ...(urnNo ? { urnNo } : {}),
+          ...(Array.isArray(testReports) && testReports.length
+            ? { testReports }
+            : {}),
+        },
+        resource: urnNo
+          ? { type: 'Process', id: urnNo, urn_no: urnNo }
+          : undefined,
+        metadata: {
+          business_event_type: 'renewal_document',
+          renewal_document_event: hasUploads ? 'upload' : 'update',
+        },
+      };
+    }
+
+    return undefined;
+  }
+
+  private queryObj(
+    req: AuditableRequest,
+  ): Record<string, unknown> | undefined {
+    const q = (req as { query?: unknown }).query;
+    if (!q || typeof q !== 'object' || Array.isArray(q)) {
+      return undefined;
+    }
+    return q as Record<string, unknown>;
   }
 
   private rawMaterialsBulkSummary(
@@ -358,21 +554,675 @@ export class AuditEntryFactory {
         statusNum === 2
           ? 'Proposal rejected by vendor'
           : 'Proposal approved by vendor',
+      old_values: {
+        urnNo: decodedUrn,
+        paymentType,
+        vendorProposalApprovalStatus: 0,
+        decision: 'pending',
+      },
       new_values: {
         urnNo: decodedUrn,
         paymentType,
         vendorProposalApprovalStatus: statusNum,
+        decision: statusNum === 2 ? 'rejected' : 'approved',
         ...(remarks ? { proposalRejectionRemarks: remarks } : {}),
       },
       resource: decodedUrn
         ? { type: 'Proposal', id: decodedUrn, urn_no: decodedUrn }
         : undefined,
       metadata: {
-        business_event_type: 'vendor_proposal_review',
+        business_event_type: DOCUMENT_REVIEW_BUSINESS_EVENT.VENDOR_PROPOSAL,
         consolidated: true,
         related_domain_events: ['payment_update', 'activity_timeline_entry'],
       },
     };
+  }
+
+  /**
+   * Admin approve/reject of vendor-uploaded process / raw-material sections
+   * (PATCH /api/admin/products/urn-tab-review). Shared by certification + renewal.
+   */
+  private urnTabReviewSummary(
+    method: string,
+    pathNorm: string,
+    req: AuditableRequest,
+  ): AuditBusinessEventSummary | undefined {
+    if (
+      method.toUpperCase() !== 'PATCH' ||
+      !/\/urn-tab-review$/i.test(pathNorm)
+    ) {
+      return undefined;
+    }
+    const body = this.bodyObj(req);
+    const response = this.responseRoot(req.__auditResponseBody);
+    const decisionRaw = (
+      this.stringField(body, 'decision') ??
+      this.stringField(response, 'decision') ??
+      ''
+    ).toLowerCase();
+    if (decisionRaw !== 'approved' && decisionRaw !== 'rejected') {
+      return undefined;
+    }
+    const decision = decisionRaw as DocumentReviewDecision;
+    const urnNo =
+      this.stringField(body, 'urnNo') ?? this.stringField(response, 'urnNo');
+    const tabKey =
+      this.stringField(body, 'tabKey') ??
+      this.stringField(response, 'tabKey') ??
+      this.stringField(
+        (response?.['updatedReview'] as Record<string, unknown> | undefined) ??
+          undefined,
+        'tabKey',
+      );
+    if (!tabKey) {
+      return undefined;
+    }
+    const stepId =
+      this.numberField(body, 'stepId') ??
+      this.numberField(response, 'stepId') ??
+      this.numberField(
+        (response?.['updatedReview'] as Record<string, unknown> | undefined) ??
+          undefined,
+        'stepId',
+      );
+    const rejectionRemarks =
+      this.stringField(body, 'rejectionRemarks') ??
+      this.stringField(
+        (response?.['updatedReview'] as Record<string, unknown> | undefined) ??
+          undefined,
+        'rejectionRemarks',
+      );
+    const renewalCycleId =
+      this.stringField(body, 'renewalCycleId') ??
+      this.stringField(response, 'renewalCycleId');
+    const built = buildUrnTabReviewAuditValues({
+      urnNo,
+      tabKey,
+      stepId: stepId ?? null,
+      decision,
+      rejectionRemarks,
+      renewalCycleId,
+    });
+    const eventKey = [
+      (urnNo || 'unknown').toLowerCase(),
+      tabKey.toLowerCase(),
+      stepId != null ? String(stepId) : '0',
+      decision,
+      (renewalCycleId || 'cert').toLowerCase(),
+    ].join(':');
+
+    return {
+      auditEventId: `urn-tab-review:${decision}:${this.hashId(eventKey)}`,
+      module: AUDIT_MODULE.CERTIFICATION,
+      action_type:
+        decision === 'approved'
+          ? AUDIT_ACTION_TYPE.APPROVE
+          : AUDIT_ACTION_TYPE.REJECT,
+      entity_name: urnNo,
+      description: formatUrnTabReviewAuditDescription(
+        tabKey,
+        decision,
+        stepId ?? null,
+      ),
+      old_values: built.old_values,
+      new_values: built.new_values,
+      resource: urnNo
+        ? { type: 'UrnTabReview', id: urnNo, urn_no: urnNo }
+        : undefined,
+      metadata: {
+        business_event_type: DOCUMENT_REVIEW_BUSINESS_EVENT.URN_TAB_REVIEW,
+        consolidated: true,
+        document_review_workflow: built.workflow,
+        related_domain_events: ['urn_tab_review', 'activity_timeline_entry'],
+      },
+    };
+  }
+
+  /**
+   * Admin "Submit for Final Review":
+   * - Certification: PATCH /api/admin/products/urn-status → updateStatusTo 6
+   * - Renewal: PATCH /renew/urn-status → updateStatusTo 17 (may complete to 11)
+   */
+  private finalReviewSubmitSummary(
+    method: string,
+    pathNorm: string,
+    req: AuditableRequest,
+  ): AuditBusinessEventSummary | undefined {
+    const m = method.toUpperCase();
+    if (m !== 'PATCH') {
+      return undefined;
+    }
+    const body = this.bodyObj(req);
+    const response = this.responseRoot(req.__auditResponseBody);
+    const typeStr =
+      this.stringField(body, 'updateStatusType') ??
+      this.stringField(response, 'updateStatusType');
+    if (typeStr && typeStr !== 'urn_status') {
+      return undefined;
+    }
+    const targetStatus = this.numberField(body, 'updateStatusTo');
+
+    const isCertFinalReview =
+      (pathNorm.endsWith('/api/admin/products/urn-status') ||
+        /\/admin\/urn\/[^/]+\/status$/i.test(pathNorm) ||
+        pathNorm.endsWith('/products/urn-status')) &&
+      targetStatus === 6;
+
+    const isRenewFinalReview =
+      /\/renew\/urn-status$/i.test(pathNorm) &&
+      targetStatus === RENEWAL_URN_STATUS.FINAL_VERIFICATION_PENDING;
+
+    if (!isCertFinalReview && !isRenewFinalReview) {
+      return undefined;
+    }
+
+    const urnNo =
+      this.stringField(response, 'urnNo') ??
+      this.stringField(body, 'urnNo') ??
+      (/\/admin\/urn\/([^/]+)\/status$/i.exec(pathNorm)?.[1]
+        ? decodeURIComponent(
+            /\/admin\/urn\/([^/]+)\/status$/i.exec(pathNorm)![1],
+          )
+        : undefined);
+
+    const resultingUrnStatus =
+      this.numberField(response, 'urnStatus') ?? targetStatus ?? undefined;
+    const previousUrnStatus =
+      this.numberField(response, 'previousUrnStatus') ??
+      this.numberField(body, 'previousUrnStatus');
+    const productRenewStatus = this.numberField(response, 'productRenewStatus');
+    const renewedDate =
+      this.stringField(response, 'renewedDate') ??
+      (response?.['renewedDate'] instanceof Date
+        ? (response['renewedDate'] as Date).toISOString()
+        : undefined);
+    const validtillDate =
+      this.stringField(response, 'validtillDate') ??
+      (response?.['validtillDate'] instanceof Date
+        ? (response['validtillDate'] as Date).toISOString()
+        : undefined);
+
+    const workflow = isRenewFinalReview ? 'renewal' : 'certification';
+    const urnKey = (urnNo || 'unknown').toLowerCase();
+    const auditEventId = `final-review-submit:${workflow}:${this.hashId(
+      `${urnKey}:${resultingUrnStatus ?? targetStatus ?? 'unknown'}`,
+    )}`;
+
+    return {
+      auditEventId,
+      module: AUDIT_MODULE.CERTIFICATION,
+      action_type: AUDIT_ACTION_TYPE.UPDATE,
+      entity_name: urnNo,
+      description: 'Submitted for final review',
+      old_values: {
+        ...(urnNo ? { urnNo } : {}),
+        ...(previousUrnStatus != null ? { previousUrnStatus } : {}),
+      },
+      new_values: {
+        ...(urnNo ? { urnNo } : {}),
+        workflow,
+        ...(resultingUrnStatus != null ? { urnStatus: resultingUrnStatus } : {}),
+        ...(productRenewStatus != null ? { productRenewStatus } : {}),
+        ...(renewedDate ? { renewedDate } : {}),
+        ...(validtillDate ? { validtillDate } : {}),
+      },
+      resource: urnNo
+        ? { type: 'URN', id: urnNo, urn_no: urnNo }
+        : undefined,
+      metadata: {
+        business_event_type: 'final_review_submit',
+        final_review_workflow: workflow,
+        consolidated: true,
+      },
+    };
+  }
+
+  /**
+   * Consolidate renew payment approve/reject across dual HTTP entry points:
+   * PATCH /payments/:urn and PATCH /renew/urn-status (13→14).
+   * Successes share one deterministic audit_event_id so concurrent/dual calls
+   * insert a single row (unique index). Failures keep per-request UUIDs so
+   * a later successful retry still records.
+   */
+  private renewalPaymentSummary(
+    method: string,
+    pathNorm: string,
+    req: AuditableRequest,
+  ): AuditBusinessEventSummary | undefined {
+    const m = method.toUpperCase();
+    const body = this.bodyObj(req);
+
+    if (m === 'PATCH' && /^\/payments\/[^/]+$/i.test(pathNorm)) {
+      const paymentType = (
+        this.stringField(body, 'paymentType') ??
+        this.stringField(body, 'payment_type') ??
+        ''
+      ).toLowerCase();
+      if (paymentType !== 'renew') {
+        return undefined;
+      }
+      const paymentStatus = this.numberField(body, 'paymentStatus');
+      if (paymentStatus !== 2 && paymentStatus !== 3) {
+        return undefined;
+      }
+      const urnSegment = pathNorm.split('/').filter(Boolean)[1];
+      const urnNo = urnSegment ? decodeURIComponent(urnSegment) : undefined;
+      const cycleId =
+        this.stringField(body, 'renewalCycleId') ??
+        this.stringField(body, 'renewal_cycle_id') ??
+        'unknown';
+      const decision = paymentStatus === 2 ? 'approve' : 'reject';
+      const remarks =
+        decision === 'reject'
+          ? this.stringField(body, 'paymentRejectionRemarks') ??
+            this.stringField(body, 'adminPaymentRejectionRemarks')
+          : undefined;
+      return this.buildRenewalPaymentAuditSummary({
+        urnNo,
+        cycleId,
+        decision,
+        paymentStatus,
+        remarks,
+        source: 'payments_patch',
+      });
+    }
+
+    if (m === 'PATCH' && /\/renew\/urn-status$/i.test(pathNorm)) {
+      const targetStatus = this.numberField(body, 'updateStatusTo');
+      if (targetStatus !== RENEWAL_URN_STATUS.PAYMENT_APPROVED) {
+        return undefined;
+      }
+      const urnNo = this.stringField(body, 'urnNo');
+      const cycleId = this.stringField(body, 'renewalCycleId') ?? 'unknown';
+      return this.buildRenewalPaymentAuditSummary({
+        urnNo,
+        cycleId,
+        decision: 'approve',
+        paymentStatus: 2,
+        urnStatus: RENEWAL_URN_STATUS.PAYMENT_APPROVED,
+        source: 'renew_urn_status',
+      });
+    }
+
+    return undefined;
+  }
+
+  private buildRenewalPaymentAuditSummary(params: {
+    urnNo?: string;
+    cycleId: string;
+    decision: 'approve' | 'reject';
+    paymentStatus: number;
+    urnStatus?: number;
+    remarks?: string;
+    source: 'payments_patch' | 'renew_urn_status';
+  }): AuditBusinessEventSummary {
+    const urnDisplay = params.urnNo?.trim() || undefined;
+    // Normalize so /payments/:urn (path-normalized) and body.urnNo hash identically.
+    const urnKey = (urnDisplay || 'unknown').toLowerCase();
+    const cycleKey = params.cycleId.trim().toLowerCase() || 'unknown';
+    const auditEventId = `renewal-payment:${params.decision}:${this.hashId(
+      `${urnKey}:${cycleKey}:${params.decision}`,
+    )}`;
+    const remarks = params.remarks?.trim() || undefined;
+    return {
+      auditEventId,
+      module: AUDIT_MODULE.PAYMENT,
+      action_type:
+        params.decision === 'approve'
+          ? AUDIT_ACTION_TYPE.APPROVE
+          : AUDIT_ACTION_TYPE.REJECT,
+      entity_name: urnDisplay,
+      description:
+        params.decision === 'approve'
+          ? 'Renewal payment approved'
+          : 'Renewal payment rejected',
+      new_values: {
+        urnNo: urnDisplay,
+        paymentType: 'renew',
+        paymentStatus: params.paymentStatus,
+        renewalCycleId: params.cycleId,
+        ...(params.urnStatus != null ? { urnStatus: params.urnStatus } : {}),
+        ...(params.decision === 'reject' && remarks
+          ? { paymentRejectionRemarks: remarks }
+          : {}),
+      },
+      resource: urnDisplay
+        ? { type: 'Payment', id: urnDisplay, urn_no: urnDisplay }
+        : undefined,
+      metadata: {
+        business_event_type: 'renewal_payment_decision',
+        consolidated: true,
+        renewal_payment_decision: params.decision,
+        audit_source: params.source,
+        related_domain_events: [
+          'payment_update',
+          'renew_urn_status',
+          'renewal_orchestration',
+        ],
+      },
+    };
+  }
+
+  /**
+   * Certification fee assign / pay / approve / reject for multi-product URNs.
+   * Prefer allowlisted business snapshots (selected/rejected product IDs) over
+   * raw payment body/response payloads.
+   */
+  private certificationPaymentSummary(
+    method: string,
+    pathNorm: string,
+    req: AuditableRequest,
+  ): AuditBusinessEventSummary | undefined {
+    const m = method.toUpperCase();
+    const body = this.bodyObj(req);
+    const response = this.responseRoot(req.__auditResponseBody);
+
+    if (m === 'POST' && pathNorm.endsWith('/payments')) {
+      const paymentType = (
+        this.stringField(body, 'paymentType') ??
+        this.stringField(response, 'paymentType') ??
+        ''
+      ).toLowerCase();
+      if (paymentType !== 'certification') {
+        return undefined;
+      }
+      return this.buildCertificationFeeAssignSummary({ body, response });
+    }
+
+    if (m === 'PATCH' && /^\/payments\/[^/]+$/i.test(pathNorm)) {
+      const paymentType = (
+        this.stringField(body, 'paymentType') ??
+        this.stringField(body, 'payment_type') ??
+        ''
+      ).toLowerCase();
+      if (paymentType !== 'certification') {
+        return undefined;
+      }
+      const paymentStatus =
+        this.numberField(body, 'paymentStatus') ??
+        this.numberField(response, 'paymentStatus');
+      if (
+        paymentStatus !== 1 &&
+        paymentStatus !== 2 &&
+        paymentStatus !== 3
+      ) {
+        return undefined;
+      }
+      const urnSegment = pathNorm.split('/').filter(Boolean)[1];
+      const urnNo =
+        this.stringField(body, 'urnNo') ??
+        this.stringField(response, 'urnNo') ??
+        (urnSegment ? decodeURIComponent(urnSegment) : undefined);
+      return this.buildCertificationFeePaymentSummary({
+        urnNo,
+        paymentStatus,
+        body,
+        response,
+      });
+    }
+
+    return undefined;
+  }
+
+  private buildCertificationFeeAssignSummary(params: {
+    body?: Record<string, unknown>;
+    response?: Record<string, unknown>;
+  }): AuditBusinessEventSummary {
+    const { body, response } = params;
+    const urnNo =
+      this.stringField(body, 'urnNo') ?? this.stringField(response, 'urnNo');
+    const productsToBeCertified =
+      this.stringField(body, 'productsToBeCertified') ??
+      this.stringField(response, 'productsToBeCertified');
+    const selectedProductIds = this.productIdList(
+      response?.['selectedProductIds'] ?? body?.['selectedProductIds'],
+      productsToBeCertified,
+    );
+    const rejectedProductIds = this.productIdList(
+      response?.['rejectedProductIds'] ?? body?.['rejectedProductIds'],
+    );
+    const hasPartialReject = rejectedProductIds.length > 0;
+    const urnKey = (urnNo || 'unknown').toLowerCase();
+    const selectionKey =
+      selectedProductIds.length > 0
+        ? selectedProductIds.slice().sort((a, b) => a - b).join(',')
+        : (productsToBeCertified ?? 'unknown');
+    const auditEventId = `certification-fee:assign:${this.hashId(
+      `${urnKey}:${selectionKey}`,
+    )}`;
+
+    return {
+      auditEventId,
+      module: AUDIT_MODULE.PAYMENT,
+      action_type: hasPartialReject
+        ? AUDIT_ACTION_TYPE.REJECT
+        : AUDIT_ACTION_TYPE.CREATE,
+      entity_name: urnNo,
+      description: hasPartialReject
+        ? 'Certification fee assigned with partial product rejection'
+        : 'Certification fee assigned',
+      old_values: {
+        urnNo,
+        ...(hasPartialReject
+          ? { rejectedProductStatus: null }
+          : {}),
+      },
+      new_values: {
+        urnNo,
+        paymentType: 'certification',
+        paymentStatus: 0,
+        ...(productsToBeCertified
+          ? { productsToBeCertified }
+          : selectedProductIds.length
+            ? { productsToBeCertified: JSON.stringify(selectedProductIds) }
+            : {}),
+        ...(selectedProductIds.length
+          ? { selectedProductIds }
+          : {}),
+        ...(rejectedProductIds.length
+          ? { rejectedProductIds }
+          : {}),
+        ...(hasPartialReject
+          ? {
+              rejectedProductStatus: 3,
+              rejectionReason:
+                'Auto-rejected: not selected for certification fee',
+            }
+          : {}),
+      },
+      resource: urnNo
+        ? { type: 'Payment', id: urnNo, urn_no: urnNo }
+        : undefined,
+      metadata: {
+        business_event_type: 'certification_fee',
+        certification_fee_event: 'assign',
+        consolidated: true,
+        partial_rejection: hasPartialReject,
+        related_domain_events: hasPartialReject
+          ? ['payment_create', 'product_partial_reject']
+          : ['payment_create'],
+      },
+    };
+  }
+
+  private buildCertificationFeePaymentSummary(params: {
+    urnNo?: string;
+    paymentStatus: number;
+    body?: Record<string, unknown>;
+    response?: Record<string, unknown>;
+  }): AuditBusinessEventSummary {
+    const { urnNo, paymentStatus, body, response } = params;
+    const event =
+      paymentStatus === 1
+        ? 'submit'
+        : paymentStatus === 2
+          ? 'approve'
+          : 'reject';
+    const previousPaymentStatus =
+      this.numberField(response, 'previousPaymentStatus') ??
+      (paymentStatus === 1
+        ? 0
+        : paymentStatus === 2 || paymentStatus === 3
+          ? 1
+          : undefined);
+    const productsToBeCertified =
+      this.stringField(body, 'productsToBeCertified') ??
+      this.stringField(response, 'productsToBeCertified');
+    const selectedProductIds = this.productIdList(
+      response?.['selectedProductIds'] ?? body?.['selectedProductIds'],
+      productsToBeCertified,
+    );
+    const rejectedProductIds = this.productIdList(
+      response?.['rejectedProductIds'] ?? body?.['rejectedProductIds'],
+    );
+    const remarks =
+      this.stringField(body, 'paymentRejectionRemarks') ??
+      this.stringField(body, 'adminPaymentRejectionRemarks') ??
+      this.stringField(response, 'paymentRejectionRemarks') ??
+      this.stringField(response, 'adminPaymentRejectionRemarks');
+    const urnStatus =
+      this.numberField(body, 'urnStatus') ??
+      this.numberField(response, 'urnStatus');
+    const urnKey = (urnNo || 'unknown').toLowerCase();
+    const auditEventId = `certification-fee:${event}:${this.hashId(urnKey)}`;
+
+    const description =
+      event === 'submit'
+        ? 'Certification fee payment submitted'
+        : event === 'approve'
+          ? 'Certification fee payment approved'
+          : 'Certification fee payment rejected';
+
+    return {
+      auditEventId,
+      module: AUDIT_MODULE.PAYMENT,
+      action_type:
+        event === 'approve'
+          ? AUDIT_ACTION_TYPE.APPROVE
+          : event === 'reject'
+            ? AUDIT_ACTION_TYPE.REJECT
+            : AUDIT_ACTION_TYPE.UPDATE,
+      entity_name: urnNo,
+      description,
+      old_values: {
+        urnNo,
+        paymentType: 'certification',
+        ...(previousPaymentStatus != null
+          ? { paymentStatus: previousPaymentStatus }
+          : {}),
+        ...(productsToBeCertified ? { productsToBeCertified } : {}),
+        ...(selectedProductIds.length ? { selectedProductIds } : {}),
+      },
+      new_values: {
+        urnNo,
+        paymentType: 'certification',
+        paymentStatus,
+        ...(productsToBeCertified ? { productsToBeCertified } : {}),
+        ...(selectedProductIds.length ? { selectedProductIds } : {}),
+        ...(rejectedProductIds.length ? { rejectedProductIds } : {}),
+        ...(urnStatus != null ? { urnStatus } : {}),
+        ...(remarks ? { paymentRejectionRemarks: remarks } : {}),
+        ...(event === 'approve' ? { certifiedProductStatus: 2 } : {}),
+      },
+      resource: urnNo
+        ? { type: 'Payment', id: urnNo, urn_no: urnNo }
+        : undefined,
+      metadata: {
+        business_event_type: 'certification_fee',
+        certification_fee_event: event,
+        consolidated: true,
+        related_domain_events:
+          event === 'approve'
+            ? ['payment_update', 'certification_approval']
+            : ['payment_update'],
+      },
+    };
+  }
+
+  /** Parse numeric product ids from arrays, JSON strings, or comma lists. */
+  private productIdList(
+    value: unknown,
+    productsToBeCertifiedFallback?: string,
+  ): number[] {
+    const fromValue = this.coerceProductIdList(value);
+    if (fromValue.length) {
+      return fromValue;
+    }
+    if (productsToBeCertifiedFallback) {
+      return this.coerceProductIdList(productsToBeCertifiedFallback);
+    }
+    return [];
+  }
+
+  private coerceProductIdList(value: unknown): number[] {
+    if (value == null || value === '') {
+      return [];
+    }
+    if (Array.isArray(value)) {
+      return [
+        ...new Set(
+          value
+            .map((item) => Number(item))
+            .filter((id) => Number.isInteger(id) && id > 0),
+        ),
+      ];
+    }
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+      return [value];
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return [];
+      }
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (Array.isArray(parsed) || typeof parsed === 'number') {
+          return this.coerceProductIdList(parsed);
+        }
+      } catch {
+        // fall through to comma split
+      }
+      return [
+        ...new Set(
+          trimmed
+            .split(/[,\s]+/)
+            .map((part) => Number(part.trim()))
+            .filter((id) => Number.isInteger(id) && id > 0),
+        ),
+      ];
+    }
+    return [];
+  }
+
+  /** No-op renew status responses must not create a second audit for the same payment decision. */
+  private isRenewUrnStatusNoop(
+    req: AuditableRequest,
+    pathNorm: string,
+  ): boolean {
+    if (!/\/renew\/urn-status$/i.test(pathNorm)) {
+      return false;
+    }
+    const response = this.responseRoot(req.__auditResponseBody);
+    if (!response) {
+      return false;
+    }
+    const message = String(response['message'] ?? '').toLowerCase();
+    return message.includes('unchanged') || message.includes('already');
+  }
+
+  private responseRoot(
+    body: unknown,
+  ): Record<string, unknown> | undefined {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return undefined;
+    }
+    const root = body as Record<string, unknown>;
+    const nested = root['data'];
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>;
+    }
+    return root;
   }
 
   private rawMaterialsBulkRow(

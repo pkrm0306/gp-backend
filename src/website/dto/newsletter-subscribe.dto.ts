@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsEmail,
@@ -6,6 +7,16 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
+
+function toOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
 
 export class NewsletterSubscribeDto {
   @ApiProperty({ example: 'user@example.com' })
@@ -19,6 +30,7 @@ export class NewsletterSubscribeDto {
     example: true,
   })
   @IsOptional()
+  @Transform(({ value }) => toOptionalBoolean(value))
   @IsBoolean()
   greenProducts?: boolean;
 
@@ -28,6 +40,7 @@ export class NewsletterSubscribeDto {
     example: false,
   })
   @IsOptional()
+  @Transform(({ value }) => toOptionalBoolean(value))
   @IsBoolean()
   events?: boolean;
 

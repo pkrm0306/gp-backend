@@ -9,6 +9,7 @@ import { AdminDashboardWidgetsService } from './dashboard/admin-dashboard-widget
 import { AdminDashboardCertificationTimingService } from './dashboard/admin-dashboard-certification-timing.service';
 import { AdminDashboardSustainabilityService } from './dashboard/admin-dashboard-sustainability.service';
 import { AdminDashboardVisitorAnalyticsService } from './dashboard/admin-dashboard-visitor-analytics.service';
+import { WebsiteAnalyticsModule } from '../website/website-analytics.module';
 import { AdminDashboardOptimizedService } from './dashboard/admin-dashboard-optimized.service';
 import { AdminRevenueDashboardService } from './dashboard/admin-revenue-dashboard.service';
 import { AdminService } from './admin.service';
@@ -35,7 +36,6 @@ import {
   EventIdCounter,
   EventIdCounterSchema,
 } from '../events/schemas/event-id-counter.schema';
-import { EmailService } from '../common/services/email.service';
 import {
   ContactReplyThread,
   ContactReplyThreadSchema,
@@ -103,6 +103,7 @@ import {
     ProductRegistrationModule,
     PaymentsModule,
     GalleryModule,
+    WebsiteAnalyticsModule,
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       { name: ProductPlant.name, schema: ProductPlantSchema },
@@ -149,7 +150,6 @@ import {
     AdminDashboardVisitorAnalyticsService,
     AdminDashboardOptimizedService,
     AdminRevenueDashboardService,
-    EmailService,
     PermissionsGuard,
   ],
   exports: [AdminService, GalleryModule],

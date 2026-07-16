@@ -14,6 +14,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
 import {
   ALL_KNOWN_PERMISSION_VALUES,
   DASHBOARD_PERMISSION_CATALOG,
@@ -43,6 +44,16 @@ type AdminPortalUser = {
 /** Admin portal RBAC is platform-scoped (not tied to a manufacturer). */
 const PLATFORM_RBAC_SCOPE = undefined;
 
+/** Designation (UI) / role (API) — granular keys plus legacy manage. */
+const DESIGNATION_READ_PERMISSIONS = [
+  PERMISSIONS.RBAC_ROLES_MANAGE,
+  PERMISSIONS.RBAC_ROLES_VIEW,
+  PERMISSIONS.RBAC_ROLES_ADD,
+  PERMISSIONS.RBAC_ROLES_UPDATE,
+  PERMISSIONS.RBAC_ROLES_DELETE,
+  PERMISSIONS.RBAC_ROLES_STATUS,
+] as const;
+
 @ApiTags('Admin RBAC')
 @ApiBearerAuth()
 @Controller('admin/rbac')
@@ -51,7 +62,7 @@ export class RbacController {
   constructor(private readonly rbacService: RbacService) {}
 
   @Get('permissions/catalog')
-  @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
+  @AnyPermissions(...DESIGNATION_READ_PERMISSIONS)
   @ApiOperation({
     summary: 'Permission catalog for role add/edit UI',
     description:
@@ -68,14 +79,14 @@ export class RbacController {
   }
 
   @Post('roles')
-  @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
+  @AnyPermissions(PERMISSIONS.RBAC_ROLES_MANAGE, PERMISSIONS.RBAC_ROLES_ADD)
   async createRole(@Body() dto: CreateRoleDto) {
     const data = await this.rbacService.createRole(PLATFORM_RBAC_SCOPE, dto);
     return { message: 'Role created successfully', data };
   }
 
   @Get(['roles', 'roles/list'])
-  @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
+  @AnyPermissions(...DESIGNATION_READ_PERMISSIONS)
   @ApiOperation({
     summary: 'List roles',
     description:
@@ -113,14 +124,14 @@ export class RbacController {
   }
 
   @Patch('roles/:id')
-  @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
+  @AnyPermissions(PERMISSIONS.RBAC_ROLES_MANAGE, PERMISSIONS.RBAC_ROLES_UPDATE)
   async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
     const data = await this.rbacService.updateRole(PLATFORM_RBAC_SCOPE, id, dto);
     return { message: 'Role updated successfully', data };
   }
 
   @Patch('roles/:id/status')
-  @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
+  @AnyPermissions(PERMISSIONS.RBAC_ROLES_MANAGE, PERMISSIONS.RBAC_ROLES_STATUS)
   async updateRoleStatus(
     @Param('id') id: string,
     @Body() dto: UpdateRoleStatusDto,
@@ -139,7 +150,7 @@ export class RbacController {
   }
 
   @Delete('roles/:id/delete')
-  @Permissions(PERMISSIONS.RBAC_ROLES_MANAGE)
+  @AnyPermissions(PERMISSIONS.RBAC_ROLES_MANAGE, PERMISSIONS.RBAC_ROLES_DELETE)
   async deleteRole(@Param('id') id: string) {
     const data = await this.rbacService.deleteRole(PLATFORM_RBAC_SCOPE, id);
     return { message: 'Role deleted successfully', data };

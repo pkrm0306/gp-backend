@@ -2800,9 +2800,12 @@ export class ManufacturersService {
     const manufacturerName = String(
       manufacturer.manufacturerName ?? manufacturer.vendor_name ?? 'Manufacturer',
     ).trim();
+    const vendorEmail = String(manufacturer.vendor_email ?? '')
+      .trim()
+      .toLowerCase();
     await this.manufacturerModel.deleteOne({ _id: manufacturerId }).exec();
     this.lifecycleNotification
-      .notifyManufacturerRejected(manufacturerName, id)
+      .notifyManufacturerRejected(manufacturerName, id, { vendorEmail })
       .catch((err) =>
         this.logger.warn(
           `[deleteUnverifiedById] Rejection notification failed: ${(err as Error).message}`,

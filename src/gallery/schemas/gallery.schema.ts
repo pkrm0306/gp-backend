@@ -8,6 +8,12 @@ export const GALLERY_TYPES = [
 ] as const;
 export type GalleryType = (typeof GALLERY_TYPES)[number];
 
+/** Options for admin add/edit gallery type dropdown (canonical labels only). */
+export const GALLERY_TYPE_OPTIONS = GALLERY_TYPES.map((value) => ({
+  value,
+  label: value,
+}));
+
 /** Legacy values kept for existing records; not offered in admin UI. */
 export const LEGACY_GALLERY_TYPES = [
   'Summits',

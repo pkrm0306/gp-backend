@@ -539,7 +539,7 @@ export const TABLE_REGISTRY: TableDefinition[] = [
   },
   {
     mysqlTable: 'subscription_list',
-    mongoCollection: 'newsletter_subscribers',
+    mongoCollection: 'newslettersubscribers',
     phase: 11,
     mysqlPk: 'subscription_id',
     numericIdField: 'legacySubscriptionId',

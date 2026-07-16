@@ -193,6 +193,13 @@ async function bootstrap() {
       'Origin',
     ],
     credentials: process.env.CORS_CREDENTIALS === 'true',
+    exposedHeaders: [
+      'Content-Disposition',
+      'Content-Type',
+      'X-GreenPro-Certificate-Count',
+      'X-Export-Row-Count',
+      'X-Export-Has-Data',
+    ],
     optionsSuccessStatus: 204,
     preflightContinue: false,
   });

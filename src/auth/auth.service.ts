@@ -16,6 +16,7 @@ import { VendorUsersService } from '../vendor-users/vendor-users.service';
 import { CaptchaService } from '../common/services/captcha.service';
 import { NotificationHelper } from '../notifications/notification.helper';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import { WebsiteAnalyticsService } from '../website/website-analytics.service';
 import {
   NotificationChannel,
   NotificationTemplateCode,
@@ -45,6 +46,11 @@ import {
   OTP_RESEND_WINDOW_SECONDS,
   VENDOR_REGISTRATION_OTP_EXPIRES_MINUTES,
 } from './utils/otp.util';
+import {
+  buildVendorRegistrationOtpClientPayload,
+  buildVendorRegistrationSuccessMessage,
+  buildVendorResendOtpMessage,
+} from './utils/vendor-registration-otp-response.util';
 
 @Injectable()
 export class AuthService {
@@ -167,6 +173,7 @@ export class AuthService {
     private readonly sessionInvalidation: AuthSessionInvalidationService,
     private readonly globalPhoneUniqueness: GlobalPhoneUniquenessService,
     private readonly zohoLeadsService: ZohoLeadsService,
+    private readonly websiteAnalytics: WebsiteAnalyticsService,
   ) {}
 
   private buildAuthTokenPayload(user: VendorUserDocument): Record<string, unknown> {
@@ -400,6 +407,17 @@ export class AuthService {
       throw new BadRequestException('Passwords do not match');
     }
 
+    const captchaToken = String(registerDto.captchaToken || '').trim();
+    if (!captchaToken) {
+      throw new BadRequestException('Please complete the reCAPTCHA verification.');
+    }
+    const captchaValid = await this.captchaService.verifyCaptcha(captchaToken);
+    if (!captchaValid) {
+      throw new BadRequestException(
+        'reCAPTCHA verification failed. Please try again.',
+      );
+    }
+
     const normalizedEmail = String(registerDto.email || '')
       .trim()
       .toLowerCase();
@@ -489,6 +507,26 @@ export class AuthService {
       await session.commitTransaction();
       transactionCommitted = true;
 
+      // Send OTP/welcome email first (before Zoho) so SMTP delays don't block verification mail.
+      let emailDelivered = false;
+      try {
+        await this.lifecycleNotification.notifyNewVendorRegistered({
+          userId: vendorUser._id.toString(),
+          email: normalizedEmail,
+          name: normalizedContactName || normalizedCompanyName,
+          companyName: normalizedCompanyName,
+          password: registerDto.password,
+          otp,
+        });
+        emailDelivered = true;
+      } catch (notifyError: any) {
+        this.logger.error(
+          `[registerVendor] Welcome/OTP email failed for ${normalizedEmail}: ${
+            notifyError?.message || notifyError
+          }`,
+        );
+      }
+
       try {
         await this.syncRegistrationLeadToZoho({
           portalUserId: vendorUser._id.toString(),
@@ -506,24 +544,33 @@ export class AuthService {
         );
       }
 
-      try {
-        await this.lifecycleNotification.notifyNewVendorRegistered({
-          userId: vendorUser._id.toString(),
-          email: normalizedEmail,
-          name: normalizedContactName || normalizedCompanyName,
-          companyName: normalizedCompanyName,
-          password: registerDto.password,
-          otp,
+      void this.websiteAnalytics
+        .recordSignUp({
+          visitorKey: normalizedEmail,
+          signUpType: 'vendor_registration',
+          path: '/register-vendor',
+        })
+        .catch((error) => {
+          this.logger.warn(
+            `[registerVendor] Analytics sign_up record failed: ${
+              (error as Error)?.message || error
+            }`,
+          );
         });
-      } catch (notifyError: any) {
-        this.logger.warn(
-          `[registerVendor] Notification send failed for ${normalizedEmail}:`,
-          notifyError?.message || notifyError,
-        );
-      }
 
       return {
-        message: 'Registration successful. Please verify your email.',
+        message: buildVendorRegistrationSuccessMessage(
+          this.configService,
+          normalizedEmail,
+          otp,
+          emailDelivered,
+        ),
+        emailDelivered,
+        ...buildVendorRegistrationOtpClientPayload(
+          this.configService,
+          normalizedEmail,
+          otp,
+        ),
       };
     } catch (error: any) {
       if (session.inTransaction() && !transactionCommitted) {
@@ -739,7 +786,12 @@ export class AuthService {
     await this.recordOtpResendAttempt(email);
 
     return {
-      message: 'Verification OTP sent to your email.',
+      message: buildVendorResendOtpMessage(this.configService, email, otp),
+      ...buildVendorRegistrationOtpClientPayload(
+        this.configService,
+        email,
+        otp,
+      ),
     };
   }
 
@@ -999,15 +1051,36 @@ export class AuthService {
       password: newPassword,
     });
 
-    this.notificationHelper.sendInBackground({
-      type: user._id
+    try {
+      const notifyResult = await this.notificationHelper.send({
+        type: user._id
         ? [NotificationChannel.EMAIL, NotificationChannel.IN_APP]
         : [NotificationChannel.EMAIL],
-      template: NotificationTemplateCode.PASSWORD_RESET,
-      userId: user._id.toString(),
-      email: submittedEmail,
-      payload: { newPassword },
-    });
+        template: NotificationTemplateCode.PASSWORD_RESET,
+        userId: user._id.toString(),
+        email: submittedEmail,
+        payload: { newPassword },
+      });
+      const failed = notifyResult.results.filter((r) => !r.success && !r.skipped);
+      if (failed.length > 0) {
+        this.logger.warn(
+          `[forgotPassword] SMTP failed for ${submittedEmail}: ${failed
+            .map((f) => f.error)
+            .join('; ')}`,
+        );
+        throw new BadRequestException(
+          'Failed to send password email. Please try again later.',
+        );
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      this.logger.warn(
+        `[forgotPassword] SMTP error for ${submittedEmail}: ${(error as Error)?.message || error}`,
+      );
+      throw new BadRequestException(
+        'Failed to send password email. Please try again later.',
+      );
+    }
 
     this.lifecycleNotification
       .notifyPasswordResetAdmin({

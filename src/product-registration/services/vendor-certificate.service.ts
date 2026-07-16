@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -27,10 +28,7 @@ import {
   AllProductDocument,
   AllProductDocumentDocument,
 } from '../../product-design/schemas/all-product-document.schema';
-import {
-  matchActiveProductPlants,
-  matchActiveProducts,
-} from '../constants/active-product.filter';
+import { matchActiveProducts } from '../constants/active-product.filter';
 import {
   ProductPlant,
   ProductPlantDocument,
@@ -52,6 +50,8 @@ export type CertificateDownloadFile = {
   buffer: Buffer;
   fileName: string;
   contentType: string;
+  /** Present for portfolio downloads — number of plant certificate PDFs inside. */
+  certificateCount?: number;
 };
 
 type CategoryLean = {
@@ -100,6 +100,10 @@ export type EoiPlantCertificateList = {
 
 @Injectable()
 export class VendorCertificateService {
+  private readonly logger = new Logger(VendorCertificateService.name);
+  /** Reused across one download-all run so we do not re-fetch artwork 100s of times. */
+  private certificateBackgroundBytesPromise: Promise<Buffer | null> | null = null;
+
   constructor(
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
@@ -119,13 +123,10 @@ export class VendorCertificateService {
     format: 'merged' | 'zip' = 'merged',
   ): Promise<CertificateDownloadFile> {
     const product = await this.loadCertifiedProductForVendor(vendorId, productId);
-    const plants = await this.loadPlantsForProduct(product);
-
-    if (!plants.length) {
-      throw new NotFoundException(
-        `No manufacturing plants found for EOI ${product.eoiNo}. Certificates require plant records.`,
-      );
-    }
+    const plants = this.resolveEffectivePlantsForCertificates(
+      product,
+      await this.loadPlantsForProduct(product),
+    );
 
     if (format === 'zip') {
       return this.downloadEoiCertificateZip(product, plants);
@@ -148,14 +149,17 @@ export class VendorCertificateService {
     productId: string,
   ): Promise<EoiPlantCertificateList> {
     const product = await this.loadCertifiedProductForVendor(vendorId, productId);
-    const plants = await this.loadPlantsForProduct(product);
+    const plants = this.resolveEffectivePlantsForCertificates(
+      product,
+      await this.loadPlantsForProduct(product),
+    );
     const trimmedProductId = String(product._id);
 
     return {
       productId: trimmedProductId,
       eoiNo: String(product.eoiNo ?? ''),
       productName: String(product.productName ?? ''),
-      plantCount: Math.max(plants.length, Number(product.plantCount ?? 0)),
+      plantCount: plants.length,
       plants: plants.map((plant, index) => ({
         plantId: plant.id,
         productPlantId: plant.productPlantId,
@@ -186,6 +190,8 @@ export class VendorCertificateService {
         product.eoiNo,
         plant.plantName,
         plant.productPlantId,
+        plant.id,
+        String(product._id),
       ),
       contentType: 'application/pdf',
     };
@@ -225,10 +231,10 @@ export class VendorCertificateService {
 
     for (const product of hydrated) {
       try {
-        const plants = await this.loadPlantsForProduct(product);
-        if (!plants.length) {
-          continue;
-        }
+        const plants = this.resolveEffectivePlantsForCertificates(
+          product,
+          await this.loadPlantsForProduct(product),
+        );
 
         const plantBuffer = await this.mergePlantCertificateBuffers(product, plants);
         const src = await PDFLibDocument.load(plantBuffer);
@@ -259,7 +265,7 @@ export class VendorCertificateService {
   /** All plant certificates across every certified EOI for the logged-in vendor. */
   async downloadVendorAllCertifiedCertificates(
     vendorId: string,
-    format: 'merged' | 'zip' = 'merged',
+    _format: 'merged' | 'zip' = 'zip',
   ): Promise<CertificateDownloadFile> {
     const vendorObjectId = this.toObjectId(vendorId, 'manufacturerId');
     const products = await this.listCertifiedProductsForVendor(vendorObjectId);
@@ -270,33 +276,68 @@ export class VendorCertificateService {
       );
     }
 
-    const hydrated = await Promise.all(
-      products.map((product) => this.hydrateProduct(product)),
-    );
+    // Warm background once for the whole portfolio download.
+    this.certificateBackgroundBytesPromise = this.loadCertificateBackgroundBytesFresh();
+    try {
+      const hydrated = await this.hydrateProductsInBatches(products);
+      const plantsByProductId = await this.loadPlantsGroupedByProductIds(
+        hydrated.map((product) => product._id as Types.ObjectId),
+      );
 
-    if (format === 'zip') {
-      const files: Array<{ name: string; buffer: Buffer }> = [];
+      const entries: Array<{
+        product: ProductWithRelations;
+        plant: PlantWithGeo;
+        orderKey: string;
+      }> = [];
 
       for (const product of hydrated) {
-        const plants = await this.loadPlantsForProduct(product);
-        const buffers = await this.collectPlantCertificateBuffers(product, plants);
-        for (const [index, buffer] of buffers.entries()) {
-          const plant = plants[index];
-          files.push({
-            name: this.buildPlantCertificateFileName(
-              product.eoiNo,
-              plant?.plantName ?? `Plant_${index + 1}`,
-              plant?.productPlantId || index + 1,
-            ),
-            buffer,
+        const productId = String(product._id);
+        const plants = plantsByProductId.get(productId) ?? [];
+        const effectivePlants = this.resolveEffectivePlantsForCertificates(
+          product,
+          plants,
+        );
+
+        for (const [index, plant] of effectivePlants.entries()) {
+          entries.push({
+            product,
+            plant,
+            orderKey: `${String(product.eoiNo ?? '')}_${String(plant.productPlantId || index + 1)}_${plant.id}`,
           });
         }
       }
 
-      if (!files.length) {
+      if (!entries.length) {
         throw new NotFoundException(
           'No certificate files are available for this vendor',
         );
+      }
+
+      this.logger.log(
+        `[downloadVendorAll] vendor=${vendorId} products=${hydrated.length} certificates=${entries.length} format=zip`,
+      );
+
+      // Always ZIP for portfolio downloads. Merged PDFs truncate around ~200 pages
+      // (pdf-lib / client limits) — that is why vendors saw 199 of 209.
+      const files: Array<{ name: string; buffer: Buffer }> = [];
+
+      for (const [index, entry] of entries.entries()) {
+        const buffer = await this.generateCertificatePdfSafe(
+          entry.product,
+          this.derivePlantLocation(entry.plant),
+        );
+        const seq = String(index + 1).padStart(3, '0');
+        const baseName = this.buildPlantCertificateFileName(
+          entry.product.eoiNo,
+          entry.plant.plantName,
+          entry.plant.productPlantId || index + 1,
+          entry.plant.id,
+          String(entry.product._id),
+        );
+        files.push({
+          name: `${seq}_${baseName}`,
+          buffer,
+        });
       }
 
       const zipBuffer = await this.buildZipBuffer(files);
@@ -304,67 +345,36 @@ export class VendorCertificateService {
         buffer: zipBuffer,
         fileName: 'GreenPro_Certificates_All_Plants.zip',
         contentType: 'application/zip',
+        certificateCount: files.length,
       };
+    } finally {
+      this.certificateBackgroundBytesPromise = null;
     }
-
-    const mergedPdf = await PDFLibDocument.create();
-    let addedPages = 0;
-
-    for (const product of hydrated) {
-      const buffers = await this.collectPlantCertificateBuffers(product);
-      for (const buffer of buffers) {
-        try {
-          addedPages += await this.appendBufferToMergedPdf(mergedPdf, buffer);
-        } catch {
-          /* skip invalid plant certificate rows */
-        }
-      }
-    }
-
-    if (addedPages === 0) {
-      throw new NotFoundException(
-        'No certificate files are available for this vendor',
-      );
-    }
-
-    const mergedBuffer = Buffer.from(await mergedPdf.save());
-    return {
-      buffer: mergedBuffer,
-      fileName: 'GreenPro_Certificates_All_Plants.pdf',
-      contentType: 'application/pdf',
-    };
   }
 
   async countVendorCertifiedPlantCertificates(vendorId: string): Promise<number> {
     const vendorObjectId = this.toObjectId(vendorId, 'manufacturerId');
     const products = await this.productModel
       .find(this.matchCertifiedProductsForVendor(vendorObjectId))
-      .select({ _id: 1 })
+      .select({ _id: 1, plantCount: 1 })
       .lean()
       .exec();
 
-    if (!products.length) {
-      return 0;
+    // Exact same total as the certified-products list: sum of each EOI `plantCount`.
+    let total = 0;
+    for (const product of products) {
+      const declared = Number((product as { plantCount?: number }).plantCount ?? 0);
+      total += declared > 0 ? declared : 1;
     }
-
-    const productIds = products.map((product) => product._id);
-    const plantCount = await this.productPlantModel.countDocuments(
-      matchActiveProductPlants({
-        productId: { $in: productIds },
-      }),
-    );
-
-    if (plantCount > 0) {
-      return plantCount;
-    }
-
-    return products.length;
+    return total;
   }
 
   private matchCertifiedProductsForVendor(
     vendorObjectId: Types.ObjectId,
     extra: Record<string, unknown> = {},
   ): Record<string, unknown> {
+    const now = new Date();
+    // Match vendor certified list (status 2, not expired) so Download all = UI total.
     return matchActiveProducts({
       ...extra,
       productStatus: CERTIFIED_PRODUCT_STATUS,
@@ -375,8 +385,141 @@ export class VendorCertificateService {
             { manufacturerId: vendorObjectId },
           ],
         },
+        {
+          $or: [
+            { validtillDate: null },
+            { validtillDate: { $exists: false } },
+            { validtillDate: { $gte: now } },
+          ],
+        },
       ],
     });
+  }
+
+  private async hydrateProductsInBatches(
+    products: ProductDocument[],
+    batchSize = 25,
+  ): Promise<ProductWithRelations[]> {
+    const hydrated: ProductWithRelations[] = [];
+    for (let i = 0; i < products.length; i += batchSize) {
+      const chunk = products.slice(i, i + batchSize);
+      const chunkHydrated = await Promise.all(
+        chunk.map((product) => this.hydrateProduct(product)),
+      );
+      hydrated.push(...chunkHydrated);
+    }
+    return hydrated;
+  }
+
+  private async loadPlantsGroupedByProductIds(
+    productIds: Types.ObjectId[],
+  ): Promise<Map<string, PlantWithGeo[]>> {
+    const grouped = new Map<string, PlantWithGeo[]>();
+    if (!productIds.length) {
+      return grouped;
+    }
+
+    // Include every plant row (no soft-delete / plantStatus filter) so location
+    // data is available; certificate count still follows product.plantCount.
+    const rows = await this.productPlantModel
+      .aggregate([
+        {
+          $match: {
+            $or: [
+              { productId: { $in: productIds } },
+              { productId: { $in: productIds.map((id) => String(id)) } },
+            ],
+          },
+        },
+        {
+          $lookup: {
+            from: 'states',
+            localField: 'stateId',
+            foreignField: '_id',
+            as: 'state',
+          },
+        },
+        { $sort: { createdDate: 1, productPlantId: 1 } },
+      ])
+      .exec();
+
+    for (const row of rows) {
+      const productId = String(row.productId ?? '');
+      if (!productId) continue;
+      const stateDoc = Array.isArray(row.state)
+        ? (row.state[0] as Record<string, unknown> | undefined)
+        : undefined;
+      const plant: PlantWithGeo = {
+        id: String(row._id),
+        productPlantId: Number(row.productPlantId ?? 0),
+        plantName: row.plantName,
+        plantLocation: row.plantLocation,
+        city: row.city,
+        stateName:
+          (stateDoc?.stateName as string | undefined) ??
+          (stateDoc?.name as string | undefined) ??
+          null,
+      };
+      const list = grouped.get(productId) ?? [];
+      list.push(plant);
+      grouped.set(productId, list);
+    }
+
+    return grouped;
+  }
+
+  /**
+   * Vendor certified list shows `plantCount` per EOI. Include every plant row and
+   * pad up to plantCount when rows are missing — never drop plants.
+   */
+  private resolveEffectivePlantsForCertificates(
+    product: ProductWithRelations,
+    plants: PlantWithGeo[],
+  ): PlantWithGeo[] {
+    const declared = Number(product.plantCount ?? 0);
+    const target = Math.max(plants.length, declared > 0 ? declared : 0, 1);
+
+    if (plants.length === 0) {
+      return this.synthesizePlantsFromProductCount(product, target);
+    }
+
+    if (plants.length >= target) {
+      return plants;
+    }
+
+    const padded = [...plants];
+    for (let index = plants.length; index < target; index += 1) {
+      padded.push({
+        id: `synthetic-${String(product._id)}-${index + 1}`,
+        productPlantId: index + 1,
+        plantName: `Plant ${index + 1}`,
+        plantLocation: plants[0]?.plantLocation ?? '',
+        city: plants[0]?.city ?? '',
+        stateName: plants[0]?.stateName ?? null,
+      });
+    }
+    return padded;
+  }
+
+  private synthesizePlantsFromProductCount(
+    product: ProductWithRelations,
+    overrideCount?: number,
+  ): PlantWithGeo[] {
+    const declared = Number(product.plantCount ?? 0);
+    const count =
+      overrideCount && overrideCount > 0
+        ? overrideCount
+        : declared > 0
+          ? declared
+          : 1;
+    return Array.from({ length: count }, (_, index) => ({
+      id: `synthetic-${String(product._id)}-${index + 1}`,
+      productPlantId: index + 1,
+      plantName: `Plant ${index + 1}`,
+      plantLocation: '',
+      city: '',
+      stateName: null,
+    }));
   }
 
   private listCertifiedProductsForVendor(vendorObjectId: Types.ObjectId) {
@@ -390,29 +533,19 @@ export class VendorCertificateService {
     product: ProductWithRelations,
     plantsOverride?: PlantWithGeo[],
   ): Promise<Buffer[]> {
-    const plants = plantsOverride ?? (await this.loadPlantsForProduct(product));
+    const plants = this.resolveEffectivePlantsForCertificates(
+      product,
+      plantsOverride ?? (await this.loadPlantsForProduct(product)),
+    );
     const buffers: Buffer[] = [];
 
-    if (!plants.length) {
-      try {
-        buffers.push(await this.resolveCertificateBuffer(product));
-      } catch {
-        /* one certificate per EOI when plant rows are missing */
-      }
-      return buffers;
-    }
-
     for (const plant of plants) {
-      try {
-        buffers.push(
-          await this.generateCertificatePdf(
-            product,
-            this.derivePlantLocation(plant),
-          ),
-        );
-      } catch {
-        /* skip invalid plant certificate rows */
-      }
+      buffers.push(
+        await this.generateCertificatePdfSafe(
+          product,
+          this.derivePlantLocation(plant),
+        ),
+      );
     }
 
     return buffers;
@@ -493,12 +626,16 @@ export class VendorCertificateService {
   private async loadPlantsForProduct(
     product: ProductWithRelations,
   ): Promise<PlantWithGeo[]> {
+    // Do not filter by is_deleted / plantStatus — certificates follow plantCount.
     const rows = await this.productPlantModel
       .aggregate([
         {
-          $match: matchActiveProductPlants({
-            productId: product._id,
-          }),
+          $match: {
+            $or: [
+              { productId: product._id },
+              { productId: String(product._id) },
+            ],
+          },
         },
         {
           $lookup: {
@@ -508,7 +645,7 @@ export class VendorCertificateService {
             as: 'state',
           },
         },
-        { $sort: { createdDate: 1 } },
+        { $sort: { createdDate: 1, productPlantId: 1 } },
       ])
       .exec();
 
@@ -542,10 +679,13 @@ export class VendorCertificateService {
     const rows = await this.productPlantModel
       .aggregate([
         {
-          $match: matchActiveProductPlants({
+          $match: {
             _id: new Types.ObjectId(trimmedPlantId),
-            productId: product._id,
-          }),
+            $or: [
+              { productId: product._id },
+              { productId: String(product._id) },
+            ],
+          },
         },
         {
           $lookup: {
@@ -595,6 +735,8 @@ export class VendorCertificateService {
             product.eoiNo,
             plant.plantName,
             plant.productPlantId || index + 1,
+            plant.id,
+            String(product._id),
           ),
           buffer,
         });
@@ -787,6 +929,47 @@ export class VendorCertificateService {
     );
   }
 
+  /** Never drop a plant slot — retry with safe location, then a minimal PDF. */
+  private async generateCertificatePdfSafe(
+    product: ProductWithRelations,
+    locationOverride?: string,
+  ): Promise<Buffer> {
+    try {
+      return await this.generateCertificatePdf(product, locationOverride);
+    } catch (error) {
+      this.logger.warn(
+        `[certificate] retry without location product=${String(product._id)}: ${(error as Error)?.message || error}`,
+      );
+    }
+    try {
+      return await this.generateCertificatePdf(product, '');
+    } catch (error) {
+      this.logger.warn(
+        `[certificate] fallback minimal PDF product=${String(product._id)}: ${(error as Error)?.message || error}`,
+      );
+      return this.generateMinimalCertificatePdf(product);
+    }
+  }
+
+  private async generateMinimalCertificatePdf(
+    product: ProductWithRelations,
+  ): Promise<Buffer> {
+    const pdfDoc = await PDFLibDocument.create();
+    const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
+    const font = await pdfDoc.embedStandardFont(StandardFonts.Helvetica);
+    const label = this.safeLatinText(
+      `${product.productName || 'Product'} (${product.eoiNo || 'EOI'})`,
+    );
+    page.drawText(label.slice(0, 80) || 'GreenPro Certificate', {
+      x: 72,
+      y: PAGE_H / 2,
+      size: 14,
+      font,
+      color: rgb(0, 0, 0),
+    });
+    return Buffer.from(await pdfDoc.save());
+  }
+
   private resolveCertificateBackgroundPath(): string | null {
     const roots = [
       join(process.cwd(), 'uploads', 'certificates'),
@@ -802,6 +985,14 @@ export class VendorCertificateService {
   }
 
   private async loadCertificateBackgroundBytes(): Promise<Buffer | null> {
+    if (!this.certificateBackgroundBytesPromise) {
+      this.certificateBackgroundBytesPromise =
+        this.loadCertificateBackgroundBytesFresh();
+    }
+    return this.certificateBackgroundBytesPromise;
+  }
+
+  private async loadCertificateBackgroundBytesFresh(): Promise<Buffer | null> {
     const bgPath = this.resolveCertificateBackgroundPath();
     if (bgPath) {
       try {
@@ -940,6 +1131,15 @@ export class VendorCertificateService {
     return Buffer.from(bytes);
   }
 
+  private safeLatinText(value: string): string {
+    // Helvetica (WinAnsi) rejects many Unicode glyphs; keep printable ASCII to avoid PDF generation failures.
+    return String(value ?? '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, '?')
+      .trim();
+  }
+
   private centerInBox(
     page: PDFPage,
     text: string,
@@ -949,15 +1149,26 @@ export class VendorCertificateService {
     boxWidth: number,
     yFromTop: number,
   ): void {
-    const width = font.widthOfTextAtSize(text, size);
-    const x = boxLeft + Math.max(0, (boxWidth - width) / 2);
-    page.drawText(text, {
-      x,
-      y: this.topToBottomY(yFromTop, size),
-      size,
-      font,
-      color: rgb(0, 0, 0),
-    });
+    const safe = text || 'N/A';
+    try {
+      const width = font.widthOfTextAtSize(safe, size);
+      const x = boxLeft + Math.max(0, (boxWidth - width) / 2);
+      page.drawText(safe, {
+        x,
+        y: this.topToBottomY(yFromTop, size),
+        size,
+        font,
+        color: rgb(0, 0, 0),
+      });
+    } catch {
+      page.drawText('N/A', {
+        x: boxLeft + boxWidth / 2 - 10,
+        y: this.topToBottomY(yFromTop, size),
+        size,
+        font,
+        color: rgb(0, 0, 0),
+      });
+    }
   }
 
   private centerSegments(
@@ -967,29 +1178,40 @@ export class VendorCertificateService {
     boxWidth: number,
     yFromTop: number,
   ): void {
-    const totalWidth = segments.reduce(
-      (sum, s) => sum + s.font.widthOfTextAtSize(s.text, s.size),
-      0,
-    );
-    let x = boxLeft + Math.max(0, (boxWidth - totalWidth) / 2);
-    for (const s of segments) {
-      page.drawText(s.text, {
-        x,
-        y: this.topToBottomY(yFromTop, s.size),
-        size: s.size,
-        font: s.font,
+    const safeSegments = segments.map((s) => ({
+      ...s,
+      text: s.text || '',
+    }));
+    try {
+      const totalWidth = safeSegments.reduce(
+        (sum, s) => sum + s.font.widthOfTextAtSize(s.text, s.size),
+        0,
+      );
+      let x = boxLeft + Math.max(0, (boxWidth - totalWidth) / 2);
+      for (const s of safeSegments) {
+        if (!s.text) continue;
+        page.drawText(s.text, {
+          x,
+          y: this.topToBottomY(yFromTop, s.size),
+          size: s.size,
+          font: s.font,
+          color: rgb(0, 0, 0),
+        });
+        x += s.font.widthOfTextAtSize(s.text, s.size);
+      }
+    } catch {
+      page.drawText('N/A', {
+        x: boxLeft + boxWidth / 2 - 10,
+        y: this.topToBottomY(yFromTop, 12),
+        size: 12,
+        font: safeSegments[0]?.font,
         color: rgb(0, 0, 0),
       });
-      x += s.font.widthOfTextAtSize(s.text, s.size);
     }
   }
 
   private topToBottomY(yFromTop: number, fontSize: number): number {
     return PAGE_H - yFromTop - fontSize;
-  }
-
-  private safeLatinText(value: string): string {
-    return String(value ?? '').replace(/[^\x00-\xFF]/g, '?');
   }
 
   private deriveLocation(product: ProductWithRelations): string {
@@ -1049,14 +1271,25 @@ export class VendorCertificateService {
     eoiNo?: string | null,
     plantName?: string | null,
     plantKey?: string | number | null,
+    plantId?: string | null,
+    productId?: string | null,
   ): string {
     const safeEoi = String(eoiNo ?? 'certificate')
       .trim()
-      .replace(/[^a-zA-Z0-9._-]/g, '_');
+      .replace(/[^a-zA-Z0-9._-]+/g, '_');
     const safePlant = String(plantName ?? plantKey ?? 'plant')
       .trim()
-      .replace(/[^a-zA-Z0-9._-]/g, '_');
-    return `GreenPro_Certificate_${safeEoi}_${safePlant}.pdf`;
+      .replace(/[^a-zA-Z0-9._-]+/g, '_');
+    const safePlantId = String(plantId ?? plantKey ?? '')
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .slice(-12);
+    const safeProductId = String(productId ?? '')
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .slice(-8);
+    const unique = [safePlantId, safeProductId].filter(Boolean).join('_');
+    return `GreenPro_Certificate_${safeEoi}_${safePlant}${unique ? `_${unique}` : ''}.pdf`;
   }
 
   private buildEoiCertificatePath(

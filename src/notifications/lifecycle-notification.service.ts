@@ -69,11 +69,8 @@ export class LifecycleNotificationService {
       referenceType: input.referenceType,
       referenceId: input.referenceId,
       actorName: input.copy.actorName,
-    });
-    this.adminSystemNotification.sendAdminAlertEmailInBackground({
-      subject: input.emailSubject ?? `GreenPro — ${input.copy.title}`,
-      html: input.emailHtmlExtra ?? `<p>${input.copy.message}</p>`,
-      text: input.copy.message,
+      emailSubject: input.emailSubject ?? `GreenPro — ${input.copy.title}`,
+      emailHtmlExtra: input.emailHtmlExtra ?? `<p>${input.copy.message}</p>`,
       ccGroups: input.ccGroups,
     });
   }
@@ -114,14 +111,36 @@ export class LifecycleNotificationService {
       }
     }
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.notificationHelper.sendInBackground({
-      type: this.vendorNotifyChannels(userId),
-      template,
-      userId,
-      email,
-      payload: { manufacturerName, vendorName: manufacturerName, ...payload },
-      async: true,
-    });
+    this.notificationHelper
+      .send({
+        type: this.vendorNotifyChannels(userId),
+        template,
+        userId,
+        email,
+        payload: { manufacturerName, vendorName: manufacturerName, ...payload },
+      })
+      .then((result) => {
+        const failed = result.results.filter((r) => !r.success && !r.skipped);
+        if (failed.length > 0) {
+          this.logger.warn(
+            `[sendVendorEmailInBackground] ${template} SMTP failed for ${email}` +
+              (logContext ? ` (${logContext})` : '') +
+              `: ${failed.map((f) => f.error).join('; ')}`,
+          );
+        } else {
+          this.logger.log(
+            `[sendVendorEmailInBackground] ${template} sent via SMTP to ${email}` +
+              (logContext ? ` (${logContext})` : ''),
+          );
+        }
+      })
+      .catch((error) => {
+        this.logger.warn(
+          `[sendVendorEmailInBackground] ${template} failed for ${email}` +
+            (logContext ? ` (${logContext})` : '') +
+            `: ${(error as Error)?.message || error}`,
+        );
+      });
   }
 
   /** Welcome email only. Admin bell feed is created after OTP verify. */
@@ -154,20 +173,37 @@ export class LifecycleNotificationService {
       },
     });
 
-    for (const r of notifyResult.results) {
-      if (r.success) {
-        this.logger.log(
-          `[notifyNewVendorRegistered] ${r.channel} ok for ${params.email}` +
-            (r.metadata?.notificationId
-              ? ` (in-app id=${r.metadata.notificationId})`
-              : ''),
-        );
-      } else if (!r.skipped) {
-        this.logger.warn(
-          `[notifyNewVendorRegistered] ${r.channel} failed for ${params.email}: ${r.error}`,
-        );
-      }
+    const emailResult = notifyResult.results.find(
+      (r) => r.channel === NotificationChannel.EMAIL,
+    );
+    if (emailResult?.success) {
+      this.logger.log(
+        `[notifyNewVendorRegistered] email ok for ${params.email}`,
+      );
+      await this.notifyAdminFeedAndEmail({
+        copy: AdminNotificationMessages.vendorRegistrationOtpSent(
+          manufacturerName,
+          params.email,
+        ),
+        referenceType: 'vendor_registration_otp',
+        referenceId: params.userId,
+        type: 'info',
+        emailSubject: `GreenPro — Vendor registration OTP sent — ${manufacturerName}`,
+        emailHtmlExtra: `<p>Registration OTP email was sent to <strong>${this.escapeHtml(params.email)}</strong> for <strong>${this.escapeHtml(manufacturerName)}</strong>.</p>`,
+        ccGroups: ['SHEshi'],
+      });
+      return;
     }
+
+    const error =
+      emailResult?.error ||
+      notifyResult.results.map((r) => r.error).filter(Boolean).join('; ') ||
+      'Registration welcome email failed';
+    this.logger.error(
+      `[notifyNewVendorRegistered] email failed for ${params.email}: ${error}`,
+    );
+    // Surface failure so /auth/register-vendor can log + user can use Resend OTP.
+    throw new Error(error);
   }
 
   async notifyVendorOtpResent(params: {
@@ -201,6 +237,23 @@ export class LifecycleNotificationService {
         throw new Error(r.error || 'OTP email send failed');
       }
     }
+
+    const manufacturerName = resolveManufacturerDisplayName({
+      contactName: params.name,
+      email: params.email,
+    });
+    await this.notifyAdminFeedAndEmail({
+      copy: AdminNotificationMessages.vendorOtpResent(
+        manufacturerName,
+        params.email,
+      ),
+      referenceType: 'vendor_otp_resent',
+      referenceId: params.userId,
+      type: 'info',
+      emailSubject: `GreenPro — Vendor OTP resent — ${manufacturerName}`,
+      emailHtmlExtra: `<p>Verification OTP was resent to <strong>${this.escapeHtml(params.email)}</strong> for <strong>${this.escapeHtml(manufacturerName)}</strong>.</p>`,
+      ccGroups: ['SHEshi'],
+    });
   }
 
   async notifyVendorRegistrationComplete(
@@ -230,22 +283,15 @@ export class LifecycleNotificationService {
       }
     }
 
-    const copy = AdminNotificationMessages.newRegistration(label);
-    await this.adminSystemNotification.createFeedNotification({
-      title: copy.title,
-      message: copy.message,
-      type: 'success',
-      source: 'manufacturer',
+    const completeCopy = AdminNotificationMessages.registrationComplete(label);
+    await this.notifyAdminFeedAndEmail({
+      copy: completeCopy,
       referenceType: 'vendor_registration',
       referenceId: userId,
-      actorName: copy.actorName,
-    });
-
-    const completeCopy = AdminNotificationMessages.registrationComplete(label);
-    this.adminSystemNotification.sendAdminAlertEmailInBackground({
-      subject: `GreenPro — ${completeCopy.title}`,
-      html: `<p>${completeCopy.message}</p>`,
-      text: completeCopy.message,
+      type: 'success',
+      emailSubject: `GreenPro — ${completeCopy.title}`,
+      emailHtmlExtra: `<p>${this.escapeHtml(completeCopy.message)}</p>`,
+      ccGroups: ['SHEshi'],
     });
   }
 
@@ -285,16 +331,31 @@ export class LifecycleNotificationService {
         vendorName: params.manufacturerName,
       };
     }
+    const manufacturerName =
+      params.manufacturerName ??
+      this.manufacturerLabelFromRecipient(recipient);
+    const productName = params.productName ?? params.urnNo;
     this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.URN_INITIAL_APPROVED,
       {
         urnNo: params.urnNo,
-        productName: params.productName ?? params.urnNo,
+        productName,
         approvedBy: params.approvedBy ?? 'GreenPro Admin',
       },
       `notifyUrnInitialApproved manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
     );
+    await this.notifyAdminFeedAndEmail({
+      copy: AdminNotificationMessages.urnInitialApproved(
+        manufacturerName,
+        params.urnNo,
+        productName,
+      ),
+      referenceType: 'urn_initial_approved',
+      referenceId: params.urnNo,
+      type: 'success',
+      ccGroups: ['TEAM_LEADS'],
+    });
   }
 
   async notifyUrnRegistrationRejected(params: {
@@ -307,75 +368,183 @@ export class LifecycleNotificationService {
     const recipient = await this.recipientService.resolveByManufacturerId(
       params.manufacturerId,
     );
-    const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
     const reason =
       String(params.reason ?? '').trim() ||
       'Your registration was not approved at the initial review stage.';
+    const productName = params.productName ?? params.urnNo;
     this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.URN_REGISTRATION_REJECTED,
       {
         urnNo: params.urnNo,
-        productName: params.productName ?? params.urnNo,
+        productName,
         reason,
         rejectedBy: params.rejectedBy ?? 'GreenPro Admin',
       },
+      `notifyUrnRegistrationRejected manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
     );
+  }
+
+  async notifyProductRegistered(params: {
+    manufacturerId: string;
+    urnNo: string;
+    productName?: string;
+    productNames?: string[];
+    /** Optional EOI numbers aligned with productNames (bulk). */
+    eoiNos?: string[];
+    eoiNo?: string;
+    manufacturerName?: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    const manufacturerName =
+      params.manufacturerName ??
+      this.manufacturerLabelFromRecipient(recipient);
+    const productNames = (
+      params.productNames?.length
+        ? params.productNames
+        : params.productName
+          ? [params.productName]
+          : []
+    )
+      .map((n) => String(n ?? '').trim())
+      .filter(Boolean);
+    const eoiNos = (params.eoiNos ?? [])
+      .map((n) => String(n ?? '').trim())
+      .filter(Boolean);
+    const copy = AdminNotificationMessages.productRegistered(
+      manufacturerName,
+      params.urnNo,
+      productNames,
+      params.eoiNo,
+    );
+
+    const productRowsHtml =
+      productNames.length === 0
+        ? '<p><em>No product names were provided.</em></p>'
+        : `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; margin:12px 0;">
+            <thead>
+              <tr>
+                <th align="left" style="padding:8px 10px; background:#f3f4f6; border:1px solid #e5e7eb;">#</th>
+                <th align="left" style="padding:8px 10px; background:#f3f4f6; border:1px solid #e5e7eb;">Product name</th>
+                <th align="left" style="padding:8px 10px; background:#f3f4f6; border:1px solid #e5e7eb;">EOI</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${productNames
+                .map((name, index) => {
+                  const eoi =
+                    eoiNos[index] ||
+                    (productNames.length === 1 ? params.eoiNo?.trim() || '—' : '—');
+                  return `<tr>
+                    <td style="padding:8px 10px; border:1px solid #e5e7eb;">${index + 1}</td>
+                    <td style="padding:8px 10px; border:1px solid #e5e7eb;">${this.escapeHtml(name)}</td>
+                    <td style="padding:8px 10px; border:1px solid #e5e7eb;">${this.escapeHtml(eoi || '—')}</td>
+                  </tr>`;
+                })
+                .join('')}
+            </tbody>
+          </table>`;
+
+    const subjectNoun =
+      productNames.length > 1 ? 'Products registered' : 'Product registered';
+    await this.notifyAdminFeedAndEmail({
+      copy,
+      referenceType: 'product_registered',
+      referenceId: params.urnNo,
+      type: 'info',
+      emailSubject: `GreenPro — ${subjectNoun} by ${manufacturerName}`,
+      emailHtmlExtra: `
+        <p><strong>Vendor registered</strong> — please review the new product registration in the admin portal.</p>
+        <p><strong>Vendor / Manufacturer:</strong> ${this.escapeHtml(manufacturerName)}</p>
+        <p><strong>URN:</strong> ${this.escapeHtml(params.urnNo)}</p>
+        <p><strong>Product count:</strong> ${productNames.length || 1}</p>
+        <p><strong>Product name list:</strong></p>
+        ${productRowsHtml}
+      `,
+      ccGroups: ['TEAM_LEADS'],
+    });
   }
 
   async notifyUrnSubmittedForReview(params: {
     manufacturerId: string;
     urnNo: string;
     productName?: string;
+    productNames?: string[];
+    eoiNos?: string[];
     manufacturerName?: string;
     vendorEmail?: string;
   }): Promise<void> {
-    let recipient = await this.recipientService.resolveByManufacturerId(
+    const recipient = await this.recipientService.resolveByManufacturerId(
       params.manufacturerId,
     );
-    if (!recipient?.email && params.vendorEmail?.trim()) {
-      recipient = {
-        email: params.vendorEmail.trim().toLowerCase(),
-        companyName: params.manufacturerName,
-        vendorName: params.manufacturerName,
-      };
-    }
     const manufacturerName =
       params.manufacturerName ??
       this.manufacturerLabelFromRecipient(recipient) ??
       'Manufacturer';
 
-    if (recipient?.email || recipient?.userId) {
-      this.notificationHelper.sendInBackground({
-        type: this.vendorNotifyChannels(recipient.userId),
-        template: NotificationTemplateCode.URN_SUBMITTED_FOR_REVIEW,
-        userId: recipient.userId,
-        email: recipient.email,
-        payload: {
-          urnNo: params.urnNo,
-          productName: params.productName ?? params.urnNo,
-          manufacturerName,
-          vendorName: manufacturerName,
-        },
-        async: true,
-      });
-    } else {
-      this.logger.warn(
-        `[notifyUrnSubmittedForReview] Skipping vendor notify — no recipient for urn=${params.urnNo}`,
-      );
-    }
+    const productNames = (
+      params.productNames?.length
+        ? params.productNames
+        : params.productName
+          ? [params.productName]
+          : []
+    )
+      .map((n) => String(n ?? '').trim())
+      .filter(Boolean);
+    const eoiNos = (params.eoiNos ?? [])
+      .map((n) => String(n ?? '').trim())
+      .filter(Boolean);
 
     const copy = AdminNotificationMessages.urnSubmittedForReview(
       manufacturerName,
       params.urnNo,
+      productNames,
     );
+
+    const productRowsHtml =
+      productNames.length === 0
+        ? '<p><em>No product names were listed on this URN.</em></p>'
+        : `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; margin:12px 0;">
+            <thead>
+              <tr>
+                <th align="left" style="padding:8px 10px; background:#f3f4f6; border:1px solid #e5e7eb;">#</th>
+                <th align="left" style="padding:8px 10px; background:#f3f4f6; border:1px solid #e5e7eb;">Product name</th>
+                <th align="left" style="padding:8px 10px; background:#f3f4f6; border:1px solid #e5e7eb;">EOI</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${productNames
+                .map((name, index) => {
+                  const eoi = eoiNos[index] || '—';
+                  return `<tr>
+                    <td style="padding:8px 10px; border:1px solid #e5e7eb;">${index + 1}</td>
+                    <td style="padding:8px 10px; border:1px solid #e5e7eb;">${this.escapeHtml(name)}</td>
+                    <td style="padding:8px 10px; border:1px solid #e5e7eb;">${this.escapeHtml(eoi)}</td>
+                  </tr>`;
+                })
+                .join('')}
+            </tbody>
+          </table>`;
+
+    // Admin-only: vendor already knows they submitted; alert ops with URN details.
     await this.notifyAdminFeedAndEmail({
       copy,
       referenceType: 'urn_submitted_for_review',
       referenceId: params.urnNo,
       type: 'info',
-      emailSubject: `GreenPro — URN ${params.urnNo} submitted for review`,
-      emailHtmlExtra: `<p><strong>${manufacturerName}</strong> submitted URN <strong>${params.urnNo}</strong> for review.</p>`,
+      emailSubject: `GreenPro — Vendor sent URN ${params.urnNo} for review`,
+      emailHtmlExtra: `
+        <p><strong>Vendor sent this URN for review.</strong></p>
+        <p>Please open the admin portal and review the submitted URN details.</p>
+        <p><strong>Vendor / Manufacturer:</strong> ${this.escapeHtml(manufacturerName)}</p>
+        <p><strong>URN:</strong> ${this.escapeHtml(params.urnNo)}</p>
+        <p><strong>Product count:</strong> ${productNames.length || 0}</p>
+        <p><strong>Products under this URN:</strong></p>
+        ${productRowsHtml}
+      `,
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -410,14 +579,13 @@ export class LifecycleNotificationService {
 
     const copy =
       AdminNotificationMessages.certificationFeeSubmitted(manufacturerName);
-    await this.adminSystemNotification.createFeedNotification({
-      title: copy.title,
-      message: copy.message,
-      type: 'info',
-      source: 'manufacturer',
+    await this.notifyAdminFeedAndEmail({
+      copy,
       referenceType: 'certification_payment_submitted',
       referenceId: String(params.paymentId),
-      actorName: copy.actorName,
+      type: 'info',
+      emailHtmlExtra: `<p>${this.escapeHtml(copy.message)}</p><p>URN: <strong>${this.escapeHtml(params.urnNo)}</strong></p>`,
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -509,12 +677,32 @@ export class LifecycleNotificationService {
   async notifyManufacturerRejected(
     manufacturerName: string,
     manufacturerId?: string,
+    options?: { vendorEmail?: string },
   ): Promise<void> {
+    const label = manufacturerName?.trim() || 'Manufacturer';
+    const vendorEmail = options?.vendorEmail?.trim().toLowerCase();
+    if (vendorEmail) {
+      this.sendVendorNotificationInBackground(
+        {
+          email: vendorEmail,
+          companyName: label,
+          vendorName: label,
+        },
+        NotificationTemplateCode.MANUFACTURER_REJECTED,
+        { manufacturerName: label },
+        `notifyManufacturerRejected manufacturerId=${manufacturerId ?? ''}`,
+      );
+    } else {
+      this.logger.warn(
+        `[notifyManufacturerRejected] Skipping vendor email — no vendorEmail for manufacturerId=${manufacturerId ?? ''}`,
+      );
+    }
     await this.notifyAdminFeedAndEmail({
-      copy: AdminNotificationMessages.manufacturerRejected(manufacturerName),
+      copy: AdminNotificationMessages.manufacturerRejected(label),
       referenceType: 'manufacturer_rejected',
       referenceId: manufacturerId,
       type: 'warning',
+      ccGroups: ['SHEshi'],
     });
   }
 
@@ -543,6 +731,9 @@ export class LifecycleNotificationService {
         : params.paymentType === 'renew'
           ? 'Renewal fee'
           : 'Registration fee';
+    const manufacturerName =
+      params.manufacturerName ??
+      this.manufacturerLabelFromRecipient(recipient);
     this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.PAYMENT_PROPOSAL_READY,
@@ -554,6 +745,18 @@ export class LifecycleNotificationService {
       },
       `notifyPaymentProposalReady manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
     );
+    await this.notifyAdminFeedAndEmail({
+      copy: AdminNotificationMessages.paymentProposalReady(
+        manufacturerName,
+        params.urnNo,
+        paymentTypeLabel,
+        String(params.paymentId),
+      ),
+      referenceType: `payment_proposal_${params.paymentType}`,
+      referenceId: String(params.paymentId),
+      type: 'info',
+      ccGroups: ['TEAM_LEADS'],
+    });
   }
 
   async notifyProductCertified(params: {
@@ -584,6 +787,7 @@ export class LifecycleNotificationService {
       referenceType: 'product_certified',
       referenceId: params.urnNo,
       type: 'success',
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -597,7 +801,6 @@ export class LifecycleNotificationService {
     const recipient = await this.recipientService.resolveByManufacturerId(
       params.manufacturerId,
     );
-    const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
     this.sendVendorNotificationInBackground(
       recipient,
       NotificationTemplateCode.PRODUCT_REJECTED,
@@ -607,16 +810,85 @@ export class LifecycleNotificationService {
         reason: params.reason ?? 'Not approved',
         rejectedBy: params.rejectedBy ?? 'GreenPro Admin',
       },
+      `notifyProductRejected manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
     );
+  }
+
+  async notifyProductNameChangeDecision(params: {
+    manufacturerId: string;
+    requestId?: string;
+    email?: string;
+    urnNo: string;
+    eoiNo?: string;
+    currentName: string;
+    requestedName: string;
+    decision: 'approved' | 'rejected';
+    manufacturerName?: string;
+    remarks?: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    const manufacturerName =
+      params.manufacturerName ||
+      this.manufacturerLabelFromRecipient(recipient);
+    const email = params.email?.trim() || recipient?.email;
+    const userId = recipient?.userId;
+    if (email || userId) {
+      const decisionLabel =
+        params.decision === 'approved' ? 'Approved' : 'Rejected';
+      const decisionDetail =
+        params.decision === 'approved'
+          ? `Updated Product Name: ${params.requestedName}`
+          : `Product Name (unchanged): ${params.currentName}`;
+      const remarksBlock =
+        params.decision === 'rejected' && params.remarks?.trim()
+          ? `Admin Remarks: ${params.remarks.trim()}`
+          : '';
+      this.notificationHelper.sendInBackground({
+        type: this.vendorNotifyChannels(userId),
+        template: NotificationTemplateCode.PRODUCT_NAME_CHANGE_DECISION,
+        userId,
+        email,
+        payload: {
+          manufacturerName,
+          urnNo: params.urnNo,
+          eoiNo: params.eoiNo ?? '',
+          currentName: params.currentName,
+          requestedName: params.requestedName,
+          decisionLabel,
+          decisionDetail,
+          remarksBlock,
+        },
+        async: true,
+      });
+    }
+    const copy = AdminNotificationMessages.productNameChangeDecision(
+      manufacturerName,
+      params.urnNo,
+      params.currentName,
+      params.requestedName,
+      params.decision,
+    );
+    const remarksLine = params.remarks?.trim()
+      ? `<p><strong>Remarks:</strong> ${this.escapeHtml(params.remarks.trim())}</p>`
+      : '';
+    const eoiLine = params.eoiNo?.trim()
+      ? `<p><strong>EOI:</strong> ${this.escapeHtml(params.eoiNo.trim())}</p>`
+      : '';
     await this.notifyAdminFeedAndEmail({
-      copy: AdminNotificationMessages.productRejected(
-        manufacturerName,
-        params.urnNo,
-        params.productName,
-      ),
-      referenceType: 'product_rejected',
-      referenceId: params.urnNo,
-      type: 'warning',
+      copy,
+      referenceType: 'product_name_change_decision',
+      referenceId: params.requestId ?? params.urnNo,
+      type: params.decision === 'approved' ? 'success' : 'warning',
+      emailSubject: `GreenPro — ${copy.title}`,
+      emailHtmlExtra: `
+        <p>${this.escapeHtml(copy.message)}</p>
+        ${eoiLine}
+        <p><strong>Decision:</strong> ${params.decision}</p>
+        ${remarksLine}
+      `,
+      ccGroups: ['SHEshi'],
     });
   }
 
@@ -734,25 +1006,15 @@ export class LifecycleNotificationService {
       params.eoiNo,
       stageLabel,
     );
-    await this.adminSystemNotification.createFeedNotification({
-      title: copy.title,
-      message: copy.message,
-      type: params.stage === 'deactivation' ? 'warning' : 'info',
-      source: 'manufacturer',
+    await this.notifyAdminFeedAndEmail({
+      copy,
       referenceType: `certification_expiry_${params.stage}`,
       referenceId: params.productId
         ? String(params.productId)
         : params.urnNo,
-      actorName: copy.actorName,
+      type: params.stage === 'deactivation' ? 'warning' : 'info',
+      ccGroups: ['SHEshi'],
     });
-    if (params.includeAdminEmail !== false) {
-      this.adminSystemNotification.sendAdminAlertEmailInBackground({
-        subject: `GreenPro — ${copy.title}`,
-        html: `<p>${copy.message}</p>`,
-        text: copy.message,
-        ccGroups: ['SHEshi'],
-      });
-    }
   }
 
   async notifyPasswordResetAdmin(params: {
@@ -764,19 +1026,14 @@ export class LifecycleNotificationService {
       params.email,
       params.portal,
     );
-    await this.adminSystemNotification.createFeedNotification({
-      title: copy.title,
-      message: copy.message,
-      type: 'info',
-      source: params.portal === 'admin' ? 'admin' : 'manufacturer',
+    await this.notifyAdminFeedAndEmail({
+      copy,
       referenceType: 'password_reset',
       referenceId: params.userId,
-      actorName: copy.actorName,
-    });
-    this.adminSystemNotification.sendAdminAlertEmailInBackground({
-      subject: `GreenPro — ${copy.title}`,
-      html: `<p>${copy.message}</p>`,
-      text: copy.message,
+      source: params.portal === 'admin' ? 'admin' : 'manufacturer',
+      type: 'info',
+      emailSubject: `GreenPro — ${copy.title}`,
+      emailHtmlExtra: `<p>${this.escapeHtml(copy.message)}</p>`,
       ccGroups: ['SHEshi'],
     });
   }
@@ -810,11 +1067,52 @@ export class LifecycleNotificationService {
     });
   }
 
-  /** Plant merge notifications — hook when plant merge API ships. */
-  notifyPlantMergedStub(params: { manufacturerId: string; urnNo?: string }): void {
-    this.logger.debug(
-      `[notifyPlantMergedStub] Plant merge notification not wired yet manufacturerId=${params.manufacturerId} urnNo=${params.urnNo ?? ''}`,
+  async notifyPlantMerged(params: {
+    manufacturerId: string;
+    urnNo: string;
+    eoiNo?: string;
+    productName?: string;
+    mergeSummary: string;
+    vendorEmail?: string;
+    manufacturerName?: string;
+  }): Promise<void> {
+    let recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
     );
+    if (!recipient?.email && params.vendorEmail?.trim()) {
+      recipient = {
+        email: params.vendorEmail.trim().toLowerCase(),
+        companyName: params.manufacturerName,
+        vendorName: params.manufacturerName,
+      };
+    }
+    const eoiNo = params.eoiNo?.trim() ?? '';
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.PLANT_MERGED,
+      {
+        urnNo: params.urnNo,
+        eoiNo,
+        eoiSuffix: eoiNo ? ` (EOI ${eoiNo})` : '',
+        productName: params.productName ?? params.urnNo,
+        mergeSummary: params.mergeSummary,
+      },
+      `notifyPlantMerged manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
+    );
+    const manufacturerName =
+      params.manufacturerName ??
+      this.manufacturerLabelFromRecipient(recipient);
+    await this.notifyAdminFeedAndEmail({
+      copy: AdminNotificationMessages.plantMerged(
+        manufacturerName,
+        params.urnNo,
+        params.mergeSummary,
+      ),
+      referenceType: 'plant_merge',
+      referenceId: params.urnNo,
+      type: 'info',
+      ccGroups: ['TEAM_LEADS'],
+    });
   }
 
   async notifyRenewalSubmitted(params: {
@@ -838,6 +1136,7 @@ export class LifecycleNotificationService {
       referenceType: 'renewal_submitted',
       referenceId: params.urnNo,
       type: 'info',
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -868,6 +1167,7 @@ export class LifecycleNotificationService {
       referenceType: 'renewal_decision',
       referenceId: params.urnNo,
       type: params.decision === 'approved' ? 'success' : 'warning',
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -892,6 +1192,7 @@ export class LifecycleNotificationService {
       referenceType: 'renewal_completed',
       referenceId: params.urnNo,
       type: 'success',
+      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -941,56 +1242,6 @@ export class LifecycleNotificationService {
       );
   }
 
-  async notifyProductNameChangeDecision(params: {
-    manufacturerId: string;
-    email: string;
-    manufacturerName: string;
-    urnNo: string;
-    eoiNo: string;
-    currentName: string;
-    requestedName: string;
-    decision: 'approved' | 'rejected';
-    remarks?: string;
-  }): Promise<void> {
-    const recipient = await this.recipientService.resolveByManufacturerId(
-      params.manufacturerId,
-    );
-    const email = params.email?.trim() || recipient?.email;
-    const userId = recipient?.userId;
-    if (!email && !userId) {
-      return;
-    }
-    const decisionLabel =
-      params.decision === 'approved' ? 'Approved' : 'Rejected';
-    const decisionDetail =
-      params.decision === 'approved'
-        ? `Updated Product Name: ${params.requestedName}`
-        : `Product Name (unchanged): ${params.currentName}`;
-    const remarksBlock =
-      params.decision === 'rejected' && params.remarks?.trim()
-        ? `Admin Remarks: ${params.remarks.trim()}`
-        : '';
-
-    this.notificationHelper.sendInBackground({
-      type: this.vendorNotifyChannels(userId),
-      template: NotificationTemplateCode.PRODUCT_NAME_CHANGE_DECISION,
-      userId,
-      email,
-      payload: {
-        manufacturerName: params.manufacturerName,
-        urnNo: params.urnNo,
-        eoiNo: params.eoiNo,
-        currentName: params.currentName,
-        requestedName: params.requestedName,
-        decisionLabel,
-        decisionDetail,
-        remarksBlock,
-      },
-      async: true,
-    });
-  }
-
-  /** Admin feed when a manufacturer raises a DPDP grievance. */
   async notifyGrievanceCreated(params: {
     manufacturerId: string;
     grievanceId: string;
