@@ -862,6 +862,8 @@ export class AdminService {
     referenceType?: string;
     referenceId?: string;
     actorName?: string;
+    /** In-app feed only; no companion admin alert email. */
+    skipEmail?: boolean;
   }) {
     await this.adminSystemNotification.createFeedNotification({
       ...input,
@@ -1444,6 +1446,7 @@ export class AdminService {
       source: 'admin',
       referenceType: 'article',
       referenceId: String((saved as any)._id),
+      skipEmail: true,
     });
     return saved.toObject();
   }
@@ -1556,6 +1559,7 @@ export class AdminService {
       source: 'admin',
       referenceType: 'article',
       referenceId: String((updated as any)._id),
+      skipEmail: true,
     });
 
     return updated;
@@ -1761,6 +1765,7 @@ export class AdminService {
       source: 'admin',
       referenceType: 'article',
       referenceId: id,
+      skipEmail: true,
     });
 
     return { id };

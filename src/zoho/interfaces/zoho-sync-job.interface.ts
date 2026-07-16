@@ -5,8 +5,7 @@ export type ZohoSyncJobType =
   | 'deal.products.sync'
   | 'payment.sync'
   | 'verification.sync'
-  | 'deal.close'
-  | 'webhook.process';
+  | 'deal.close';
 
 export interface ZohoSyncJob<TPayload = Record<string, unknown>> {
   type: ZohoSyncJobType;

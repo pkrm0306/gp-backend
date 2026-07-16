@@ -1258,6 +1258,7 @@ var AdminService = function () {
                                     source: 'admin',
                                     referenceType: 'article',
                                     referenceId: String(saved._id),
+                                    skipEmail: true,
                                 })];
                         case 2:
                             _f.sent();
@@ -1368,6 +1369,7 @@ var AdminService = function () {
                                     source: 'admin',
                                     referenceType: 'article',
                                     referenceId: String(updated._id),
+                                    skipEmail: true,
                                 })];
                         case 3:
                             _h.sent();
@@ -1594,6 +1596,7 @@ var AdminService = function () {
                                     source: 'admin',
                                     referenceType: 'article',
                                     referenceId: id,
+                                    skipEmail: true,
                                 })];
                         case 3:
                             _b.sent();
