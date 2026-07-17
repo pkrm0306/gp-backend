@@ -703,30 +703,33 @@ export class AdminService {
   }
 
   /**
-   * Empty → next after last active / high-water.
-   * Explicit → validate uniqueness among active (gaps OK).
+   * Blank/undefined → `undefined` (stays unassigned; sorts last). No auto-assign.
+   * Explicit → validate uniqueness among active (gaps OK) and bump high-water.
    */
   private async resolveTeamMemberDisplayOrder(opts: {
     requested?: number;
     excludeUserId?: Types.ObjectId;
-  }): Promise<number> {
-    let order: number;
+  }): Promise<number | undefined> {
     if (opts.requested === undefined) {
-      order = await this.nextTeamMemberDisplayOrder(opts.excludeUserId);
-    } else {
-      if (!this.isSaneDisplayOrder(opts.requested)) {
-        throw new BadRequestException(
-          `Display order must be a whole number between 1 and ${AdminService.DISPLAY_ORDER_SANITY_MAX}.`,
-        );
-      }
-      await this.assertTeamMemberDisplayOrderAvailable(
-        opts.requested,
-        opts.excludeUserId,
-      );
-      order = opts.requested;
+      return undefined;
     }
-    await this.bumpTeamMemberDisplayOrderHighWater(order);
-    return order;
+    if (!this.isSaneDisplayOrder(opts.requested)) {
+      throw new BadRequestException(
+        `Display order must be a whole number between 1 and ${AdminService.DISPLAY_ORDER_SANITY_MAX}.`,
+      );
+    }
+    await this.assertTeamMemberDisplayOrderAvailable(
+      opts.requested,
+      opts.excludeUserId,
+    );
+    await this.bumpTeamMemberDisplayOrderHighWater(opts.requested);
+    return opts.requested;
+  }
+
+  /** Positive integer order → the number; blank/0/junk → null (unassigned, sorts last). */
+  private mapTeamMemberDisplayOrder(value: unknown): number | null {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
   }
 
   /** Assigned orders ascending; missing/0/null last. Used by admin + public website lists. */
@@ -2188,7 +2191,6 @@ export class AdminService {
         status: 1,
         isVerified: true,
         password: passwordHash,
-        displayOrder: desiredOrder,
         businessVertical: data.businessVertical,
         image: data.imagePath,
         facebookUrl: data.facebookUrl,
@@ -2203,6 +2205,12 @@ export class AdminService {
 
       const updatePayload: Record<string, unknown> = { $set };
       const $unset: Record<string, string> = { team: '' };
+      // Blank display order → keep unassigned (sorts last); clear any legacy value.
+      if (desiredOrder === undefined) {
+        $unset.displayOrder = '';
+      } else {
+        $set.displayOrder = desiredOrder;
+      }
       if (data.designation !== undefined && data.designation === '') {
         $unset.designation = '';
       }
@@ -2277,7 +2285,8 @@ export class AdminService {
       facebookUrl: data.facebookUrl,
       twitterUrl: data.twitterUrl,
       linkedinUrl: data.linkedinUrl,
-      displayOrder: desiredOrder,
+      // Blank display order → omit (stays unassigned; sorts last).
+      ...(desiredOrder !== undefined ? { displayOrder: desiredOrder } : {}),
       businessVertical: data.businessVertical,
       password: passwordHash,
       sector_ids,
@@ -2329,7 +2338,7 @@ export class AdminService {
         facebookUrl: obj.facebookUrl,
         twitterUrl: obj.twitterUrl,
         linkedinUrl: obj.linkedinUrl,
-        displayOrder: obj.displayOrder,
+        displayOrder: this.mapTeamMemberDisplayOrder(obj.displayOrder),
         businessVertical: obj.businessVertical,
         business_vertical: obj.businessVertical,
         status: obj.status,
@@ -2372,7 +2381,7 @@ export class AdminService {
           email: m.email,
           mobile: m.phone,
           is_active: m.status === 1,
-          displayOrder: Number((m as any).displayOrder) || 0,
+          displayOrder: this.mapTeamMemberDisplayOrder((m as any).displayOrder),
           businessVertical: String((m as any).businessVertical ?? ''),
           business_vertical: String((m as any).businessVertical ?? ''),
           showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
@@ -2479,7 +2488,7 @@ export class AdminService {
           email: m.email,
           mobile: m.phone,
           is_active: m.status === 1,
-          displayOrder: Number((m as any).displayOrder) || 0,
+          displayOrder: this.mapTeamMemberDisplayOrder((m as any).displayOrder),
           businessVertical: String((m as any).businessVertical ?? ''),
           business_vertical: String((m as any).businessVertical ?? ''),
           showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
@@ -2541,7 +2550,7 @@ export class AdminService {
           email: m.email,
           mobile: m.phone,
           is_active: m.status === 1,
-          displayOrder: Number((m as any).displayOrder) || 0,
+          displayOrder: this.mapTeamMemberDisplayOrder((m as any).displayOrder),
           businessVertical: String((m as any).businessVertical ?? ''),
           business_vertical: String((m as any).businessVertical ?? ''),
           showOnWebsite: this.mapTeamMemberShowOnWebsite((m as any).showOnWebsite),
@@ -2592,7 +2601,7 @@ export class AdminService {
         facebookUrl: member.facebookUrl ?? '',
         twitterUrl: member.twitterUrl ?? '',
         linkedinUrl: member.linkedinUrl ?? '',
-        displayOrder: Number((member as any).displayOrder) || 0,
+        displayOrder: this.mapTeamMemberDisplayOrder((member as any).displayOrder),
         businessVertical: String((member as any).businessVertical ?? ''),
         business_vertical: String((member as any).businessVertical ?? ''),
         showOnWebsite: this.mapTeamMemberShowOnWebsite((member as any).showOnWebsite),
@@ -3036,13 +3045,18 @@ export class AdminService {
     if (data.imagePath !== undefined) {
       $set.image = data.imagePath;
     }
-    $set.displayOrder = desiredOrder;
     $set.businessVertical = data.businessVertical;
     if (data.showOnWebsite !== undefined) {
       $set.showOnWebsite = data.showOnWebsite;
     }
 
     const $unset: Record<string, string> = { team: '' };
+    // Blank display order → clear it (stays unassigned; sorts last).
+    if (desiredOrder === undefined) {
+      $unset.displayOrder = '';
+    } else {
+      $set.displayOrder = desiredOrder;
+    }
     if (data.sector_ids !== undefined) {
       const sector_ids = this.assertTeamMemberSectorsValid(data.sector_ids);
       $set.sector_ids = sector_ids;
@@ -3110,7 +3124,7 @@ export class AdminService {
         facebookUrl: obj.facebookUrl,
         twitterUrl: obj.twitterUrl,
         linkedinUrl: obj.linkedinUrl,
-        displayOrder: obj.displayOrder,
+        displayOrder: this.mapTeamMemberDisplayOrder(obj.displayOrder),
         businessVertical: obj.businessVertical,
         business_vertical: obj.businessVertical,
         status: obj.status,
