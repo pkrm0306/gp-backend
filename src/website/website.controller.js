@@ -410,7 +410,7 @@ var WebsiteController = function () {
             }), (0, swagger_1.ApiResponse)({ status: 200, description: 'Paginated summits list' })];
         _listPublicEvents_decorators = [(0, common_1.Get)('public/events/list'), (0, common_1.HttpCode)(common_1.HttpStatus.OK), (0, swagger_1.ApiOperation)({
                 summary: 'Public events list (paginated)',
-                description: 'Returns active events for the public website events page. Default pagination: page=1, limit=10 (max 50). Sorted by event date (newest first).',
+                description: 'Returns active events for the public website events page. Default pagination: page=1, limit=10 (max 200). Sorted by event date (newest first).',
             }), (0, swagger_1.ApiResponse)({
                 status: 200,
                 description: 'Paginated events list',

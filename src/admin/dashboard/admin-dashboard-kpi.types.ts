@@ -27,3 +27,36 @@ export interface AdminDashboardKpiBundle {
   cards: AdminDashboardKpiCards;
   certificationTiming: import('./admin-dashboard-certification-timing.types').AdminDashboardCertificationTiming;
 }
+
+/** Executive KPI strip keys (admin dashboard home). */
+export type ExecutiveKpiKey =
+  | 'totalManufacturers'
+  | 'activeUrns'
+  | 'registeredProducts'
+  | 'certifiedProducts'
+  | 'pendingProducts'
+  | 'underReview'
+  | 'renewalsDue'
+  | 'pendingPayments'
+  | 'totalRevenue'
+  | 'todaysCollection'
+  | 'monthlyCollection'
+  | 'yearlyCollection';
+
+export type ExecutiveKpiFormat = 'number' | 'currency';
+
+export type ExecutiveKpiCard = {
+  key: ExecutiveKpiKey;
+  label: string;
+  value: number;
+  changePercent: number;
+  higherIsBetter: boolean;
+  format: ExecutiveKpiFormat;
+  href: string;
+  sparkline: number[];
+};
+
+export type ExecutiveKpiPayload = {
+  cards: ExecutiveKpiCard[];
+  generatedAt: string;
+};

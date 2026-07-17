@@ -5,7 +5,12 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { AnyPermissions } from '../../common/decorators/any-permissions.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions.constants';
-import { DashboardMetricsQueryDto } from '../dto/dashboard-metrics-query.dto';
+import {
+  DashboardActivityCenterQueryDto,
+  DashboardActivityCenterTabQueryDto,
+  DashboardMetricsQueryDto,
+  DashboardPendingActionsQueryDto,
+} from '../dto/dashboard-metrics-query.dto';
 import { AdminService } from '../admin.service';
 import { AdminDashboardStatsService } from './admin-dashboard-stats.service';
 import { AdminDashboardKpiService } from './admin-dashboard-kpi.service';
@@ -183,6 +188,35 @@ export class AdminDashboardController {
         appliedFilters: this.dashboardStats.buildAppliedFilters(query, filters),
         cards: bundle.cards,
         certificationTiming: bundle.certificationTiming,
+      },
+    };
+  }
+
+  @Get('executive-kpis')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW,
+    PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
+    PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
+    PERMISSIONS.PAYMENTS_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Executive KPI strip (counts + paid collection buckets)',
+    description:
+      'Returns the dashboard executive cards. Revenue/collection cards sum `quoteTotal` for ' +
+      'paid payments (`paymentStatus` 2) by recognition date (cheque → updated → created): ' +
+      'Total (all-time), Today, Month-to-date, Year-to-date. % change vs yesterday / prior MTD / prior YTD.',
+  })
+  @ApiResponse({ status: 200, description: 'Executive KPIs retrieved' })
+  async getExecutiveKpis(@Query() query: DashboardMetricsQueryDto) {
+    const filters = await this.adminService.resolveDashboardMetricsFilters(query);
+    const payload = await this.dashboardOptimized.getExecutiveKpis(filters);
+    return {
+      message: 'Executive KPIs retrieved successfully',
+      data: {
+        appliedFilters: this.dashboardStats.buildAppliedFilters(query, filters),
+        ...payload,
       },
     };
   }
@@ -419,16 +453,13 @@ export class AdminDashboardController {
   @ApiQuery({ name: 'pageSize', required: false })
   @ApiQuery({ name: 'search', required: false })
   async getPendingAdminActions(
-    @Query() query: DashboardMetricsQueryDto,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-    @Query('search') search?: string,
+    @Query() query: DashboardPendingActionsQueryDto,
   ) {
     const filters = await this.adminService.resolveDashboardMetricsFilters(query);
     const data = await this.dashboardOptimized.getPendingActions(filters, {
-      page: Number(page) || 1,
-      pageSize: Number(pageSize) || 5,
-      search,
+      page: Number(query.page) || 1,
+      pageSize: Number(query.pageSize) || 7,
+      search: query.search,
     });
     return {
       message: 'Pending admin actions retrieved successfully',
@@ -449,15 +480,14 @@ export class AdminDashboardController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Activity center — latest vendors, applications, payments, renewals',
-    description: 'Latest-only lists (default 12) with Redis cache. Supports global filters.',
+    description: 'Latest-only lists (default 10) for the selected period with Redis cache. Supports global filters.',
   })
-  @ApiQuery({ name: 'limit', required: false, description: '1–24 (default 12)' })
+  @ApiQuery({ name: 'limit', required: false, description: '1–24 (default 10)' })
   async getActivityCenter(
-    @Query() query: DashboardMetricsQueryDto,
-    @Query('limit') limit?: string,
+    @Query() query: DashboardActivityCenterQueryDto,
   ) {
     const filters = await this.adminService.resolveDashboardMetricsFilters(query);
-    const parsedLimit = Math.min(Math.max(Number(limit) || 12, 1), 24);
+    const parsedLimit = Math.min(Math.max(Number(query.limit) || 10, 1), 24);
     const data = await this.dashboardOptimized.getActivityCenter(filters, parsedLimit);
     return {
       message: 'Activity center retrieved successfully',
@@ -487,17 +517,14 @@ export class AdminDashboardController {
   @ApiQuery({ name: 'search', required: false })
   async getActivityCenterTab(
     @Param('tab') tab: string,
-    @Query() query: DashboardMetricsQueryDto,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-    @Query('search') search?: string,
+    @Query() query: DashboardActivityCenterTabQueryDto,
   ) {
     const allowed = new Set(['vendors', 'applications', 'payments', 'renewals']);
     const normalized = String(tab || '').trim().toLowerCase();
     if (!allowed.has(normalized)) {
       return {
         message: 'Invalid activity tab',
-        data: { tab: normalized, items: [], total: 0, page: 1, pageSize: 5 },
+        data: { tab: normalized, items: [], total: 0, page: 1, pageSize: 10 },
       };
     }
     const filters = await this.adminService.resolveDashboardMetricsFilters(query);
@@ -505,9 +532,9 @@ export class AdminDashboardController {
       filters,
       normalized as 'vendors' | 'applications' | 'payments' | 'renewals',
       {
-        page: Number(page) || 1,
-        pageSize: Number(pageSize) || 5,
-        search,
+        page: Number(query.page) || 1,
+        pageSize: Number(query.pageSize) || 10,
+        search: query.search,
       },
     );
     return {

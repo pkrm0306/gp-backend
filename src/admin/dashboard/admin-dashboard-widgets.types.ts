@@ -2,11 +2,13 @@ export interface DashboardPaymentStatusItem {
   key: 'paid' | 'pending';
   label: string;
   count: number;
+  amount: number;
   percent: number;
 }
 
 export interface DashboardPaymentStatusWidget {
   total: number;
+  totalAmount: number;
   items: DashboardPaymentStatusItem[];
   chart: DashboardPaymentStatusItem[];
 }

@@ -17,13 +17,13 @@ export class PublicListEventsQueryDto {
 
   @ApiPropertyOptional({
     default: 10,
-    description: 'Items per page (max 50)',
+    description: 'Items per page (max 200)',
     example: 10,
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(50)
+  @Max(200)
   limit?: number = 10;
 }

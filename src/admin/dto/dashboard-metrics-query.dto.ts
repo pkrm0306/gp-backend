@@ -209,3 +209,62 @@ export class DashboardActivityQueryDto {
   @Max(100)
   limit?: number = 20;
 }
+
+/** Activity Center bundle — metrics filters + row limit. */
+export class DashboardActivityCenterQueryDto extends DashboardMetricsQueryDto {
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 24, description: '1–24 (default 10)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(24)
+  limit?: number = 10;
+}
+
+/** Activity Center tab list — metrics filters + pagination/search. */
+export class DashboardActivityCenterTabQueryDto extends DashboardMetricsQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  pageSize?: number = 10;
+
+  @ApiPropertyOptional({ description: 'Free-text search within the active tab' })
+  @IsOptional()
+  @Transform(({ value }) => trimOptional(value))
+  @IsString()
+  search?: string;
+}
+
+/** Pending admin actions — metrics filters + pagination/search. */
+export class DashboardPendingActionsQueryDto extends DashboardMetricsQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 7, minimum: 1, maximum: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  pageSize?: number = 7;
+
+  @ApiPropertyOptional({ description: 'Free-text search within pending actions' })
+  @IsOptional()
+  @Transform(({ value }) => trimOptional(value))
+  @IsString()
+  search?: string;
+}

@@ -93,23 +93,33 @@ export class AdminDashboardWidgetsService {
     };
 
     const rows = await this.paymentDetailsModel
-      .aggregate<{ _id: number; count: number }>([
+      .aggregate<{ _id: number; count: number; amount: number }>([
         { $match: match },
-        { $group: { _id: '$paymentStatus', count: { $sum: 1 } } },
+        {
+          $group: {
+            _id: '$paymentStatus',
+            count: { $sum: 1 },
+            amount: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+          },
+        },
       ])
       .exec();
 
     const paid = rows.find((r) => Number(r._id) === PAYMENT_STATUS_PAID)?.count ?? 0;
+    const paidAmount = rows.find((r) => Number(r._id) === PAYMENT_STATUS_PAID)?.amount ?? 0;
     const pending =
       rows.find((r) => Number(r._id) === PAYMENT_STATUS_PENDING)?.count ?? 0;
+    const pendingAmount =
+      rows.find((r) => Number(r._id) === PAYMENT_STATUS_PENDING)?.amount ?? 0;
     const total = paid + pending;
+    const totalAmount = roundRevenueAmount(paidAmount + pendingAmount);
 
     const items = [
-      this.buildPaymentStatusItem('paid', 'Paid', paid, total),
-      this.buildPaymentStatusItem('pending', 'Pending', pending, total),
+      this.buildPaymentStatusItem('paid', 'Paid', paid, paidAmount, total),
+      this.buildPaymentStatusItem('pending', 'Pending', pending, pendingAmount, total),
     ];
 
-    return { total, items, chart: items };
+    return { total, totalAmount, items, chart: items };
   }
 
   async getRecentPayments(
@@ -337,11 +347,12 @@ export class AdminDashboardWidgetsService {
     key: 'paid' | 'pending',
     label: string,
     count: number,
+    amount: number,
     total: number,
   ) {
     const percent =
       total > 0 ? Math.round((count / total) * 1000) / 10 : 0;
-    return { key, label, count, percent };
+    return { key, label, count, amount: roundRevenueAmount(amount), percent };
   }
 
   private buildPaymentVendorScope(

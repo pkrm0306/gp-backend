@@ -7,6 +7,7 @@ import {
   Manufacturer,
   ManufacturerDocument,
 } from '../../manufacturers/schemas/manufacturer.schema';
+import { resolveManufacturerScopeFilter } from '../../manufacturers/utils/list-manufacturers-query.util';
 import {
   PaymentDetails,
   PaymentDetailsDocument,
@@ -17,7 +18,9 @@ import {
 } from '../../product-registration/schemas/product.schema';
 import {
   PRODUCT_STATUS_CERTIFIED,
+  PRODUCT_STATUS_PENDING,
   PRODUCT_STATUS_REJECTED,
+  PRODUCT_STATUS_SUBMITTED,
 } from '../../renew/constants/product-status.constants';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
 import {
@@ -45,6 +48,8 @@ import type {
 
 const PAYMENT_STATUS_PENDING = 1;
 const PAYMENT_STATUS_PAID = 2;
+const PAYMENT_STATUS_CREATED = 0;
+const PAYMENT_STATUS_REJECTED = 3;
 
 /** Cache TTL for expensive dashboard aggregations (seconds). */
 const CACHE_TTL_SECONDS = 120;
@@ -211,30 +216,87 @@ export class AdminDashboardOptimizedService {
       ? { vendorId: { $in: paymentVendorIds } }
       : {};
 
-    const [productFacet, paymentFacet, vendorsAwaiting] = await Promise.all([
+    const [productFacet, paymentFacet, vendorsAwaiting, timingAvgs] = await Promise.all([
       this.productModel
         .aggregate<{
           pendingReview: { count: number }[];
           assessmentBacklog: { count: number }[];
+          documentVerification: { count: number }[];
+          renewalDocumentVerification: { count: number }[];
           expiringSoon: { count: number }[];
           renewalsDue: { count: number }[];
           rejected: { count: number }[];
           certificationDays: { avgDays: number | null }[];
+          renewalProcessingDays: { avgDays: number | null }[];
+          prevCertificationDays: { avgDays: number | null }[];
+          prevRenewalProcessingDays: { avgDays: number | null }[];
         }>([
           { $match: productMatch },
           {
             $facet: {
+              /**
+               * Same default scope as Un-certified Products list (`status` [0,1]):
+               * manufacturer-grouped `total` (distinct manufacturers with active EOIs).
+               */
               pendingReview: [
-                { $match: { productStatus: { $in: [0, 1] } } },
+                {
+                  $match: {
+                    productStatus: {
+                      $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
+                    },
+                  },
+                },
+                { $group: { _id: '$manufacturerId' } },
                 { $count: 'count' },
               ],
               assessmentBacklog: [
                 {
                   $match: {
-                    productStatus: { $in: [0, 1] },
+                    productStatus: {
+                      $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
+                    },
                     urnStatus: { $gte: 4, $lte: 10 },
                   },
                 },
+                { $count: 'count' },
+              ],
+              /**
+               * Admin form / document review queue (urnStatus 4 = review, 6 = final verification).
+               * Distinct URNs — same unit admins open from Un-certified URN detail.
+               */
+              documentVerification: [
+                {
+                  $match: {
+                    productStatus: {
+                      $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
+                    },
+                    urnStatus: { $in: [4, 6] },
+                  },
+                },
+                { $group: { _id: '$urnNo' } },
+                { $count: 'count' },
+              ],
+              /**
+               * Same eligibility as Admin Renew Products list (`adminListRenewProducts`),
+               * manufacturer-grouped (list pagination `total`).
+               */
+              renewalDocumentVerification: [
+                {
+                  $match: {
+                    productStatus: PRODUCT_STATUS_CERTIFIED,
+                    $or: [
+                      {
+                        validtillDate: {
+                          $exists: true,
+                          $ne: null,
+                          $lt: thresholdDate,
+                        },
+                      },
+                      { urnStatus: { $gte: 12, $lte: 17 } },
+                    ],
+                  },
+                },
+                { $group: { _id: '$manufacturerId' } },
                 { $count: 'count' },
               ],
               expiringSoon: [
@@ -279,7 +341,14 @@ export class AdminDashboardOptimizedService {
                   $match: {
                     productStatus: PRODUCT_STATUS_CERTIFIED,
                     createdDate: { $exists: true, $ne: null },
-                    updatedDate: { $exists: true, $ne: null },
+                    updatedDate: filters.dateRange
+                      ? {
+                          $exists: true,
+                          $ne: null,
+                          $gte: filters.dateRange.from,
+                          $lte: filters.dateRange.to,
+                        }
+                      : { $exists: true, $ne: null },
                   },
                 },
                 {
@@ -295,6 +364,88 @@ export class AdminDashboardOptimizedService {
                 { $match: { days: { $gte: 0, $lte: 365 } } },
                 { $group: { _id: null, avgDays: { $avg: '$days' } } },
               ],
+              renewalProcessingDays: [
+                {
+                  $match: {
+                    productStatus: PRODUCT_STATUS_CERTIFIED,
+                    urnStatus: { $gte: 12, $lte: 17 },
+                    createdDate: { $exists: true, $ne: null },
+                    updatedDate: filters.dateRange
+                      ? {
+                          $exists: true,
+                          $ne: null,
+                          $gte: filters.dateRange.from,
+                          $lte: filters.dateRange.to,
+                        }
+                      : { $exists: true, $ne: null },
+                  },
+                },
+                {
+                  $project: {
+                    days: {
+                      $divide: [
+                        { $subtract: ['$updatedDate', '$createdDate'] },
+                        1000 * 60 * 60 * 24,
+                      ],
+                    },
+                  },
+                },
+                { $match: { days: { $gte: 0, $lte: 365 } } },
+                { $group: { _id: null, avgDays: { $avg: '$days' } } },
+              ],
+              prevCertificationDays: previousRange
+                ? [
+                    {
+                      $match: {
+                        productStatus: PRODUCT_STATUS_CERTIFIED,
+                        createdDate: { $exists: true, $ne: null },
+                        updatedDate: {
+                          $gte: previousRange.from,
+                          $lte: previousRange.to,
+                        },
+                      },
+                    },
+                    {
+                      $project: {
+                        days: {
+                          $divide: [
+                            { $subtract: ['$updatedDate', '$createdDate'] },
+                            1000 * 60 * 60 * 24,
+                          ],
+                        },
+                      },
+                    },
+                    { $match: { days: { $gte: 0, $lte: 365 } } },
+                    { $group: { _id: null, avgDays: { $avg: '$days' } } },
+                  ]
+                : [{ $match: { _id: null } }, { $group: { _id: null, avgDays: { $avg: 0 } } }],
+              prevRenewalProcessingDays: previousRange
+                ? [
+                    {
+                      $match: {
+                        productStatus: PRODUCT_STATUS_CERTIFIED,
+                        urnStatus: { $gte: 12, $lte: 17 },
+                        createdDate: { $exists: true, $ne: null },
+                        updatedDate: {
+                          $gte: previousRange.from,
+                          $lte: previousRange.to,
+                        },
+                      },
+                    },
+                    {
+                      $project: {
+                        days: {
+                          $divide: [
+                            { $subtract: ['$updatedDate', '$createdDate'] },
+                            1000 * 60 * 60 * 24,
+                          ],
+                        },
+                      },
+                    },
+                    { $match: { days: { $gte: 0, $lte: 365 } } },
+                    { $group: { _id: null, avgDays: { $avg: '$days' } } },
+                  ]
+                : [{ $match: { _id: null } }, { $group: { _id: null, avgDays: { $avg: 0 } } }],
             },
           },
         ])
@@ -303,15 +454,47 @@ export class AdminDashboardOptimizedService {
       this.paymentDetailsModel
         .aggregate<{
           pending: { count: number }[];
+          pendingRegistration: { count: number }[];
+          pendingCertification: { count: number }[];
+          pendingRenewal: { count: number }[];
           currentRevenue: { total: number }[];
           previousRevenue: { total: number }[];
           verificationDays: { avgDays: number | null }[];
+          prevVerificationDays: { avgDays: number | null }[];
         }>([
           { $match: paymentMatch },
           {
             $facet: {
               pending: [
                 { $match: { paymentStatus: PAYMENT_STATUS_PENDING } },
+                { $count: 'count' },
+              ],
+              pendingRegistration: [
+                {
+                  $match: {
+                    paymentStatus: PAYMENT_STATUS_PENDING,
+                    paymentType: 'registration',
+                  },
+                },
+                { $count: 'count' },
+              ],
+              pendingCertification: [
+                {
+                  $match: {
+                    paymentStatus: PAYMENT_STATUS_PENDING,
+                    paymentType: 'certification',
+                  },
+                },
+                { $count: 'count' },
+              ],
+              /** Same filter as Payment History with `paymentType=renew` + pending status. */
+              pendingRenewal: [
+                {
+                  $match: {
+                    paymentStatus: PAYMENT_STATUS_PENDING,
+                    paymentType: 'renew',
+                  },
+                },
                 { $count: 'count' },
               ],
               currentRevenue: [
@@ -381,7 +564,14 @@ export class AdminDashboardOptimizedService {
                   $match: {
                     paymentStatus: PAYMENT_STATUS_PAID,
                     createdDate: { $exists: true, $ne: null },
-                    updatedDate: { $exists: true, $ne: null },
+                    updatedDate: filters.dateRange
+                      ? {
+                          $exists: true,
+                          $ne: null,
+                          $gte: filters.dateRange.from,
+                          $lte: filters.dateRange.to,
+                        }
+                      : { $exists: true, $ne: null },
                   },
                 },
                 {
@@ -397,6 +587,32 @@ export class AdminDashboardOptimizedService {
                 { $match: { days: { $gte: 0, $lte: 90 } } },
                 { $group: { _id: null, avgDays: { $avg: '$days' } } },
               ],
+              prevVerificationDays: previousRange
+                ? [
+                    {
+                      $match: {
+                        paymentStatus: PAYMENT_STATUS_PAID,
+                        createdDate: { $exists: true, $ne: null },
+                        updatedDate: {
+                          $gte: previousRange.from,
+                          $lte: previousRange.to,
+                        },
+                      },
+                    },
+                    {
+                      $project: {
+                        days: {
+                          $divide: [
+                            { $subtract: ['$updatedDate', '$createdDate'] },
+                            1000 * 60 * 60 * 24,
+                          ],
+                        },
+                      },
+                    },
+                    { $match: { days: { $gte: 0, $lte: 90 } } },
+                    { $group: { _id: null, avgDays: { $avg: '$days' } } },
+                  ]
+                : [{ $match: { _id: null } }, { $group: { _id: null, avgDays: { $avg: 0 } } }],
             },
           },
         ])
@@ -405,9 +621,12 @@ export class AdminDashboardOptimizedService {
       this.manufacturerModel
         .countDocuments({
           ...manufacturerMatch,
-          $or: [{ manufacturerStatus: { $ne: 1 } }, { vendor_status: { $ne: 1 } }],
+          // Same filter as admin Unverified Manufacturers list (`scope=unverified`).
+          ...resolveManufacturerScopeFilter({ scope: 'unverified' }),
         })
         .exec(),
+
+      this.aggregateVendorApprovalTiming(manufacturerMatch, filters.dateRange, previousRange),
     ]);
 
     const pf = productFacet[0];
@@ -420,26 +639,50 @@ export class AdminDashboardOptimizedService {
         ? Number((((revenueCurrent - revenuePrevious) / revenuePrevious) * 100).toFixed(1))
         : 0;
 
-    const avgCertificationDays = Number(pf?.certificationDays?.[0]?.avgDays ?? 12.5);
-    const avgPaymentDays = Number(pay?.verificationDays?.[0]?.avgDays ?? 1.2);
+    const avgCertificationDays = Number(pf?.certificationDays?.[0]?.avgDays ?? 0);
+    const avgPaymentDays = Number(pay?.verificationDays?.[0]?.avgDays ?? 0);
+    const avgRenewalDays = Number(pf?.renewalProcessingDays?.[0]?.avgDays ?? 0);
+    const avgVendorApprovalDays = Number(timingAvgs.current ?? 0);
 
     return {
       vendorsAwaitingApproval: vendorsAwaiting,
+      productsPendingReview: pf?.pendingReview?.[0]?.count ?? 0,
+      registrationPaymentsPending: pay?.pendingRegistration?.[0]?.count ?? 0,
+      documentVerificationPending: pf?.documentVerification?.[0]?.count ?? 0,
+      certificationPaymentsPending: pay?.pendingCertification?.[0]?.count ?? 0,
+      renewalPaymentsPending: pay?.pendingRenewal?.[0]?.count ?? 0,
+      renewalDocumentVerificationPending:
+        pf?.renewalDocumentVerification?.[0]?.count ?? 0,
       paymentsPendingVerification: pay?.pending?.[0]?.count ?? 0,
       certificatesExpiringSoon: pf?.expiringSoon?.[0]?.count ?? 0,
       assessmentBacklog: pf?.assessmentBacklog?.[0]?.count ?? 0,
-      productsPendingReview: pf?.pendingReview?.[0]?.count ?? 0,
       renewalsDue: pf?.renewalsDue?.[0]?.count ?? 0,
       rejectedProducts: pf?.rejected?.[0]?.count ?? 0,
       revenueCurrent,
       revenuePrevious,
       revenueChangePercent,
-      avgVendorApprovalDays: 2.4,
-      avgProductReviewDays: Math.max(1, Number((avgCertificationDays * 0.25).toFixed(1))),
-      avgAssessmentDays: Math.max(1, Number((avgCertificationDays * 0.35).toFixed(1))),
+      avgVendorApprovalDays: Number(avgVendorApprovalDays.toFixed(1)),
+      avgProductReviewDays: Math.max(
+        0,
+        Number((avgCertificationDays * 0.25).toFixed(1)),
+      ),
+      avgAssessmentDays: Math.max(
+        0,
+        Number((avgCertificationDays * 0.35).toFixed(1)),
+      ),
       avgCertificationDays: Number(avgCertificationDays.toFixed(1)),
       avgPaymentVerificationDays: Number(avgPaymentDays.toFixed(1)),
-      avgRenewalProcessingDays: 5.5,
+      avgRenewalProcessingDays: Number(avgRenewalDays.toFixed(1)),
+      prevAvgVendorApprovalDays: Number(Number(timingAvgs.previous ?? 0).toFixed(1)),
+      prevAvgCertificationDays: Number(
+        Number(pf?.prevCertificationDays?.[0]?.avgDays ?? 0).toFixed(1),
+      ),
+      prevAvgPaymentVerificationDays: Number(
+        Number(pay?.prevVerificationDays?.[0]?.avgDays ?? 0).toFixed(1),
+      ),
+      prevAvgRenewalProcessingDays: Number(
+        Number(pf?.prevRenewalProcessingDays?.[0]?.avgDays ?? 0).toFixed(1),
+      ),
     };
   }
 
@@ -448,6 +691,13 @@ export class AdminDashboardOptimizedService {
   /** Cached lightweight KPI cards (delegates to existing KPI service). */
   async getKpis(filters: ResolvedDashboardFilters) {
     return this.cached('kpis', filters, () => this.kpiService.getKpiBundle(filters));
+  }
+
+  /** Cached executive KPI strip (counts + paid collection buckets). */
+  async getExecutiveKpis(filters: ResolvedDashboardFilters) {
+    return this.cached('executive-kpis', filters, () =>
+      this.kpiService.getExecutiveKpis(filters),
+    );
   }
 
   /** Cached chart widgets for the analytics section. */
@@ -507,7 +757,7 @@ export class AdminDashboardOptimizedService {
 
   async getActivityCenter(
     filters: ResolvedDashboardFilters,
-    limit = 12,
+    limit = 10,
   ): Promise<DashboardActivityCenterPayload> {
     const capped = Math.min(Math.max(limit, 1), 24);
     return this.cached(`activity-center:${capped}`, filters, () =>
@@ -531,15 +781,16 @@ export class AdminDashboardOptimizedService {
     generatedAt: string;
   }> {
     const page = Math.max(1, options?.page ?? 1);
-    const pageSize = Math.min(Math.max(options?.pageSize ?? 5, 1), 50);
+    const pageSize = Math.min(Math.max(options?.pageSize ?? 10, 1), 50);
     const search = String(options?.search ?? '').trim().toLowerCase();
+    const fetchLimit = Math.min(Math.max(pageSize * page, 10), 48);
 
     return this.cached(
-      `activity-tab:${tab}:p${page}:s${pageSize}:q${search}`,
+      `activity-tab:${tab}:p${page}:s${pageSize}:q${search}:from${filters.dateRange?.from?.toISOString() ?? 'all'}:to${filters.dateRange?.to?.toISOString() ?? 'all'}`,
       filters,
       async () => {
         // Load a bounded window then filter/paginate — keeps index usage tight.
-        const bundle = await this.loadActivityCenter(filters, 48);
+        const bundle = await this.loadActivityCenter(filters, fetchLimit);
         let items: unknown[] = [];
         switch (tab) {
           case 'vendors':
@@ -559,10 +810,9 @@ export class AdminDashboardOptimizedService {
             if (search) {
               items = bundle.applications.filter(
                 (r) =>
-                  r.productName.toLowerCase().includes(search) ||
-                  r.eoiNo.toLowerCase().includes(search) ||
+                  r.urnNo.toLowerCase().includes(search) ||
                   r.manufacturerName.toLowerCase().includes(search) ||
-                  r.status.toLowerCase().includes(search),
+                  String(r.totalEoi).includes(search),
               );
             }
             break;
@@ -713,94 +963,67 @@ export class AdminDashboardOptimizedService {
       slaHours: number;
     }> = [
       {
-        key: 'vendorApproval',
-        action: 'Vendor Approval',
+        key: 'manufacturerApprovals',
+        action: 'Manufacturer Approvals',
         count: signals.vendorsAwaitingApproval,
         assignedTeam: 'Vendor Ops',
-        quickActionLabel: 'Review vendors',
+        quickActionLabel: 'Review manufacturers',
         href: '/vendors/unverified',
         slaHours: signals.vendorsAwaitingApproval > 10 ? -4 : 8,
       },
       {
-        key: 'documentVerification',
-        action: 'Document Verification',
-        count: Math.max(0, Math.round(signals.productsPendingReview * 0.4)),
-        assignedTeam: 'Compliance',
-        quickActionLabel: 'Verify docs',
-        href: '/products/un-certified',
-        slaHours: 12,
-      },
-      {
-        key: 'productReview',
-        action: 'Product Review',
+        key: 'productApprovals',
+        action: 'Product Approvals',
         count: signals.productsPendingReview,
         assignedTeam: 'Product Ops',
         quickActionLabel: 'Review products',
-        href: '/products/requests',
-        slaHours: 6,
-      },
-      {
-        key: 'assignAssessor',
-        action: 'Assign Assessor',
-        count: Math.max(0, Math.round(signals.assessmentBacklog * 0.5)),
-        assignedTeam: 'Assessment',
-        quickActionLabel: 'Assign',
         href: '/products/un-certified',
-        slaHours: 4,
+        slaHours: signals.productsPendingReview > 20 ? -2 : 12,
       },
       {
-        key: 'scheduleAudit',
-        action: 'Schedule Audit',
-        count: Math.max(0, Math.round(signals.assessmentBacklog * 0.3)),
-        assignedTeam: 'Assessment',
-        quickActionLabel: 'Schedule',
+        key: 'registrationPaymentApprovals',
+        action: 'Registration Payment Approvals',
+        count: signals.registrationPaymentsPending,
+        assignedTeam: 'Finance',
+        quickActionLabel: 'Verify payments',
+        href: '/payment-history?paymentType=registration&status=pending',
+        slaHours: signals.registrationPaymentsPending > 8 ? -6 : 5,
+      },
+      {
+        key: 'documentVerification',
+        action: 'Document Verification',
+        count: signals.documentVerificationPending,
+        assignedTeam: 'Compliance',
+        quickActionLabel: 'Verify documents',
         href: '/products/un-certified',
-        slaHours: 24,
+        slaHours: signals.documentVerificationPending > 15 ? -4 : 10,
       },
       {
-        key: 'reviewAssessment',
-        action: 'Review Assessment',
-        count: signals.assessmentBacklog,
-        assignedTeam: 'Assessment',
-        quickActionLabel: 'Review',
-        href: '/products/un-certified',
-        slaHours: signals.assessmentBacklog > 15 ? -2 : 10,
+        key: 'certificationPaymentApprovals',
+        action: 'Certification Payment Approvals',
+        count: signals.certificationPaymentsPending,
+        assignedTeam: 'Finance',
+        quickActionLabel: 'Verify payments',
+        href: '/payment-history?paymentType=certification&status=pending',
+        slaHours: signals.certificationPaymentsPending > 8 ? -6 : 5,
       },
       {
-        key: 'certificationApproval',
-        action: 'Certification Approval',
-        count: Math.max(0, Math.round(signals.productsPendingReview * 0.25)),
-        assignedTeam: 'Certification',
-        quickActionLabel: 'Approve',
-        href: '/products/un-certified',
-        slaHours: 16,
+        key: 'renewalPaymentApprovals',
+        action: 'Renewal Payment Approvals',
+        count: signals.renewalPaymentsPending,
+        assignedTeam: 'Finance',
+        quickActionLabel: 'Verify payments',
+        href: '/payment-history?paymentType=renew&status=pending',
+        slaHours: signals.renewalPaymentsPending > 8 ? -6 : 5,
       },
       {
-        key: 'generateCertificate',
-        action: 'Generate Certificate',
-        count: Math.max(0, Math.round(signals.certificatesExpiringSoon * 0.2)),
-        assignedTeam: 'Certification',
-        quickActionLabel: 'Generate',
-        href: '/products/certified',
-        slaHours: 20,
-      },
-      {
-        key: 'renewalApproval',
-        action: 'Renewal Approval',
-        count: signals.renewalsDue,
+        key: 'renewalDocumentVerification',
+        action: 'Renewal Document Verification',
+        count: signals.renewalDocumentVerificationPending,
         assignedTeam: 'Renewals',
         quickActionLabel: 'Review renewals',
         href: '/products/renew',
-        slaHours: 18,
-      },
-      {
-        key: 'paymentVerification',
-        action: 'Payment Verification',
-        count: signals.paymentsPendingVerification,
-        assignedTeam: 'Finance',
-        quickActionLabel: 'Verify payments',
-        href: '/payment-history',
-        slaHours: signals.paymentsPendingVerification > 8 ? -6 : 5,
+        slaHours: signals.renewalDocumentVerificationPending > 10 ? -3 : 12,
       },
     ];
 
@@ -948,31 +1171,15 @@ export class AdminDashboardOptimizedService {
         'vendorApproval',
         'Average Vendor Approval Time',
         signals.avgVendorApprovalDays,
-        Number((signals.avgVendorApprovalDays * 1.15).toFixed(1)),
+        signals.prevAvgVendorApprovalDays,
         3,
         '/vendors/unverified',
-      ),
-      mk(
-        'productReview',
-        'Average Product Review Time',
-        signals.avgProductReviewDays,
-        Number((signals.avgProductReviewDays * 0.9).toFixed(1)),
-        5,
-        '/products/requests',
-      ),
-      mk(
-        'assessment',
-        'Average Assessment Time',
-        signals.avgAssessmentDays,
-        Number((signals.avgAssessmentDays * 0.85).toFixed(1)),
-        7,
-        '/products/un-certified',
       ),
       mk(
         'certification',
         'Average Certification Time',
         signals.avgCertificationDays,
-        Number((signals.avgCertificationDays * 1.1).toFixed(1)),
+        signals.prevAvgCertificationDays,
         14,
         '/products/certified',
       ),
@@ -980,7 +1187,7 @@ export class AdminDashboardOptimizedService {
         'paymentVerification',
         'Average Payment Verification Time',
         signals.avgPaymentVerificationDays,
-        Number((signals.avgPaymentVerificationDays * 1.25).toFixed(1)),
+        signals.prevAvgPaymentVerificationDays,
         2,
         '/payment-history',
       ),
@@ -988,11 +1195,54 @@ export class AdminDashboardOptimizedService {
         'renewalProcessing',
         'Average Renewal Processing Time',
         signals.avgRenewalProcessingDays,
-        Number((signals.avgRenewalProcessingDays * 0.8).toFixed(1)),
+        signals.prevAvgRenewalProcessingDays,
         5,
         '/products/renew',
       ),
     ];
+  }
+
+  private async aggregateVendorApprovalTiming(
+    manufacturerMatch: Record<string, unknown>,
+    dateRange: { from: Date; to: Date } | undefined,
+    previousRange: { from: Date; to: Date } | undefined,
+  ): Promise<{ current: number; previous: number }> {
+    const avgForRange = async (
+      range?: { from: Date; to: Date },
+    ): Promise<number> => {
+      const match: Record<string, unknown> = {
+        ...manufacturerMatch,
+        manufacturerStatus: 1,
+        createdAt: { $exists: true, $ne: null },
+        updatedAt: range
+          ? { $exists: true, $ne: null, $gte: range.from, $lte: range.to }
+          : { $exists: true, $ne: null },
+      };
+      const rows = await this.manufacturerModel
+        .aggregate<{ avgDays: number | null }>([
+          { $match: match },
+          {
+            $project: {
+              days: {
+                $divide: [
+                  { $subtract: ['$updatedAt', '$createdAt'] },
+                  1000 * 60 * 60 * 24,
+                ],
+              },
+            },
+          },
+          { $match: { days: { $gte: 0, $lte: 90 } } },
+          { $group: { _id: null, avgDays: { $avg: '$days' } } },
+        ])
+        .exec();
+      return Number(rows[0]?.avgDays ?? 0);
+    };
+
+    const [current, previous] = await Promise.all([
+      avgForRange(dateRange),
+      previousRange ? avgForRange(previousRange) : Promise.resolve(0),
+    ]);
+    return { current, previous };
   }
 
   private async loadActivityCenter(
@@ -1000,16 +1250,77 @@ export class AdminDashboardOptimizedService {
     limit: number,
   ): Promise<DashboardActivityCenterPayload> {
     const now = new Date();
-    const productMatch = buildProductSnapshotMatch(filters, now);
-    const manufacturerMatch = buildManufacturerSnapshotMatch(filters);
+    const applicationsMatch = {
+      ...buildProductSnapshotMatch(filters, now),
+      productStatus: {
+        $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
+      },
+      urnNo: { $exists: true, $nin: [null, ''] },
+      ...(filters.dateRange
+        ? {
+            createdDate: {
+              $gte: filters.dateRange.from,
+              $lte: filters.dateRange.to,
+            },
+          }
+        : {}),
+    };
+    const manufacturerMatch = {
+      ...buildManufacturerSnapshotMatch(filters),
+      ...(filters.dateRange
+        ? {
+            createdAt: {
+              $gte: filters.dateRange.from,
+              $lte: filters.dateRange.to,
+            },
+          }
+        : {}),
+    };
     const paymentIds = resolveManufacturerScopeIds(filters);
     const paymentMatch: Record<string, unknown> = {
-      paymentStatus: { $in: [PAYMENT_STATUS_PAID, PAYMENT_STATUS_PENDING] },
+      paymentStatus: {
+        $in: [
+          PAYMENT_STATUS_CREATED,
+          PAYMENT_STATUS_PENDING,
+          PAYMENT_STATUS_PAID,
+          PAYMENT_STATUS_REJECTED,
+        ],
+      },
       ...(paymentIds ? { vendorId: { $in: paymentIds } } : {}),
+      ...(filters.dateRange
+        ? {
+            $or: [
+              {
+                updatedDate: {
+                  $gte: filters.dateRange.from,
+                  $lte: filters.dateRange.to,
+                },
+              },
+              {
+                createdDate: {
+                  $gte: filters.dateRange.from,
+                  $lte: filters.dateRange.to,
+                },
+              },
+            ],
+          }
+        : {}),
     };
 
     const thresholdDate = new Date(now);
     thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const renewalsMatch: Record<string, unknown> = {
+      ...buildProductSnapshotMatch(filters, now),
+      productStatus: PRODUCT_STATUS_CERTIFIED,
+      validtillDate: {
+        $exists: true,
+        $ne: null,
+        $gte: now,
+        ...(filters.dateRange
+          ? { $lte: filters.dateRange.to < thresholdDate ? filters.dateRange.to : thresholdDate }
+          : { $lte: thresholdDate }),
+      },
+    };
 
     const [vendors, applications, payments, renewals] = await Promise.all([
       this.manufacturerModel
@@ -1030,8 +1341,56 @@ export class AdminDashboardOptimizedService {
 
       this.productModel
         .aggregate([
-          { $match: productMatch },
+          { $match: applicationsMatch },
           { $sort: { createdDate: -1 } },
+          {
+            $group: {
+              _id: '$urnNo',
+              urnNo: { $first: '$urnNo' },
+              manufacturerId: { $first: '$manufacturerId' },
+              createdAt: { $max: '$createdDate' },
+              totalEoi: { $sum: 1 },
+            },
+          },
+          { $sort: { createdAt: -1 } },
+          { $limit: limit },
+          {
+            $lookup: {
+              from: 'manufacturers',
+              localField: 'manufacturerId',
+              foreignField: '_id',
+              as: 'manufacturer',
+            },
+          },
+          {
+            $project: {
+              urnNo: 1,
+              totalEoi: 1,
+              createdAt: 1,
+              manufacturerName: {
+                $ifNull: [
+                  { $arrayElemAt: ['$manufacturer.manufacturerName', 0] },
+                  { $arrayElemAt: ['$manufacturer.vendor_name', 0] },
+                ],
+              },
+            },
+          },
+        ])
+        .exec(),
+
+      this.paymentDetailsModel
+        .find(paymentMatch)
+        .sort({ updatedDate: -1, createdDate: -1 })
+        .limit(limit)
+        .lean()
+        .exec(),
+
+      this.productModel
+        .aggregate([
+          {
+            $match: renewalsMatch,
+          },
+          { $sort: { validtillDate: 1 } },
           { $limit: limit },
           {
             $lookup: {
@@ -1050,10 +1409,32 @@ export class AdminDashboardOptimizedService {
             },
           },
           {
+            $lookup: {
+              from: 'sectors',
+              let: { sectorId: { $arrayElemAt: ['$category.sector', 0] } },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $and: [
+                        { $ne: ['$$sectorId', null] },
+                        { $eq: ['$id', '$$sectorId'] },
+                      ],
+                    },
+                  },
+                },
+                { $project: { name: 1 } },
+                { $limit: 1 },
+              ],
+              as: 'sector',
+            },
+          },
+          {
             $project: {
+              urnNo: 1,
               eoiNo: 1,
               productName: 1,
-              productStatus: 1,
+              validtillDate: 1,
               createdDate: 1,
               manufacturerName: {
                 $ifNull: [
@@ -1067,52 +1448,8 @@ export class AdminDashboardOptimizedService {
                   { $arrayElemAt: ['$category.category_name', 0] },
                 ],
               },
-            },
-          },
-        ])
-        .exec(),
-
-      this.paymentDetailsModel
-        .find(paymentMatch)
-        .sort({ updatedDate: -1, createdDate: -1 })
-        .limit(limit)
-        .lean()
-        .exec(),
-
-      this.productModel
-        .aggregate([
-          {
-            $match: {
-              ...productMatch,
-              productStatus: PRODUCT_STATUS_CERTIFIED,
-              validtillDate: {
-                $exists: true,
-                $ne: null,
-                $gte: now,
-                $lte: thresholdDate,
-              },
-            },
-          },
-          { $sort: { validtillDate: 1 } },
-          { $limit: limit },
-          {
-            $lookup: {
-              from: 'manufacturers',
-              localField: 'manufacturerId',
-              foreignField: '_id',
-              as: 'manufacturer',
-            },
-          },
-          {
-            $project: {
-              urnNo: 1,
-              productName: 1,
-              validtillDate: 1,
-              manufacturerName: {
-                $ifNull: [
-                  { $arrayElemAt: ['$manufacturer.manufacturerName', 0] },
-                  { $arrayElemAt: ['$manufacturer.vendor_name', 0] },
-                ],
+              sectorName: {
+                $ifNull: [{ $arrayElemAt: ['$sector.name', 0] }, '—'],
               },
             },
           },
@@ -1143,43 +1480,53 @@ export class AdminDashboardOptimizedService {
     });
 
     const applicationRows: DashboardActivityApplicationRow[] = applications.map((row) => {
-      const status = this.mapProductStatusLabel(Number(row.productStatus ?? 0));
+      const urnNo = String(row.urnNo ?? '').trim();
       return {
-        id: String(row._id),
-        eoiNo: String(row.eoiNo ?? ''),
-        productName: String(row.productName ?? ''),
+        id: urnNo || String(row._id),
+        urnNo: urnNo || '—',
         manufacturerName: String(row.manufacturerName ?? 'Unknown'),
-        categoryName: String(row.categoryName ?? 'Unknown'),
-        submittedAt: row.createdDate
-          ? new Date(row.createdDate as Date).toISOString().slice(0, 10)
+        totalEoi: Number(row.totalEoi ?? 0),
+        createdAt: row.createdAt
+          ? new Date(row.createdAt as Date).toISOString().slice(0, 10)
           : '',
-        status: status.label,
-        statusTone: status.tone,
-        href: '/products/requests',
+        href: urnNo
+          ? `/products/un-certified/urn/${encodeURIComponent(urnNo)}`
+          : '/products/un-certified',
       };
     });
 
     const paymentRows: DashboardActivityPaymentRow[] = payments.map((row) => {
-      const paid = Number(row.paymentStatus) === PAYMENT_STATUS_PAID;
+      const statusCode = Number(row.paymentStatus);
+      const paid = statusCode === PAYMENT_STATUS_PAID;
+      const rejected = statusCode === PAYMENT_STATUS_REJECTED;
+      const overdue = statusCode === PAYMENT_STATUS_CREATED;
       const vendorKey = row.vendorId?.toString() ?? '';
       const mfr = manufacturerMap.get(vendorKey);
       const companyName =
         mfr?.manufacturerName ?? mfr?.vendor_name ?? 'Unknown';
       const paymentId = Number(row.paymentId ?? 0);
+      const status = paid
+        ? { label: 'Paid', tone: 'success' }
+        : rejected
+          ? { label: 'Rejected', tone: 'neutral' }
+          : overdue
+            ? { label: 'Over Due', tone: 'danger' }
+            : { label: 'Pending', tone: 'warning' };
       return {
         id: String(row._id),
         transactionId: row.paymentReferenceNo?.trim()
           ? String(row.paymentReferenceNo).trim()
           : `TXN-${paymentId || row._id}`,
         companyName,
-        paymentType: String(row.paymentType ?? 'Fee'),
+        paymentType: this.formatPaymentType(row.paymentType),
+        paymentMode: String(row.paymentMode ?? "").trim() || "—",
         amount: Number(row.quoteTotal ?? 0),
         currency: 'INR',
-        paidAt: (row.updatedDate ?? row.createdDate)
-          ? new Date((row.updatedDate ?? row.createdDate) as Date).toISOString().slice(0, 10)
+        paidAt: (row.createdDate ?? row.updatedDate)
+          ? new Date((row.createdDate ?? row.updatedDate) as Date).toISOString().slice(0, 10)
           : '',
-        status: paid ? 'Paid' : 'Pending',
-        statusTone: paid ? 'success' : 'warning',
+        status: status.label,
+        statusTone: status.tone,
         href: '/payment-history',
       };
     });
@@ -1195,12 +1542,15 @@ export class AdminDashboardOptimizedService {
           ? { label: 'Overdue', tone: 'danger' }
           : daysRemaining <= 14
             ? { label: 'Due Soon', tone: 'warning' }
-            : { label: 'Active', tone: 'success' };
+            : { label: 'Certified', tone: 'success' };
       const urnNo = String(row.urnNo ?? '');
       return {
         id: String(row._id),
+        eoiNo: String(row.eoiNo ?? ''),
         urnNo,
         productName: String(row.productName ?? ''),
+        categoryName: String(row.categoryName ?? '—'),
+        sectorName: String(row.sectorName ?? '—'),
         manufacturerName: String(row.manufacturerName ?? 'Unknown'),
         expiresAt: expires.toISOString().slice(0, 10),
         daysRemaining,
@@ -1217,6 +1567,22 @@ export class AdminDashboardOptimizedService {
       renewals: renewalRows,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  private formatPaymentType(value?: string | null): string {
+    const key = String(value ?? '').trim().toLowerCase();
+    if (key === 'certification') return 'Certification';
+    if (key === 'renew' || key === 'renewal') return 'Renewal';
+    if (key === 'registration') return 'Registration';
+    return key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Payment';
+  }
+
+  private formatPaymentMode(value?: string | null): string {
+    const key = String(value ?? '').trim().toLowerCase();
+    if (key === 'online') return 'UPI';
+    if (key === 'cheque_or_dd') return 'Cheque';
+    if (key === 'neft_or_rtgs') return 'Bank Transfer';
+    return key || '—';
   }
 
   private mapProductStatusLabel(status: number): { label: string; tone: string } {

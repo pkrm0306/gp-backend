@@ -169,7 +169,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public events list (paginated)',
     description:
-      'Returns active events for the public website events page. Default pagination: page=1, limit=10 (max 50). Sorted by event date (newest first).',
+      'Returns active events for the public website events page. Default pagination: page=1, limit=10 (max 200). Sorted by event date (newest first).',
   })
   @ApiResponse({
     status: 200,

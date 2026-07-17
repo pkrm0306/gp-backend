@@ -3,16 +3,13 @@
 export type DashboardPendingActionPriority = 'critical' | 'high' | 'medium' | 'low';
 
 export type DashboardPendingActionKey =
-  | 'vendorApproval'
+  | 'manufacturerApprovals'
+  | 'productApprovals'
+  | 'registrationPaymentApprovals'
   | 'documentVerification'
-  | 'productReview'
-  | 'assignAssessor'
-  | 'scheduleAudit'
-  | 'reviewAssessment'
-  | 'certificationApproval'
-  | 'generateCertificate'
-  | 'renewalApproval'
-  | 'paymentVerification';
+  | 'certificationPaymentApprovals'
+  | 'renewalPaymentApprovals'
+  | 'renewalDocumentVerification';
 
 export type DashboardPendingActionRow = {
   id: string;
@@ -40,13 +37,10 @@ export type DashboardActivityVendorRow = {
 
 export type DashboardActivityApplicationRow = {
   id: string;
-  eoiNo: string;
-  productName: string;
+  urnNo: string;
   manufacturerName: string;
-  categoryName: string;
-  submittedAt: string;
-  status: string;
-  statusTone: string;
+  totalEoi: number;
+  createdAt: string;
   href: string;
 };
 
@@ -55,6 +49,7 @@ export type DashboardActivityPaymentRow = {
   transactionId: string;
   companyName: string;
   paymentType: string;
+  paymentMode: string;
   amount: number;
   currency: 'INR';
   paidAt: string;
@@ -65,8 +60,11 @@ export type DashboardActivityPaymentRow = {
 
 export type DashboardActivityRenewalRow = {
   id: string;
+  eoiNo: string;
   urnNo: string;
   productName: string;
+  categoryName: string;
+  sectorName: string;
   manufacturerName: string;
   expiresAt: string;
   daysRemaining: number;
@@ -122,10 +120,15 @@ export type DashboardReportCard = {
 /** Aggregated operational signals from a minimal set of DB $facet queries. */
 export type DashboardOpsSignals = {
   vendorsAwaitingApproval: number;
+  productsPendingReview: number;
+  registrationPaymentsPending: number;
+  documentVerificationPending: number;
+  certificationPaymentsPending: number;
+  renewalPaymentsPending: number;
+  renewalDocumentVerificationPending: number;
   paymentsPendingVerification: number;
   certificatesExpiringSoon: number;
   assessmentBacklog: number;
-  productsPendingReview: number;
   renewalsDue: number;
   rejectedProducts: number;
   revenueCurrent: number;
@@ -137,4 +140,9 @@ export type DashboardOpsSignals = {
   avgCertificationDays: number;
   avgPaymentVerificationDays: number;
   avgRenewalProcessingDays: number;
+  /** Previous comparable period averages for operational insights % change. */
+  prevAvgVendorApprovalDays: number;
+  prevAvgCertificationDays: number;
+  prevAvgPaymentVerificationDays: number;
+  prevAvgRenewalProcessingDays: number;
 };
