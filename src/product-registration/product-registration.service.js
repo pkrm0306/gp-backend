@@ -472,7 +472,16 @@ var ProductRegistrationService = function () {
                 validTillTo: (_12 = (_11 = dto.validTillTo) !== null && _11 !== void 0 ? _11 : dto.valid_till_to) !== null && _12 !== void 0 ? _12 : null,
                 sectorIds: (_14 = (_13 = this.resolveAdminListSectorIds(dto)) === null || _13 === void 0 ? void 0 : _13.join(',')) !== null && _14 !== void 0 ? _14 : null,
                 status: resolvedStatus,
-                v: 15,
+                urnStatuses: (function () {
+                    for (var _i = 0, _a = [dto.urnStatuses, dto.urnStatus, dto.urn_status]; _i < _a.length; _i++) {
+                        var c = _a[_i];
+                        if (Array.isArray(c) && c.length > 0) {
+                            return __spreadArray([], c, true).map(function (s) { return Number(s); }).filter(function (s) { return Number.isFinite(s); }).sort(function (a, b) { return a - b; }).join(',');
+                        }
+                    }
+                    return null;
+                })(),
+                v: 16,
             };
             return this.redisService.buildKey('products', 'list', 'admin', JSON.stringify(normalized));
         };
@@ -858,6 +867,17 @@ var ProductRegistrationService = function () {
             var eois = ((_b = urn.eoiDocs) !== null && _b !== void 0 ? _b : []).map(function (e) {
                 return _this.formatAdminListEoiEntry(e !== null && e !== void 0 ? e : {});
             });
+            var workflowStatus = (function () {
+                for (var _i = 0, eois_1 = eois; _i < eois_1.length; _i++) {
+                    var e = eois_1[_i];
+                    var code = Number((e === null || e === void 0 ? void 0 : e.urnWorkflowStatus) !== null && (e === null || e === void 0 ? void 0 : e.urnWorkflowStatus) !== undefined
+                        ? e.urnWorkflowStatus
+                        : e === null || e === void 0 ? void 0 : e.urnStatusCode);
+                    if (Number.isFinite(code))
+                        return code;
+                }
+                return null;
+            })();
             return {
                 urn_number: urn.urnNo,
                 urnNo: urn.urnNo,
@@ -871,6 +891,9 @@ var ProductRegistrationService = function () {
                 urnStatus: eoiSummaryStatusLabel,
                 urnStatusCode: eoiSummaryStatusCode,
                 urnStatusLabel: eoiSummaryStatusLabel,
+                urnWorkflowStatus: workflowStatus,
+                urn_workflow_status: workflowStatus,
+                urn_status: workflowStatus,
                 status: eoiSummaryStatusLabel,
                 statusCode: eoiSummaryStatusCode,
                 statusLabel: eoiSummaryStatusLabel,
@@ -7407,6 +7430,23 @@ var ProductRegistrationService = function () {
             }
             if (dto.product_type !== undefined) {
                 nativeMatch.productType = dto.product_type;
+            }
+            var urnStatuses = (function () {
+                for (var _i = 0, _a = [dto.urnStatuses, dto.urnStatus, dto.urn_status]; _i < _a.length; _i++) {
+                    var c = _a[_i];
+                    if (c === undefined || c === null || c === '')
+                        continue;
+                    var source = Array.isArray(c) ? c : String(c).split(',');
+                    var parsed = source
+                        .map(function (v) { return Number(String(v).trim()); })
+                        .filter(function (v) { return Number.isFinite(v); });
+                    if (parsed.length > 0)
+                        return parsed;
+                }
+                return [];
+            })();
+            if (urnStatuses.length > 0) {
+                nativeMatch.urnStatus = { $in: urnStatuses };
             }
             var categoryIds = this.resolveAdminListCategoryIds(dto);
             if (categoryIds && categoryIds.length > 0) {

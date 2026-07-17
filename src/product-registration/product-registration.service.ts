@@ -33,7 +33,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateUrnStatusDto } from './dto/update-urn-status.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 import { ListProductsDto } from './dto/list-products.dto';
-import { AdminListProductsDto } from './dto/admin-list-products.dto';
+import { AdminListProductsDto, normalizeNumberArray } from './dto/admin-list-products.dto';
 import { AdminListProductsFilterOptionsDto } from './dto/admin-list-products-filter-options.dto';
 import { AdminProductsExportDto } from './dto/admin-products-export.dto';
 import { SequenceHelper } from './helpers/sequence.helper';
@@ -524,7 +524,15 @@ export class ProductRegistrationService {
       validTillTo: dto.validTillTo ?? dto.valid_till_to ?? null,
       sectorIds: this.resolveAdminListSectorIds(dto)?.join(',') ?? null,
       status: resolvedStatus,
-      v: 15,
+      urnStatuses: (() => {
+        for (const c of [dto.urnStatuses, dto.urnStatus, dto.urn_status]) {
+          if (Array.isArray(c) && c.length > 0) {
+            return [...c].sort((a, b) => a - b).join(',');
+          }
+        }
+        return null;
+      })(),
+      v: 16,
     };
     return this.redisService.buildKey(
       'products',
@@ -958,6 +966,17 @@ export class ProductRegistrationService {
     const eois = (urn.eoiDocs ?? []).map((e) =>
       this.formatAdminListEoiEntry(e ?? {}),
     );
+    const workflowStatus = (() => {
+      for (const e of eois) {
+        const code = Number(
+          (e as { urnStatusCode?: number; urnWorkflowStatus?: number })
+            .urnWorkflowStatus ??
+            (e as { urnStatusCode?: number }).urnStatusCode,
+        );
+        if (Number.isFinite(code)) return code;
+      }
+      return null as number | null;
+    })();
     return {
       urn_number: urn.urnNo,
       urnNo: urn.urnNo,
@@ -969,8 +988,16 @@ export class ProductRegistrationService {
       eoiSummaryStatusLabel,
       /** @deprecated Same as `eoiSummaryStatus`; name is misleading (not DB `urnStatus`). */
       urnStatus: eoiSummaryStatusLabel,
+      /**
+       * Historical field held EOI productStatus rollup — keep for older clients.
+       * Prefer `urnWorkflowStatus` / EOI `urnStatusCode` for workflow filters.
+       */
       urnStatusCode: eoiSummaryStatusCode,
       urnStatusLabel: eoiSummaryStatusLabel,
+      /** Real DB `products.urnStatus` workflow step (0=proposal, 2=reg pay verify, 3=forms, 8=cert pay, …). */
+      urnWorkflowStatus: workflowStatus,
+      urn_workflow_status: workflowStatus,
+      urn_status: workflowStatus,
       status: eoiSummaryStatusLabel,
       statusCode: eoiSummaryStatusCode,
       statusLabel: eoiSummaryStatusLabel,
@@ -8447,6 +8474,18 @@ export class ProductRegistrationService {
     }
     if (dto.product_type !== undefined) {
       nativeMatch.productType = dto.product_type;
+    }
+    const urnStatuses = (() => {
+      for (const c of [dto.urnStatuses, dto.urnStatus, dto.urn_status]) {
+        const parsed = normalizeNumberArray(c);
+        if (parsed && parsed.length > 0) {
+          return parsed;
+        }
+      }
+      return [] as number[];
+    })();
+    if (urnStatuses.length > 0) {
+      nativeMatch.urnStatus = { $in: urnStatuses };
     }
     const categoryIds = this.resolveAdminListCategoryIds(dto);
     if (categoryIds && categoryIds.length > 0) {

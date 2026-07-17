@@ -222,6 +222,9 @@ export class AdminDashboardOptimizedService {
           pendingReview: { count: number }[];
           assessmentBacklog: { count: number }[];
           documentVerification: { count: number }[];
+          registrationPaymentVerification: { count: number }[];
+          certificationPaymentVerification: { count: number }[];
+          renewalPaymentVerification: { count: number }[];
           renewalDocumentVerification: { count: number }[];
           expiringSoon: { count: number }[];
           renewalsDue: { count: number }[];
@@ -235,8 +238,8 @@ export class AdminDashboardOptimizedService {
           {
             $facet: {
               /**
-               * Same default scope as Un-certified Products list (`status` [0,1]):
-               * manufacturer-grouped `total` (distinct manufacturers with active EOIs).
+               * Product Approvals — same scope as Un-certified list `?urnStatus=0`:
+               * product documents (EOIs) with productStatus ∈ {0,1}, productType 0, urnStatus 0.
                */
               pendingReview: [
                 {
@@ -244,9 +247,10 @@ export class AdminDashboardOptimizedService {
                     productStatus: {
                       $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
                     },
+                    productType: 0,
+                    urnStatus: 0,
                   },
                 },
-                { $group: { _id: '$manufacturerId' } },
                 { $count: 'count' },
               ],
               assessmentBacklog: [
@@ -255,14 +259,14 @@ export class AdminDashboardOptimizedService {
                     productStatus: {
                       $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
                     },
+                    productType: 0,
                     urnStatus: { $gte: 4, $lte: 10 },
                   },
                 },
                 { $count: 'count' },
               ],
               /**
-               * Admin form / document review queue (urnStatus 4 = review, 6 = final verification).
-               * Distinct URNs — same unit admins open from Un-certified URN detail.
+               * Document Verification — Un-certified list `?urnStatus=3` (product/EOI count).
                */
               documentVerification: [
                 {
@@ -270,33 +274,66 @@ export class AdminDashboardOptimizedService {
                     productStatus: {
                       $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
                     },
-                    urnStatus: { $in: [4, 6] },
+                    productType: 0,
+                    urnStatus: 3,
                   },
                 },
-                { $group: { _id: '$urnNo' } },
                 { $count: 'count' },
               ],
               /**
-               * Same eligibility as Admin Renew Products list (`adminListRenewProducts`),
-               * manufacturer-grouped (list pagination `total`).
+               * Registration Payment Approvals — Un-certified list `?urnStatus=2`.
+               */
+              registrationPaymentVerification: [
+                {
+                  $match: {
+                    productStatus: {
+                      $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
+                    },
+                    productType: 0,
+                    urnStatus: 2,
+                  },
+                },
+                { $count: 'count' },
+              ],
+              /**
+               * Certification Payment Approvals — Un-certified list `?urnStatus=8`.
+               */
+              certificationPaymentVerification: [
+                {
+                  $match: {
+                    productStatus: {
+                      $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
+                    },
+                    productType: 0,
+                    urnStatus: 8,
+                  },
+                },
+                { $count: 'count' },
+              ],
+              /**
+               * Renewal Payment Approvals — Renew list `?urnStatus=13` (product count).
+               */
+              renewalPaymentVerification: [
+                {
+                  $match: {
+                    productStatus: PRODUCT_STATUS_CERTIFIED,
+                    productType: 0,
+                    urnStatus: 13,
+                  },
+                },
+                { $count: 'count' },
+              ],
+              /**
+               * Renewal Document Verification — Renew list `?urnStatus=15,17`.
                */
               renewalDocumentVerification: [
                 {
                   $match: {
                     productStatus: PRODUCT_STATUS_CERTIFIED,
-                    $or: [
-                      {
-                        validtillDate: {
-                          $exists: true,
-                          $ne: null,
-                          $lt: thresholdDate,
-                        },
-                      },
-                      { urnStatus: { $gte: 12, $lte: 17 } },
-                    ],
+                    productType: 0,
+                    urnStatus: { $in: [15, 17] },
                   },
                 },
-                { $group: { _id: '$manufacturerId' } },
                 { $count: 'count' },
               ],
               expiringSoon: [
@@ -647,10 +684,12 @@ export class AdminDashboardOptimizedService {
     return {
       vendorsAwaitingApproval: vendorsAwaiting,
       productsPendingReview: pf?.pendingReview?.[0]?.count ?? 0,
-      registrationPaymentsPending: pay?.pendingRegistration?.[0]?.count ?? 0,
+      registrationPaymentsPending:
+        pf?.registrationPaymentVerification?.[0]?.count ?? 0,
       documentVerificationPending: pf?.documentVerification?.[0]?.count ?? 0,
-      certificationPaymentsPending: pay?.pendingCertification?.[0]?.count ?? 0,
-      renewalPaymentsPending: pay?.pendingRenewal?.[0]?.count ?? 0,
+      certificationPaymentsPending:
+        pf?.certificationPaymentVerification?.[0]?.count ?? 0,
+      renewalPaymentsPending: pf?.renewalPaymentVerification?.[0]?.count ?? 0,
       renewalDocumentVerificationPending:
         pf?.renewalDocumentVerification?.[0]?.count ?? 0,
       paymentsPendingVerification: pay?.pending?.[0]?.count ?? 0,
@@ -977,7 +1016,8 @@ export class AdminDashboardOptimizedService {
         count: signals.productsPendingReview,
         assignedTeam: 'Product Ops',
         quickActionLabel: 'Review products',
-        href: '/products/un-certified',
+        /** urnStatus 0 = Proposal / Admin Approval Pending */
+        href: '/products/un-certified?urnStatus=0',
         slaHours: signals.productsPendingReview > 20 ? -2 : 12,
       },
       {
@@ -986,7 +1026,8 @@ export class AdminDashboardOptimizedService {
         count: signals.registrationPaymentsPending,
         assignedTeam: 'Finance',
         quickActionLabel: 'Verify payments',
-        href: '/payment-history?paymentType=registration&status=pending',
+        /** urnStatus 2 = Registration Payment Verification Pending (Admin Action) */
+        href: '/products/un-certified?urnStatus=2',
         slaHours: signals.registrationPaymentsPending > 8 ? -6 : 5,
       },
       {
@@ -995,7 +1036,8 @@ export class AdminDashboardOptimizedService {
         count: signals.documentVerificationPending,
         assignedTeam: 'Compliance',
         quickActionLabel: 'Verify documents',
-        href: '/products/un-certified',
+        /** urnStatus 3 = Process Forms Submitted by vendor, admin must review */
+        href: '/products/un-certified?urnStatus=3',
         slaHours: signals.documentVerificationPending > 15 ? -4 : 10,
       },
       {
@@ -1004,7 +1046,8 @@ export class AdminDashboardOptimizedService {
         count: signals.certificationPaymentsPending,
         assignedTeam: 'Finance',
         quickActionLabel: 'Verify payments',
-        href: '/payment-history?paymentType=certification&status=pending',
+        /** urnStatus 8 = Certification Payment Verification Pending (Admin Action) */
+        href: '/products/un-certified?urnStatus=8',
         slaHours: signals.certificationPaymentsPending > 8 ? -6 : 5,
       },
       {
@@ -1013,7 +1056,7 @@ export class AdminDashboardOptimizedService {
         count: signals.renewalPaymentsPending,
         assignedTeam: 'Finance',
         quickActionLabel: 'Verify payments',
-        href: '/payment-history?paymentType=renew&status=pending',
+        href: '/products/renew?urnStatus=13',
         slaHours: signals.renewalPaymentsPending > 8 ? -6 : 5,
       },
       {
@@ -1022,7 +1065,7 @@ export class AdminDashboardOptimizedService {
         count: signals.renewalDocumentVerificationPending,
         assignedTeam: 'Renewals',
         quickActionLabel: 'Review renewals',
-        href: '/products/renew',
+        href: '/products/renew?urnStatus=15,17',
         slaHours: signals.renewalDocumentVerificationPending > 10 ? -3 : 12,
       },
     ];

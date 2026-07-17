@@ -122,6 +122,15 @@ var AdminListProductsDto = function () {
     var _urn_status_labels_decorators;
     var _urn_status_labels_initializers = [];
     var _urn_status_labels_extraInitializers = [];
+    var _urnStatuses_decorators;
+    var _urnStatuses_initializers = [];
+    var _urnStatuses_extraInitializers = [];
+    var _urnStatus_decorators;
+    var _urnStatus_initializers = [];
+    var _urnStatus_extraInitializers = [];
+    var _urn_status_decorators;
+    var _urn_status_initializers = [];
+    var _urn_status_extraInitializers = [];
     var _status_decorators;
     var _status_initializers = [];
     var _status_extraInitializers = [];
@@ -329,7 +338,10 @@ var AdminListProductsDto = function () {
                  */
                 this.urnStatusLabels = __runInitializers(this, _urnStatusLabels_initializers, void 0);
                 this.urn_status_labels = (__runInitializers(this, _urnStatusLabels_extraInitializers), __runInitializers(this, _urn_status_labels_initializers, void 0));
-                this.status = (__runInitializers(this, _urn_status_labels_extraInitializers), __runInitializers(this, _status_initializers, void 0));
+                this.urnStatuses = (__runInitializers(this, _urn_status_labels_extraInitializers), __runInitializers(this, _urnStatuses_initializers, void 0));
+                this.urnStatus = (__runInitializers(this, _urnStatuses_extraInitializers), __runInitializers(this, _urnStatus_initializers, void 0));
+                this.urn_status = (__runInitializers(this, _urnStatus_extraInitializers), __runInitializers(this, _urn_status_initializers, void 0));
+                this.status = (__runInitializers(this, _urn_status_extraInitializers), __runInitializers(this, _status_initializers, void 0));
                 this.productStatus = (__runInitializers(this, _status_extraInitializers), __runInitializers(this, _productStatus_initializers, void 0));
                 this.product_status = (__runInitializers(this, _productStatus_extraInitializers), __runInitializers(this, _product_status_initializers, void 0));
                 this.product_type = (__runInitializers(this, _product_status_extraInitializers), __runInitializers(this, _product_type_initializers, void 0));
@@ -403,6 +415,9 @@ var AdminListProductsDto = function () {
             var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
             _urnStatusLabels_decorators = [(0, class_validator_1.Allow)()];
             _urn_status_labels_decorators = [(0, class_validator_1.Allow)()];
+            _urnStatuses_decorators = [(0, class_validator_1.Allow)()];
+            _urnStatus_decorators = [(0, class_validator_1.Allow)()];
+            _urn_status_decorators = [(0, class_validator_1.Allow)()];
             _status_decorators = [(0, swagger_1.ApiPropertyOptional)({
                     description: 'EOI **productStatus** filter (same as `productStatus` / `product_status`). Values: **0** Pending, **1** Submitted, **2** Certified, **3** Rejected, **4** Expired (certified past validtill). ' +
                         'Omitted or empty → server uses `[0, 1]` for admin list/export. This filters **per EOI row** on `products.productStatus`, not manufacturer/vendor status.',
@@ -860,6 +875,9 @@ var AdminListProductsDto = function () {
                 }), (0, class_validator_1.IsMongoId)()];
             __esDecorate(null, null, _urnStatusLabels_decorators, { kind: "field", name: "urnStatusLabels", static: false, private: false, access: { has: function (obj) { return "urnStatusLabels" in obj; }, get: function (obj) { return obj.urnStatusLabels; }, set: function (obj, value) { obj.urnStatusLabels = value; } }, metadata: _metadata }, _urnStatusLabels_initializers, _urnStatusLabels_extraInitializers);
             __esDecorate(null, null, _urn_status_labels_decorators, { kind: "field", name: "urn_status_labels", static: false, private: false, access: { has: function (obj) { return "urn_status_labels" in obj; }, get: function (obj) { return obj.urn_status_labels; }, set: function (obj, value) { obj.urn_status_labels = value; } }, metadata: _metadata }, _urn_status_labels_initializers, _urn_status_labels_extraInitializers);
+            __esDecorate(null, null, _urnStatuses_decorators, { kind: "field", name: "urnStatuses", static: false, private: false, access: { has: function (obj) { return "urnStatuses" in obj; }, get: function (obj) { return obj.urnStatuses; }, set: function (obj, value) { obj.urnStatuses = value; } }, metadata: _metadata }, _urnStatuses_initializers, _urnStatuses_extraInitializers);
+            __esDecorate(null, null, _urnStatus_decorators, { kind: "field", name: "urnStatus", static: false, private: false, access: { has: function (obj) { return "urnStatus" in obj; }, get: function (obj) { return obj.urnStatus; }, set: function (obj, value) { obj.urnStatus = value; } }, metadata: _metadata }, _urnStatus_initializers, _urnStatus_extraInitializers);
+            __esDecorate(null, null, _urn_status_decorators, { kind: "field", name: "urn_status", static: false, private: false, access: { has: function (obj) { return "urn_status" in obj; }, get: function (obj) { return obj.urn_status; }, set: function (obj, value) { obj.urn_status = value; } }, metadata: _metadata }, _urn_status_initializers, _urn_status_extraInitializers);
             __esDecorate(null, null, _status_decorators, { kind: "field", name: "status", static: false, private: false, access: { has: function (obj) { return "status" in obj; }, get: function (obj) { return obj.status; }, set: function (obj, value) { obj.status = value; } }, metadata: _metadata }, _status_initializers, _status_extraInitializers);
             __esDecorate(null, null, _productStatus_decorators, { kind: "field", name: "productStatus", static: false, private: false, access: { has: function (obj) { return "productStatus" in obj; }, get: function (obj) { return obj.productStatus; }, set: function (obj, value) { obj.productStatus = value; } }, metadata: _metadata }, _productStatus_initializers, _productStatus_extraInitializers);
             __esDecorate(null, null, _product_status_decorators, { kind: "field", name: "product_status", static: false, private: false, access: { has: function (obj) { return "product_status" in obj; }, get: function (obj) { return obj.product_status; }, set: function (obj, value) { obj.product_status = value; } }, metadata: _metadata }, _product_status_initializers, _product_status_extraInitializers);

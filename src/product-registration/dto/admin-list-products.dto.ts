@@ -109,6 +109,20 @@ export class AdminListProductsDto {
   @Allow()
   urn_status_labels?: unknown;
 
+  /**
+   * Numeric URN workflow filter (`products.urnStatus`).
+   * Whitelisted with `@Allow()` so ValidationPipe `forbidNonWhitelisted` accepts deep-link bodies.
+   * Service normalizes to number[] when present.
+   */
+  @Allow()
+  urnStatuses?: unknown;
+
+  @Allow()
+  urnStatus?: unknown;
+
+  @Allow()
+  urn_status?: unknown;
+
   @ApiPropertyOptional({
     description:
       'EOI **productStatus** filter (same as `productStatus` / `product_status`). Values: **0** Pending, **1** Submitted, **2** Certified, **3** Rejected, **4** Expired (certified past validtill). ' +
