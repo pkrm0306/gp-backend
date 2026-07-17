@@ -61,18 +61,24 @@ export class LifecycleNotificationService {
     emailHtmlExtra?: string;
     ccGroups?: NotificationCcGroup[];
   }): Promise<void> {
-    await this.adminSystemNotification.createFeedNotification({
-      title: input.copy.title,
-      message: input.copy.message,
-      type: input.type ?? 'info',
-      source: input.source ?? 'manufacturer',
-      referenceType: input.referenceType,
-      referenceId: input.referenceId,
-      actorName: input.copy.actorName,
-      emailSubject: input.emailSubject ?? `GreenPro — ${input.copy.title}`,
-      emailHtmlExtra: input.emailHtmlExtra ?? `<p>${input.copy.message}</p>`,
-      ccGroups: input.ccGroups,
-    });
+    try {
+      await this.adminSystemNotification.createFeedNotification({
+        title: input.copy.title,
+        message: input.copy.message,
+        type: input.type ?? 'info',
+        source: input.source ?? 'manufacturer',
+        referenceType: input.referenceType,
+        referenceId: input.referenceId,
+        actorName: input.copy.actorName,
+        emailSubject: input.emailSubject ?? `GreenPro — ${input.copy.title}`,
+        emailHtmlExtra: input.emailHtmlExtra ?? `<p>${input.copy.message}</p>`,
+        ccGroups: input.ccGroups,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Admin feed/email failed [${input.referenceType}]: ${(error as Error)?.message || error}`,
+      );
+    }
   }
 
   /** Email + in-app when `userId` is present. Sign-up/OTP must not use this helper. */
@@ -111,39 +117,20 @@ export class LifecycleNotificationService {
       }
     }
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.notificationHelper
-      .send({
-        type: this.vendorNotifyChannels(userId),
-        template,
-        userId,
-        email,
-        payload: { manufacturerName, vendorName: manufacturerName, ...payload },
-      })
-      .then((result) => {
-        const failed = result.results.filter((r) => !r.success && !r.skipped);
-        if (failed.length > 0) {
-          this.logger.warn(
-            `[sendVendorEmailInBackground] ${template} SMTP failed for ${email}` +
-              (logContext ? ` (${logContext})` : '') +
-              `: ${failed.map((f) => f.error).join('; ')}`,
-          );
-        } else {
-          this.logger.log(
-            `[sendVendorEmailInBackground] ${template} sent via SMTP to ${email}` +
-              (logContext ? ` (${logContext})` : ''),
-          );
-        }
-      })
-      .catch((error) => {
-        this.logger.warn(
-          `[sendVendorEmailInBackground] ${template} failed for ${email}` +
-            (logContext ? ` (${logContext})` : '') +
-            `: ${(error as Error)?.message || error}`,
-        );
-      });
+    this.notificationHelper.sendInBackground({
+      type: this.vendorNotifyChannels(userId),
+      template,
+      userId,
+      email,
+      payload: { manufacturerName, vendorName: manufacturerName, ...payload },
+      async: true,
+    });
   }
 
-  /** Welcome email only. Admin bell feed is created after OTP verify. */
+  /**
+   * Welcome/OTP email is fire-and-forget. Never throws — registration must succeed
+   * even when SMTP is down (caller can offer Resend OTP).
+   */
   async notifyNewVendorRegistered(params: {
     userId: string;
     email: string;
@@ -159,7 +146,7 @@ export class LifecycleNotificationService {
       email: params.email,
     });
 
-    const notifyResult = await this.notificationHelper.send({
+    this.notificationHelper.sendInBackground({
       type: [NotificationChannel.EMAIL],
       template: NotificationTemplateCode.USER_CREATED,
       userId: params.userId,
@@ -171,41 +158,29 @@ export class LifecycleNotificationService {
         password: params.password,
         otp: params.otp,
       },
+      async: true,
     });
 
-    const emailResult = notifyResult.results.find(
-      (r) => r.channel === NotificationChannel.EMAIL,
-    );
-    if (emailResult?.success) {
-      this.logger.log(
-        `[notifyNewVendorRegistered] email ok for ${params.email}`,
+    // Admin feed is independent of SMTP success.
+    void this.notifyAdminFeedAndEmail({
+      copy: AdminNotificationMessages.vendorRegistrationOtpSent(
+        manufacturerName,
+        params.email,
+      ),
+      referenceType: 'vendor_registration_otp',
+      referenceId: params.userId,
+      type: 'info',
+      emailSubject: `GreenPro — Vendor registration OTP sent — ${manufacturerName}`,
+      emailHtmlExtra: `<p>Registration OTP email was queued for <strong>${this.escapeHtml(params.email)}</strong> for <strong>${this.escapeHtml(manufacturerName)}</strong>.</p>`,
+      ccGroups: ['SHEshi'],
+    }).catch((error) => {
+      this.logger.warn(
+        `[notifyNewVendorRegistered] admin feed failed for ${params.email}: ${(error as Error)?.message || error}`,
       );
-      await this.notifyAdminFeedAndEmail({
-        copy: AdminNotificationMessages.vendorRegistrationOtpSent(
-          manufacturerName,
-          params.email,
-        ),
-        referenceType: 'vendor_registration_otp',
-        referenceId: params.userId,
-        type: 'info',
-        emailSubject: `GreenPro — Vendor registration OTP sent — ${manufacturerName}`,
-        emailHtmlExtra: `<p>Registration OTP email was sent to <strong>${this.escapeHtml(params.email)}</strong> for <strong>${this.escapeHtml(manufacturerName)}</strong>.</p>`,
-        ccGroups: ['SHEshi'],
-      });
-      return;
-    }
-
-    const error =
-      emailResult?.error ||
-      notifyResult.results.map((r) => r.error).filter(Boolean).join('; ') ||
-      'Registration welcome email failed';
-    this.logger.error(
-      `[notifyNewVendorRegistered] email failed for ${params.email}: ${error}`,
-    );
-    // Surface failure so /auth/register-vendor can log + user can use Resend OTP.
-    throw new Error(error);
+    });
   }
 
+  /** OTP resend email is fire-and-forget. Never throws when SMTP is down. */
   async notifyVendorOtpResent(params: {
     userId: string;
     email: string;
@@ -213,7 +188,7 @@ export class LifecycleNotificationService {
     otp: string;
     expiresInMinutes: number;
   }): Promise<void> {
-    const notifyResult = await this.notificationHelper.send({
+    this.notificationHelper.sendInBackground({
       type: [NotificationChannel.EMAIL],
       template: NotificationTemplateCode.OTP_VERIFICATION,
       userId: params.userId,
@@ -223,26 +198,14 @@ export class LifecycleNotificationService {
         otp: params.otp,
         expiresInMinutes: params.expiresInMinutes,
       },
+      async: true,
     });
-
-    for (const r of notifyResult.results) {
-      if (r.success) {
-        this.logger.log(
-          `[notifyVendorOtpResent] ${r.channel} ok for ${params.email}`,
-        );
-      } else if (!r.skipped) {
-        this.logger.warn(
-          `[notifyVendorOtpResent] ${r.channel} failed for ${params.email}: ${r.error}`,
-        );
-        throw new Error(r.error || 'OTP email send failed');
-      }
-    }
 
     const manufacturerName = resolveManufacturerDisplayName({
       contactName: params.name,
       email: params.email,
     });
-    await this.notifyAdminFeedAndEmail({
+    void this.notifyAdminFeedAndEmail({
       copy: AdminNotificationMessages.vendorOtpResent(
         manufacturerName,
         params.email,
@@ -253,9 +216,14 @@ export class LifecycleNotificationService {
       emailSubject: `GreenPro — Vendor OTP resent — ${manufacturerName}`,
       emailHtmlExtra: `<p>Verification OTP was resent to <strong>${this.escapeHtml(params.email)}</strong> for <strong>${this.escapeHtml(manufacturerName)}</strong>.</p>`,
       ccGroups: ['SHEshi'],
+    }).catch((error) => {
+      this.logger.warn(
+        `[notifyVendorOtpResent] admin feed failed for ${params.email}: ${(error as Error)?.message || error}`,
+      );
     });
   }
 
+  /** Registration-complete notify is fire-and-forget. Never throws when SMTP is down. */
   async notifyVendorRegistrationComplete(
     userId: string,
     email: string,
@@ -263,28 +231,17 @@ export class LifecycleNotificationService {
   ): Promise<void> {
     const label = resolveManufacturerDisplayName({ manufacturerName, email });
 
-    const notifyResult = await this.notificationHelper.send({
+    this.notificationHelper.sendInBackground({
       type: this.vendorNotifyChannels(userId),
       template: NotificationTemplateCode.VENDOR_REGISTRATION_COMPLETE,
       userId,
       email,
       payload: { manufacturerName: label, vendorName: label, email },
+      async: true,
     });
 
-    for (const r of notifyResult.results) {
-      if (r.success) {
-        this.logger.log(
-          `[notifyVendorRegistrationComplete] ${r.channel} ok for ${email}`,
-        );
-      } else if (!r.skipped) {
-        this.logger.warn(
-          `[notifyVendorRegistrationComplete] ${r.channel} failed for ${email}: ${r.error}`,
-        );
-      }
-    }
-
     const completeCopy = AdminNotificationMessages.registrationComplete(label);
-    await this.notifyAdminFeedAndEmail({
+    void this.notifyAdminFeedAndEmail({
       copy: completeCopy,
       referenceType: 'vendor_registration',
       referenceId: userId,
@@ -292,6 +249,10 @@ export class LifecycleNotificationService {
       emailSubject: `GreenPro — ${completeCopy.title}`,
       emailHtmlExtra: `<p>${this.escapeHtml(completeCopy.message)}</p>`,
       ccGroups: ['SHEshi'],
+    }).catch((error) => {
+      this.logger.warn(
+        `[notifyVendorRegistrationComplete] admin feed failed for ${email}: ${(error as Error)?.message || error}`,
+      );
     });
   }
 

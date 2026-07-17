@@ -5,7 +5,6 @@ import {
   IsOptional,
   IsString,
   Matches,
-  Max,
   Min,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
@@ -55,7 +54,6 @@ export class EditBannerDto {
   })
   @IsInt()
   @Min(1)
-  @Max(9999)
   sequenceNumber?: number;
 
   @ApiPropertyOptional({

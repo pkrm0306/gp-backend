@@ -108,20 +108,27 @@ function validateSectionTitle(
   }
 }
 
-function validateRequiredField(
+/** True when a CMS text field has enough content to keep (not an empty draft UI row). */
+function hasCmsFieldContent(value: string): boolean {
+  return value.length >= SUMMIT_CMS_FIELD_MIN;
+}
+
+/**
+ * Draft/basic saves often send empty placeholder cards from other tabs.
+ * Keep only fully filled rows; drop incomplete placeholders instead of failing.
+ */
+function isCompleteCardRow(item: {
+  heading: string;
+  description: string;
+}): boolean {
+  return hasCmsFieldContent(item.heading) && hasCmsFieldContent(item.description);
+}
+
+function validateCmsFieldMax(
   value: string,
   fieldKey: string,
-  label: string,
   errors: Record<string, string>,
 ): void {
-  if (!value) {
-    errors[fieldKey] = `${label} is required.`;
-    return;
-  }
-  if (value.length < SUMMIT_CMS_FIELD_MIN) {
-    errors[fieldKey] = `Minimum ${SUMMIT_CMS_FIELD_MIN} characters are required.`;
-    return;
-  }
   if (value.length > SUMMIT_CMS_FIELD_MAX) {
     errors[fieldKey] = `Maximum ${SUMMIT_CMS_FIELD_MAX} characters are allowed.`;
   }
@@ -577,7 +584,10 @@ export function normalizeHighlightsSection(body: Record<string, unknown>): {
 } {
   const errors: Record<string, string> = {};
   const rawItems = extractNestedArray(body.highlights, ['items', 'points']);
-  const items = rawItems.map((item, index) => cardRowFromInput(item, index));
+  const items = rawItems
+    .map((item, index) => cardRowFromInput(item, index))
+    // Drop empty / half-filled draft cards from other tabs so basic-only saves work.
+    .filter((item) => isCompleteCardRow(item));
 
   if (items.length > SUMMIT_CMS_CARD_MAX) {
     errors['highlights.max'] = `Maximum ${SUMMIT_CMS_CARD_MAX} highlights are allowed.`;
@@ -585,16 +595,10 @@ export function normalizeHighlightsSection(body: Record<string, unknown>): {
 
   const sorted = sortSummitItems(items).slice(0, SUMMIT_CMS_CARD_MAX);
   for (const item of sorted) {
-    validateRequiredField(
-      item.heading,
-      `highlight.${item.id}.heading`,
-      'Highlight heading',
-      errors,
-    );
-    validateRequiredField(
+    validateCmsFieldMax(item.heading, `highlight.${item.id}.heading`, errors);
+    validateCmsFieldMax(
       item.description,
       `highlight.${item.id}.description`,
-      'Highlight description',
       errors,
     );
   }
@@ -619,7 +623,9 @@ export function normalizeEventOutcomesSection(body: Record<string, unknown>): {
 } {
   const errors: Record<string, string> = {};
   const rawItems = extractNestedArray(body.eventOutcomes, ['items', 'points']);
-  const items = rawItems.map((item, index) => cardRowFromInput(item, index));
+  const items = rawItems
+    .map((item, index) => cardRowFromInput(item, index))
+    .filter((item) => isCompleteCardRow(item));
 
   if (items.length > SUMMIT_CMS_CARD_MAX) {
     errors['event-outcomes.max'] =
@@ -628,16 +634,10 @@ export function normalizeEventOutcomesSection(body: Record<string, unknown>): {
 
   const sorted = sortSummitItems(items).slice(0, SUMMIT_CMS_CARD_MAX);
   for (const item of sorted) {
-    validateRequiredField(
-      item.heading,
-      `outcome.${item.id}.heading`,
-      'Outcome heading',
-      errors,
-    );
-    validateRequiredField(
+    validateCmsFieldMax(item.heading, `outcome.${item.id}.heading`, errors);
+    validateCmsFieldMax(
       item.description,
       `outcome.${item.id}.description`,
-      'Outcome description',
       errors,
     );
   }
@@ -701,7 +701,19 @@ export function normalizeFocusedAreaSection(body: Record<string, unknown>): {
     rawCards = reconstructFocusedAreaCardsFromAreaPoints(rawCards) as unknown[];
   }
 
-  const cards = rawCards.map((card, index) => focusCardFromInput(card, index));
+  const cards = rawCards
+    .map((card, index) => focusCardFromInput(card, index))
+    .map((card) => {
+      const points = sortSummitItems(card.points ?? []).filter((point) =>
+        hasCmsFieldContent(readTrimmed(point.text)),
+      );
+      return { ...card, points };
+    })
+    // Drop empty / half-filled draft topic cards from other tabs.
+    .filter(
+      (card) =>
+        hasCmsFieldContent(card.heading) && (card.points?.length ?? 0) > 0,
+    );
 
   if (cards.length > SUMMIT_CMS_CARD_MAX) {
     errors['focused-area.max'] =
@@ -710,35 +722,15 @@ export function normalizeFocusedAreaSection(body: Record<string, unknown>): {
 
   const sorted = sortSummitItems(cards).slice(0, SUMMIT_CMS_CARD_MAX);
   for (const card of sorted) {
-    validateRequiredField(
-      card.heading,
-      `focus-card.${card.id}.heading`,
-      'Topic heading',
-      errors,
-    );
-
-    if (card.points.length === 0) {
-      errors[`focus-card.${card.id}.points.min`] =
-        'At least 1 point is required per topic card.';
-    }
+    validateCmsFieldMax(card.heading, `focus-card.${card.id}.heading`, errors);
     if (card.points.length > SUMMIT_FOCUS_POINTS_MAX) {
       errors[`focus-card.${card.id}.points.max`] =
         `Maximum ${SUMMIT_FOCUS_POINTS_MAX} points are allowed per topic card.`;
     }
-
-    const sortedPoints = sortSummitItems(card.points).slice(
-      0,
-      SUMMIT_FOCUS_POINTS_MAX,
-    );
-    for (const point of sortedPoints) {
-      validateRequiredField(
-        point.text,
-        `focus-point.${point.id}.text`,
-        'Point text',
-        errors,
-      );
+    card.points = card.points.slice(0, SUMMIT_FOCUS_POINTS_MAX);
+    for (const point of card.points) {
+      validateCmsFieldMax(point.text, `focus-point.${point.id}.text`, errors);
     }
-    card.points = sortedPoints;
   }
 
   const rawTitle = readTrimmed(
@@ -788,36 +780,43 @@ export function normalizeAgendaSectionInput(body: Record<string, unknown>): {
   }
 
   const legacyTextOnlyIds = new Set<string>();
-  const points: SummitAgendaPointRow[] = pointsSource.map((point, index) => {
-    const row = cardRowFromInput(point, index);
-    const source = (point ?? {}) as Record<string, unknown>;
-    const isLegacyTextOnly =
-      !readTrimmed(source.heading ?? source.title ?? source.label) &&
-      readTrimmed(source.text ?? source.point).length > 0 &&
-      source.description === undefined;
-    if (fromLegacyHtml || isLegacyTextOnly) {
-      legacyTextOnlyIds.add(row.id);
-    }
-    return {
-      ...row,
-      text: combineCardText(row.heading, row.description),
-    };
-  });
+  const points: SummitAgendaPointRow[] = pointsSource
+    .map((point, index) => {
+      const row = cardRowFromInput(point, index);
+      const source = (point ?? {}) as Record<string, unknown>;
+      const isLegacyTextOnly =
+        !readTrimmed(source.heading ?? source.title ?? source.label) &&
+        readTrimmed(source.text ?? source.point).length > 0 &&
+        source.description === undefined;
+      if (fromLegacyHtml || isLegacyTextOnly) {
+        legacyTextOnlyIds.add(row.id);
+      }
+      return {
+        ...row,
+        text: combineCardText(row.heading, row.description),
+      };
+    })
+    // Drop empty / incomplete draft agenda rows from other tabs.
+    .filter((point) => {
+      if (legacyTextOnlyIds.has(point.id)) {
+        return hasCmsFieldContent(point.description);
+      }
+      return isCompleteCardRow(point);
+    });
+
   const sorted = sortSummitItems(points);
 
   for (const point of sorted) {
     if (!legacyTextOnlyIds.has(point.id)) {
-      validateRequiredField(
+      validateCmsFieldMax(
         point.heading,
         `agenda-point.${point.id}.heading`,
-        'Agenda point heading',
         errors,
       );
     }
-    validateRequiredField(
+    validateCmsFieldMax(
       point.description,
       `agenda-point.${point.id}.description`,
-      'Agenda point description',
       errors,
     );
   }

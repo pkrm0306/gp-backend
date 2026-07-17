@@ -1093,10 +1093,17 @@ export class WebsiteService {
     referenceId?: string;
     actorName?: string;
   }) {
-    await this.adminSystemNotification.createFeedNotification({
-      ...input,
-      source: input.source ?? 'website',
-    });
+    try {
+      await this.adminSystemNotification.createFeedNotification({
+        ...input,
+        source: input.source ?? 'website',
+      });
+    } catch (error) {
+      // Public forms already persisted; never fail the request on notify/email.
+      this.logger.warn(
+        `Website notification failed: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
   }
 
   async subscribeNewsletter(dto: NewsletterSubscribeDto) {
@@ -1272,49 +1279,51 @@ export class WebsiteService {
    *   await doc.save();
    */
   async submitContact(dto: ContactSubmitDto) {
+    const name = String(dto.name ?? '').trim();
+    const email = String(dto.email ?? '').trim().toLowerCase();
+    const phoneNumber = String(dto.phoneNumber ?? dto.phone ?? '').trim();
+    const subject = String(dto.subject ?? '').trim();
+    const message = String(dto.message ?? '').trim();
+
+    const payload: Partial<ContactMessage> = {
+      inquiryType: 'contact',
+      name,
+      email,
+      phoneNumber,
+      subject,
+      message,
+    };
+
+    let saved: ContactMessageDocument;
     try {
-      const name = String(dto.name ?? '').trim();
-      const email = String(dto.email ?? '').trim().toLowerCase();
-      const phoneNumber = String(dto.phoneNumber ?? dto.phone ?? '').trim();
-      const subject = String(dto.subject ?? '').trim();
-      const message = String(dto.message ?? '').trim();
-
-      const payload: Partial<ContactMessage> = {
-        inquiryType: 'contact',
-        name,
-        email,
-        phoneNumber,
-        subject,
-        message,
-      };
-
       const created = new this.contactMessageModel(payload);
-      const saved = await created.save();
-
-      await this.createNotification({
-        title: 'New website inquiry',
-        message: `${payload.name || 'Anonymous'} submitted a contact inquiry.`,
-        type: 'info',
-        source: 'website',
-        referenceType: 'contact',
-        referenceId: String((saved as any)._id),
-        actorName: payload.name,
-      });
-
-      return {
-        id: String((saved as any)._id),
-        name: (saved as any).name,
-        email: (saved as any).email,
-        phoneNumber: (saved as any).phoneNumber,
-        subject: (saved as any).subject,
-        message: (saved as any).message,
-        createdAt: (saved as any).createdAt,
-      };
+      saved = await created.save();
     } catch (e: any) {
       throw new InternalServerErrorException(
         e?.message || 'Failed to submit contact message',
       );
     }
+
+    // Notify/email are async best-effort — form data is already captured.
+    await this.createNotification({
+      title: 'New website inquiry',
+      message: `${payload.name || 'Anonymous'} submitted a contact inquiry.`,
+      type: 'info',
+      source: 'website',
+      referenceType: 'contact',
+      referenceId: String((saved as any)._id),
+      actorName: payload.name,
+    });
+
+    return {
+      id: String((saved as any)._id),
+      name: (saved as any).name,
+      email: (saved as any).email,
+      phoneNumber: (saved as any).phoneNumber,
+      subject: (saved as any).subject,
+      message: (saved as any).message,
+      createdAt: (saved as any).createdAt,
+    };
   }
 
   /**
@@ -1385,7 +1394,7 @@ export class WebsiteService {
    * sorted by displayOrder so website follows admin ordering.
    */
   async listWebsiteTeamMembers() {
-    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list-v4');
+    const cacheKey = this.redisService.buildKey('website', 'team-members', 'list-v5');
     try {
       const cached = await this.redisService.get<
         Array<{
@@ -1421,14 +1430,14 @@ export class WebsiteService {
       );
     }
 
-    const rows = await this.vendorUserModel
+    const rowsRaw = await this.vendorUserModel
       .find({ type: 'staff', status: 1, showOnWebsite: { $ne: false } })
-      .sort({ displayOrder: 1, _id: 1 })
       .select(
         'name designation email phone image facebookUrl twitterUrl linkedinUrl displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
+    const rows = this.adminService.sortTeamMembersByDisplayOrder(rowsRaw ?? []);
 
     const baseRows = await Promise.all(
       (rows ?? []).map(async (m: any, idx: number) => {

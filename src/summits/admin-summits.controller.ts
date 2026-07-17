@@ -162,7 +162,11 @@ export class AdminSummitsController {
   }
 
   @Patch(':id/status')
-  @AnyPermissions(PERMISSIONS.SUMMITS_UPDATE, PERMISSIONS.EVENTS_UPDATE)
+  @AnyPermissions(
+    PERMISSIONS.SUMMITS_STATUS,
+    PERMISSIONS.SUMMITS_UPDATE,
+    PERMISSIONS.EVENTS_UPDATE,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Set summit active or inactive (public site shows active only)' })
   async updateStatus(

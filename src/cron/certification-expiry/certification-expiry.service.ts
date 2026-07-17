@@ -634,10 +634,22 @@ export class CertificationExpiryService {
     const vendorEmail = email.toLowerCase();
     const ccFiltered =
       cc?.filter((addr) => addr.trim().toLowerCase() !== vendorEmail) ?? [];
-    await this.emailService.sendEmail(email, subject, html, undefined, {
-      rawHtml: true,
-      cc: ccFiltered.length ? ccFiltered : undefined,
-    });
+    // Never throw into the cron job when SMTP is down.
+    const ok = await this.emailService.sendEmail(
+      email,
+      subject,
+      html,
+      undefined,
+      {
+        rawHtml: true,
+        cc: ccFiltered.length ? ccFiltered : undefined,
+      },
+    );
+    if (!ok) {
+      this.logger.warn(
+        `Certification expiry email failed for ${email} (continuing cron)`,
+      );
+    }
   }
 
   private async writeLog(

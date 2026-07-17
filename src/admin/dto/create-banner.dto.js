@@ -104,7 +104,7 @@ var CreateBannerDto = function () {
                     if (!raw)
                         return undefined;
                     return Number(raw);
-                }), (0, class_validator_1.IsInt)(), (0, class_validator_1.Min)(1), (0, class_validator_1.Max)(9999)];
+                }), (0, class_validator_1.IsInt)(), (0, class_validator_1.Min)(1)];
             _status_decorators = [(0, swagger_1.ApiPropertyOptional)({
                     example: 'active',
                     description: 'Initial banner status',

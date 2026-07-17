@@ -1036,7 +1036,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Create banner',
     description:
-      'Creates a banner for the logged-in vendor. Image file may be sent as multipart field **image**, **bannerImage**, **banner_image**, or **file** (first non-empty file wins). Otherwise send **imageUrl** (http(s) or `/uploads/...`). Server stores **imageSource**: `binary_upload` vs `manual_url` from that choice.',
+      'Creates a banner for the logged-in vendor. Provide either a multipart image file (**image**, **bannerImage**, **banner_image**, or **file**) or **imageUrl** (http(s) public URL or `/uploads/...`). Server stores **imageSource**: `binary_upload` vs `manual_url` from that choice.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -1047,7 +1047,11 @@ export class AdminController {
         bannerImage: { type: 'string', format: 'binary' },
         banner_image: { type: 'string', format: 'binary' },
         file: { type: 'string', format: 'binary' },
-        imageUrl: { type: 'string', description: 'Optional if image uploaded' },
+        imageUrl: {
+          type: 'string',
+          description:
+            'Public http(s) image URL or `/uploads/...` path. Optional when uploading a file.',
+        },
         title: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
         sequenceNumber: { type: 'number', example: 1 },
@@ -1075,11 +1079,6 @@ export class AdminController {
     const vendorScope = resolveBannerVendorScope(user);
     const uploadedFile = pickBannerImageFile(files);
     const uploadedVideo = pickBannerVideoFile(files);
-    if (String(body.imageUrl ?? '').trim() && !uploadedFile) {
-      throw new BadRequestException(
-        'Banner image must be uploaded from your device. Image URLs are not accepted.',
-      );
-    }
     if (String(body.videoUrl ?? body.video_url ?? '').trim()) {
       throw new BadRequestException(
         'Banner video must be uploaded from your device. Video URLs are not accepted.',
@@ -1106,13 +1105,10 @@ export class AdminController {
     const imageUrl = uploadedFile
       ? (await uploadFile(uploadedFile, 'banners')).fileUrl
       : dto.imageUrl;
-    if (!uploadedFile) {
-      throw new BadRequestException(
-        'Banner image must be uploaded from your device.',
-      );
-    }
     if (!imageUrl) {
-      throw new BadRequestException('Banner image is required');
+      throw new BadRequestException(
+        'Banner image is required (upload a file or provide imageUrl)',
+      );
     }
     const videoUrl = await resolveUploadedBannerVideoUrl(
       uploadedVideo,
@@ -1137,7 +1133,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit banner',
     description:
-      'Edits a banner for the logged-in vendor. To replace the image, upload multipart **image**, **bannerImage**, **banner_image**, or **file**. Existing `imageUrl` / `videoUrl` values resent by the form are ignored (image/video kept as-is).',
+      'Edits a banner for the logged-in vendor. Replace the image by uploading multipart **image**, **bannerImage**, **banner_image**, or **file**, or by sending a new **imageUrl** (public http(s) URL or `/uploads/...`).',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id (from banner list)' })
   @ApiConsumes('multipart/form-data')
@@ -1153,7 +1149,7 @@ export class AdminController {
         imageUrl: {
           type: 'string',
           description:
-            'Ignored on edit without a new file upload (keeps the current image).',
+            'Optional public http(s) URL or `/uploads/...` path when not uploading a new file.',
         },
         title: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
@@ -1163,7 +1159,7 @@ export class AdminController {
           type: 'string',
           enum: ['binary_upload', 'manual_url'],
           description:
-            'Optional; updated only when a new image file is uploaded.',
+            'Optional; updated when a new image file or imageUrl is provided.',
         },
       },
     },
@@ -1184,9 +1180,14 @@ export class AdminController {
     const uploadedVideo = pickBannerVideoFile(files);
     const clearVideo = parseBannerClearVideoFlag(body);
 
-    // Edit forms often re-send the current stored image/video URL. Keep the
-    // existing media unless a new multipart file is uploaded.
+    if (String(body.videoUrl ?? body.video_url ?? '').trim() && !uploadedVideo) {
+      throw new BadRequestException(
+        'Banner video must be uploaded from your device. Video URLs are not accepted.',
+      );
+    }
+
     const dto = plainToClass(EditBannerDto, {
+      imageUrl: body.imageUrl,
       title: body.title ?? body.heading,
       status: body.status,
       sequenceNumber: body.sequenceNumber,
@@ -1206,6 +1207,7 @@ export class AdminController {
       !uploadedFile &&
       !uploadedVideo &&
       !clearVideo &&
+      dto.imageUrl === undefined &&
       dto.title === undefined &&
       dto.status === undefined &&
       dto.sequenceNumber === undefined &&
@@ -1216,13 +1218,20 @@ export class AdminController {
 
     const imageUrl = uploadedFile
       ? (await uploadFile(uploadedFile, 'banners')).fileUrl
-      : undefined;
+      : dto.imageUrl;
+    const imageSource = uploadedFile
+      ? ('binary_upload' as const)
+      : imageUrl
+        ? ('manual_url' as const)
+        : undefined;
     const videoUrl = await resolveUploadedBannerVideoUrl(
       uploadedVideo,
       mergeBannerVideoDurationBody(req.body, body, dto),
     );
     const data = await this.adminService.updateBanner(vendorScope, id, {
-      ...(imageUrl ? { imageUrl, imageSource: 'binary_upload' as const } : {}),
+      ...(imageUrl
+        ? { imageUrl, ...(imageSource ? { imageSource } : {}) }
+        : {}),
       ...(clearVideo ? { clearVideo: true } : {}),
       ...(videoUrl ? { videoUrl, videoSource: 'binary_upload' as const } : {}),
       ...(dto.title !== undefined ? { title: dto.title } : {}),
@@ -2873,7 +2882,7 @@ export class AdminController {
           description: 'JSON array string of sector ids',
         },
       },
-      required: ['name', 'email', 'mobile', 'displayOrder', 'businessVertical'],
+      required: ['name', 'email', 'mobile', 'businessVertical'],
     },
   })
   @ApiResponse({ status: 201, description: 'Team member created successfully' })

@@ -35,6 +35,7 @@ import { resolveAdminListValidTillMonthYearFilter } from './helpers/admin-list-v
 import { AdminListProductsFilterOptionsDto } from './dto/admin-list-products-filter-options.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
 import { Permissions } from '../common/decorators/permissions.decorator';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PatchUrnTabReviewDto } from './dto/urn-tab-review.dto';
@@ -594,7 +595,7 @@ export class AdminProductsController {
   }
 
   @Get('requests')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(PERMISSIONS.PRODUCTS_REQUESTS_VIEW, PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({
     summary: 'List vendor product name change requests',
     description:
@@ -616,7 +617,10 @@ export class AdminProductsController {
   }
 
   @Patch('requests/:requestId/status')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(
+    PERMISSIONS.PRODUCTS_REQUESTS_APPROVE_REJECT,
+    PERMISSIONS.PRODUCTS_UPDATE,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Review vendor product name change request',

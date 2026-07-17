@@ -53,6 +53,7 @@ describe('AdminController Banner Endpoints', () => {
         status: 'active',
         imageUrl: 'https://example.com/banner.jpg',
       },
+      { body: {} } as any,
       undefined,
     );
 
@@ -69,6 +70,7 @@ describe('AdminController Banner Endpoints', () => {
       controller.createBanner(
         { role: 'vendor' } as any,
         { title: 'Banner 1', description: 'Desc', sequenceNumber: 1 },
+        { body: {} } as any,
         undefined,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -86,6 +88,7 @@ describe('AdminController Banner Endpoints', () => {
         status: 'active',
         imageUrl: 'https://example.com/banner.jpg',
       },
+      { body: {} } as any,
       undefined,
     );
 
@@ -116,7 +119,7 @@ describe('AdminController Banner Endpoints', () => {
     expect(res.message).toBe('Banner updated successfully');
   });
 
-  it('edits banner while ignoring resent existing imageUrl', async () => {
+  it('edits banner while accepting public imageUrl', async () => {
     adminServiceMock.updateBanner.mockResolvedValue({ id: 'b1', title: 'Updated' } as any);
 
     const res = await controller.editBanner(
@@ -134,6 +137,8 @@ describe('AdminController Banner Endpoints', () => {
     );
 
     expect(adminServiceMock.updateBanner).toHaveBeenCalledWith('v1', 'b1', {
+      imageUrl: 'https://cdn.example.com/existing-banner.jpg',
+      imageSource: 'manual_url',
       title: 'Updated',
       status: 'active',
       sequenceNumber: 2,

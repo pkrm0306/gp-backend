@@ -865,8 +865,11 @@ export class SummitsService {
         keyPoint: normalizeSpeakerKeyPoint((item as { keyPoint?: string }).keyPoint),
         tags: normalizeSpeakerTags((item as { tags?: unknown }).tags),
         imageUrl: String(
-          (item as { imageUrl?: string; image?: string }).imageUrl ??
+          (item as { imageUrl?: string; image?: string; photoUrl?: string; photo?: string })
+            .imageUrl ??
             (item as { image?: string }).image ??
+            (item as { photoUrl?: string }).photoUrl ??
+            (item as { photo?: string }).photo ??
             '',
         ),
       };

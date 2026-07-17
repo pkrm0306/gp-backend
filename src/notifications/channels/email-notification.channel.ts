@@ -37,7 +37,19 @@ export class EmailNotificationChannel implements NotificationChannelHandler {
     }
 
     try {
-      await this.dispatchEmail(context.template, email, context.payload);
+      const delivered = await this.dispatchEmail(
+        context.template,
+        email,
+        context.payload,
+      );
+      if (!delivered) {
+        return {
+          channel: this.channel,
+          success: false,
+          error: 'Email delivery failed',
+          attempts: 1,
+        };
+      }
       return { channel: this.channel, success: true, attempts: 1 };
     } catch (error) {
       const message = (error as Error)?.message || 'Email send failed';
@@ -52,30 +64,29 @@ export class EmailNotificationChannel implements NotificationChannelHandler {
     template: NotificationTemplateCode,
     email: string,
     payload: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (template === NotificationTemplateCode.USER_CREATED) {
-      await this.emailService.sendRegistrationEmail(
+      return this.emailService.sendRegistrationEmail(
         email,
         String(payload.password ?? ''),
         String(payload.otp ?? ''),
       );
-      return;
     }
 
     if (template === NotificationTemplateCode.PASSWORD_RESET) {
-      await this.emailService.sendPasswordResetEmail(
+      return this.emailService.sendPasswordResetEmail(
         email,
         String(payload.newPassword ?? payload.password ?? ''),
       );
-      return;
     }
 
     const resolved = this.templateRegistry.resolveEmail(template, payload);
     if (!resolved) {
-      throw new Error(`Template ${template} has no email definition`);
+      this.logger.error(`Template ${template} has no email definition`);
+      return false;
     }
 
-    await this.emailService.sendEmail(
+    return this.emailService.sendEmail(
       email,
       resolved.subject,
       resolved.html,

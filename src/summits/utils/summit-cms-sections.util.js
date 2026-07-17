@@ -100,6 +100,22 @@ function validateRequiredField(value, fieldKey, label, errors) {
         errors[fieldKey] = "Maximum ".concat(summit_constants_1.SUMMIT_CMS_FIELD_MAX, " characters are allowed.");
     }
 }
+/** True when a CMS text field has enough content to keep (not an empty draft UI row). */
+function hasCmsFieldContent(value) {
+    return value.length >= summit_constants_1.SUMMIT_CMS_FIELD_MIN;
+}
+/**
+ * Draft/basic saves often send empty placeholder cards from other tabs.
+ * Keep only fully filled rows; drop incomplete placeholders instead of failing.
+ */
+function isCompleteCardRow(item) {
+    return hasCmsFieldContent(item.heading) && hasCmsFieldContent(item.description);
+}
+function validateCmsFieldMax(value, fieldKey, errors) {
+    if (value.length > summit_constants_1.SUMMIT_CMS_FIELD_MAX) {
+        errors[fieldKey] = "Maximum ".concat(summit_constants_1.SUMMIT_CMS_FIELD_MAX, " characters are allowed.");
+    }
+}
 function splitLegacyCardText(text, knownHeading) {
     var trimmed = readTrimmed(text);
     if (!trimmed) {
@@ -486,15 +502,18 @@ function normalizeHighlightsSection(body) {
     var _a, _b;
     var errors = {};
     var rawItems = extractNestedArray(body.highlights, ['items', 'points']);
-    var items = rawItems.map(function (item, index) { return cardRowFromInput(item, index); });
+    var items = rawItems
+        .map(function (item, index) { return cardRowFromInput(item, index); })
+        // Drop empty / half-filled draft cards from other tabs so basic-only saves work.
+        .filter(function (item) { return isCompleteCardRow(item); });
     if (items.length > summit_constants_1.SUMMIT_CMS_CARD_MAX) {
         errors['highlights.max'] = "Maximum ".concat(summit_constants_1.SUMMIT_CMS_CARD_MAX, " highlights are allowed.");
     }
     var sorted = sortSummitItems(items).slice(0, summit_constants_1.SUMMIT_CMS_CARD_MAX);
     for (var _i = 0, sorted_1 = sorted; _i < sorted_1.length; _i++) {
         var item = sorted_1[_i];
-        validateRequiredField(item.heading, "highlight.".concat(item.id, ".heading"), 'Highlight heading', errors);
-        validateRequiredField(item.description, "highlight.".concat(item.id, ".description"), 'Highlight description', errors);
+        validateCmsFieldMax(item.heading, "highlight.".concat(item.id, ".heading"), errors);
+        validateCmsFieldMax(item.description, "highlight.".concat(item.id, ".description"), errors);
     }
     var rawTitle = readTrimmed((_b = (_a = body.highlightsTitle) !== null && _a !== void 0 ? _a : body.highlights_title) !== null && _b !== void 0 ? _b : (isPlainObject(body.highlights) ? body.highlights.title : undefined));
     validateSectionTitle(rawTitle, 'highlights.title', sorted.length > 0, errors);
@@ -507,7 +526,9 @@ function normalizeEventOutcomesSection(body) {
     var _a, _b;
     var errors = {};
     var rawItems = extractNestedArray(body.eventOutcomes, ['items', 'points']);
-    var items = rawItems.map(function (item, index) { return cardRowFromInput(item, index); });
+    var items = rawItems
+        .map(function (item, index) { return cardRowFromInput(item, index); })
+        .filter(function (item) { return isCompleteCardRow(item); });
     if (items.length > summit_constants_1.SUMMIT_CMS_CARD_MAX) {
         errors['event-outcomes.max'] =
             "Maximum ".concat(summit_constants_1.SUMMIT_CMS_CARD_MAX, " event outcomes are allowed.");
@@ -515,8 +536,8 @@ function normalizeEventOutcomesSection(body) {
     var sorted = sortSummitItems(items).slice(0, summit_constants_1.SUMMIT_CMS_CARD_MAX);
     for (var _i = 0, sorted_2 = sorted; _i < sorted_2.length; _i++) {
         var item = sorted_2[_i];
-        validateRequiredField(item.heading, "outcome.".concat(item.id, ".heading"), 'Outcome heading', errors);
-        validateRequiredField(item.description, "outcome.".concat(item.id, ".description"), 'Outcome description', errors);
+        validateCmsFieldMax(item.heading, "outcome.".concat(item.id, ".heading"), errors);
+        validateCmsFieldMax(item.description, "outcome.".concat(item.id, ".description"), errors);
     }
     var rawTitle = readTrimmed((_b = (_a = body.eventOutcomesTitle) !== null && _a !== void 0 ? _a : body.event_outcomes_title) !== null && _b !== void 0 ? _b : (isPlainObject(body.eventOutcomes)
         ? body.eventOutcomes.title
@@ -549,7 +570,18 @@ function normalizeFocusedAreaSection(body) {
         shouldRegroupFlatAreaPoints(rawCards)) {
         rawCards = reconstructFocusedAreaCardsFromAreaPoints(rawCards);
     }
-    var cards = rawCards.map(function (card, index) { return focusCardFromInput(card, index); });
+    var cards = rawCards
+        .map(function (card, index) { return focusCardFromInput(card, index); })
+        .map(function (card) {
+        var points = sortSummitItems((card.points !== null && card.points !== void 0 ? card.points : [])).filter(function (point) {
+            return hasCmsFieldContent(readTrimmed(point.text));
+        });
+        return __assign(__assign({}, card), { points: points });
+    })
+        // Drop empty / half-filled draft topic cards from other tabs.
+        .filter(function (card) {
+        return (hasCmsFieldContent(card.heading) && ((card.points !== null && card.points !== void 0 ? card.points : [])).length > 0);
+    });
     if (cards.length > summit_constants_1.SUMMIT_CMS_CARD_MAX) {
         errors['focused-area.max'] =
             "Maximum ".concat(summit_constants_1.SUMMIT_CMS_CARD_MAX, " focused-area cards are allowed.");
@@ -557,21 +589,16 @@ function normalizeFocusedAreaSection(body) {
     var sorted = sortSummitItems(cards).slice(0, summit_constants_1.SUMMIT_CMS_CARD_MAX);
     for (var _i = 0, sorted_3 = sorted; _i < sorted_3.length; _i++) {
         var card = sorted_3[_i];
-        validateRequiredField(card.heading, "focus-card.".concat(card.id, ".heading"), 'Topic heading', errors);
-        if (card.points.length === 0) {
-            errors["focus-card.".concat(card.id, ".points.min")] =
-                'At least 1 point is required per topic card.';
-        }
+        validateCmsFieldMax(card.heading, "focus-card.".concat(card.id, ".heading"), errors);
         if (card.points.length > summit_constants_1.SUMMIT_FOCUS_POINTS_MAX) {
             errors["focus-card.".concat(card.id, ".points.max")] =
                 "Maximum ".concat(summit_constants_1.SUMMIT_FOCUS_POINTS_MAX, " points are allowed per topic card.");
         }
-        var sortedPoints = sortSummitItems(card.points).slice(0, summit_constants_1.SUMMIT_FOCUS_POINTS_MAX);
-        for (var _j = 0, sortedPoints_1 = sortedPoints; _j < sortedPoints_1.length; _j++) {
-            var point = sortedPoints_1[_j];
-            validateRequiredField(point.text, "focus-point.".concat(point.id, ".text"), 'Point text', errors);
+        card.points = card.points.slice(0, summit_constants_1.SUMMIT_FOCUS_POINTS_MAX);
+        for (var _j = 0, _k = card.points; _j < _k.length; _j++) {
+            var point = _k[_j];
+            validateCmsFieldMax(point.text, "focus-point.".concat(point.id, ".text"), errors);
         }
-        card.points = sortedPoints;
     }
     var rawTitle = readTrimmed((_h = (_g = (_f = body.focusedAreaTitle) !== null && _f !== void 0 ? _f : body.focused_area_title) !== null && _g !== void 0 ? _g : (isPlainObject(body.focusedArea) ? body.focusedArea.title : undefined)) !== null && _h !== void 0 ? _h : (isPlainObject(body.focused_area) ? body.focused_area.title : undefined));
     validateSectionTitle(rawTitle, 'focused-area.title', sorted.length > 0, errors);
@@ -593,7 +620,8 @@ function normalizeAgendaSectionInput(body) {
         fromLegacyHtml = true;
     }
     var legacyTextOnlyIds = new Set();
-    var points = pointsSource.map(function (point, index) {
+    var points = pointsSource
+        .map(function (point, index) {
         var _a, _b, _c;
         var row = cardRowFromInput(point, index);
         var source = (point !== null && point !== void 0 ? point : {});
@@ -604,14 +632,21 @@ function normalizeAgendaSectionInput(body) {
             legacyTextOnlyIds.add(row.id);
         }
         return __assign(__assign({}, row), { text: combineCardText(row.heading, row.description) });
+    })
+        // Drop empty / incomplete draft agenda rows from other tabs.
+        .filter(function (point) {
+        if (legacyTextOnlyIds.has(point.id)) {
+            return hasCmsFieldContent(point.description);
+        }
+        return isCompleteCardRow(point);
     });
     var sorted = sortSummitItems(points);
     for (var _i = 0, sorted_4 = sorted; _i < sorted_4.length; _i++) {
         var point = sorted_4[_i];
         if (!legacyTextOnlyIds.has(point.id)) {
-            validateRequiredField(point.heading, "agenda-point.".concat(point.id, ".heading"), 'Agenda point heading', errors);
+            validateCmsFieldMax(point.heading, "agenda-point.".concat(point.id, ".heading"), errors);
         }
-        validateRequiredField(point.description, "agenda-point.".concat(point.id, ".description"), 'Agenda point description', errors);
+        validateCmsFieldMax(point.description, "agenda-point.".concat(point.id, ".description"), errors);
     }
     var rawTitle = readTrimmed((_f = (_e = body.agendaTitle) !== null && _e !== void 0 ? _e : body.agenda_title) !== null && _f !== void 0 ? _f : (isPlainObject(body.agenda) ? body.agenda.title : undefined));
     validateSectionTitle(rawTitle, 'agenda.title', sorted.length > 0, errors);

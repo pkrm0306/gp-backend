@@ -53,10 +53,16 @@ export const PERMISSIONS = {
   PRODUCTS_REJECTED_VIEW: 'products:rejected:view',
   PRODUCTS_REJECTED_DETAILS_VIEW: 'products:rejected:details:view',
   PRODUCTS_REJECTED_STATUS: 'products:rejected:status',
+  /** Product name-change requests (admin Requests tab under Products). */
+  PRODUCTS_REQUESTS_VIEW: 'products:requests:view',
+  PRODUCTS_REQUESTS_APPROVE_REJECT: 'products:requests:approve-reject',
   PRODUCTS_ADD: 'products:add',
   PRODUCTS_UPDATE: 'products:update',
   PRODUCTS_DELETE: 'products:delete',
   PRODUCTS_STATUS: 'products:status',
+
+  /** Renew products list / renew admin workspace. */
+  RENEW_PRODUCTS_VIEW: 'renew-products:view',
 
   PAYMENTS_VIEW: 'payments:view',
   PAYMENTS_ADD: 'payments:add',
@@ -67,12 +73,14 @@ export const PERMISSIONS = {
   EVENTS_ADD: 'events:add',
   EVENTS_UPDATE: 'events:update',
   EVENTS_DELETE: 'events:delete',
+  /** Kept for legacy role data; event status toggle is no longer in the designation matrix. */
   EVENTS_STATUS: 'events:status',
 
   SUMMITS_VIEW: 'summits:view',
   SUMMITS_ADD: 'summits:add',
   SUMMITS_UPDATE: 'summits:update',
   SUMMITS_DELETE: 'summits:delete',
+  SUMMITS_STATUS: 'summits:status',
 
   INQUIRIES_VIEW: 'inquiries:view',
   INQUIRIES_REPLY: 'inquiries:reply',

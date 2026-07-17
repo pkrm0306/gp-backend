@@ -37,6 +37,10 @@ import {
   EventIdCounterSchema,
 } from '../events/schemas/event-id-counter.schema';
 import {
+  TeamMemberDisplayOrderCounter,
+  TeamMemberDisplayOrderCounterSchema,
+} from './schemas/team-member-display-order-counter.schema';
+import {
   ContactReplyThread,
   ContactReplyThreadSchema,
 } from './schemas/contact-reply-thread.schema';
@@ -119,6 +123,10 @@ import {
       { name: Notification.name, schema: NotificationSchema },
       { name: Event.name, schema: EventSchema },
       { name: EventIdCounter.name, schema: EventIdCounterSchema },
+      {
+        name: TeamMemberDisplayOrderCounter.name,
+        schema: TeamMemberDisplayOrderCounterSchema,
+      },
       { name: Article.name, schema: ArticleSchema },
       { name: PaymentDetails.name, schema: PaymentDetailsSchema },
       {

@@ -43,6 +43,11 @@ import {
   EventIdCounterDocument,
   EVENT_ID_COUNTER_KEY,
 } from '../events/schemas/event-id-counter.schema';
+import {
+  TeamMemberDisplayOrderCounter,
+  TeamMemberDisplayOrderCounterDocument,
+  TEAM_MEMBER_DISPLAY_ORDER_COUNTER_KEY,
+} from './schemas/team-member-display-order-counter.schema';
 import { EmailService } from '../common/services/email.service';
 import { AdminSystemNotificationService } from '../notifications/helpers/admin-system-notification.service';
 import {
@@ -237,6 +242,8 @@ export class AdminService {
     private eventModel: Model<EventDocument>,
     @InjectModel(EventIdCounter.name)
     private eventCounterModel: Model<EventIdCounterDocument>,
+    @InjectModel(TeamMemberDisplayOrderCounter.name)
+    private teamMemberDisplayOrderCounterModel: Model<TeamMemberDisplayOrderCounterDocument>,
     @InjectModel(NewsletterSubscriber.name)
     private newsletterSubscriberModel: Model<NewsletterSubscriberDocument>,
     @InjectModel(ContactMessage.name)
@@ -590,6 +597,154 @@ export class AdminService {
     }
   }
 
+  /** Ignore legacy garbage when computing active max / high-water. */
+  private static readonly DISPLAY_ORDER_SANITY_MAX = 1_000_000;
+
+  private isSaneDisplayOrder(order: number): boolean {
+    return (
+      Number.isInteger(order) &&
+      order >= 1 &&
+      order <= AdminService.DISPLAY_ORDER_SANITY_MAX
+    );
+  }
+
+  private async getTeamMemberDisplayOrderHighWater(): Promise<number> {
+    const doc = await this.teamMemberDisplayOrderCounterModel
+      .findById(TEAM_MEMBER_DISPLAY_ORDER_COUNTER_KEY)
+      .select({ highWater: 1 })
+      .lean()
+      .exec();
+    const n = Number(
+      (doc as { highWater?: number } | null)?.highWater,
+    );
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.min(Math.floor(n), AdminService.DISPLAY_ORDER_SANITY_MAX);
+  }
+
+  /** Raise high-water so blank assign never reuses a deleted max (gap stays free). */
+  private async bumpTeamMemberDisplayOrderHighWater(
+    order: number,
+  ): Promise<void> {
+    if (!this.isSaneDisplayOrder(order)) return;
+    await this.teamMemberDisplayOrderCounterModel
+      .updateOne(
+        { _id: TEAM_MEMBER_DISPLAY_ORDER_COUNTER_KEY },
+        { $max: { highWater: order } },
+        { upsert: true },
+      )
+      .exec();
+  }
+
+  /** Max display order among active staff only (excludes soft-deleted + junk). */
+  private async maxActiveTeamMemberDisplayOrder(
+    excludeUserId?: Types.ObjectId,
+  ): Promise<number> {
+    const filter: Record<string, unknown> = {
+      type: 'staff',
+      status: { $ne: 2 },
+      displayOrder: {
+        $gt: 0,
+        $lte: AdminService.DISPLAY_ORDER_SANITY_MAX,
+      },
+    };
+    if (excludeUserId) {
+      filter._id = { $ne: excludeUserId };
+    }
+    const row = await this.vendorUserModel
+      .findOne(filter)
+      .sort({ displayOrder: -1 })
+      .select({ displayOrder: 1 })
+      .lean()
+      .exec();
+    const max = Number((row as { displayOrder?: number } | null)?.displayOrder);
+    return this.isSaneDisplayOrder(max) ? Math.floor(max) : 0;
+  }
+
+  /**
+   * Blank → max(active max, highWater) + 1.
+   * Never scans soft-deleted rows (avoids values like 1233317).
+   */
+  private async nextTeamMemberDisplayOrder(
+    excludeUserId?: Types.ObjectId,
+  ): Promise<number> {
+    const [activeMax, highWater] = await Promise.all([
+      this.maxActiveTeamMemberDisplayOrder(excludeUserId),
+      this.getTeamMemberDisplayOrderHighWater(),
+    ]);
+    const next = Math.max(activeMax, highWater) + 1;
+    if (!this.isSaneDisplayOrder(next)) {
+      throw new BadRequestException(
+        'Display order sequence is exhausted. Enter a free order explicitly.',
+      );
+    }
+    return next;
+  }
+
+  private async assertTeamMemberDisplayOrderAvailable(
+    order: number,
+    excludeUserId?: Types.ObjectId,
+  ): Promise<void> {
+    const filter: Record<string, unknown> = {
+      type: 'staff',
+      status: { $ne: 2 },
+      displayOrder: order,
+    };
+    if (excludeUserId) {
+      filter._id = { $ne: excludeUserId };
+    }
+    const existing = await this.vendorUserModel
+      .findOne(filter)
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+    if (existing) {
+      throw new BadRequestException('This display order is already assigned.');
+    }
+  }
+
+  /**
+   * Empty → next after last active / high-water.
+   * Explicit → validate uniqueness among active (gaps OK).
+   */
+  private async resolveTeamMemberDisplayOrder(opts: {
+    requested?: number;
+    excludeUserId?: Types.ObjectId;
+  }): Promise<number> {
+    let order: number;
+    if (opts.requested === undefined) {
+      order = await this.nextTeamMemberDisplayOrder(opts.excludeUserId);
+    } else {
+      if (!this.isSaneDisplayOrder(opts.requested)) {
+        throw new BadRequestException(
+          `Display order must be a whole number between 1 and ${AdminService.DISPLAY_ORDER_SANITY_MAX}.`,
+        );
+      }
+      await this.assertTeamMemberDisplayOrderAvailable(
+        opts.requested,
+        opts.excludeUserId,
+      );
+      order = opts.requested;
+    }
+    await this.bumpTeamMemberDisplayOrderHighWater(order);
+    return order;
+  }
+
+  /** Assigned orders ascending; missing/0/null last. Used by admin + public website lists. */
+  sortTeamMembersByDisplayOrder<
+    T extends { displayOrder?: unknown; _id?: unknown },
+  >(members: T[]): T[] {
+    return [...members].sort((a, b) => {
+      const ao = Number(a.displayOrder);
+      const bo = Number(b.displayOrder);
+      const aOk = Number.isFinite(ao) && ao > 0;
+      const bOk = Number.isFinite(bo) && bo > 0;
+      if (aOk && bOk && ao !== bo) return ao - bo;
+      if (aOk && !bOk) return -1;
+      if (!aOk && bOk) return 1;
+      return String(a._id ?? '').localeCompare(String(b._id ?? ''));
+    });
+  }
+
   /** Platform admin/staff emails are globally unique (including soft-deleted rows). */
   private async assertPlatformEmailAvailable(
     emailLower: string,
@@ -613,7 +768,11 @@ export class AdminService {
   }
 
   private rethrowTeamMemberDuplicateKeyError(e: unknown): never {
-    const err = e as { code?: number; keyPattern?: Record<string, unknown>; keyValue?: Record<string, unknown> };
+    const err = e as {
+      code?: number;
+      keyPattern?: Record<string, unknown>;
+      keyValue?: Record<string, unknown>;
+    };
     if (err?.code === 11000) {
       const pattern = err.keyPattern ?? {};
       const keyVal = err.keyValue ?? {};
@@ -2012,33 +2171,10 @@ export class AdminService {
       await this.assertGlobalMobileAvailable(mobileTrim, softDeleted._id);
       await this.assertPlatformEmailAvailable(emailLower, softDeleted._id);
 
-      const totalNonDeleted = await this.vendorUserModel
-        .countDocuments({
-          type: 'staff',
-          businessVertical: data.businessVertical,
-          status: { $ne: 2 },
-        })
-        .exec();
-      const maxAllowed = Math.max(1, totalNonDeleted + 1);
-      const desiredOrder =
-        data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-      if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-        throw new BadRequestException('Display order must be a positive integer');
-      }
-
-      if (desiredOrder <= totalNonDeleted) {
-        await this.vendorUserModel
-          .updateMany(
-            {
-              type: 'staff',
-              businessVertical: data.businessVertical,
-              status: { $ne: 2 },
-              displayOrder: { $gte: desiredOrder },
-            },
-            { $inc: { displayOrder: 1 } },
-          )
-          .exec();
-      }
+      const desiredOrder = await this.resolveTeamMemberDisplayOrder({
+        requested: data.displayOrder,
+        excludeUserId: softDeleted._id as Types.ObjectId,
+      });
 
       const passwordHash = await bcrypt.hash(
         crypto.randomBytes(8).toString('hex'),
@@ -2119,33 +2255,9 @@ export class AdminService {
       };
     }
 
-    const totalNonDeleted = await this.vendorUserModel
-      .countDocuments({
-        type: 'staff',
-        businessVertical: data.businessVertical,
-        status: { $ne: 2 },
-      })
-      .exec();
-    const maxAllowed = Math.max(1, totalNonDeleted + 1);
-    const desiredOrder =
-      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-      throw new BadRequestException('Display order must be a positive integer');
-    }
-
-    if (desiredOrder <= totalNonDeleted) {
-      await this.vendorUserModel
-        .updateMany(
-          {
-            type: 'staff',
-            businessVertical: data.businessVertical,
-            status: { $ne: 2 },
-            displayOrder: { $gte: desiredOrder },
-          },
-          { $inc: { displayOrder: 1 } },
-        )
-        .exec();
-    }
+    const desiredOrder = await this.resolveTeamMemberDisplayOrder({
+      requested: data.displayOrder,
+    });
 
     const passwordHash = await bcrypt.hash(crypto.randomBytes(8).toString('hex'), 10);
 
@@ -2236,17 +2348,17 @@ export class AdminService {
    * status 1 = active, 0 = inactive (matches partner toggle).
    */
   async listTeamMembers(_vendorId: string) {
-    const members = await this.vendorUserModel
+    const membersRaw = await this.vendorUserModel
       .find({
         type: 'staff',
         status: { $ne: 2 },
       })
-      .sort({ displayOrder: 1, _id: 1 })
       .select(
         'name designation email phone status displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
+    const members = this.sortTeamMembersByDisplayOrder(membersRaw ?? []);
 
     const rows = await Promise.all(
       members.map(async (m, index) => {
@@ -2323,22 +2435,36 @@ export class AdminService {
       mongoQuery.designation = new RegExp(`^${escapeRegex(designation)}$`, 'i');
     }
 
-    const [displayOrderMax, totalCount, members] = await Promise.all([
+    const [displayOrderMaxDoc, totalCount, membersRaw] = await Promise.all([
       this.vendorUserModel
-        .countDocuments({ type: 'staff', status: { $ne: 2 } })
+        .findOne({
+          type: 'staff',
+          status: { $ne: 2 },
+          displayOrder: { $gt: 0, $lte: AdminService.DISPLAY_ORDER_SANITY_MAX },
+        })
+        .sort({ displayOrder: -1 })
+        .select({ displayOrder: 1 })
+        .lean()
         .exec(),
       this.vendorUserModel.countDocuments(mongoQuery).exec(),
       this.vendorUserModel
         .find(mongoQuery)
-        .sort({ displayOrder: 1, _id: 1 })
-        .skip(skip)
-        .limit(perPage)
         .select(
           'name designation email phone status displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
         )
         .lean()
         .exec(),
     ]);
+
+    const sorted = this.sortTeamMembersByDisplayOrder(membersRaw ?? []);
+    const members = sorted.slice(skip, skip + perPage);
+    const maxAssigned = Number(
+      (displayOrderMaxDoc as { displayOrder?: number } | null)?.displayOrder,
+    );
+    const displayOrderMax =
+      Number.isFinite(maxAssigned) && maxAssigned >= 1
+        ? Math.floor(maxAssigned)
+        : 1;
 
     const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
     const rows = await Promise.all(
@@ -2394,14 +2520,14 @@ export class AdminService {
       query.email = new RegExp(escapeRegex(email), 'i');
     }
 
-    const members = await this.vendorUserModel
+    const membersRaw = await this.vendorUserModel
       .find(query)
-      .sort({ displayOrder: 1, _id: 1 })
       .select(
         'name designation email phone status displayOrder businessVertical showOnWebsite sector_ids sector_id category_ids category_id',
       )
       .lean()
       .exec();
+    const members = this.sortTeamMembersByDisplayOrder(membersRaw ?? []);
 
     const rows = await Promise.all(
       members.map(async (m, index) => {
@@ -2882,44 +3008,10 @@ export class AdminService {
 
     await this.assertPlatformEmailAvailable(emailLower, memberObjectId);
 
-    const totalNonDeleted = await this.vendorUserModel
-      .countDocuments({ type: 'staff', status: { $ne: 2 } })
-      .exec();
-    const maxAllowed = Math.max(1, totalNonDeleted);
-    const desiredOrder =
-      data.displayOrder === undefined ? maxAllowed : data.displayOrder;
-    if (!Number.isInteger(desiredOrder) || desiredOrder < 1) {
-      throw new BadRequestException('Display order must be a positive integer');
-    }
-
-    const currentOrder = Number((member as any).displayOrder) || maxAllowed;
-    if (desiredOrder !== currentOrder) {
-      if (desiredOrder < currentOrder) {
-        await this.vendorUserModel
-          .updateMany(
-            {
-              _id: { $ne: memberObjectId },
-              type: 'staff',
-              status: { $ne: 2 },
-              displayOrder: { $gte: desiredOrder, $lt: currentOrder },
-            },
-            { $inc: { displayOrder: 1 } },
-          )
-          .exec();
-      } else {
-        await this.vendorUserModel
-          .updateMany(
-            {
-              _id: { $ne: memberObjectId },
-              type: 'staff',
-              status: { $ne: 2 },
-              displayOrder: { $gt: currentOrder, $lte: desiredOrder },
-            },
-            { $inc: { displayOrder: -1 } },
-          )
-          .exec();
-      }
-    }
+    const desiredOrder = await this.resolveTeamMemberDisplayOrder({
+      requested: data.displayOrder,
+      excludeUserId: memberObjectId,
+    });
 
     const $set: Record<string, unknown> = {
       name: data.name,
@@ -3053,31 +3145,23 @@ export class AdminService {
       throw new NotFoundException('Team member not found');
     }
 
+    const deletedOrder = Number((member as any).displayOrder);
+    if (this.isSaneDisplayOrder(deletedOrder)) {
+      await this.bumpTeamMemberDisplayOrderHighWater(deletedOrder);
+    }
+
     const updated = await this.vendorUserModel
       .findByIdAndUpdate(
         memberObjectId,
-        { status: 2, updatedAt: new Date() },
+        // Soft-delete only. High-water counter preserves gaps for blank assign;
+        // uniqueness remains active-only so the freed number can be typed explicitly.
+        { $set: { status: 2, updatedAt: new Date() } },
         { new: true },
       )
       .exec();
 
     if (!updated) {
       throw new NotFoundException('Team member not found');
-    }
-
-    const deletedOrder = Number((member as any).displayOrder);
-    if (Number.isFinite(deletedOrder) && deletedOrder > 0) {
-      await this.vendorUserModel
-        .updateMany(
-          {
-            _id: { $ne: memberObjectId },
-            type: 'staff',
-            status: { $ne: 2 },
-            displayOrder: { $gt: deletedOrder },
-          },
-          { $inc: { displayOrder: -1 } },
-        )
-        .exec();
     }
 
     await this.rbacService

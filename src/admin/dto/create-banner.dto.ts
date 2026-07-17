@@ -6,7 +6,6 @@ import {
   IsOptional,
   IsString,
   Matches,
-  Max,
   Min,
 } from 'class-validator';
 import {
@@ -50,7 +49,6 @@ export class CreateBannerDto {
   })
   @IsInt()
   @Min(1)
-  @Max(9999)
   sequenceNumber: number;
 
   @ApiPropertyOptional({

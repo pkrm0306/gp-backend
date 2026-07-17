@@ -956,9 +956,6 @@ var AdminController = function () {
                             vendorScope = (0, banner_vendor_scope_util_1.resolveBannerVendorScope)(user);
                             uploadedFile = (0, banner_image_upload_util_1.pickBannerImageFile)(files);
                             uploadedVideo = (0, banner_image_upload_util_1.pickBannerVideoFile)(files);
-                            if (String((_b = body.imageUrl) !== null && _b !== void 0 ? _b : '').trim() && !uploadedFile) {
-                                throw new common_1.BadRequestException('Banner image must be uploaded from your device. Image URLs are not accepted.');
-                            }
                             if (String((_d = (_c = body.videoUrl) !== null && _c !== void 0 ? _c : body.video_url) !== null && _d !== void 0 ? _d : '').trim()) {
                                 throw new common_1.BadRequestException('Banner video must be uploaded from your device. Video URLs are not accepted.');
                             }
@@ -990,11 +987,8 @@ var AdminController = function () {
                             _k.label = 4;
                         case 4:
                             imageUrl = _a;
-                            if (!uploadedFile) {
-                                throw new common_1.BadRequestException('Banner image must be uploaded from your device.');
-                            }
                             if (!imageUrl) {
-                                throw new common_1.BadRequestException('Banner image is required');
+                                throw new common_1.BadRequestException('Banner image is required (upload a file or provide imageUrl)');
                             }
                             return [4 /*yield*/, resolveUploadedBannerVideoUrl(uploadedVideo, mergeBannerVideoDurationBody(req.body, body, dto))];
                         case 5:
@@ -1018,20 +1012,16 @@ var AdminController = function () {
                             vendorScope = (0, banner_vendor_scope_util_1.resolveBannerVendorScope)(user);
                             uploadedFile = (0, banner_image_upload_util_1.pickBannerImageFile)(files);
                             uploadedVideo = (0, banner_image_upload_util_1.pickBannerVideoFile)(files);
-                            if (String((_b = body.imageUrl) !== null && _b !== void 0 ? _b : '').trim() && !uploadedFile) {
-                                throw new common_1.BadRequestException('Banner image must be uploaded from your device. Image URLs are not accepted.');
-                            }
-                            if (String((_d = (_c = body.videoUrl) !== null && _c !== void 0 ? _c : body.video_url) !== null && _d !== void 0 ? _d : '').trim()) {
+                            clearVideo = parseBannerClearVideoFlag(body);
+                            if (String((_d = (_c = body.videoUrl) !== null && _c !== void 0 ? _c : body.video_url) !== null && _d !== void 0 ? _d : '').trim() && !uploadedVideo) {
                                 throw new common_1.BadRequestException('Banner video must be uploaded from your device. Video URLs are not accepted.');
                             }
-                            clearVideo = parseBannerClearVideoFlag(body);
                             dto = (0, class_transformer_1.plainToClass)(edit_banner_dto_1.EditBannerDto, {
                                 imageUrl: body.imageUrl,
                                 title: (_e = body.title) !== null && _e !== void 0 ? _e : body.heading,
                                 status: body.status,
                                 sequenceNumber: body.sequenceNumber,
                                 description: body.description,
-                                imageSource: body.imageSource,
                                 videoDurationSeconds: body.videoDurationSeconds,
                             });
                             return [4 /*yield*/, (0, class_validator_1.validate)(dto, { skipMissingProperties: true })];

@@ -86,12 +86,25 @@ class SummitCardItemDto {
   @IsOptional() @IsString() description?: string;
   /** Legacy flat bullet alias */
   @IsOptional() @IsString() text?: string;
+  /** Legacy flat bullet alias used by admin CMS forms */
+  @IsOptional() @IsString() point?: string;
+  /** Legacy heading alias */
+  @IsOptional() @IsString() title?: string;
+  /** Legacy heading alias */
+  @IsOptional() @IsString() label?: string;
 }
 
 class SummitFocusPointDto {
   @IsOptional() @IsString() id?: string;
   @IsOptional() @IsInt() sortOrder?: number;
   @IsOptional() @IsString() text?: string;
+  /** Legacy flat bullet alias */
+  @IsOptional() @IsString() point?: string;
+  /** Legacy aliases accepted on nested focus points */
+  @IsOptional() @IsString() heading?: string;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() label?: string;
+  @IsOptional() @IsString() description?: string;
 }
 
 class SummitFocusAreaCardDto {
@@ -113,6 +126,18 @@ class SummitAgendaPointDto {
   @IsOptional() @IsString() description?: string;
   /** @deprecated legacy flat bullet — treated as description */
   @IsOptional() @IsString() text?: string;
+  /** Legacy flat bullet alias */
+  @IsOptional() @IsString() point?: string;
+}
+
+/** Legacy `areaPoints` rows may be flat bullets or topic cards with nested points. */
+class SummitAreaPointCompatDto extends SummitAgendaPointDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(SUMMIT_FOCUS_POINTS_MAX)
+  @ValidateNested({ each: true })
+  @Type(() => SummitFocusPointDto)
+  points?: SummitFocusPointDto[];
 }
 
 class SummitSpeakerDto {
@@ -138,6 +163,10 @@ class SummitSpeakerDto {
   @IsOptional() @IsString() imageUrl?: string;
   /** Legacy alias for imageUrl on save. */
   @IsOptional() @IsString() image?: string;
+  /** Legacy alias for imageUrl on save. */
+  @IsOptional() @IsString() photoUrl?: string;
+  /** Legacy alias for imageUrl on save. */
+  @IsOptional() @IsString() photo?: string;
 }
 
 class SummitSponsorDto {
@@ -222,12 +251,12 @@ export class UpdateSummitPayloadDto {
   focusedAreas?: SummitFocusAreaCardDto[];
 
   /** @deprecated legacy flat bullets — use focusedAreas */
-  @ApiPropertyOptional({ type: [SummitAgendaPointDto] })
+  @ApiPropertyOptional({ type: [SummitAreaPointCompatDto] })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => SummitAgendaPointDto)
-  areaPoints?: SummitAgendaPointDto[];
+  @Type(() => SummitAreaPointCompatDto)
+  areaPoints?: SummitAreaPointCompatDto[];
 
   @ApiPropertyOptional({
     minLength: SUMMIT_CMS_FIELD_MIN,

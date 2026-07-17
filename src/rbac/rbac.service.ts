@@ -165,13 +165,9 @@ export class RbacService {
       )
       .exec();
 
-    try {
-      await this.emailService.sendStaffCredentialsEmail(email, password, name);
-    } catch (error) {
-      this.logger.warn(
-        `First role assignment credentials email failed for ${email}: ${(error as Error)?.message || 'unknown error'}`,
-      );
-    }
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendStaffCredentialsEmail(email, password, name),
+    );
 
     return { temporaryPassword: password, email };
   }
@@ -524,17 +520,13 @@ export class RbacService {
       isVerified: true,
     });
 
-    try {
-      await this.emailService.sendStaffCredentialsEmail(
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendStaffCredentialsEmail(
         dto.email.trim().toLowerCase(),
         dto.password,
         dto.name.trim(),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Staff created but credentials email failed for ${dto.email.trim().toLowerCase()}: ${(error as Error)?.message || 'unknown error'}`,
-      );
-    }
+      ),
+    );
 
     await this.invalidateRbacCache(undefined);
     return createdStaff;

@@ -48,13 +48,43 @@ describe('summit-cms-sections.util', () => {
       ).toThrow(BadRequestException);
     });
 
-    it('requires heading and description on each saved row', () => {
-      expect(() =>
-        normalizeHighlightsSection({
-          highlightsTitle: 'Why Attend',
-          highlights: [{ heading: 'Only heading', description: '   ' }],
-        }),
-      ).toThrow(BadRequestException);
+    it('drops incomplete draft highlight cards instead of failing', () => {
+      const result = normalizeHighlightsSection({
+        highlightsTitle: 'Why Attend',
+        highlights: [
+          {
+            id: '98f69cb9-aed7-45ff-a0cc-7b644a531de1',
+            heading: 'Only heading',
+            description: '   ',
+          },
+          {
+            heading: '',
+            description: '',
+          },
+        ],
+      });
+
+      expect(result.items).toHaveLength(0);
+    });
+
+    it('keeps complete highlights and drops empty placeholders in the same payload', () => {
+      const result = normalizeHighlightsSection({
+        highlightsTitle: 'Why Attend',
+        highlights: [
+          {
+            heading: 'Knowledge sessions',
+            description: 'Learn from industry experts and GreenPro leaders.',
+          },
+          {
+            id: 'draft-empty',
+            heading: '',
+            description: '',
+          },
+        ],
+      });
+
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].heading).toBe('Knowledge sessions');
     });
 
     it('accepts API round-trip payloads that only send combined text', () => {
@@ -248,15 +278,16 @@ describe('summit-cms-sections.util', () => {
       );
     });
 
-    it('rejects structured points missing heading or description', () => {
-      expect(() =>
-        normalizeAgendaSectionInput({
-          agendaTitle: "GreenPro's Core Agenda",
-          agendaPoints: [
-            { heading: 'Opening remarks', description: '' },
-          ],
-        }),
-      ).toThrow(BadRequestException);
+    it('drops incomplete draft agenda points instead of failing', () => {
+      const result = normalizeAgendaSectionInput({
+        agendaTitle: "GreenPro's Core Agenda",
+        agendaPoints: [
+          { heading: 'Opening remarks', description: '' },
+          { heading: '', description: '' },
+        ],
+      });
+
+      expect(result.points).toHaveLength(0);
     });
 
     it('accepts agenda points posted as a top-level agenda array', () => {

@@ -64,7 +64,8 @@ export class AdminSystemNotificationService {
       return;
     }
 
-    await this.sendAdminAlertEmail({
+    // Companion email is async — feed write must succeed even if SMTP is down.
+    this.sendAdminAlertEmailInBackground({
       subject: input.emailSubject ?? `GreenPro — ${input.title}`,
       html: input.emailHtmlExtra ?? `<p>${this.escapeHtml(input.message)}</p>`,
       text: input.message,
@@ -74,36 +75,43 @@ export class AdminSystemNotificationService {
 
   /**
    * Deliver admin alert via Gmail (not Mailtrap-only) with ops CC.
+   * Logs failures only — never throws into API handlers.
    */
   async sendAdminAlertEmail(input: {
     subject: string;
     html: string;
     text?: string;
     ccGroups?: NotificationCcGroup[];
-  }): Promise<void> {
+  }): Promise<boolean> {
     const to = resolveAdminAlertTo(this.configService);
     if (!to) {
       this.logger.warn(
         'Admin alert email skipped — set ADMIN_ALERT_EMAIL or ADMIN_MAIL_CC',
       );
-      return;
+      return false;
     }
 
     const cc = this.resolveAdminAlertCc(input.ccGroups);
-    try {
-      await this.emailService.sendEmail(to, input.subject, input.html, input.text, {
+    const ok = await this.emailService.sendEmail(
+      to,
+      input.subject,
+      input.html,
+      input.text,
+      {
         cc: cc.length ? cc : undefined,
         primaryOnly: true,
-      });
+      },
+    );
+    if (ok) {
       this.logger.log(
         `Admin alert email sent to ${to}${cc.length ? `, cc: ${cc.join(', ')}` : ''} — ${input.subject}`,
       );
-    } catch (error) {
+    } else {
       this.logger.error(
-        `Admin alert email failed to ${to} — ${input.subject}: ${(error as Error)?.message || error}`,
+        `Admin alert email failed to ${to} — ${input.subject}`,
       );
-      throw error;
     }
+    return ok;
   }
 
   sendAdminAlertEmailInBackground(input: {

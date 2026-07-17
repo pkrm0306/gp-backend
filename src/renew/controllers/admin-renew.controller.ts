@@ -18,6 +18,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { Permissions } from '../../common/decorators/permissions.decorator';
+import { AnyPermissions } from '../../common/decorators/any-permissions.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions.constants';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RenewQuickViewService } from '../services/renew-quick-view.service';
@@ -73,7 +74,7 @@ export class AdminRenewController {
   }
 
   @Get('quick-view/:urnNo')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(PERMISSIONS.RENEW_PRODUCTS_VIEW, PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({ summary: 'Admin renewal quick view for a URN' })
   @ApiParam({ name: 'urnNo', type: String })
   async getQuickView(
@@ -89,7 +90,7 @@ export class AdminRenewController {
   }
 
   @Get('details/:urnNo')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(PERMISSIONS.RENEW_PRODUCTS_VIEW, PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({
     summary: 'Full renewal URN details (admin — same shape as uncertified GET /products/details)',
     description:
@@ -114,7 +115,7 @@ export class AdminRenewController {
   }
 
   @Get('renew-list')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(PERMISSIONS.RENEW_PRODUCTS_VIEW, PERMISSIONS.PRODUCTS_VIEW)
   @ApiOperation({
     summary: 'Admin renew products list (grouped by manufacturer)',
     description:

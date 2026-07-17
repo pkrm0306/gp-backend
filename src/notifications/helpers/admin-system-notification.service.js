@@ -121,14 +121,13 @@ var AdminSystemNotificationService = function () {
                             if (input.skipEmail) {
                                 return [2 /*return*/];
                             }
-                            return [4 /*yield*/, this.sendAdminAlertEmail({
-                                    subject: (_c = input.emailSubject) !== null && _c !== void 0 ? _c : "GreenPro \u2014 ".concat(input.title),
-                                    html: (_d = input.emailHtmlExtra) !== null && _d !== void 0 ? _d : "<p>".concat(this.escapeHtml(input.message), "</p>"),
-                                    text: input.message,
-                                    ccGroups: input.ccGroups,
-                                })];
-                        case 4:
-                            _e.sent();
+                            // Never block the caller (public forms / admin saves) on SMTP failures.
+                            this.sendAdminAlertEmailInBackground({
+                                subject: (_c = input.emailSubject) !== null && _c !== void 0 ? _c : "GreenPro \u2014 ".concat(input.title),
+                                html: (_d = input.emailHtmlExtra) !== null && _d !== void 0 ? _d : "<p>".concat(this.escapeHtml(input.message), "</p>"),
+                                text: input.message,
+                                ccGroups: input.ccGroups,
+                            });
                             return [2 /*return*/];
                     }
                 });

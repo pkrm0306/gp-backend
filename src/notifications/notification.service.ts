@@ -45,9 +45,11 @@ export class NotificationService {
 
   /**
    * Queue-ready: fire-and-forget; logs failures without throwing to caller.
+   * SMTP / channel errors never propagate to the HTTP request.
    */
   sendInBackground(request: SendNotificationRequest): void {
-    this.send({ ...request, async: true })
+    const { async: _ignored, ...payload } = request;
+    void this.send(payload)
       .then((result) => {
         const failed = result.results.filter((r) => !r.success && !r.skipped);
         if (failed.length > 0) {

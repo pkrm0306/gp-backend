@@ -507,8 +507,8 @@ export class AuthService {
       await session.commitTransaction();
       transactionCommitted = true;
 
-      // Send OTP/welcome email first (before Zoho) so SMTP delays don't block verification mail.
-      let emailDelivered = false;
+      // Queue OTP/welcome email in background — never block or fail registration on SMTP.
+      let emailDelivered = true;
       try {
         await this.lifecycleNotification.notifyNewVendorRegistered({
           userId: vendorUser._id.toString(),
@@ -518,10 +518,10 @@ export class AuthService {
           password: registerDto.password,
           otp,
         });
-        emailDelivered = true;
       } catch (notifyError: any) {
+        emailDelivered = false;
         this.logger.error(
-          `[registerVendor] Welcome/OTP email failed for ${normalizedEmail}: ${
+          `[registerVendor] Welcome/OTP email queue failed for ${normalizedEmail}: ${
             notifyError?.message || notifyError
           }`,
         );
@@ -773,13 +773,11 @@ export class AuthService {
         expiresInMinutes: VENDOR_REGISTRATION_OTP_EXPIRES_MINUTES,
       });
     } catch (notifyError: any) {
+      // OTP is already saved — never fail the HTTP response on email delivery issues.
       this.logger.warn(
         `[resendOtp] OTP email failed for ${email}: ${
           notifyError?.message || notifyError
         }`,
-      );
-      throw new BadRequestException(
-        'Failed to send OTP email. Please try again later.',
       );
     }
 
@@ -1051,34 +1049,21 @@ export class AuthService {
       password: newPassword,
     });
 
+    // Password already updated — queue reset mail in background; never fail the API on SMTP.
     try {
-      const notifyResult = await this.notificationHelper.send({
+      this.notificationHelper.sendInBackground({
         type: user._id
-        ? [NotificationChannel.EMAIL, NotificationChannel.IN_APP]
-        : [NotificationChannel.EMAIL],
+          ? [NotificationChannel.EMAIL, NotificationChannel.IN_APP]
+          : [NotificationChannel.EMAIL],
         template: NotificationTemplateCode.PASSWORD_RESET,
         userId: user._id.toString(),
         email: submittedEmail,
         payload: { newPassword },
+        async: true,
       });
-      const failed = notifyResult.results.filter((r) => !r.success && !r.skipped);
-      if (failed.length > 0) {
-        this.logger.warn(
-          `[forgotPassword] SMTP failed for ${submittedEmail}: ${failed
-            .map((f) => f.error)
-            .join('; ')}`,
-        );
-        throw new BadRequestException(
-          'Failed to send password email. Please try again later.',
-        );
-      }
     } catch (error) {
-      if (error instanceof BadRequestException) throw error;
       this.logger.warn(
-        `[forgotPassword] SMTP error for ${submittedEmail}: ${(error as Error)?.message || error}`,
-      );
-      throw new BadRequestException(
-        'Failed to send password email. Please try again later.',
+        `[forgotPassword] SMTP queue error for ${submittedEmail}: ${(error as Error)?.message || error}`,
       );
     }
 

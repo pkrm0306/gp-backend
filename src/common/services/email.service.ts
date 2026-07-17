@@ -287,7 +287,7 @@ export class EmailService {
       /** Vendor-facing mail — do not CC admin ops addresses. */
       skipAdminCc?: boolean;
     },
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const disabledRaw =
         this.configService.get<string>('EMAIL_DISABLED') || 'false';
@@ -324,11 +324,14 @@ export class EmailService {
         this.logger.warn(
           `EMAIL_DISABLED=true, skipping SMTP send to ${to} (local preview still saved if enabled)`,
         );
-        return;
+        return true;
       }
 
       if (this.transporters.length === 0) {
-        throw new Error('No SMTP transports configured');
+        this.logger.error(
+          `Failed to send email to ${to}: No SMTP transports configured`,
+        );
+        return false;
       }
 
       let outcome = await this.dispatchToTransports({
@@ -359,11 +362,14 @@ export class EmailService {
         const detail = outcome.primaryError
           ? `: ${outcome.primaryError}`
           : '';
-        throw new Error(`Failed to send email to ${to}${detail}`);
+        this.logger.error(`Failed to send email to ${to}${detail}`);
+        return false;
       }
+      return true;
     } catch (error) {
+      // Never throw — callers (CMS, auth, notifications) must not fail when SMTP is down.
       this.logger.error(`Failed to send email to ${to}:`, error);
-      throw error;
+      return false;
     }
   }
 
@@ -480,13 +486,21 @@ export class EmailService {
   /**
    * Fire-and-forget wrapper used by non-critical email flows.
    * Prevents request failures when SMTP has transient issues.
+   * Never rejects to the caller; failures are logged only.
    */
-  sendInBackground(task: () => Promise<void>): void {
-    task().catch((error) => {
-      this.logger.warn(
-        `Background email task failed: ${(error as Error)?.message || 'unknown error'}`,
-      );
-    });
+  sendInBackground(task: () => Promise<void | boolean>): void {
+    void Promise.resolve()
+      .then(() => task())
+      .then((ok) => {
+        if (ok === false) {
+          this.logger.warn('Background email task reported delivery failure');
+        }
+      })
+      .catch((error) => {
+        this.logger.warn(
+          `Background email task failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      });
   }
 
   async sendRegistrationEmail(
@@ -494,7 +508,7 @@ export class EmailService {
     password: string,
     otp: string,
     options?: { cc?: string | string[] },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const subject = 'Welcome to GreenPro - Registration Successful';
     const safeEmail = this.escapeHtml(email);
     const safePassword = this.escapeHtml(password);
@@ -529,7 +543,7 @@ OTP: ${otp}
 Thank you for joining GreenPro!
     `;
 
-    await this.sendEmail(email, subject, htmlBody, textBody, {
+    return this.sendEmail(email, subject, htmlBody, textBody, {
       ...options,
       primaryOnly: true,
       skipAdminCc: true,
@@ -558,7 +572,7 @@ Thank you for joining GreenPro!
     email: string,
     newPassword: string,
     options?: { cc?: string | string[] },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const subject = 'GreenPro - Password Reset';
     const safePassword = this.escapeHtml(newPassword);
     const htmlBody = `
@@ -590,7 +604,7 @@ Best regards,
 The GreenPro Team
     `;
 
-    await this.sendEmail(email, subject, htmlBody, textBody, options);
+    return this.sendEmail(email, subject, htmlBody, textBody, options);
   }
 
   async sendStaffCredentialsEmail(
