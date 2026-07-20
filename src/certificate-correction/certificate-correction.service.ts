@@ -101,19 +101,10 @@ export class CertificateCorrectionService {
       throw new BadRequestException('EOI number is required');
     }
 
-    const product = await this.productModel
-      .findOne(matchActiveProducts({ eoiNo: trimmed }))
-      .lean()
-      .exec();
+    const product = await this.findCertifiedProductByEoi(trimmed).lean().exec();
 
     if (!product) {
       throw new NotFoundException('EOI number not found!');
-    }
-
-    if (Number(product.productStatus) !== CERTIFIED_PRODUCT_STATUS) {
-      throw new BadRequestException(
-        'Only certified products can be corrected',
-      );
     }
 
     const plants = await this.productPlantModel
@@ -167,19 +158,12 @@ export class CertificateCorrectionService {
     const session = await this.connection.startSession();
     session.startTransaction();
     try {
-      const product = await this.productModel
-        .findOne(matchActiveProducts({ eoiNo: eoi }))
+      const product = await this.findCertifiedProductByEoi(eoi)
         .session(session)
         .exec();
 
       if (!product) {
         throw new NotFoundException('EOI number not found!');
-      }
-
-      if (Number(product.productStatus) !== CERTIFIED_PRODUCT_STATUS) {
-        throw new BadRequestException(
-          'Only certified products can be corrected',
-        );
       }
 
       const currentManufacturerId = String(product.manufacturerId ?? '');
@@ -285,6 +269,18 @@ export class CertificateCorrectionService {
 
   async previewPdf(eoiNo: string) {
     return this.vendorCertificateService.regenerateCertificatePdfByEoiNo(eoiNo);
+  }
+
+  /** Prefer certified row when duplicate active products share the same EOI. */
+  private findCertifiedProductByEoi(eoiNo: string) {
+    return this.productModel
+      .findOne(
+        matchActiveProducts({
+          eoiNo: String(eoiNo ?? '').trim(),
+          productStatus: CERTIFIED_PRODUCT_STATUS,
+        }),
+      )
+      .sort({ certifiedDate: -1, updatedDate: -1 });
   }
 
   private async resolveIndiaCountryId(): Promise<string | null> {
