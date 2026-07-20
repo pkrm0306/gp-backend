@@ -41,6 +41,7 @@ import {
   PRODUCTS_VIEW_ANY,
 } from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
 import { PatchUrnTabReviewDto } from './dto/urn-tab-review.dto';
 import { UrnTabReviewService } from './urn-tab-review.service';
 import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-product.dto';
@@ -55,7 +56,24 @@ import { UpsertUrnFinalReviewDto } from './dto/upsert-urn-final-review.dto';
 import { RenewAdminTestValidityService } from '../renew/services/renew-admin-test-validity.service';
 import { ProcessFinalReviewService } from './services/process-final-review.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import type { AdminProductCallerScope } from './product-registration.service';
 import type { Response } from 'express';
+
+type AdminJwtUser = {
+  userId?: string;
+  id?: string;
+  role?: string;
+  type?: string;
+};
+
+function resolveAdminProductCallerScope(
+  user?: AdminJwtUser | null,
+): AdminProductCallerScope {
+  return {
+    userId: String(user?.userId ?? user?.id ?? '').trim(),
+    isAdmin: isPlatformAdminUser(user),
+  };
+}
 
 /**
  * Admin list filters EOIs by **product** `productStatus` (EOI lifecycle), not manufacturer/vendor status.
@@ -142,10 +160,16 @@ export class AdminProductsController {
   @ApiResponse({ status: 200, description: 'Tab review state' })
   async getUrnTabReview(
     @Param('urnNo') urnNo: string,
+    @CurrentUser() user: AdminJwtUser,
     @Query('renewalCycleId') renewalCycleId?: string,
   ) {
+    const trimmed = urnNo.trim();
+    await this.productRegistrationService.assertAdminCanAccessUrn(
+      trimmed,
+      resolveAdminProductCallerScope(user),
+    );
     const data = await this.urnTabReviewService.getUrnTabReviews(
-      urnNo.trim(),
+      trimmed,
       renewalCycleId?.trim(),
     );
     return { message: 'URN tab reviews retrieved', data };
@@ -195,10 +219,18 @@ export class AdminProductsController {
   })
   @ApiResponse({ status: 200, description: 'Product details for the URN' })
   @ApiResponse({ status: 404, description: 'No products for this URN' })
-  async adminGetProductDetailsByUrn(@Param('urn') urn: string) {
+  async adminGetProductDetailsByUrn(
+    @Param('urn') urn: string,
+    @CurrentUser() user: AdminJwtUser,
+  ) {
     if (!urn || urn.trim() === '') {
       throw new BadRequestException('URN number is required');
     }
+    const scope = resolveAdminProductCallerScope(user);
+    await this.productRegistrationService.assertAdminCanAccessUrn(
+      urn.trim(),
+      scope,
+    );
     const data = await this.productRegistrationService.getProductDetailsByUrn(urn.trim());
     const siteVisits =
       (data[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
@@ -352,8 +384,16 @@ export class AdminProductsController {
     summary: 'Get URN technical/final review and credits',
   })
   @ApiParam({ name: 'urnNo', example: 'URN-20260527122016' })
-  async getUrnFinalReview(@Param('urnNo') urnNo: string) {
-    const data = await this.processFinalReviewService.getByUrn(urnNo.trim());
+  async getUrnFinalReview(
+    @Param('urnNo') urnNo: string,
+    @CurrentUser() user: AdminJwtUser,
+  ) {
+    const trimmed = urnNo.trim();
+    await this.productRegistrationService.assertAdminCanAccessUrn(
+      trimmed,
+      resolveAdminProductCallerScope(user),
+    );
+    const data = await this.processFinalReviewService.getByUrn(trimmed);
     return {
       success: true,
       message: 'URN final review fetched successfully',
@@ -671,8 +711,14 @@ export class AdminProductsController {
   })
   @ApiBody({ type: AdminListProductsFilterOptionsDto })
   @ApiResponse({ status: 200, description: 'Filter options' })
-  async listFilterOptions(@Body() dto: AdminListProductsFilterOptionsDto) {
-    return this.productRegistrationService.adminGetProductListFilterOptions(dto);
+  async listFilterOptions(
+    @Body() dto: AdminListProductsFilterOptionsDto,
+    @CurrentUser() user: AdminJwtUser,
+  ) {
+    return this.productRegistrationService.adminGetProductListFilterOptions(
+      dto,
+      resolveAdminProductCallerScope(user),
+    );
   }
 
   @Post('list')
@@ -689,9 +735,13 @@ export class AdminProductsController {
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({ status: 200, description: 'Products listed successfully' })
   @HttpCode(HttpStatus.OK)
-  async list(@Body() dto: AdminListProductsDto) {
+  async list(
+    @Body() dto: AdminListProductsDto,
+    @CurrentUser() user: AdminJwtUser,
+  ) {
     return this.productRegistrationService.adminListProducts(
       resolveAdminListProductsBody(dto),
+      resolveAdminProductCallerScope(user),
     );
   }
 
@@ -708,10 +758,12 @@ export class AdminProductsController {
   @ApiResponse({ status: 200, description: 'File download (may contain headers only)' })
   async export(
     @Body() dto: AdminProductsExportDto,
+    @CurrentUser() user: AdminJwtUser,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const file = await this.productRegistrationService.exportAdminProductsFile(
       resolveAdminListProductsBody(dto) as AdminProductsExportDto,
+      resolveAdminProductCallerScope(user),
     );
 
     res.setHeader('X-Export-Row-Count', String(file.rowCount));

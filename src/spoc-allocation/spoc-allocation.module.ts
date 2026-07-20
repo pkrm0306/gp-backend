@@ -52,6 +52,6 @@ import { SpocAllocationService } from './service/spoc-allocation.service';
     SpocAllocationService,
     PermissionsGuard,
   ],
-  exports: [SpocAllocationService, MongooseModule],
+  exports: [SpocAllocationService, SpocAllocationRepository, MongooseModule],
 })
 export class SpocAllocationModule {}

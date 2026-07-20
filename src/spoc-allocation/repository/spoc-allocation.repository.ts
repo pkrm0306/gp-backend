@@ -106,6 +106,57 @@ export class SpocAllocationRepository {
       .exec();
   }
 
+  /**
+   * Distinct business `productId`s with an active SPOC allocation for the given staff user.
+   */
+  async findActiveProductIdsForSpoc(spocUserId: string): Promise<number[]> {
+    const id = String(spocUserId ?? '').trim();
+    if (!id || !Types.ObjectId.isValid(id)) {
+      return [];
+    }
+    const rows = await this.allocationModel
+      .find({ spocId: new Types.ObjectId(id), isActive: true })
+      .select('productId')
+      .lean()
+      .exec();
+    const ids = new Set<number>();
+    for (const row of rows) {
+      const productId = Number(row.productId);
+      if (Number.isFinite(productId) && productId > 0) {
+        ids.add(productId);
+      }
+    }
+    return [...ids];
+  }
+
+  /**
+   * True when the staff user has an active allocation on any of the given productIds.
+   */
+  async hasActiveAllocationForSpocOnProducts(
+    spocUserId: string,
+    productIds: number[],
+  ): Promise<boolean> {
+    const id = String(spocUserId ?? '').trim();
+    const uniqueIds = [
+      ...new Set(
+        productIds
+          .map((n) => Number(n))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    ];
+    if (!id || !Types.ObjectId.isValid(id) || uniqueIds.length === 0) {
+      return false;
+    }
+    const found = await this.allocationModel
+      .exists({
+        spocId: new Types.ObjectId(id),
+        isActive: true,
+        productId: { $in: uniqueIds },
+      })
+      .exec();
+    return !!found;
+  }
+
   createAllocation(doc: {
     productId: number;
     urn: string;

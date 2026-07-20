@@ -26,6 +26,15 @@ import {
 } from '../common/constants/permissions.constants';
 import { ProductRegistrationService } from './product-registration.service';
 import { AdminPatchUrnStatusBodyDto } from './dto/admin-patch-urn-status-body.dto';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
+
+type AdminJwtUser = {
+  userId?: string;
+  id?: string;
+  role?: string;
+  type?: string;
+};
 
 /**
  * REST-style admin URN routes used by the admin portal env:
@@ -55,11 +64,18 @@ export class AdminUrnController {
   })
   @ApiResponse({ status: 200, description: 'Product details for the URN' })
   @ApiResponse({ status: 404, description: 'No products for this URN' })
-  async getDetailsByUrn(@Param('urn') urn: string) {
+  async getDetailsByUrn(
+    @Param('urn') urn: string,
+    @CurrentUser() user: AdminJwtUser,
+  ) {
     const urnNo = decodeURIComponent(String(urn ?? '')).trim();
     if (!urnNo) {
       throw new BadRequestException('URN number is required');
     }
+    await this.productRegistrationService.assertAdminCanAccessUrn(urnNo, {
+      userId: String(user?.userId ?? user?.id ?? '').trim(),
+      isAdmin: isPlatformAdminUser(user),
+    });
     const data =
       await this.productRegistrationService.getProductDetailsByUrn(urnNo);
     return { success: true, data };

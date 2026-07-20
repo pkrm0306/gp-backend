@@ -31,6 +31,7 @@ import { SectorsModule } from '../sectors/sectors.module';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { SpocAllocationModule } from '../spoc-allocation/spoc-allocation.module';
 import { UrnSiteVisitsModule } from '../urn-site-visits/urn-site-visits.module';
 import {
   Category,
@@ -105,6 +106,7 @@ import {
     SectorsModule,
     ActivityLogModule,
     RbacModule,
+    SpocAllocationModule,
     UrnSiteVisitsModule,
     ZohoModule,
     forwardRef(() => RenewalModule),

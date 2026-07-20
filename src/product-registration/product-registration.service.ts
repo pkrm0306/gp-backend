@@ -103,6 +103,7 @@ import { RedisService } from '../common/redis/redis.service';
 import { UrnSiteVisitsService } from '../urn-site-visits/urn-site-visits.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import { UrnTabReviewService } from './urn-tab-review.service';
+import { SpocAllocationRepository } from '../spoc-allocation/repository/spoc-allocation.repository';
 import { AdminPatchCertifiedProductDto } from './dto/admin-patch-certified-product.dto';
 import { VendorPatchCertifiedProductDto } from './dto/vendor-patch-certified-product.dto';
 import { VendorProductChangeRequestDto } from './dto/vendor-product-change-request.dto';
@@ -174,6 +175,12 @@ export type GetProductDetailsByUrnOptions = {
   enrichPlantsWithGeo?: boolean;
 };
 
+/** Platform admin vs staff scope for admin product list / export / detail. */
+export type AdminProductCallerScope = {
+  userId: string;
+  isAdmin: boolean;
+};
+
 type AdminExportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 type AdminExportJob = {
   jobId: string;
@@ -229,6 +236,7 @@ export class ProductRegistrationService {
     private readonly categoryChangeCleanupService: CategoryChangeCleanupService,
     private readonly zohoDealsService: ZohoDealsService,
     private readonly emailService: EmailService,
+    private readonly spocAllocationRepository: SpocAllocationRepository,
   ) {}
 
   private async syncUrnProductsToZohoDeal(
@@ -478,7 +486,10 @@ export class ProductRegistrationService {
     );
   }
 
-  private buildAdminProductListCacheKey(dto: AdminListProductsDto): string {
+  private buildAdminProductListCacheKey(
+    dto: AdminListProductsDto,
+    scope?: AdminProductCallerScope | null,
+  ): string {
     const resolvedStatus = (() => {
       for (const c of [dto.status, dto.productStatus, dto.product_status]) {
         if (Array.isArray(c) && c.length > 0) {
@@ -532,7 +543,12 @@ export class ProductRegistrationService {
         }
         return null;
       })(),
-      v: 16,
+      spocScope: !scope
+        ? 'legacy'
+        : scope.isAdmin
+          ? 'admin'
+          : `staff:${String(scope.userId ?? '').trim()}`,
+      v: 17,
     };
     return this.redisService.buildKey(
       'products',
@@ -544,6 +560,92 @@ export class ProductRegistrationService {
 
   private async invalidateProductListingsCache(): Promise<void> {
     await invalidateAllProductListingsCache(this.redisService, this.logger);
+  }
+
+  /**
+   * `null` = unrestricted (platform admin). Otherwise business `productId`s for `$in`.
+   */
+  private async resolveAdminScopedProductIds(
+    scope?: AdminProductCallerScope | null,
+  ): Promise<number[] | null> {
+    if (!scope || scope.isAdmin) {
+      return null;
+    }
+    const userId = String(scope.userId ?? '').trim();
+    if (!userId) {
+      return [];
+    }
+    return this.spocAllocationRepository.findActiveProductIdsForSpoc(userId);
+  }
+
+  private emptyAdminProductListResponse(page: number, limit: number) {
+    return {
+      message: 'Products listed successfully',
+      data: [] as any[],
+      total: 0,
+      page,
+      limit,
+      statusCounts: {} as Record<string, number>,
+    };
+  }
+
+  /**
+   * Staff may only open URN details when they have an active SPOC allocation
+   * on at least one EOI under that URN. Platform admins are unrestricted.
+   */
+  async assertAdminCanAccessUrn(
+    urnNo: string,
+    scope?: AdminProductCallerScope | null,
+  ): Promise<void> {
+    if (!scope || scope.isAdmin) {
+      return;
+    }
+    const userId = String(scope.userId ?? '').trim();
+    const trimmedUrn = String(urnNo ?? '').trim();
+    if (!userId || !trimmedUrn) {
+      throw new NotFoundException(`No products found with URN: ${urnNo}`);
+    }
+    const productIds = await this.productModel
+      .distinct('productId', matchActiveProducts({ urnNo: trimmedUrn }))
+      .exec();
+    const numericIds = productIds
+      .map((id) => Number(id))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const allowed =
+      await this.spocAllocationRepository.hasActiveAllocationForSpocOnProducts(
+        userId,
+        numericIds,
+      );
+    if (!allowed) {
+      throw new NotFoundException(
+        `No products found with URN: ${trimmedUrn}`,
+      );
+    }
+  }
+
+  /**
+   * Staff may only read a product when they have an active SPOC allocation for it.
+   */
+  async assertAdminCanAccessProductId(
+    productId: number,
+    scope?: AdminProductCallerScope | null,
+  ): Promise<void> {
+    if (!scope || scope.isAdmin) {
+      return;
+    }
+    const userId = String(scope.userId ?? '').trim();
+    const pid = Number(productId);
+    if (!userId || !Number.isFinite(pid) || pid < 1) {
+      throw new NotFoundException('Product not found');
+    }
+    const allowed =
+      await this.spocAllocationRepository.hasActiveAllocationForSpocOnProducts(
+        userId,
+        [pid],
+      );
+    if (!allowed) {
+      throw new NotFoundException('Product not found');
+    }
   }
 
   /** Distinct URN + EOI counts for a manufacturer scoped to one category (admin list totals). */
@@ -1965,6 +2067,7 @@ export class ProductRegistrationService {
 
   private async collectAdminListRowsForExport(
     dto: AdminListProductsDto,
+    scope?: AdminProductCallerScope | null,
   ): Promise<any[]> {
     const batchSize = 500;
     let page = 1;
@@ -1972,11 +2075,14 @@ export class ProductRegistrationService {
     const listRows: any[] = [];
 
     while (true) {
-      const batch = await this.adminListProducts({
-        ...dto,
-        page,
-        limit: batchSize,
-      } as AdminListProductsDto);
+      const batch = await this.adminListProducts(
+        {
+          ...dto,
+          page,
+          limit: batchSize,
+        } as AdminListProductsDto,
+        scope,
+      );
 
       if (totalGroups === 0) {
         totalGroups = batch.total ?? 0;
@@ -8242,7 +8348,10 @@ export class ProductRegistrationService {
    * Dropdown values for admin certified (or other) product list filters.
    * Categories: all active categories. Other fields: distinct values from products in scope.
    */
-  async adminGetProductListFilterOptions(dto: AdminListProductsFilterOptionsDto) {
+  async adminGetProductListFilterOptions(
+    dto: AdminListProductsFilterOptionsDto,
+    scope?: AdminProductCallerScope | null,
+  ) {
     const statuses = (() => {
       for (const c of [dto.status, dto.productStatus, dto.product_status]) {
         if (Array.isArray(c) && c.length > 0) {
@@ -8259,15 +8368,30 @@ export class ProductRegistrationService {
       .lean()
       .exec();
 
-    const categoryOptions = categories.map((c) => ({
+    let categoryOptions = categories.map((c) => ({
       value: String(c._id),
       label: String(c.category_name ?? '').trim() || 'Category',
     }));
+
+    const scopedProductIds = await this.resolveAdminScopedProductIds(scope);
 
     const productMatch: Record<string, unknown> = {
       ...matchActiveProducts(),
       productStatus: statuses.length === 1 ? statuses[0] : { $in: statuses },
     };
+    if (scopedProductIds != null) {
+      productMatch.productId = { $in: scopedProductIds };
+    }
+
+    if (scopedProductIds != null) {
+      const scopedCategoryIds = await this.productModel
+        .distinct('categoryId', productMatch)
+        .exec();
+      const allowed = new Set(
+        scopedCategoryIds.map((id) => String(id)).filter(Boolean),
+      );
+      categoryOptions = categoryOptions.filter((c) => allowed.has(c.value));
+    }
 
     const [manufacturerRows, yearRows, countryOptions, sectorOptions] =
       await Promise.all([
@@ -8414,18 +8538,35 @@ export class ProductRegistrationService {
     };
   }
 
-  async adminListProducts(dto: AdminListProductsDto) {
+  async adminListProducts(
+    dto: AdminListProductsDto,
+    scope?: AdminProductCallerScope | null,
+  ) {
+    const scopedProductIds = await this.resolveAdminScopedProductIds(scope);
+    if (scopedProductIds !== null && scopedProductIds.length === 0) {
+      return this.emptyAdminProductListResponse(
+        dto.page ?? 1,
+        dto.limit ?? 10,
+      );
+    }
     const groupBy = dto.groupBy ?? 'manufacturer';
     if (groupBy === 'urn') {
-      return this.adminListProductsGroupedByUrn(dto);
+      return this.adminListProductsGroupedByUrn(dto, scopedProductIds, scope);
     }
-    return this.adminListProductsGroupedByManufacturer(dto);
+    return this.adminListProductsGroupedByManufacturer(
+      dto,
+      scopedProductIds,
+      scope,
+    );
   }
 
   private buildAdminListRowBase(
     dto: AdminListProductsDto,
     locationProductIds: Types.ObjectId[] | null = null,
-    options?: { requirePublicWebsiteManufacturerVisibility?: boolean },
+    options?: {
+      requirePublicWebsiteManufacturerVisibility?: boolean;
+      scopedProductIds?: number[] | null;
+    },
   ): {
     page: number;
     limit: number;
@@ -8471,6 +8612,9 @@ export class ProductRegistrationService {
     };
     if (locationProductIds != null) {
       nativeMatch._id = { $in: locationProductIds };
+    }
+    if (options?.scopedProductIds != null) {
+      nativeMatch.productId = { $in: options.scopedProductIds };
     }
     if (dto.product_type !== undefined) {
       nativeMatch.productType = dto.product_type;
@@ -8737,8 +8881,10 @@ export class ProductRegistrationService {
 
   private async adminListProductsGroupedByManufacturer(
     dto: AdminListProductsDto,
+    scopedProductIds: number[] | null = null,
+    scope?: AdminProductCallerScope | null,
   ) {
-    const cacheKey = this.buildAdminProductListCacheKey(dto);
+    const cacheKey = this.buildAdminProductListCacheKey(dto, scope);
     try {
       const cached = await this.redisService.get<{
         message: string;
@@ -8779,7 +8925,9 @@ export class ProductRegistrationService {
       now,
       rowBase,
       manufacturerSortField,
-    } = this.buildAdminListRowBase(dto, locationProductIds);
+    } = this.buildAdminListRowBase(dto, locationProductIds, {
+      scopedProductIds,
+    });
 
     const manufacturerGroupPipeline: any[] = [
       ...rowBase,
@@ -8953,8 +9101,12 @@ export class ProductRegistrationService {
     return response;
   }
 
-  private async adminListProductsGroupedByUrn(dto: AdminListProductsDto) {
-    const cacheKey = this.buildAdminProductListCacheKey(dto);
+  private async adminListProductsGroupedByUrn(
+    dto: AdminListProductsDto,
+    scopedProductIds: number[] | null = null,
+    scope?: AdminProductCallerScope | null,
+  ) {
+    const cacheKey = this.buildAdminProductListCacheKey(dto, scope);
     try {
       const cached = await this.redisService.get<{
         message: string;
@@ -8996,7 +9148,9 @@ export class ProductRegistrationService {
       rowBase,
       statusMatch,
       urnSortField,
-    } = this.buildAdminListRowBase(dto, locationProductIds);
+    } = this.buildAdminListRowBase(dto, locationProductIds, {
+      scopedProductIds,
+    });
     const sortField = urnSortField;
     const sectorFilterIds = this.resolveAdminListSectorIds(dto);
 
@@ -9445,13 +9599,14 @@ export class ProductRegistrationService {
 
   async exportAdminProductsFile(
     dto: AdminProductsExportDto,
+    scope?: AdminProductCallerScope | null,
   ): Promise<{
     buffer: Buffer;
     fileName: string;
     contentType: string;
     rowCount: number;
   }> {
-    const listRows = await this.collectAdminListRowsForExport(dto);
+    const listRows = await this.collectAdminListRowsForExport(dto, scope);
     const { eoiRows } = this.flattenAdminListForExport(listRows);
     const format = dto.format ?? 'xlsx';
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
