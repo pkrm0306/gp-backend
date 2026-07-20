@@ -2623,7 +2623,7 @@ export class AdminController {
 
   @Get('notifications')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
-  @Permissions(PERMISSIONS.PROFILE_VIEW)
+  @Permissions(PERMISSIONS.PROFILE_NOTIFICATIONS)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List admin in-app notifications',
@@ -2662,7 +2662,7 @@ export class AdminController {
 
   @Patch('notifications/seen-all')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
-  @Permissions(PERMISSIONS.PROFILE_VIEW)
+  @Permissions(PERMISSIONS.PROFILE_NOTIFICATIONS)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Mark all admin notifications as seen',
@@ -2681,7 +2681,7 @@ export class AdminController {
 
   @Patch('notifications/:id/seen')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
-  @Permissions(PERMISSIONS.PROFILE_VIEW)
+  @Permissions(PERMISSIONS.PROFILE_NOTIFICATIONS)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark an admin notification as seen' })
   @ApiParam({
@@ -2703,6 +2703,7 @@ export class AdminController {
   }
 
   @Post('banner/delete')
+  @Permissions(PERMISSIONS.BANNERS_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete banner',
@@ -2720,6 +2721,7 @@ export class AdminController {
   }
 
   @Delete('banner/delete')
+  @Permissions(PERMISSIONS.BANNERS_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete banner',
@@ -2746,6 +2748,7 @@ export class AdminController {
   }
 
   @Get('banner/:id')
+  @Permissions(PERMISSIONS.BANNERS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get banner by id',
@@ -2766,6 +2769,7 @@ export class AdminController {
   }
 
   @Patch('banner/:id/status')
+  @Permissions(PERMISSIONS.BANNERS_STATUS)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Set/toggle banner status',

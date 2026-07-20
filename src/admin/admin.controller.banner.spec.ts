@@ -1,4 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
+import { PERMISSIONS_KEY } from '../common/decorators/permissions.decorator';
+import { PERMISSIONS } from '../common/constants/permissions.constants';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 
@@ -178,6 +180,33 @@ describe('AdminController Banner Endpoints', () => {
     const res = await controller.deleteBannerPost({ vendorId: 'v1' }, { id: 'b1' } as any);
     expect(adminServiceMock.deleteBanner).toHaveBeenCalledWith('v1', 'b1');
     expect(res.message).toBe('Banner deleted successfully');
+  });
+});
+
+describe('AdminController Banner permission metadata', () => {
+  it('requires BANNERS_VIEW on getBannerById', () => {
+    const permissions = Reflect.getMetadata(
+      PERMISSIONS_KEY,
+      AdminController.prototype.getBannerById,
+    ) as string[];
+    expect(permissions).toEqual([PERMISSIONS.BANNERS_VIEW]);
+  });
+
+  it('requires BANNERS_DELETE on delete routes', () => {
+    expect(
+      Reflect.getMetadata(PERMISSIONS_KEY, AdminController.prototype.deleteBannerPost) as string[],
+    ).toEqual([PERMISSIONS.BANNERS_DELETE]);
+    expect(
+      Reflect.getMetadata(PERMISSIONS_KEY, AdminController.prototype.deleteBannerDelete) as string[],
+    ).toEqual([PERMISSIONS.BANNERS_DELETE]);
+  });
+
+  it('requires BANNERS_STATUS on updateBannerStatus', () => {
+    const permissions = Reflect.getMetadata(
+      PERMISSIONS_KEY,
+      AdminController.prototype.updateBannerStatus,
+    ) as string[];
+    expect(permissions).toEqual([PERMISSIONS.BANNERS_STATUS]);
   });
 });
 
