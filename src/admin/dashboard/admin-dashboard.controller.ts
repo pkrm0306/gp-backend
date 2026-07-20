@@ -270,6 +270,26 @@ export class AdminDashboardController {
     };
   }
 
+  @Get('inquiry-analytics')
+  @AnyPermissions(
+    PERMISSIONS.DASHBOARD_VIEW,
+    PERMISSIONS.INQUIRIES_VIEW,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Inquiry analytics summary cards',
+    description:
+      'All-time counts for contact + product enquiries: total, contact, product, ' +
+      'acknowledged (`isAcknowledged`), and reminded (`isReminded`).',
+  })
+  async getInquiryAnalytics() {
+    const data = await this.dashboardKpi.getInquiryAnalytics();
+    return {
+      message: 'Inquiry analytics retrieved successfully',
+      data,
+    };
+  }
+
   @Get('sustainability-contributions')
   @AnyPermissions(
     PERMISSIONS.DASHBOARD_VIEW,

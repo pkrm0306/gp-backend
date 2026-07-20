@@ -44,6 +44,27 @@ export class ContactMessage {
   @Prop({ required: false, trim: true, default: '' })
   urnNumber?: string;
 
+  /** Admin acknowledged this enquiry (one-way; cannot be unset via API). */
+  @Prop({ required: false, default: false, index: true })
+  isAcknowledged?: boolean;
+
+  @Prop({ required: false, default: null })
+  acknowledgedAt?: Date | null;
+
+  /** Admin user id who acknowledged the enquiry. */
+  @Prop({ required: false, trim: true, default: '' })
+  acknowledgedBy?: string;
+
+  /**
+   * Whether an unacknowledged reminder email has already been sent for this enquiry.
+   * Separate from acknowledgement — used so each enquiry is only reminded once.
+   */
+  @Prop({ required: false, default: false, index: true })
+  isReminded?: boolean;
+
+  @Prop({ required: false, default: null })
+  remindedAt?: Date | null;
+
   createdAt?: Date;
   updatedAt?: Date;
 }

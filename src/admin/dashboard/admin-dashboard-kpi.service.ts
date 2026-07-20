@@ -880,4 +880,43 @@ export class AdminDashboardKpiService {
       count: row?.count ?? 0,
     };
   }
+
+  /**
+   * Inquiry analytics snapshot for the admin dashboard.
+   * All-time counts (not filtered by period) — contact + product enquiries.
+   */
+  async getInquiryAnalytics(): Promise<{
+    totalEnquiries: number;
+    contactEnquiries: number;
+    productEnquiries: number;
+    acknowledgedEnquiries: number;
+    remindedEnquiries: number;
+  }> {
+    const contactMatch = {
+      $or: [
+        { inquiryType: 'contact' },
+        { inquiryType: { $exists: false } },
+        { inquiryType: null },
+        { inquiryType: '' },
+      ],
+    };
+
+    const [contactEnquiries, productEnquiries, acknowledgedEnquiries, remindedEnquiries] =
+      await Promise.all([
+        this.contactMessageModel.countDocuments(contactMatch).exec(),
+        this.contactMessageModel.countDocuments({ inquiryType: 'product' }).exec(),
+        this.contactMessageModel
+          .countDocuments({ isAcknowledged: true })
+          .exec(),
+        this.contactMessageModel.countDocuments({ isReminded: true }).exec(),
+      ]);
+
+    return {
+      totalEnquiries: contactEnquiries + productEnquiries,
+      contactEnquiries,
+      productEnquiries,
+      acknowledgedEnquiries,
+      remindedEnquiries,
+    };
+  }
 }

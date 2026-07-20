@@ -3407,6 +3407,34 @@ export class AdminController {
     return { message: 'Contact message retrieved successfully', data };
   }
 
+  @Patch('contact/:id/acknowledge')
+  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Acknowledge contact enquiry (one-way)',
+    description:
+      'Marks a contact enquiry as acknowledged. Already-acknowledged rows are left unchanged. Stores isAcknowledged, acknowledgedAt, and acknowledgedBy.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Contact message MongoDB id (from list)',
+  })
+  @ApiResponse({ status: 200, description: 'Contact enquiry acknowledged' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
+  @ApiResponse({ status: 404, description: 'Contact message not found' })
+  async acknowledgeContactMessage(
+    @Param('id') id: string,
+    @CurrentUser() user: { userId?: string; vendorId?: string },
+  ) {
+    const adminUserId = String(user?.userId ?? user?.vendorId ?? '').trim();
+    const data = await this.adminService.acknowledgeInquiry(
+      id,
+      'contact',
+      adminUserId,
+    );
+    return { message: 'Contact enquiry acknowledged successfully', data };
+  }
+
   @Get('product-inquiry/list')
   @Permissions(PERMISSIONS.INQUIRIES_VIEW)
   @HttpCode(HttpStatus.OK)
@@ -3431,6 +3459,34 @@ export class AdminController {
   async viewProductInquiry(@Param('id') id: string) {
     const data = await this.adminService.getProductInquiryById(id);
     return { message: 'Product inquiry retrieved successfully', data };
+  }
+
+  @Patch('product-inquiry/:id/acknowledge')
+  @Permissions(PERMISSIONS.INQUIRIES_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Acknowledge product enquiry (one-way)',
+    description:
+      'Marks a product enquiry as acknowledged. Already-acknowledged rows are left unchanged. Stores isAcknowledged, acknowledgedAt, and acknowledgedBy.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Product inquiry MongoDB id (from list)',
+  })
+  @ApiResponse({ status: 200, description: 'Product enquiry acknowledged' })
+  @ApiResponse({ status: 400, description: 'Invalid id' })
+  @ApiResponse({ status: 404, description: 'Product inquiry not found' })
+  async acknowledgeProductInquiry(
+    @Param('id') id: string,
+    @CurrentUser() user: { userId?: string; vendorId?: string },
+  ) {
+    const adminUserId = String(user?.userId ?? user?.vendorId ?? '').trim();
+    const data = await this.adminService.acknowledgeInquiry(
+      id,
+      'product',
+      adminUserId,
+    );
+    return { message: 'Product enquiry acknowledged successfully', data };
   }
 
   @Post('contact/delete')

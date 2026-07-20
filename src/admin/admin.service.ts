@@ -3486,6 +3486,20 @@ export class AdminService {
    *     .lean()
    *     .exec();
    */
+  private mapInquiryAcknowledgement(r: Record<string, unknown>) {
+    const isAcknowledged = Boolean(r.isAcknowledged);
+    const isReminded = Boolean(r.isReminded);
+    return {
+      isAcknowledged,
+      acknowledgedAt: isAcknowledged ? (r.acknowledgedAt ?? null) : null,
+      acknowledgedBy: isAcknowledged
+        ? String(r.acknowledgedBy ?? '').trim()
+        : '',
+      isReminded,
+      remindedAt: isReminded ? (r.remindedAt ?? null) : null,
+    };
+  }
+
   async listContactMessages() {
     const rows = await this.contactMessageModel
       .find({
@@ -3496,7 +3510,9 @@ export class AdminService {
           { inquiryType: '' },
         ],
       })
-      .select('name email phoneNumber message subject createdAt inquiryType')
+      .select(
+        'name email phoneNumber message subject createdAt inquiryType isAcknowledged acknowledgedAt acknowledgedBy isReminded remindedAt',
+      )
       .sort({ createdAt: -1, _id: -1 })
       .lean()
       .exec();
@@ -3514,6 +3530,7 @@ export class AdminService {
       subject: String((r as any).subject ?? ''),
       createdAt: (r as any).createdAt ?? null,
       inquiryType: 'contact',
+      ...this.mapInquiryAcknowledgement(r as Record<string, unknown>),
     }));
   }
 
@@ -3596,6 +3613,7 @@ export class AdminService {
       eoiNo: String(product?.eoiNo ?? '').trim(),
       createdAt: r.createdAt ?? null,
       inquiryType: 'product' as const,
+      ...this.mapInquiryAcknowledgement(r),
     };
   }
 
@@ -3674,7 +3692,7 @@ export class AdminService {
     const rows = await this.contactMessageModel
       .find({ inquiryType: 'product' })
       .select(
-        'name email phoneNumber message designation organisation manufacturerId productId categoryId urnNumber createdAt',
+        'name email phoneNumber message designation organisation manufacturerId productId categoryId urnNumber createdAt isAcknowledged acknowledgedAt acknowledgedBy isReminded remindedAt',
       )
       .sort({ createdAt: -1, _id: -1 })
       .lean()
@@ -3701,7 +3719,7 @@ export class AdminService {
     const msg = await this.contactMessageModel
       .findOne({ _id: objectId, inquiryType: 'product' })
       .select(
-        'name email phoneNumber message designation organisation manufacturerId productId categoryId urnNumber createdAt',
+        'name email phoneNumber message designation organisation manufacturerId productId categoryId urnNumber createdAt isAcknowledged acknowledgedAt acknowledgedBy isReminded remindedAt',
       )
       .lean()
       .exec();
@@ -3735,7 +3753,9 @@ export class AdminService {
 
     const msg = await this.contactMessageModel
       .findById(objectId)
-      .select('name email phoneNumber message subject createdAt inquiryType')
+      .select(
+        'name email phoneNumber message subject createdAt inquiryType isAcknowledged acknowledgedAt acknowledgedBy isReminded remindedAt',
+      )
       .lean()
       .exec();
 
@@ -3753,6 +3773,85 @@ export class AdminService {
       message: String((msg as any).message ?? ''),
       createdAt: (msg as any).createdAt ?? null,
       inquiryType: String((msg as any).inquiryType ?? 'contact'),
+      ...this.mapInquiryAcknowledgement(msg as Record<string, unknown>),
+    };
+  }
+
+  /**
+   * One-way acknowledge for contact / product enquiries.
+   * Already-acknowledged rows are left unchanged (idempotent).
+   */
+  async acknowledgeInquiry(
+    id: string,
+    inquiryType: 'contact' | 'product',
+    adminUserId: string,
+  ) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException(
+        inquiryType === 'product' ? 'Invalid inquiry id' : 'Invalid contact id',
+      );
+    }
+
+    const filter: Record<string, unknown> =
+      inquiryType === 'product'
+        ? { _id: objectId, inquiryType: 'product' }
+        : {
+            _id: objectId,
+            $or: [
+              { inquiryType: 'contact' },
+              { inquiryType: { $exists: false } },
+              { inquiryType: null },
+              { inquiryType: '' },
+            ],
+          };
+
+    const existing = await this.contactMessageModel
+      .findOne(filter)
+      .select('_id isAcknowledged acknowledgedAt acknowledgedBy')
+      .lean()
+      .exec();
+
+    if (!existing) {
+      throw new NotFoundException(
+        inquiryType === 'product'
+          ? 'Product inquiry not found'
+          : 'Contact message not found',
+      );
+    }
+
+    if (Boolean((existing as any).isAcknowledged)) {
+      return {
+        id: String(existing._id),
+        isAcknowledged: true,
+        acknowledgedAt: (existing as any).acknowledgedAt ?? null,
+        acknowledgedBy: String((existing as any).acknowledgedBy ?? '').trim(),
+      };
+    }
+
+    const acknowledgedAt = new Date();
+    const acknowledgedBy = String(adminUserId ?? '').trim();
+
+    await this.contactMessageModel
+      .updateOne(
+        { _id: objectId },
+        {
+          $set: {
+            isAcknowledged: true,
+            acknowledgedAt,
+            acknowledgedBy,
+          },
+        },
+      )
+      .exec();
+
+    return {
+      id: String(existing._id),
+      isAcknowledged: true,
+      acknowledgedAt,
+      acknowledgedBy,
     };
   }
 
