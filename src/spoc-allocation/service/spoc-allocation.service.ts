@@ -4,7 +4,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
+import { PERMISSIONS } from '../../common/constants/permissions.constants';
 import { PRODUCT_STATUS_CERTIFIED } from '../../renew/constants/product-status.constants';
+import { RbacService } from '../../rbac/rbac.service';
 import { AssignSpocDto, ReassignSpocInput } from '../dto/assign-spoc.dto';
 import { SpocAllocationEmailService } from '../email/spoc-allocation-email.service';
 import {
@@ -18,6 +20,7 @@ export class SpocAllocationService {
   constructor(
     private readonly repository: SpocAllocationRepository,
     private readonly spocEmail: SpocAllocationEmailService,
+    private readonly rbacService: RbacService,
   ) {}
 
   private toObjectId(id: string, field: string): Types.ObjectId {
@@ -29,14 +32,18 @@ export class SpocAllocationService {
     return new Types.ObjectId(id);
   }
 
-  /**
-   * Active GreenPro team members: `type=staff` and `status=1`
-   * (same active rule as Team Member admin list).
-   */
-  async listActiveTeamMembers() {
-    const members = await this.repository.listActiveStaffMembers();
-
-    return (members ?? []).map((m, index) => ({
+  private mapTeamMemberRow(
+    m: {
+      _id?: Types.ObjectId | string;
+      name?: string;
+      email?: string;
+      phone?: string;
+      designation?: string;
+      displayOrder?: number;
+    },
+    index: number,
+  ) {
+    return {
       s_no: index + 1,
       id: String(m._id),
       name: String(m.name ?? ''),
@@ -45,14 +52,39 @@ export class SpocAllocationService {
       designation: String(m.designation ?? ''),
       is_active: true,
       displayOrder:
-        typeof (m as { displayOrder?: number }).displayOrder === 'number'
-          ? (m as { displayOrder: number }).displayOrder
-          : null,
-    }));
+        typeof m.displayOrder === 'number' ? m.displayOrder : null,
+    };
   }
 
   /**
-   * Only active GreenPro team members (`type=staff`, `status=1`) may be assigned.
+   * Active GreenPro team members eligible as SPOC:
+   * `type=staff`, `status=1`, and an RBAC role that grants Un-certified Products view
+   * (`products:uncertified:view`, including via parent `products:view`).
+   */
+  async listActiveTeamMembers(options?: { includeSpocId?: string | null }) {
+    const [members, eligibleIds] = await Promise.all([
+      this.repository.listActiveStaffMembers(),
+      this.rbacService.findPlatformStaffIdsWithEffectivePermission(
+        PERMISSIONS.PRODUCTS_UNCERTIFIED_VIEW,
+      ),
+    ]);
+
+    const eligible = new Set(eligibleIds);
+    const includeSpocId = String(options?.includeSpocId ?? '').trim();
+    if (includeSpocId) {
+      eligible.add(includeSpocId);
+    }
+
+    const filtered = (members ?? []).filter((m) =>
+      eligible.has(String(m._id)),
+    );
+
+    return filtered.map((m, index) => this.mapTeamMemberRow(m, index));
+  }
+
+  /**
+   * Only active GreenPro team members (`type=staff`, `status=1`) with
+   * Un-certified Products view permission may be assigned.
    */
   private async requireActiveTeamMember(spocId: string) {
     const id = this.toObjectId(spocId, 'spocId');
@@ -80,6 +112,20 @@ export class SpocAllocationService {
         'Only active team members can be assigned as SPOC',
         {
           spocId: 'Only active team members can be assigned as SPOC',
+        },
+      );
+    }
+
+    const eligibleIds =
+      await this.rbacService.findPlatformStaffIdsWithEffectivePermission(
+        PERMISSIONS.PRODUCTS_UNCERTIFIED_VIEW,
+      );
+    if (!eligibleIds.includes(String(id))) {
+      throwSpocValidationError(
+        'Team member must have Un-certified Products view permission',
+        {
+          spocId:
+            'Team member must have Un-certified Products view permission',
         },
       );
     }
@@ -260,6 +306,7 @@ export class SpocAllocationService {
 
     return allocations.map((row) => ({
       productId: Number(row.productId),
+      spocId: String(row.spocId ?? ''),
       spocName: nameBySpocId.get(String(row.spocId)) || '',
     }));
   }

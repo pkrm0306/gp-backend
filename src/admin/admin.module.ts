@@ -96,6 +96,10 @@ import {
   RawMaterialsUtilizationRmc,
   RawMaterialsUtilizationRmcSchema,
 } from '../raw-materials-utilization-rmc/schemas/raw-materials-utilization-rmc.schema';
+import {
+  SpocAllocation,
+  SpocAllocationSchema,
+} from '../spoc-allocation/models/spoc-allocation.model';
 
 @Module({
   imports: [
@@ -141,6 +145,7 @@ import {
         schema: RawMaterialsRapidlyRenewableMaterialsSchema,
       },
       { name: RawMaterialsUtilizationRmc.name, schema: RawMaterialsUtilizationRmcSchema },
+      { name: SpocAllocation.name, schema: SpocAllocationSchema },
     ]),
   ],
   controllers: [

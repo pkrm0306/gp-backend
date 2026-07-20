@@ -81,6 +81,10 @@ import {
 } from './helpers/admin-notification.util';
 import * as bcrypt from 'bcryptjs';
 import { RbacService } from '../rbac/rbac.service';
+import {
+  SpocAllocation,
+  SpocAllocationDocument,
+} from '../spoc-allocation/models/spoc-allocation.model';
 import { RedisService } from '../common/redis/redis.service';
 import { CategoriesService } from '../categories/categories.service';
 import { SectorsService } from '../sectors/sectors.service';
@@ -264,6 +268,8 @@ export class AdminService {
     private activityLogModel: Model<ActivityLogDocument>,
     @InjectModel(PaymentDetails.name)
     private paymentDetailsModel: Model<PaymentDetailsDocument>,
+    @InjectModel(SpocAllocation.name)
+    private spocAllocationModel: Model<SpocAllocationDocument>,
     private readonly emailService: EmailService,
     private readonly adminSystemNotification: AdminSystemNotificationService,
     private readonly rbacService: RbacService,
@@ -3157,6 +3163,15 @@ export class AdminService {
 
     if (!member) {
       throw new NotFoundException('Team member not found');
+    }
+
+    const activeSpocAssignment = await this.spocAllocationModel
+      .exists({ spocId: memberObjectId, isActive: true })
+      .exec();
+    if (activeSpocAssignment) {
+      throw new ConflictException(
+        'Team member is already assigned to Products.',
+      );
     }
 
     const deletedOrder = Number((member as any).displayOrder);

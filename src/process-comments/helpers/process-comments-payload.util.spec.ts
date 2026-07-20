@@ -2,6 +2,8 @@ import {
   buildSectionCommentPayload,
   parseSectionCommentPayload,
   FINAL_REVIEW_META_SEPARATOR,
+  hasMeaningfulProcessCommentValue,
+  stripHtmlToPlainText,
 } from './process-comments-payload.util';
 
 describe('process-comments-payload.util', () => {
@@ -30,5 +32,21 @@ describe('process-comments-payload.util', () => {
       credits: '10',
       maxCredits: '20',
     });
+  });
+
+  it('hasMeaningfulProcessCommentValue rejects empty primary comment', () => {
+    expect(hasMeaningfulProcessCommentValue('')).toBe(false);
+    expect(hasMeaningfulProcessCommentValue('<p></p>')).toBe(false);
+    expect(hasMeaningfulProcessCommentValue('   ')).toBe(false);
+    expect(hasMeaningfulProcessCommentValue('<p>Review note</p>')).toBe(true);
+  });
+
+  it('hasMeaningfulProcessCommentValue ignores technical-only meta without primary text', () => {
+    const packed = buildSectionCommentPayload({
+      adminComment: '',
+      technicalReview: 'tech only',
+    });
+    expect(stripHtmlToPlainText('')).toBe('');
+    expect(hasMeaningfulProcessCommentValue(packed)).toBe(false);
   });
 });

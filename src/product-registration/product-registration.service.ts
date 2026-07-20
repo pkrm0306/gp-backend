@@ -548,7 +548,21 @@ export class ProductRegistrationService {
         : scope.isAdmin
           ? 'admin'
           : `staff:${String(scope.userId ?? '').trim()}`,
-      v: 17,
+      assignedStaffIds: (() => {
+        const ids = [
+          ...(dto.spocIds ?? []),
+          ...(dto.spoc_ids ?? []),
+          ...(dto.staffIds ?? []),
+          ...(dto.staff_ids ?? []),
+          ...(dto.assignedStaffIds ?? []),
+          ...(dto.assigned_staff_ids ?? []),
+        ]
+          .map((id) => String(id ?? '').trim())
+          .filter(Boolean)
+          .sort();
+        return ids.length ? ids.join(',') : null;
+      })(),
+      v: 18,
     };
     return this.redisService.buildKey(
       'products',
@@ -576,6 +590,41 @@ export class ProductRegistrationService {
       return [];
     }
     return this.spocAllocationRepository.findActiveProductIdsForSpoc(userId);
+  }
+
+  /**
+   * Assigned Staff filter: `null` = no filter; otherwise productIds with active SPOC
+   * allocation to any of the selected staff ids (may be empty).
+   */
+  private async resolveAdminStaffFilterProductIds(
+    dto: AdminListProductsDto,
+  ): Promise<number[] | null> {
+    const staffIds = [
+      ...(dto.spocIds ?? []),
+      ...(dto.spoc_ids ?? []),
+      ...(dto.staffIds ?? []),
+      ...(dto.staff_ids ?? []),
+      ...(dto.assignedStaffIds ?? []),
+      ...(dto.assigned_staff_ids ?? []),
+    ]
+      .map((id) => String(id ?? '').trim())
+      .filter((id) => /^[a-fA-F0-9]{24}$/.test(id));
+    const unique = [...new Set(staffIds)];
+    if (!unique.length) {
+      return null;
+    }
+    return this.spocAllocationRepository.findActiveProductIdsBySpocIds(unique);
+  }
+
+  private intersectAdminProductIdFilters(
+    a: number[] | null,
+    b: number[] | null,
+  ): number[] | null {
+    if (a == null && b == null) return null;
+    if (a == null) return b;
+    if (b == null) return a;
+    const setB = new Set(b);
+    return a.filter((id) => setB.has(id));
   }
 
   private emptyAdminProductListResponse(page: number, limit: number) {
@@ -8542,8 +8591,21 @@ export class ProductRegistrationService {
     dto: AdminListProductsDto,
     scope?: AdminProductCallerScope | null,
   ) {
-    const scopedProductIds = await this.resolveAdminScopedProductIds(scope);
-    if (scopedProductIds !== null && scopedProductIds.length === 0) {
+    const [scopedProductIds, staffFilterProductIds] = await Promise.all([
+      this.resolveAdminScopedProductIds(scope),
+      this.resolveAdminStaffFilterProductIds(dto),
+    ]);
+    if (staffFilterProductIds !== null && staffFilterProductIds.length === 0) {
+      return this.emptyAdminProductListResponse(
+        dto.page ?? 1,
+        dto.limit ?? 10,
+      );
+    }
+    const productIds = this.intersectAdminProductIdFilters(
+      scopedProductIds,
+      staffFilterProductIds,
+    );
+    if (productIds !== null && productIds.length === 0) {
       return this.emptyAdminProductListResponse(
         dto.page ?? 1,
         dto.limit ?? 10,
@@ -8551,11 +8613,11 @@ export class ProductRegistrationService {
     }
     const groupBy = dto.groupBy ?? 'manufacturer';
     if (groupBy === 'urn') {
-      return this.adminListProductsGroupedByUrn(dto, scopedProductIds, scope);
+      return this.adminListProductsGroupedByUrn(dto, productIds, scope);
     }
     return this.adminListProductsGroupedByManufacturer(
       dto,
-      scopedProductIds,
+      productIds,
       scope,
     );
   }

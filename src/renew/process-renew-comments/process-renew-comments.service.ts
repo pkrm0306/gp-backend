@@ -27,6 +27,7 @@ import {
   renewOwnershipFields,
   resolveUrnRenewContext,
 } from '../helpers/renew-common.util';
+import { hasMeaningfulProcessCommentValue } from '../../process-comments/helpers/process-comments-payload.util';
 
 /** Admin renew review tabs — exact POST field names (incl. legacy typo). */
 export const ADMIN_RENEW_PROCESS_COMMENT_FIELDS = [
@@ -278,6 +279,9 @@ export class ProcessRenewCommentsService implements OnModuleInit {
     };
     for (const field of COMMENT_FIELDS) {
       if (input[field] !== undefined) {
+        if (!hasMeaningfulProcessCommentValue(String(input[field]))) {
+          throw new BadRequestException('Comments are required.');
+        }
         updateData[field] = input[field];
       }
     }

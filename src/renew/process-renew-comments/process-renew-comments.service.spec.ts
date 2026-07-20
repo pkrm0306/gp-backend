@@ -30,5 +30,22 @@ describe('ProcessRenewCommentsService admin section validation', () => {
     });
     expect(patch).toEqual({ manfacturingProcess: '<p>ok</p>' });
   });
+
+  it('rejects empty section comment values', () => {
+    expect(() =>
+      (service as any).buildCommentUpdateData(
+        {
+          urnNo: 'URN-1',
+          productPerformance: '<p></p>',
+        },
+        {
+          vendorId: '507f1f77bcf86cd799439011' as any,
+          manufacturerId: '507f1f77bcf86cd799439012' as any,
+        },
+        '507f1f77bcf86cd799439013' as any,
+        new Date(),
+      ),
+    ).toThrow(/Comments are required/);
+  });
 });
 

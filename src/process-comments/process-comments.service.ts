@@ -11,6 +11,10 @@ import {
 } from './schemas/process-comments.schema';
 import { CreateProcessCommentsDto } from './dto/create-process-comments.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
+import {
+  hasMeaningfulProcessCommentValue,
+  PROCESS_COMMENT_SECTION_FIELDS,
+} from './helpers/process-comments-payload.util';
 
 @Injectable()
 export class ProcessCommentsService {
@@ -36,6 +40,20 @@ export class ProcessCommentsService {
     return new Types.ObjectId(id);
   }
 
+  private assertMeaningfulCommentFields(
+    dto: CreateProcessCommentsDto,
+  ): void {
+    for (const field of PROCESS_COMMENT_SECTION_FIELDS) {
+      const value = dto[field as keyof CreateProcessCommentsDto];
+      if (
+        value !== undefined &&
+        !hasMeaningfulProcessCommentValue(String(value))
+      ) {
+        throw new BadRequestException('Comments are required.');
+      }
+    }
+  }
+
   /**
    * Create or update process comments
    * Uses upsert to update existing record or create new one based on urnNo and vendorId
@@ -45,6 +63,7 @@ export class ProcessCommentsService {
     vendorId: string,
   ): Promise<ProcessCommentsDocument> {
     try {
+      this.assertMeaningfulCommentFields(createProcessCommentsDto);
       // Convert vendorId to ObjectId
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
 

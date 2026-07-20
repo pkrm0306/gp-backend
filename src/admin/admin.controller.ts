@@ -1599,7 +1599,7 @@ export class AdminController {
   }
 
   @Post('gallery/create')
-  @Permissions(PERMISSIONS.EVENTS_ADD)
+  @Permissions(PERMISSIONS.GALLERY_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -1711,7 +1711,7 @@ export class AdminController {
   }
 
   @Patch('gallery/:id/edit')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
+  @Permissions(PERMISSIONS.GALLERY_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -1939,7 +1939,7 @@ export class AdminController {
   }
 
   @Get('gallery/types')
-  @Permissions(PERMISSIONS.EVENTS_VIEW)
+  @Permissions(PERMISSIONS.GALLERY_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Gallery type options for add/edit dropdown',
@@ -1974,11 +1974,12 @@ export class AdminController {
   }
 
   @Get('gallery/list')
+  @Permissions(PERMISSIONS.GALLERY_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'List gallery items (public website)',
+    summary: 'List gallery items (admin)',
     description:
-      'Returns paginated gallery items for the public website. Default: page=1, limit=50. Only active items (eventStatus=1) are returned. No authentication required.',
+      'Returns paginated gallery items for the admin CMS. Default: page=1, limit=50.',
   })
   @ApiQuery({
     name: 'page',
@@ -2035,7 +2036,6 @@ export class AdminController {
       },
     },
   })
-  @Public()
   async listGallery(
     @Query('page') pageRaw?: string,
     @Query('limit') limitRaw?: string,
@@ -2066,7 +2066,7 @@ export class AdminController {
   }
 
   @Get('gallery/:id')
-  @Permissions(PERMISSIONS.EVENTS_VIEW)
+  @Permissions(PERMISSIONS.GALLERY_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get gallery item by id (admin)',
@@ -2084,7 +2084,7 @@ export class AdminController {
   }
 
   @Patch('gallery/:id/status')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
+  @Permissions(PERMISSIONS.GALLERY_STATUS)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Set/toggle gallery status',
@@ -2113,7 +2113,7 @@ export class AdminController {
   }
 
   @Post('articles/create')
-  @Permissions(PERMISSIONS.EVENTS_ADD)
+  @Permissions(PERMISSIONS.ARTICLES_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -2264,7 +2264,7 @@ export class AdminController {
   }
 
   @Patch('articles/:id/edit')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
+  @Permissions(PERMISSIONS.ARTICLES_UPDATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileFieldsInterceptor(
@@ -2408,8 +2408,8 @@ export class AdminController {
   }
 
   @Get(['articles/list', 'article/list'])
+  @Permissions(PERMISSIONS.ARTICLES_VIEW)
   @HttpCode(HttpStatus.OK)
-  @Public()
   @ApiOperation({
     summary: 'List articles',
     description:
@@ -2425,8 +2425,8 @@ export class AdminController {
   }
 
   @Get('articles/:id')
+  @Permissions(PERMISSIONS.ARTICLES_VIEW)
   @HttpCode(HttpStatus.OK)
-  @Public()
   @ApiOperation({
     summary: 'Get article by id',
     description:
@@ -2442,7 +2442,7 @@ export class AdminController {
   }
 
   @Patch('articles/:id/status')
-  @Permissions(PERMISSIONS.EVENTS_UPDATE)
+  @Permissions(PERMISSIONS.ARTICLES_STATUS)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Set/toggle article status',
@@ -2471,7 +2471,7 @@ export class AdminController {
   }
 
   @Delete('articles/:id/delete')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
+  @Permissions(PERMISSIONS.ARTICLES_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete article',
@@ -2488,7 +2488,7 @@ export class AdminController {
   }
 
   @Delete('articles/:id')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
+  @Permissions(PERMISSIONS.ARTICLES_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete article',
@@ -2539,7 +2539,7 @@ export class AdminController {
   }
 
   @Delete('gallery/:id')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
+  @Permissions(PERMISSIONS.GALLERY_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete gallery item',
@@ -2556,7 +2556,7 @@ export class AdminController {
   }
 
   @Delete('gallery/:id/delete')
-  @Permissions(PERMISSIONS.EVENTS_DELETE)
+  @Permissions(PERMISSIONS.GALLERY_DELETE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete gallery item (alias)',

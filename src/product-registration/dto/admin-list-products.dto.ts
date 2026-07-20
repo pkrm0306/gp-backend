@@ -252,6 +252,67 @@ export class AdminListProductsDto {
 
   @ApiPropertyOptional({
     description:
+      'Multi-select Assigned Staff filter by team member Mongo `_id` (active SPOC allocation).',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  spocIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `spocIds`.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  spoc_ids?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Alias of `spocIds` (Assigned Staff filter).',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  staffIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `staffIds`.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  staff_ids?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Alias of `spocIds` (Assigned Staff filter).',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  assignedStaffIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `assignedStaffIds`.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeMongoIdArray(value))
+  @IsArray()
+  @IsMongoId({ each: true })
+  assigned_staff_ids?: string[];
+
+  @ApiPropertyOptional({
+    description:
       'Multi-select manufacturer filter by exact `manufacturerName` (use labels from filter-options).',
     type: [String],
     example: ['ABC Solar Pvt Ltd'],

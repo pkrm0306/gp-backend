@@ -157,6 +157,35 @@ export class SpocAllocationRepository {
     return !!found;
   }
 
+  /**
+   * Distinct business `productId`s with an active SPOC allocation for any of the given staff ids.
+   */
+  async findActiveProductIdsBySpocIds(spocUserIds: string[]): Promise<number[]> {
+    const objectIds = [
+      ...new Set(
+        spocUserIds
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ].map((id) => new Types.ObjectId(id));
+    if (!objectIds.length) {
+      return [];
+    }
+    const rows = await this.allocationModel
+      .find({ spocId: { $in: objectIds }, isActive: true })
+      .select('productId')
+      .lean()
+      .exec();
+    const ids = new Set<number>();
+    for (const row of rows) {
+      const productId = Number(row.productId);
+      if (Number.isFinite(productId) && productId > 0) {
+        ids.add(productId);
+      }
+    }
+    return [...ids];
+  }
+
   createAllocation(doc: {
     productId: number;
     urn: string;

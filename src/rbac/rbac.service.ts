@@ -25,6 +25,7 @@ import { ListRolesQueryDto } from './dto/list-roles-query.dto';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
 import {
   expandEffectivePermissions,
+  hasEffectivePermission,
   minimizePermissionSet,
 } from '../common/permissions/permission-hierarchy';
 import { ALL_KNOWN_PERMISSION_VALUES } from '../common/constants/permissions.constants';
@@ -479,9 +480,7 @@ export class RbacService {
         .exec();
 
       if (activeUsersCount > 0) {
-        throw new BadRequestException(
-          'Cannot delete role while assigned to staff. Reassign/remove mappings first.',
-        );
+        throw new BadRequestException('Designation cannot be deleted');
       }
 
       await this.mappingModel
@@ -969,6 +968,58 @@ export class RbacService {
       effectivePermissions,
       isPlatformAdmin: false,
     };
+  }
+
+  /**
+   * Platform-scoped staff user ids whose assigned active roles grant `requiredPermission`
+   * (including parent grants via permission hierarchy, e.g. `products:view` ⇒
+   * `products:uncertified:view`).
+   */
+  async findPlatformStaffIdsWithEffectivePermission(
+    requiredPermission: string,
+  ): Promise<string[]> {
+    const required = String(requiredPermission ?? '')
+      .trim()
+      .toLowerCase();
+    if (!required) {
+      return [];
+    }
+
+    const roles = await this.roleModel
+      .find({ ...this.rbacScope(null), status: 1 })
+      .select('_id permissions')
+      .lean()
+      .exec();
+
+    const matchingRoleIds = roles
+      .filter((role) =>
+        hasEffectivePermission(
+          this.normalizePermissions(role.permissions || []),
+          required,
+        ),
+      )
+      .map((role) => role._id as Types.ObjectId);
+
+    if (!matchingRoleIds.length) {
+      return [];
+    }
+
+    const mappings = await this.mappingModel
+      .find({
+        ...this.rbacScope(null),
+        status: 1,
+        roleId: { $in: matchingRoleIds },
+      })
+      .select('vendorUserId')
+      .lean()
+      .exec();
+
+    const ids = new Set<string>();
+    for (const row of mappings) {
+      const id = String(row.vendorUserId ?? '').trim();
+      if (id) ids.add(id);
+    }
+    return [...ids];
   }
 }
 

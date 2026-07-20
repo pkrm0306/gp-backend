@@ -51,7 +51,10 @@ export class AdminSpocAllocationController {
   @Get(SPOC_ALLOCATION_ROUTES.teamMembers)
   @Permissions(PERMISSIONS.SPOC_ALLOCATION_ASSIGN)
   @ApiOperation({
-    summary: 'List active GreenPro team members eligible as SPOC',
+    summary:
+      'List active GreenPro team members eligible as SPOC (Un-certified Products view)',
+    description:
+      'Returns active staff (`type=staff`, `status=1`) whose RBAC role grants `products:uncertified:view` (including via parent `products:view`).',
   })
   @ApiResponse({ status: 200, description: 'Active team members' })
   async listActiveTeamMembers() {

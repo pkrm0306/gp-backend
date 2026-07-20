@@ -138,3 +138,19 @@ export function formatProcessCommentsForApi(
     sectionReviews,
   };
 }
+
+export function stripHtmlToPlainText(html: string): string {
+  const raw = String(html ?? '').trim();
+  if (!raw) return '';
+  return raw
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Primary admin comment must contain non-whitespace text (ignores technical-only meta). */
+export function hasMeaningfulProcessCommentValue(packed?: string | null): boolean {
+  const parsed = parseSectionCommentPayload(packed);
+  const primary = parsed.commentHtml ?? parsed.adminComment ?? '';
+  return stripHtmlToPlainText(primary).length > 0;
+}

@@ -2,6 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Types } from 'mongoose';
 import { PRODUCT_STATUS_CERTIFIED } from '../renew/constants/product-status.constants';
+import { RbacService } from '../rbac/rbac.service';
 import { SpocAllocationEmailService } from './email/spoc-allocation-email.service';
 import { SpocAllocationRepository } from './repository/spoc-allocation.repository';
 import { SpocAllocationService } from './service/spoc-allocation.service';
@@ -62,6 +63,10 @@ describe('SpocAllocationService regression', () => {
     notifyAfterSuccess: jest.fn(),
   };
 
+  const rbacService = {
+    findPlatformStaffIdsWithEffectivePermission: jest.fn(),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
     repository.findManufacturerName.mockResolvedValue({
@@ -72,12 +77,17 @@ describe('SpocAllocationService regression', () => {
       _id: new Types.ObjectId(),
       ...doc,
     }));
+    rbacService.findPlatformStaffIdsWithEffectivePermission.mockResolvedValue([
+      spocId,
+      otherSpocId,
+    ]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SpocAllocationService,
         { provide: SpocAllocationRepository, useValue: repository },
         { provide: SpocAllocationEmailService, useValue: spocEmail },
+        { provide: RbacService, useValue: rbacService },
       ],
     }).compile();
 
@@ -281,10 +291,23 @@ describe('SpocAllocationService regression', () => {
   });
 
   describe('isolation smoke', () => {
-    it('listActiveTeamMembers only queries staff status=1', async () => {
-      repository.listActiveStaffMembers.mockResolvedValue([]);
-      await service.listActiveTeamMembers();
+    it('listActiveTeamMembers only returns staff with uncertified view permission', async () => {
+      const withoutPermId = '507f1f77bcf86cd799439055';
+      repository.listActiveStaffMembers.mockResolvedValue([
+        activeSpoc,
+        { ...otherSpoc, _id: new Types.ObjectId(withoutPermId) },
+      ]);
+      rbacService.findPlatformStaffIdsWithEffectivePermission.mockResolvedValue([
+        spocId,
+      ]);
+
+      const rows = await service.listActiveTeamMembers();
       expect(repository.listActiveStaffMembers).toHaveBeenCalled();
+      expect(
+        rbacService.findPlatformStaffIdsWithEffectivePermission,
+      ).toHaveBeenCalled();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(spocId);
     });
 
     it('lookupAssignedSpocNames returns empty for products without allocation', async () => {
