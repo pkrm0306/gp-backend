@@ -326,7 +326,16 @@ export class AuditLogService {
       filter.action = query.action;
     }
     if (query.module) {
-      filter.module = query.module;
+      const moduleKey = String(query.module).trim().toLowerCase();
+      if (moduleKey === 'spoc_allocation') {
+        filter.$or = [
+          { module: query.module },
+          { module: 'spoc_allocation' },
+          { route: { $regex: 'spoc-allocation', $options: 'i' } },
+        ];
+      } else {
+        filter.module = query.module;
+      }
     }
     if (query.action_type) {
       filter.action_type = query.action_type;

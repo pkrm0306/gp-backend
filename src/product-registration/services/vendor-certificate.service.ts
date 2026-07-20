@@ -144,6 +144,77 @@ export class VendorCertificateService {
     };
   }
 
+  /**
+   * Admin certificate correction preview — load certified product by EOI (no vendor scope)
+   and regenerate PDF from current DB fields (skips stale stored cert documents).
+   */
+  async regenerateCertificatePdfByEoiNo(
+    eoiNo: string,
+  ): Promise<CertificateDownloadFile> {
+    const trimmed = String(eoiNo ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('EOI number is required');
+    }
+
+    const productDoc = await this.productModel
+      .findOne(
+        matchActiveProducts({
+          eoiNo: trimmed,
+          productStatus: CERTIFIED_PRODUCT_STATUS,
+        }),
+      )
+      .exec();
+
+    if (!productDoc) {
+      throw new NotFoundException('EOI number not found!');
+    }
+
+    const product = await this.hydrateProduct(productDoc);
+    const plants = this.resolveEffectivePlantsForCertificates(
+      product,
+      await this.loadPlantsForProduct(product),
+    );
+
+    if (!plants.length) {
+      throw new NotFoundException(
+        `No plants found for EOI ${product.eoiNo}`,
+      );
+    }
+
+    const mergedPdf = await PDFLibDocument.create();
+    let addedPages = 0;
+    for (const plant of plants) {
+      try {
+        const location = this.derivePlantLocation(plant);
+        const buffer = await this.generateCertificatePdfSafe(product, location);
+        const src = await PDFLibDocument.load(buffer);
+        const pages = await mergedPdf.copyPages(src, src.getPageIndices());
+        for (const p of pages) {
+          mergedPdf.addPage(p);
+        }
+        addedPages += pages.length;
+      } catch (err) {
+        this.logger.warn(
+          `Failed regenerating plant cert for EOI ${product.eoiNo}: ${
+            (err as Error)?.message ?? err
+          }`,
+        );
+      }
+    }
+
+    if (addedPages === 0) {
+      throw new NotFoundException(
+        `Unable to generate certificate PDF for EOI ${product.eoiNo}`,
+      );
+    }
+
+    return {
+      buffer: Buffer.from(await mergedPdf.save()),
+      fileName: this.buildCertificateFileName(product.eoiNo, plants.length),
+      contentType: 'application/pdf',
+    };
+  }
+
   async listEoiPlantCertificates(
     vendorId: string,
     productId: string,

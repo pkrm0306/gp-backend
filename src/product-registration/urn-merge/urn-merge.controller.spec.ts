@@ -2,7 +2,7 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { PERMISSIONS_KEY } from '../../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../../common/constants/permissions.constants';
+import { PRODUCTS_UPDATE_ANY } from '../../common/constants/permissions.constants';
 import { UrnMergeController } from './urn-merge.controller';
 
 describe('UrnMergeController auth metadata', () => {
@@ -11,11 +11,11 @@ describe('UrnMergeController auth metadata', () => {
     expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard, PermissionsGuard]));
   });
 
-  it('requires PRODUCTS_UPDATE on execute', () => {
+  it('requires PRODUCTS_UPDATE_ANY (any-match) on execute', () => {
     const permissions = Reflect.getMetadata(
       PERMISSIONS_KEY,
       UrnMergeController.prototype.execute,
     ) as string[];
-    expect(permissions).toEqual([PERMISSIONS.PRODUCTS_UPDATE]);
+    expect(permissions).toEqual([...PRODUCTS_UPDATE_ANY]);
   });
 });

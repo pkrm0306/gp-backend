@@ -29,6 +29,7 @@ exports.AUDIT_MODULE = {
     RAW_MATERIALS: 'raw_materials',
     RBAC: 'rbac',
     SECTOR: 'sector',
+    SPOC_ALLOCATION: 'spoc_allocation',
     STANDARD: 'standard',
     STATE: 'state',
     SUMMIT: 'summit',
@@ -117,6 +118,10 @@ exports.AUDIT_MODULE_CONFIG = (_a = {},
     },
     _a[exports.AUDIT_MODULE.RBAC] = { value: exports.AUDIT_MODULE.RBAC, displayName: 'RBAC' },
     _a[exports.AUDIT_MODULE.SECTOR] = { value: exports.AUDIT_MODULE.SECTOR, displayName: 'Sector' },
+    _a[exports.AUDIT_MODULE.SPOC_ALLOCATION] = {
+        value: exports.AUDIT_MODULE.SPOC_ALLOCATION,
+        displayName: 'SPOC Allocation',
+    },
     _a[exports.AUDIT_MODULE.STANDARD] = {
         value: exports.AUDIT_MODULE.STANDARD,
         displayName: 'Standard',

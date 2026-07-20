@@ -15,8 +15,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import { PRODUCTS_UPDATE_ANY } from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminCertifiedRejectService } from './services/admin-certified-reject.service';
 import { AdminCertifiedRejectProductDto } from './dto/admin-certified-reject.dto';
@@ -39,7 +39,7 @@ export class AdminCertifiedRejectController {
   }
 
   @Patch('product')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject one certified product (2 → 3); eoiNo unchanged' })
   @ApiResponse({ status: 200, description: 'Product rejected' })

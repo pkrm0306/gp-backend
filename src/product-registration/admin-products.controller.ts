@@ -34,9 +34,12 @@ import { AdminProductsExportDto } from './dto/admin-products-export.dto';
 import { resolveAdminListValidTillMonthYearFilter } from './helpers/admin-list-valid-till-filter.util';
 import { AdminListProductsFilterOptionsDto } from './dto/admin-list-products-filter-options.dto';
 import { AdminUpdateUrnStatusDto } from './dto/admin-update-urn-status.dto';
-import { Permissions } from '../common/decorators/permissions.decorator';
 import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import {
+  PERMISSIONS,
+  PRODUCTS_UPDATE_ANY,
+  PRODUCTS_VIEW_ANY,
+} from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PatchUrnTabReviewDto } from './dto/urn-tab-review.dto';
 import { UrnTabReviewService } from './urn-tab-review.service';
@@ -129,7 +132,7 @@ export class AdminProductsController {
   ) {}
 
   @Get('urn-tab-review/:urnNo')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Get URN tab/step admin review state',
     description:
@@ -149,7 +152,7 @@ export class AdminProductsController {
   }
 
   @Patch('urn-tab-review')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Record admin approve/reject for one process tab or raw material step',
@@ -176,7 +179,7 @@ export class AdminProductsController {
   }
 
   @Get('details/:urn')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Get product details by URN (platform admin)',
     description:
@@ -249,7 +252,7 @@ export class AdminProductsController {
   }
 
   @Patch('urn-status')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Update URN status (platform admin)',
@@ -275,7 +278,7 @@ export class AdminProductsController {
   }
 
   @Patch('renew-validity')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Update valid-till date by URN (admin utility)',
@@ -323,7 +326,7 @@ export class AdminProductsController {
 
   @Put('urn-final-review')
   @Post('urn-final-review')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Save URN technical/final review and credits (certified URN details)',
@@ -344,7 +347,7 @@ export class AdminProductsController {
   }
 
   @Get('urn-final-review/:urnNo')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Get URN technical/final review and credits',
   })
@@ -360,7 +363,7 @@ export class AdminProductsController {
   }
 
   @Patch('certified/:productId')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileInterceptor('productImage', adminImageMemoryMulterOptions()),
@@ -458,7 +461,7 @@ export class AdminProductsController {
   }
 
   @Post('urn-assessment-report')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileInterceptor(
@@ -499,7 +502,7 @@ export class AdminProductsController {
   }
 
   @Post('urn/:urnNo/assessment-report')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileInterceptor(
@@ -559,7 +562,7 @@ export class AdminProductsController {
   }
 
   @Patch('certified/:productId/passport')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Save passport for certified product (admin)',
@@ -656,7 +659,7 @@ export class AdminProductsController {
   }
 
   @Post('list/filter-options')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Filter dropdown options for admin product list (certified, uncertified, etc.)',
@@ -673,7 +676,7 @@ export class AdminProductsController {
   }
 
   @Post('list')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Admin product lifecycle listing (manufacturer → URN → EOI)',
     description:
@@ -693,7 +696,7 @@ export class AdminProductsController {
   }
 
   @Post('export')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiConsumes('application/json')
   @ApiOperation({

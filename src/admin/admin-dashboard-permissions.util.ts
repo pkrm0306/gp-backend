@@ -1,5 +1,6 @@
 import {
   PERMISSIONS,
+  PRODUCTS_VIEW_ANY,
   type DashboardVisibleSections,
 } from '../common/constants/permissions.constants';
 import { hasEffectivePermission } from '../common/permissions/permission-hierarchy';
@@ -12,11 +13,17 @@ import type { AppliedDashboardFilters } from './admin-dashboard-metrics.types';
 
 export type { AdminDashboardMetricsResponse };
 
+function hasAnyOf(grants: Iterable<string>, keys: readonly string[]): boolean {
+  return keys.some((key) => hasEffectivePermission(grants, key));
+}
+
 export function canViewDashboardManufacturers(grants: Iterable<string>): boolean {
   return (
     hasEffectivePermission(grants, PERMISSIONS.DASHBOARD_VIEW) ||
     hasEffectivePermission(grants, PERMISSIONS.DASHBOARD_MANUFACTURERS_VIEW) ||
-    hasEffectivePermission(grants, PERMISSIONS.MANUFACTURERS_VIEW)
+    hasEffectivePermission(grants, PERMISSIONS.MANUFACTURERS_VIEW) ||
+    hasEffectivePermission(grants, PERMISSIONS.MANUFACTURERS_VERIFIED_VIEW) ||
+    hasEffectivePermission(grants, PERMISSIONS.MANUFACTURERS_UNVERIFIED_VIEW)
   );
 }
 
@@ -24,7 +31,7 @@ export function canViewDashboardProducts(grants: Iterable<string>): boolean {
   return (
     hasEffectivePermission(grants, PERMISSIONS.DASHBOARD_VIEW) ||
     hasEffectivePermission(grants, PERMISSIONS.DASHBOARD_PRODUCTS_VIEW) ||
-    hasEffectivePermission(grants, PERMISSIONS.PRODUCTS_VIEW)
+    hasAnyOf(grants, PRODUCTS_VIEW_ANY)
   );
 }
 
@@ -32,9 +39,7 @@ export function canViewDashboardCertification(grants: Iterable<string>): boolean
   return (
     hasEffectivePermission(grants, PERMISSIONS.DASHBOARD_VIEW) ||
     hasEffectivePermission(grants, PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW) ||
-    hasEffectivePermission(grants, PERMISSIONS.PRODUCTS_VIEW) ||
-    hasEffectivePermission(grants, PERMISSIONS.PRODUCTS_CERTIFIED_VIEW) ||
-    hasEffectivePermission(grants, PERMISSIONS.PRODUCTS_UNCERTIFIED_VIEW)
+    hasAnyOf(grants, PRODUCTS_VIEW_ANY)
   );
 }
 

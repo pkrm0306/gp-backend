@@ -2,7 +2,8 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { PERMISSIONS_KEY } from '../../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../../common/constants/permissions.constants';
+import { PERMISSIONS_MATCH_MODE_KEY } from '../../common/decorators/any-permissions.decorator';
+import { PRODUCTS_UPDATE_ANY } from '../../common/constants/permissions.constants';
 import { PlantMergeController } from './plant-merge.controller';
 
 describe('PlantMergeController auth metadata', () => {
@@ -11,27 +12,32 @@ describe('PlantMergeController auth metadata', () => {
     expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard, PermissionsGuard]));
   });
 
-  it('requires PRODUCTS_UPDATE on validate', () => {
+  it('requires PRODUCTS_UPDATE_ANY (any-match) on validate', () => {
     const permissions = Reflect.getMetadata(
       PERMISSIONS_KEY,
       PlantMergeController.prototype.validate,
     ) as string[];
-    expect(permissions).toEqual([PERMISSIONS.PRODUCTS_UPDATE]);
+    const mode = Reflect.getMetadata(
+      PERMISSIONS_MATCH_MODE_KEY,
+      PlantMergeController.prototype.validate,
+    );
+    expect(mode).toBe('any');
+    expect(permissions).toEqual([...PRODUCTS_UPDATE_ANY]);
   });
 
-  it('requires PRODUCTS_UPDATE on execute', () => {
+  it('requires PRODUCTS_UPDATE_ANY (any-match) on execute', () => {
     const permissions = Reflect.getMetadata(
       PERMISSIONS_KEY,
       PlantMergeController.prototype.execute,
     ) as string[];
-    expect(permissions).toEqual([PERMISSIONS.PRODUCTS_UPDATE]);
+    expect(permissions).toEqual([...PRODUCTS_UPDATE_ANY]);
   });
 
-  it('requires PRODUCTS_UPDATE on urnExecute', () => {
+  it('requires PRODUCTS_UPDATE_ANY (any-match) on urnExecute', () => {
     const permissions = Reflect.getMetadata(
       PERMISSIONS_KEY,
       PlantMergeController.prototype.urnExecute,
     ) as string[];
-    expect(permissions).toEqual([PERMISSIONS.PRODUCTS_UPDATE]);
+    expect(permissions).toEqual([...PRODUCTS_UPDATE_ANY]);
   });
 });

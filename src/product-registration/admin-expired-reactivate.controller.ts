@@ -15,8 +15,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import { PRODUCTS_EXPIRED_STATUS_ANY } from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminExpiredReactivateService } from './services/admin-expired-reactivate.service';
 import {
@@ -42,7 +42,7 @@ export class AdminExpiredReactivateController {
   }
 
   @Patch('product')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_EXPIRED_STATUS_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reactivate one expired product to certified (4 → 2)' })
   @ApiResponse({ status: 200, description: 'Product reactivated' })
@@ -61,7 +61,7 @@ export class AdminExpiredReactivateController {
   }
 
   @Patch('urn')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_EXPIRED_STATUS_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Reactivate all expired products on a URN to certified (4 → 2)',

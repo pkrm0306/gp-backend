@@ -17,8 +17,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { Permissions } from '../../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../../common/constants/permissions.constants';
+import { AnyPermissions } from '../../common/decorators/any-permissions.decorator';
+import { PRODUCTS_UPDATE_ANY } from '../../common/constants/permissions.constants';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UrnMergeService } from './urn-merge.service';
 import { UrnMergePreviewQueryDto } from './dto/urn-merge-preview-query.dto';
@@ -32,7 +32,7 @@ export class UrnMergeController {
   constructor(private readonly urnMergeService: UrnMergeService) {}
 
   @Get('preview')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({ summary: 'Preview merging source URN into target URN' })
   @ApiResponse({ status: 200, description: 'Merge preview' })
   async preview(@Query() query: UrnMergePreviewQueryDto) {
@@ -43,7 +43,7 @@ export class UrnMergeController {
   }
 
   @Post()
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Execute URN merge (certified EOIs → target URN)' })
   @ApiResponse({ status: 200, description: 'Merge completed' })

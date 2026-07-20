@@ -18,8 +18,11 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import {
+  PRODUCTS_ADD_ANY,
+  PRODUCTS_VIEW_ANY,
+} from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminAddProductToUrnService } from './services/admin-add-product-to-urn.service';
 import { AdminAddProductToUrnDto } from './dto/admin-add-product-to-urn.dto';
@@ -42,7 +45,7 @@ export class AdminUrnAddProductController {
   }
 
   @Get(':urnNo/add-product/context')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({ summary: 'Add-product form context for an existing URN' })
   @ApiParam({ name: 'urnNo', type: String })
   @ApiResponse({ status: 200, description: 'URN context for add-product form' })
@@ -52,7 +55,7 @@ export class AdminUrnAddProductController {
   }
 
   @Post(':urnNo/add-product')
-  @Permissions(PERMISSIONS.PRODUCTS_ADD)
+  @AnyPermissions(...PRODUCTS_ADD_ANY)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Add one new EOI product to an existing URN (admin)' })
   @ApiParam({ name: 'urnNo', type: String })

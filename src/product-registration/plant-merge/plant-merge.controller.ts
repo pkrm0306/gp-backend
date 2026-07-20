@@ -17,8 +17,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { Permissions } from '../../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../../common/constants/permissions.constants';
+import { AnyPermissions } from '../../common/decorators/any-permissions.decorator';
+import { PRODUCTS_UPDATE_ANY } from '../../common/constants/permissions.constants';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PlantMergeService } from './plant-merge.service';
 import { PlantMergeUrnPreviewService } from './services/plant-merge-urn-preview.service';
@@ -44,7 +44,7 @@ export class PlantMergeController {
   ) {}
 
   @Post('validate')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Validate a plant merge pair (source URN/EOI → target URN/EOI)',
@@ -55,7 +55,7 @@ export class PlantMergeController {
   }
 
   @Get('urn-preview')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({
     summary:
       'Preview plant merge targets for each certified EOI on a source URN (read-only)',
@@ -66,7 +66,7 @@ export class PlantMergeController {
   }
 
   @Get('preview')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({ summary: 'Preview merging source plants into a target plant' })
   @ApiResponse({ status: 200, description: 'Plant merge preview' })
   async preview(@Query() query: PlantMergePreviewQueryDto) {
@@ -91,7 +91,7 @@ export class PlantMergeController {
   }
 
   @Post('urn-execute')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
@@ -109,7 +109,7 @@ export class PlantMergeController {
   }
 
   @Post()
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Execute plant merge (absorb source plants into target plant)',

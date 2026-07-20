@@ -14,8 +14,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import { PRODUCTS_VIEW_ANY } from '../common/constants/permissions.constants';
 import { ActivityLogService } from './activity-log.service';
 
 /**
@@ -30,7 +30,7 @@ export class AdminProcessActivityLogController {
   constructor(private readonly activityLogService: ActivityLogService) {}
 
   @Get(':urn/activity-log')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Get activity logs by URN (platform admin, REST path)',
     description:

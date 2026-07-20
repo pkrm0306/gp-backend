@@ -82,6 +82,7 @@ import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
 import {
   DASHBOARD_PERMISSION_CATALOG,
   PERMISSIONS,
+  PRODUCTS_VIEW_ANY,
 } from '../common/constants/permissions.constants';
 import { BUSINESS_VERTICALS } from '../vendor-users/schemas/vendor-user.schema';
 import {
@@ -610,7 +611,7 @@ export class AdminController {
   @AnyPermissions(
     PERMISSIONS.DASHBOARD_VIEW,
     PERMISSIONS.DASHBOARD_PRODUCTS_VIEW,
-    PERMISSIONS.PRODUCTS_VIEW,
+    ...PRODUCTS_VIEW_ANY,
   )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -636,7 +637,7 @@ export class AdminController {
   @AnyPermissions(
     PERMISSIONS.DASHBOARD_VIEW,
     PERMISSIONS.DASHBOARD_CERTIFICATION_VIEW,
-    PERMISSIONS.PRODUCTS_VIEW,
+    ...PRODUCTS_VIEW_ANY,
   )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

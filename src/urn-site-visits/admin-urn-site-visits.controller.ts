@@ -22,8 +22,11 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import {
+  PRODUCTS_UPDATE_ANY,
+  PRODUCTS_VIEW_ANY,
+} from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UrnSiteVisitsService } from './urn-site-visits.service';
 import { ListUrnSiteVisitsDto } from './dto/list-urn-site-visits.dto';
@@ -44,7 +47,7 @@ export class AdminUrnSiteVisitsController {
   }
 
   @Get()
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({ summary: 'List site visits for a URN (admin)' })
   @ApiQuery({ name: 'urnNo', required: true })
   @ApiResponse({ status: 200, description: 'Site visits listed' })
@@ -61,7 +64,7 @@ export class AdminUrnSiteVisitsController {
   }
 
   @Get('plant-options')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Plant name options for site visit form (admin)',
     description:
@@ -82,7 +85,7 @@ export class AdminUrnSiteVisitsController {
   }
 
   @Get(':id')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({ summary: 'Get one site visit by id (admin)' })
   @ApiParam({ name: 'id', description: 'Site visit MongoDB id' })
   @ApiQuery({ name: 'urnNo', required: false })
@@ -96,7 +99,7 @@ export class AdminUrnSiteVisitsController {
   }
 
   @Post()
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Create site visit for a URN (admin)',
@@ -121,7 +124,7 @@ export class AdminUrnSiteVisitsController {
   }
 
   @Put(':id')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({
     summary: 'Update site visit (admin)',
     description:
@@ -148,7 +151,7 @@ export class AdminUrnSiteVisitsController {
   }
 
   @Delete(':id')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Soft-delete site visit (admin)' })
   @ApiParam({ name: 'id' })

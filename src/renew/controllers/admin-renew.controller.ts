@@ -17,9 +17,11 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { Permissions } from '../../common/decorators/permissions.decorator';
 import { AnyPermissions } from '../../common/decorators/any-permissions.decorator';
-import { PERMISSIONS } from '../../common/constants/permissions.constants';
+import {
+  PRODUCTS_UPDATE_ANY,
+  RENEW_PRODUCTS_VIEW_ANY,
+} from '../../common/constants/permissions.constants';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RenewQuickViewService } from '../services/renew-quick-view.service';
 import { RenewDetailsService } from '../services/renew-details.service';
@@ -56,7 +58,7 @@ export class AdminRenewController {
   ) {}
 
   @Patch('test-validity')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({
     summary: 'Test renewal — change valid till and start a new renewal cycle',
     description:
@@ -74,7 +76,7 @@ export class AdminRenewController {
   }
 
   @Get('quick-view/:urnNo')
-  @AnyPermissions(PERMISSIONS.RENEW_PRODUCTS_VIEW, PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...RENEW_PRODUCTS_VIEW_ANY)
   @ApiOperation({ summary: 'Admin renewal quick view for a URN' })
   @ApiParam({ name: 'urnNo', type: String })
   async getQuickView(
@@ -90,7 +92,7 @@ export class AdminRenewController {
   }
 
   @Get('details/:urnNo')
-  @AnyPermissions(PERMISSIONS.RENEW_PRODUCTS_VIEW, PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...RENEW_PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Full renewal URN details (admin — same shape as uncertified GET /products/details)',
     description:
@@ -115,7 +117,7 @@ export class AdminRenewController {
   }
 
   @Get('renew-list')
-  @AnyPermissions(PERMISSIONS.RENEW_PRODUCTS_VIEW, PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...RENEW_PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Admin renew products list (grouped by manufacturer)',
     description:
@@ -133,7 +135,7 @@ export class AdminRenewController {
   }
 
   @Post('complete-renewal/:urnNo')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({ summary: 'Complete renewal for a URN' })
   @ApiParam({ name: 'urnNo', type: String })
   async completeRenewal(
@@ -149,7 +151,7 @@ export class AdminRenewController {
   }
 
   @Post('start-renewal-cycle')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({ summary: 'Start a renewal cycle for a URN' })
   async startRenewalCycle(
     @CurrentUser() user: any,

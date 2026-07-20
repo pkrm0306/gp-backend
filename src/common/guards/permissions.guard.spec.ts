@@ -112,5 +112,70 @@ describe('PermissionsGuard', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
+
+  it('any-mode: allows staff with nested products:uncertified:view when parent products:view is also accepted', async () => {
+    (reflector.getAllAndOverride as jest.Mock)
+      .mockReturnValueOnce(false) // isPublic
+      .mockReturnValueOnce(false) // allowStaffSelfRoleRead
+      .mockReturnValueOnce([
+        'products:view',
+        'products:uncertified:view',
+        'products:certified:view',
+      ])
+      .mockReturnValueOnce('any');
+    (rbacService.getStaffPermissions as jest.Mock).mockResolvedValue([
+      'products:uncertified:view',
+    ]);
+
+    const ok = await guard.canActivate(
+      makeContext({
+        role: 'staff',
+        userId: '507f1f77bcf86cd799439011',
+        manufacturerId: '507f1f77bcf86cd799439012',
+      }),
+    );
+    expect(ok).toBe(true);
+  });
+
+  it('any-mode: allows staff with parent products:view', async () => {
+    (reflector.getAllAndOverride as jest.Mock)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(['products:view', 'products:uncertified:view'])
+      .mockReturnValueOnce('any');
+    (rbacService.getStaffPermissions as jest.Mock).mockResolvedValue([
+      'products:view',
+    ]);
+
+    const ok = await guard.canActivate(
+      makeContext({
+        role: 'staff',
+        userId: '507f1f77bcf86cd799439011',
+        manufacturerId: '507f1f77bcf86cd799439012',
+      }),
+    );
+    expect(ok).toBe(true);
+  });
+
+  it('any-mode: denies staff with only unrelated nested grant', async () => {
+    (reflector.getAllAndOverride as jest.Mock)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(['products:view', 'products:uncertified:view'])
+      .mockReturnValueOnce('any');
+    (rbacService.getStaffPermissions as jest.Mock).mockResolvedValue([
+      'products:certified:view',
+    ]);
+
+    await expect(
+      guard.canActivate(
+        makeContext({
+          role: 'staff',
+          userId: '507f1f77bcf86cd799439011',
+          manufacturerId: '507f1f77bcf86cd799439012',
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
 });
 

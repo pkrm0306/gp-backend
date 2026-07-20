@@ -14,8 +14,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import { PRODUCTS_DELETE_ANY } from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ProductSoftDeleteService } from './services/product-soft-delete.service';
 
@@ -29,7 +29,7 @@ export class ProductController {
   ) {}
 
   @Delete(':id')
-  @Permissions(PERMISSIONS.PRODUCTS_DELETE)
+  @AnyPermissions(...PRODUCTS_DELETE_ANY)
   @ApiOperation({
     summary: 'Soft delete EOI product and re-sequence manufacturer EOIs',
     description:

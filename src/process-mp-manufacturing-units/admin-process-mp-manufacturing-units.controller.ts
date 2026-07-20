@@ -14,8 +14,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import { PRODUCTS_VIEW_ANY } from '../common/constants/permissions.constants';
 import { ProcessMpManufacturingUnitsService } from './process-mp-manufacturing-units.service';
 
 /**
@@ -43,7 +43,7 @@ export class AdminProcessMpManufacturingUnitsController {
   }
 
   @Get('urn/:urn/process-mp-manufacturing-units')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'List MP manufacturing units by URN (platform admin)',
   })
@@ -54,7 +54,7 @@ export class AdminProcessMpManufacturingUnitsController {
   }
 
   @Get('process-mp-manufacturing-units/:urn_no')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'List MP manufacturing units by URN (platform admin, flat path)',
   })
@@ -76,7 +76,7 @@ export class ApiProcessMpManufacturingUnitsController {
   ) {}
 
   @Get(':urn_no')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'List MP manufacturing units by URN (platform admin, /api prefix)',
   })

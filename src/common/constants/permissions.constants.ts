@@ -56,6 +56,9 @@ export const PERMISSIONS = {
   /** Product name-change requests (admin Requests tab under Products). */
   PRODUCTS_REQUESTS_VIEW: 'products:requests:view',
   PRODUCTS_REQUESTS_APPROVE_REJECT: 'products:requests:approve-reject',
+  /** Certificate field correction (admin Products → Certificate Correction). */
+  PRODUCTS_CERTIFICATE_CORRECTION_VIEW: 'products:certificate-correction:view',
+  PRODUCTS_CERTIFICATE_CORRECTION_UPDATE: 'products:certificate-correction:update',
   PRODUCTS_ADD: 'products:add',
   PRODUCTS_UPDATE: 'products:update',
   PRODUCTS_DELETE: 'products:delete',
@@ -131,12 +134,81 @@ export const PERMISSIONS = {
   GALLERY_UPDATE: 'gallery:update',
   GALLERY_DELETE: 'gallery:delete',
   GALLERY_STATUS: 'gallery:status',
+
+  /** Assign / reassign SPOC on un-certified products (isolated module). */
+  SPOC_ALLOCATION_ASSIGN: 'spoc_allocation.assign',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
 /** All registered permission strings; used to expand effective permissions for UI. */
 export const ALL_KNOWN_PERMISSION_VALUES: readonly PermissionKey[] = Object.values(PERMISSIONS);
+
+/**
+ * Shared product list/detail/export APIs.
+ * Accept parent `products:view` or any Products submenu `:view` (child does not imply parent).
+ */
+export const PRODUCTS_VIEW_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.PRODUCTS_VIEW,
+  PERMISSIONS.PRODUCTS_UNCERTIFIED_VIEW,
+  PERMISSIONS.PRODUCTS_CERTIFIED_VIEW,
+  PERMISSIONS.PRODUCTS_EXPIRED_VIEW,
+  PERMISSIONS.PRODUCTS_REJECTED_VIEW,
+  PERMISSIONS.PRODUCTS_REQUESTS_VIEW,
+  PERMISSIONS.PRODUCTS_CERTIFICATE_CORRECTION_VIEW,
+];
+
+/** Shared product mutate APIs used from Uncertified (and general) workflows. */
+export const PRODUCTS_UPDATE_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.PRODUCTS_UPDATE,
+  PERMISSIONS.PRODUCTS_UNCERTIFIED_UPDATE,
+];
+
+/** Certificate correction page — nested view or parent products:view. */
+export const PRODUCTS_CERTIFICATE_CORRECTION_VIEW_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.PRODUCTS_CERTIFICATE_CORRECTION_VIEW,
+  PERMISSIONS.PRODUCTS_VIEW,
+];
+
+/** Certificate correction save — nested update or parent products:update. */
+export const PRODUCTS_CERTIFICATE_CORRECTION_UPDATE_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.PRODUCTS_CERTIFICATE_CORRECTION_UPDATE,
+  PERMISSIONS.PRODUCTS_UPDATE,
+];
+
+export const PRODUCTS_ADD_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.PRODUCTS_ADD,
+  PERMISSIONS.PRODUCTS_UNCERTIFIED_ADD,
+];
+
+export const PRODUCTS_DELETE_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.PRODUCTS_DELETE,
+  PERMISSIONS.PRODUCTS_UNCERTIFIED_DELETE,
+];
+
+/** Expired reactivate / status actions. */
+export const PRODUCTS_EXPIRED_STATUS_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.PRODUCTS_UPDATE,
+  PERMISSIONS.PRODUCTS_EXPIRED_STATUS,
+];
+
+/** Rejected restore / status actions. */
+export const PRODUCTS_REJECTED_STATUS_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.PRODUCTS_UPDATE,
+  PERMISSIONS.PRODUCTS_REJECTED_STATUS,
+];
+
+/** Delete unverified manufacturer — parent or unverified submenu. */
+export const MANUFACTURERS_DELETE_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.MANUFACTURERS_DELETE,
+  PERMISSIONS.MANUFACTURERS_UNVERIFIED_DELETE,
+];
+
+/** Renew list/view — renew module or legacy products:view. */
+export const RENEW_PRODUCTS_VIEW_ANY: readonly PermissionKey[] = [
+  PERMISSIONS.RENEW_PRODUCTS_VIEW,
+  PERMISSIONS.PRODUCTS_VIEW,
+];
 
 /** Role form: dashboard section checkboxes (nested under Dashboard). */
 export const DASHBOARD_PERMISSION_CATALOG = [

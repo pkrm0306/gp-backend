@@ -29,6 +29,7 @@ describe('isListingAuditPath', () => {
     expect(
       isListingAuditPath('/website/public/products/certified/filter-options'),
     ).toBe(true);
+    expect(isListingAuditPath('/api/admin/spoc-allocation/lookup')).toBe(true);
   });
 
   it('does not match mutating business routes', () => {
@@ -37,5 +38,7 @@ describe('isListingAuditPath', () => {
     expect(isListingAuditPath('/api/admin/products/urn-status')).toBe(false);
     expect(isListingAuditPath('/product-design')).toBe(false);
     expect(isListingAuditPath('/categories/1')).toBe(false);
+    expect(isListingAuditPath('/api/admin/spoc-allocation')).toBe(false);
+    expect(isListingAuditPath('/api/admin/spoc-allocation/12')).toBe(false);
   });
 });

@@ -97,11 +97,42 @@ describe('audit module resolution', () => {
     expect(auditModuleDisplayName(AUDIT_MODULE.CATEGORY)).toBe('Category');
     expect(auditModuleDisplayName(AUDIT_MODULE.SECTOR)).toBe('Sector');
     expect(auditModuleDisplayName(AUDIT_MODULE.STANDARD)).toBe('Standard');
+    expect(auditModuleDisplayName(AUDIT_MODULE.SPOC_ALLOCATION)).toBe(
+      'SPOC Allocation',
+    );
     expect(auditModuleDisplayName(AUDIT_MODULE.RAW_MATERIALS)).toBe(
       'Raw Materials',
     );
     expect(auditModuleDisplayName('custom_module')).toBe('Custom Module');
     expect(auditModuleDisplayName(undefined)).toBeNull();
+  });
+
+  it('maps SPOC allocation assign/reassign routes to the spoc_allocation module', () => {
+    const assign = routeMapper.map(
+      'POST',
+      '/api/admin/spoc-allocation',
+      request({ productId: 12, spocId: '507f1f77bcf86cd799439011', urn: 'URN-1' }),
+      'success',
+    );
+    const reassign = routeMapper.map(
+      'PUT',
+      '/api/admin/spoc-allocation/12',
+      request({ spocId: '507f1f77bcf86cd799439022' }),
+      'success',
+    );
+
+    expect(assign).toMatchObject({
+      module: AUDIT_MODULE.SPOC_ALLOCATION,
+      action_type: 'create',
+      description: 'SPOC assigned',
+      entity_name: 'URN-1',
+    });
+    expect(reassign).toMatchObject({
+      module: AUDIT_MODULE.SPOC_ALLOCATION,
+      action_type: 'update',
+      description: 'SPOC reassigned',
+      entity_name: 'Product 12',
+    });
   });
 
   it('maps category controller routes to the category module', () => {

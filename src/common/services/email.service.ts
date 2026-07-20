@@ -644,6 +644,57 @@ The GreenPro Team
     await this.sendEmail(email, subject, htmlBody, textBody);
   }
 
+  /**
+   * Notify the assigned SPOC after a successful allocation assign/reassign.
+   * Call only after the DB write succeeds; use once per history event.
+   */
+  async sendSpocAllocationEmail(
+    email: string,
+    params: {
+      spocName?: string;
+      urn: string;
+      productName: string;
+      vendorName: string;
+      kind: 'assign' | 'reassign';
+    },
+  ): Promise<boolean> {
+    const isReassign = params.kind === 'reassign';
+    const safeName = this.escapeHtml(params.spocName?.trim() || 'Team Member');
+    const safeUrn = this.escapeHtml(params.urn?.trim() || '—');
+    const safeProduct = this.escapeHtml(params.productName?.trim() || '—');
+    const safeVendor = this.escapeHtml(params.vendorName?.trim() || '—');
+    const actionLabel = isReassign ? 'reassigned' : 'assigned';
+    const subject = isReassign
+      ? 'GreenPro — SPOC Reassignment'
+      : 'GreenPro — SPOC Assignment';
+    const htmlBody = `
+      <p>Hello ${safeName},</p>
+      <p>You have been <strong>${actionLabel}</strong> as the SPOC for the following product:</p>
+      <div style="background:#f9fafb; padding:16px; border-radius:8px; border-left:4px solid #16a34a; margin:16px 0;">
+        <p style="margin:5px 0;"><strong>URN:</strong> ${safeUrn}</p>
+        <p style="margin:5px 0;"><strong>Product Name:</strong> ${safeProduct}</p>
+        <p style="margin:5px 0;"><strong>Vendor Name:</strong> ${safeVendor}</p>
+      </div>
+      <p>Best regards,<br>The GreenPro Team</p>
+    `;
+    const textBody = `
+GreenPro SPOC ${isReassign ? 'Reassignment' : 'Assignment'}
+
+Hello ${params.spocName?.trim() || 'Team Member'},
+
+You have been ${actionLabel} as the SPOC for the following product:
+
+URN: ${params.urn?.trim() || '—'}
+Product Name: ${params.productName?.trim() || '—'}
+Vendor Name: ${params.vendorName?.trim() || '—'}
+
+Best regards,
+The GreenPro Team
+    `;
+
+    return this.sendEmail(email, subject, htmlBody, textBody);
+  }
+
   /** Admin manufacturer email change includes a new random password; profile self-edit does not. */
   async sendVendorLoginEmailUpdatedEmail(
     email: string,

@@ -17,8 +17,11 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { Permissions } from '../../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../../common/constants/permissions.constants';
+import { AnyPermissions } from '../../common/decorators/any-permissions.decorator';
+import {
+  PRODUCTS_UPDATE_ANY,
+  PRODUCTS_VIEW_ANY,
+} from '../../common/constants/permissions.constants';
 import { ProcessRenewCommentsService } from './process-renew-comments.service';
 import { AdminRenewProcessCommentsDto } from './dto/admin-renew-process-comments.dto';
 
@@ -36,7 +39,7 @@ export class AdminRenewProcessCommentsController {
   ) {}
 
   @Post()
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({
     summary: 'Admin — upsert renewal process comment for one section',
     description:
@@ -52,7 +55,7 @@ export class AdminRenewProcessCommentsController {
   }
 
   @Get(':urnNo')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({ summary: 'Admin — get renewal process comments for a URN + cycle' })
   @ApiParam({ name: 'urnNo', type: String })
   @ApiQuery({ name: 'renewalCycleId', required: true, type: String })

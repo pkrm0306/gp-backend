@@ -727,6 +727,48 @@ function mapFriendlyAudit(method, pathNorm, req, outcome, snapshot) {
             new_values: snap,
         };
     }
+    if (pathNorm.includes('/spoc-allocation')) {
+        var pathParts = pathNorm.split('/').filter(Boolean);
+        var pathTail = pathParts.length ? pathParts[pathParts.length - 1] : '';
+        var productIdFromPath = pathTail &&
+            pathTail !== 'spoc-allocation' &&
+            pathTail !== 'lookup' &&
+            pathTail !== 'team-members'
+            ? pathTail
+            : undefined;
+        var productIdFromBody = (body === null || body === void 0 ? void 0 : body.productId) != null && String(body.productId).trim()
+            ? String(body.productId).trim()
+            : undefined;
+        var productId = productIdFromBody !== null && productIdFromBody !== void 0 ? productIdFromBody : productIdFromPath;
+        var urn = urnFromBody(body);
+        var entityName = urn !== null && urn !== void 0 ? urn : (productId ? "Product ".concat(productId) : undefined);
+        if (m === 'POST') {
+            return {
+                module: audit_friendlies_1.AUDIT_MODULE.SPOC_ALLOCATION,
+                action_type: audit_friendlies_1.AUDIT_ACTION_TYPE.CREATE,
+                description: 'SPOC assigned',
+                entity_name: entityName,
+                new_values: snap,
+            };
+        }
+        if (m === 'PUT' || m === 'PATCH') {
+            return {
+                module: audit_friendlies_1.AUDIT_MODULE.SPOC_ALLOCATION,
+                action_type: audit_friendlies_1.AUDIT_ACTION_TYPE.UPDATE,
+                description: 'SPOC reassigned',
+                entity_name: entityName,
+                new_values: snap,
+            };
+        }
+        var atSpoc = methodDefaultActionType(m);
+        return {
+            module: audit_friendlies_1.AUDIT_MODULE.SPOC_ALLOCATION,
+            action_type: atSpoc,
+            description: "SPOC allocation ".concat(actionVerbLabel(atSpoc)),
+            entity_name: entityName,
+            new_values: snap,
+        };
+    }
     if (pathNorm.startsWith('/zoho')) {
         var at_23 = methodDefaultActionType(m);
         return {

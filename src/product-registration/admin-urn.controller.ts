@@ -19,8 +19,11 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import {
+  PRODUCTS_UPDATE_ANY,
+  PRODUCTS_VIEW_ANY,
+} from '../common/constants/permissions.constants';
 import { ProductRegistrationService } from './product-registration.service';
 import { AdminPatchUrnStatusBodyDto } from './dto/admin-patch-urn-status-body.dto';
 
@@ -39,7 +42,7 @@ export class AdminUrnController {
   ) {}
 
   @Get(':urn')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Get product details by URN (platform admin, REST path)',
     description:
@@ -63,7 +66,7 @@ export class AdminUrnController {
   }
 
   @Patch(':urn/status')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Update URN status (platform admin, REST path)',

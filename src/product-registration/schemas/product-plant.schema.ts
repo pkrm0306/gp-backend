@@ -41,6 +41,10 @@ export class ProductPlant {
   @Prop({ required: true })
   city: string;
 
+  /** Optional free-text note shown on certificate correction UI (max 40 on write). */
+  @Prop()
+  additionalPlantInfo?: string;
+
   @Prop({ default: 1 })
   plantStatus: number;
 

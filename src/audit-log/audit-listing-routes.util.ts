@@ -30,5 +30,10 @@ export function isListingAuditPath(pathNorm: string): boolean {
     return true;
   }
 
+  // Batch Assigned-SPOC name lookup (read-only POST).
+  if (/\/spoc-allocation\/lookup$/i.test(p)) {
+    return true;
+  }
+
   return false;
 }

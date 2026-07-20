@@ -26,5 +26,8 @@ function isListingAuditPath(pathNorm) {
     if (/\/filter-options$/.test(p)) {
         return true;
     }
+    if (/\/spoc-allocation\/lookup$/i.test(p)) {
+        return true;
+    }
     return false;
 }

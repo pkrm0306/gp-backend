@@ -115,6 +115,8 @@ exports.PERMISSIONS = {
     GALLERY_UPDATE: 'gallery:update',
     GALLERY_DELETE: 'gallery:delete',
     GALLERY_STATUS: 'gallery:status',
+    /** Assign / reassign SPOC on un-certified products (isolated module). */
+    SPOC_ALLOCATION_ASSIGN: 'spoc_allocation.assign',
 };
 /** All registered permission strings; used to expand effective permissions for UI. */
 exports.ALL_KNOWN_PERMISSION_VALUES = Object.values(exports.PERMISSIONS);

@@ -834,6 +834,56 @@ export function mapFriendlyAudit(
     };
   }
 
+  if (
+    pathNorm.includes('/spoc-allocation') ||
+    pathNorm.startsWith('/api/admin/spoc-allocation') ||
+    pathNorm.startsWith('/admin/spoc-allocation')
+  ) {
+    const pathTail = pathNorm.split('/').filter(Boolean).pop() ?? '';
+    const productIdFromPath =
+      pathTail &&
+      pathTail !== 'spoc-allocation' &&
+      pathTail !== 'lookup' &&
+      pathTail !== 'team-members'
+        ? pathTail
+        : undefined;
+    const productIdFromBody =
+      body?.productId != null && String(body.productId).trim()
+        ? String(body.productId).trim()
+        : undefined;
+    const productId = productIdFromBody ?? productIdFromPath;
+    const urn = urnFromBody(body);
+    const entityName =
+      urn ?? (productId ? `Product ${productId}` : undefined);
+
+    if (m === 'POST') {
+      return {
+        module: AUDIT_MODULE.SPOC_ALLOCATION,
+        action_type: AUDIT_ACTION_TYPE.CREATE,
+        description: 'SPOC assigned',
+        entity_name: entityName,
+        new_values: snap,
+      };
+    }
+    if (m === 'PUT' || m === 'PATCH') {
+      return {
+        module: AUDIT_MODULE.SPOC_ALLOCATION,
+        action_type: AUDIT_ACTION_TYPE.UPDATE,
+        description: 'SPOC reassigned',
+        entity_name: entityName,
+        new_values: snap,
+      };
+    }
+    const at = methodDefaultActionType(m);
+    return {
+      module: AUDIT_MODULE.SPOC_ALLOCATION,
+      action_type: at,
+      description: `SPOC allocation ${actionVerbLabel(at)}`,
+      entity_name: entityName,
+      new_values: snap,
+    };
+  }
+
   if (pathNorm.startsWith('/zoho')) {
     const at = methodDefaultActionType(m);
     return {

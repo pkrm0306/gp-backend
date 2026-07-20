@@ -15,8 +15,11 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
-import { Permissions } from '../../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../../common/constants/permissions.constants';
+import { AnyPermissions } from '../../common/decorators/any-permissions.decorator';
+import {
+  PRODUCTS_UPDATE_ANY,
+  PRODUCTS_VIEW_ANY,
+} from '../../common/constants/permissions.constants';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AdminRenewProductDiscontinueService } from '../services/admin-renew-product-discontinue.service';
 import {
@@ -43,7 +46,7 @@ export class AdminRenewProductDiscontinueController {
   }
 
   @Get('products')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({ summary: 'List products for discontinue tab' })
   @ApiParam({ name: 'urnNo', type: String })
   async listProducts(@Param('urnNo') urnNo: string) {
@@ -52,7 +55,7 @@ export class AdminRenewProductDiscontinueController {
   }
 
   @Patch('products/bulk-reactivate')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({ summary: 'Bulk reactivate discontinued products to certified (2)' })
   @ApiParam({ name: 'urnNo', type: String })
   async bulkReactivate(
@@ -68,7 +71,7 @@ export class AdminRenewProductDiscontinueController {
   }
 
   @Patch('products/:productId/discontinue')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({
     summary: 'Soft-delete certified product during renewal and resequence remaining EOIs',
   })
@@ -90,7 +93,7 @@ export class AdminRenewProductDiscontinueController {
   }
 
   @Patch('products/:productId/toggle-status')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @ApiOperation({
     summary: 'Deprecated alias — use PATCH .../discontinue (soft-delete + EOI resequence)',
   })

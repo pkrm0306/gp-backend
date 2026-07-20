@@ -24,6 +24,7 @@ export const AUDIT_MODULE = {
   RAW_MATERIALS: 'raw_materials',
   RBAC: 'rbac',
   SECTOR: 'sector',
+  SPOC_ALLOCATION: 'spoc_allocation',
   STANDARD: 'standard',
   STATE: 'state',
   SUMMIT: 'summit',
@@ -118,6 +119,10 @@ export const AUDIT_MODULE_CONFIG: Record<
   },
   [AUDIT_MODULE.RBAC]: { value: AUDIT_MODULE.RBAC, displayName: 'RBAC' },
   [AUDIT_MODULE.SECTOR]: { value: AUDIT_MODULE.SECTOR, displayName: 'Sector' },
+  [AUDIT_MODULE.SPOC_ALLOCATION]: {
+    value: AUDIT_MODULE.SPOC_ALLOCATION,
+    displayName: 'SPOC Allocation',
+  },
   [AUDIT_MODULE.STANDARD]: {
     value: AUDIT_MODULE.STANDARD,
     displayName: 'Standard',

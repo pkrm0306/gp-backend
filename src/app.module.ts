@@ -62,6 +62,8 @@ import { CronModule } from './cron/cron.module';
 import { EmailModule } from './common/email.module';
 import { GrievancesModule } from './grievances/grievances.module';
 import { AccountDeletionModule } from './account-deletion/account-deletion.module';
+import { CertificateCorrectionModule } from './certificate-correction/certificate-correction.module';
+import { SpocAllocationModule } from './spoc-allocation/spoc-allocation.module';
 
 @Module({
   imports: [
@@ -136,6 +138,8 @@ import { AccountDeletionModule } from './account-deletion/account-deletion.modul
     CronModule,
     GrievancesModule,
     AccountDeletionModule,
+    CertificateCorrectionModule,
+    SpocAllocationModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -17,8 +17,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { ManufacturersService } from './manufacturers.service';
 import { DeleteUnverifiedManufacturerDto } from './dto/delete-unverified-manufacturer.dto';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import { MANUFACTURERS_DELETE_ANY } from '../common/constants/permissions.constants';
 
 @ApiTags('Admin Manufacturers')
 @Controller('api/admin/manufacturers')
@@ -28,7 +28,7 @@ export class AdminManufacturerActionsController {
   constructor(private readonly manufacturersService: ManufacturersService) {}
 
   @Post('delete_unverified_manufacturer_by_id')
-  @Permissions(PERMISSIONS.MANUFACTURERS_DELETE)
+  @AnyPermissions(...MANUFACTURERS_DELETE_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Delete unverified manufacturer by id',

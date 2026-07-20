@@ -18,8 +18,11 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import {
+  PRODUCTS_REJECTED_STATUS_ANY,
+  PRODUCTS_VIEW_ANY,
+} from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminRejectedRestoreService } from './services/admin-rejected-restore.service';
 import {
@@ -45,7 +48,7 @@ export class AdminRejectedRestoreController {
   }
 
   @Get('options')
-  @Permissions(PERMISSIONS.PRODUCTS_VIEW)
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @ApiOperation({
     summary: 'Restore target options for a URN (certified gate)',
   })
@@ -56,7 +59,7 @@ export class AdminRejectedRestoreController {
   }
 
   @Patch('product')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_REJECTED_STATUS_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Restore one rejected product to Un-certified (0) or Certified (2)' })
   @ApiResponse({ status: 200, description: 'Product restored' })
@@ -77,7 +80,7 @@ export class AdminRejectedRestoreController {
   }
 
   @Patch('urn')
-  @Permissions(PERMISSIONS.PRODUCTS_UPDATE)
+  @AnyPermissions(...PRODUCTS_REJECTED_STATUS_ANY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Restore all rejected products on a URN to Un-certified (0) or Certified (2)',

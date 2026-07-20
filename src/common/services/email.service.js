@@ -517,6 +517,30 @@ var EmailService = function () {
                 });
             });
         };
+        /**
+         * Notify the assigned SPOC after a successful allocation assign/reassign.
+         * Call only after the DB write succeeds; use once per history event.
+         */
+        EmailService_1.prototype.sendSpocAllocationEmail = function (email, params) {
+            return __awaiter(this, void 0, void 0, function () {
+                var isReassign, safeName, safeUrn, safeProduct, safeVendor, actionLabel, subject, htmlBody, textBody;
+                var _a, _b, _c, _d, _e, _f, _g;
+                return __generator(this, function (_h) {
+                    isReassign = params.kind === 'reassign';
+                    safeName = this.escapeHtml(((_a = params.spocName) === null || _a === void 0 ? void 0 : _a.trim()) || 'Team Member');
+                    safeUrn = this.escapeHtml(((_b = params.urn) === null || _b === void 0 ? void 0 : _b.trim()) || '—');
+                    safeProduct = this.escapeHtml(((_c = params.productName) === null || _c === void 0 ? void 0 : _c.trim()) || '—');
+                    safeVendor = this.escapeHtml(((_d = params.vendorName) === null || _d === void 0 ? void 0 : _d.trim()) || '—');
+                    actionLabel = isReassign ? 'reassigned' : 'assigned';
+                    subject = isReassign
+                        ? 'GreenPro — SPOC Reassignment'
+                        : 'GreenPro — SPOC Assignment';
+                    htmlBody = "\n      <p>Hello ".concat(safeName, ",</p>\n      <p>You have been <strong>").concat(actionLabel, "</strong> as the SPOC for the following product:</p>\n      <div style=\"background:#f9fafb; padding:16px; border-radius:8px; border-left:4px solid #16a34a; margin:16px 0;\">\n        <p style=\"margin:5px 0;\"><strong>URN:</strong> ").concat(safeUrn, "</p>\n        <p style=\"margin:5px 0;\"><strong>Product Name:</strong> ").concat(safeProduct, "</p>\n        <p style=\"margin:5px 0;\"><strong>Vendor Name:</strong> ").concat(safeVendor, "</p>\n      </div>\n      <p>Best regards,<br>The GreenPro Team</p>\n    ");
+                    textBody = "\nGreenPro SPOC ".concat(isReassign ? 'Reassignment' : 'Assignment', "\n\nHello ").concat(((_e = params.spocName) === null || _e === void 0 ? void 0 : _e.trim()) || 'Team Member', ",\n\nYou have been ").concat(actionLabel, " as the SPOC for the following product:\n\nURN: ").concat(((_f = params.urn) === null || _f === void 0 ? void 0 : _f.trim()) || '—', "\nProduct Name: ").concat(((_g = params.productName) === null || _g === void 0 ? void 0 : _g.trim()) || '—', "\nVendor Name: ").concat((params.vendorName || '').trim() || '—', "\n\nBest regards,\nThe GreenPro Team\n    ");
+                    return [2 /*return*/, this.sendEmail(email, subject, htmlBody, textBody)];
+                });
+            });
+        };
         /** Admin manufacturer email change includes a new random password; profile self-edit does not. */
         EmailService_1.prototype.sendVendorLoginEmailUpdatedEmail = function (email, vendorName, password, options) {
             return __awaiter(this, void 0, void 0, function () {

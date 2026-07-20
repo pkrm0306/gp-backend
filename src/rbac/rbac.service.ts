@@ -208,6 +208,11 @@ export class RbacService {
       return `rbac:roles:${dashMatch[1]}`;
     }
 
+    // SPOC allocation — keep canonical key as `spoc_allocation.assign` (dot form).
+    if (raw === 'spoc_allocation.assign' || raw === 'spoc_allocation:assign') {
+      return 'spoc_allocation.assign';
+    }
+
     // Generic normalization for old dot-style keys.
     return dotted;
   }
