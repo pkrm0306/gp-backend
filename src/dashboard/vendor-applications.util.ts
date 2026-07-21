@@ -3,10 +3,25 @@
  * Source of truth: products.productStatus, products.urnStatus (productType = 0).
  */
 
-export type VendorApplicationProductApproval = 'Pending' | 'Approved' | 'Rejected';
+export type VendorApplicationProductApproval =
+  | 'Pending'
+  | 'Submitted'
+  | 'Approved'
+  | 'Rejected'
+  | 'Expired';
 export type VendorApplicationCertification = 'Not certified' | 'Certified';
-export type VendorApplicationOverall = 'Pending' | 'Certified' | 'Rejected';
-export type VendorApplicationOverallVariant = 'pending' | 'certified' | 'rejected';
+export type VendorApplicationOverall =
+  | 'Pending'
+  | 'Submitted'
+  | 'Certified'
+  | 'Rejected'
+  | 'Expired';
+export type VendorApplicationOverallVariant =
+  | 'pending'
+  | 'submitted'
+  | 'certified'
+  | 'rejected'
+  | 'expired';
 
 export type VendorApplicationRow = {
   product_id: number;
@@ -28,8 +43,11 @@ export function mapProductApproval(
   productStatus: number,
 ): VendorApplicationProductApproval {
   if (productStatus === 3) return 'Rejected';
+  if (productStatus === 4) return 'Expired';
   if (productStatus === 0) return 'Pending';
-  return 'Approved';
+  if (productStatus === 1) return 'Submitted';
+  if (productStatus === 2) return 'Approved';
+  return 'Pending';
 }
 
 export function mapCertification(
@@ -47,6 +65,12 @@ export function mapOverall(productStatus: number): {
   }
   if (productStatus === 3) {
     return { overall: 'Rejected', overall_variant: 'rejected' };
+  }
+  if (productStatus === 4) {
+    return { overall: 'Expired', overall_variant: 'expired' };
+  }
+  if (productStatus === 1) {
+    return { overall: 'Submitted', overall_variant: 'submitted' };
   }
   return { overall: 'Pending', overall_variant: 'pending' };
 }

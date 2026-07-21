@@ -22,6 +22,7 @@ export const AUDIT_ACTION = {
   PRODUCT_DISCONTINUED: 'product_discontinued',
   ADMIN_ADD_PRODUCT_TO_URN: 'admin_add_product_to_urn',
   CERTIFIED_REJECT_PRODUCT: 'certified_reject_product',
+  CERTIFIED_REJECT_URN: 'certified_reject_urn',
   URN_TAB_REVIEW_DECISION: 'urn_tab_review_decision',
   ACTIVITY_LOG_CREATED: 'ACTIVITY_LOG_CREATED',
   RAW_MATERIALS_DELETED: 'RAW_MATERIALS_DELETED',

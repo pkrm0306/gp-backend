@@ -59,14 +59,18 @@ export class NotificationRecipientService {
       vendorEmail ||
       String(user?.email ?? '')
         .trim()
-        .toLowerCase();
+        .toLowerCase() ||
+      undefined;
 
-    if (!email) {
+    const userId = user?._id?.toString();
+
+    // Allow in-app-only (userId without email) or email-only (no linked user).
+    if (!email && !userId) {
       return null;
     }
 
     return {
-      userId: user?._id?.toString(),
+      userId,
       email,
       vendorName,
       companyName,
@@ -92,12 +96,14 @@ export class NotificationRecipientService {
       base?.email ||
       String(user.email ?? '')
         .trim()
-        .toLowerCase();
-    if (!email) {
+        .toLowerCase() ||
+      undefined;
+    const resolvedUserId = user._id.toString();
+    if (!email && !resolvedUserId) {
       return null;
     }
     return {
-      userId: user._id.toString(),
+      userId: resolvedUserId,
       email,
       vendorName: base?.vendorName || user.name,
       companyName: base?.companyName,

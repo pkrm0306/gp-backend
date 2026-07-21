@@ -5533,21 +5533,13 @@ export class ProductRegistrationService {
         );
       }
 
-      if (dto.updateStatusTo === 11) {
-        const productRenewStatus = Number(products[0].productRenewStatus ?? 0);
-        if (productRenewStatus === 0) {
-          this.lifecycleNotification
-            .notifyProductCertified({
-              manufacturerId: manufacturerId.toString(),
-              urnNo,
-              productName: sampleProductName || urnNo,
-            })
-            .catch((err) =>
-              this.logger.warn(
-                `[Admin URN Status] Certification complete notification failed: ${(err as Error).message}`,
-              ),
-            );
-        }
+      // PRODUCT_APPROVED is sent only from product_status → 2 (or certification payment
+      // approval). Do not also notify on urn_status → 11 — that caused duplicates when
+      // admin fee-approve patched both statuses.
+      if (dto.updateStatusTo === 11 && previousUrnStatus !== 11) {
+        this.logger.debug(
+          `[Admin URN Status] URN ${urnNo} reached certified stage (11); product certified notify is owned by product_status / payment approval`,
+        );
       }
 
       await this.invalidateProductListingsCache();
@@ -5555,7 +5547,8 @@ export class ProductRegistrationService {
     }
 
     if (dto.updateStatusType === 'product_status') {
-      if (dto.updateStatusTo === 2) {
+      const previousProductStatus = Number(products[0].productStatus ?? 0);
+      if (dto.updateStatusTo === 2 && previousProductStatus !== 2) {
         this.lifecycleNotification
           .notifyProductCertified({
             manufacturerId: manufacturerId.toString(),
@@ -5567,7 +5560,7 @@ export class ProductRegistrationService {
               `[Admin URN Status] Product certified notification failed: ${(err as Error).message}`,
             ),
           );
-      } else if (dto.updateStatusTo === 3) {
+      } else if (dto.updateStatusTo === 3 && previousProductStatus !== 3) {
         const notifyRejected =
           previousUrnStatus < 2
             ? this.lifecycleNotification.notifyUrnRegistrationRejected({
@@ -5584,6 +5577,13 @@ export class ProductRegistrationService {
           this.logger.warn(
             `[Admin URN Status] Product rejected notification failed: ${(err as Error).message}`,
           ),
+        );
+      } else if (
+        (dto.updateStatusTo === 2 && previousProductStatus === 2) ||
+        (dto.updateStatusTo === 3 && previousProductStatus === 3)
+      ) {
+        this.logger.debug(
+          `[Admin URN Status] Skipping product status notify for ${urnNo}: already productStatus ${previousProductStatus}`,
         );
       }
     }

@@ -975,41 +975,6 @@ export class PaymentsService {
     }
   }
 
-  private tryNotifyUrnRegistrationApproved(
-    urnNo: string,
-    vendorObjectId: Types.ObjectId,
-    previousUrnStatus: number,
-  ): void {
-    if (previousUrnStatus >= 2) {
-      return;
-    }
-    this.findUrnProductForOrg(urnNo, vendorObjectId, 'manufacturerId productName')
-      .then(async (product) => {
-        if (!product?.manufacturerId) return;
-        const manufacturer = await this.manufacturerModel
-          .findById(product.manufacturerId)
-          .select('manufacturerName vendor_name vendor_email')
-          .lean()
-          .exec();
-        return this.lifecycleNotification.notifyUrnInitialApproved({
-          manufacturerId: product.manufacturerId.toString(),
-          urnNo,
-          productName: String(product.productName ?? urnNo),
-          vendorEmail: String(manufacturer?.vendor_email ?? '').trim() || undefined,
-          manufacturerName:
-            String(manufacturer?.manufacturerName ?? '').trim() ||
-            String(manufacturer?.vendor_name ?? '').trim() ||
-            undefined,
-        });
-      })
-      .catch((err) =>
-        console.warn(
-          '[Payment] URN registration approved notification failed:',
-          (err as Error)?.message,
-        ),
-      );
-  }
-
   private tryNotifyPaymentProposalReady(
     urnNo: string,
     vendorObjectId: Types.ObjectId,
@@ -1052,6 +1017,48 @@ export class PaymentsService {
           (err as Error)?.message,
         ),
       );
+  }
+
+  /**
+   * Vendor PRODUCT_REJECTED when certification fee creation auto-rejects
+   * products not selected in productsToBeCertified (productStatus 0/1/2 → 3).
+   */
+  private tryNotifyCertificationFeeAutoRejected(
+    urnNo: string,
+    products: Array<{
+      manufacturerId?: Types.ObjectId | string;
+      productName?: string;
+      productId?: number;
+      eoiNo?: string;
+    }>,
+  ): void {
+    const reason = 'Auto-rejected: not selected for certification fee';
+    for (const product of products) {
+      const manufacturerId = String(product.manufacturerId ?? '').trim();
+      if (!manufacturerId) {
+        console.warn(
+          `[Payment] Auto-reject notify skipped — missing manufacturerId urn=${urnNo} productId=${product.productId}`,
+        );
+        continue;
+      }
+      const productName =
+        String(product.productName ?? '').trim() ||
+        String(product.eoiNo ?? '').trim() ||
+        (product.productId != null ? `Product ${product.productId}` : urnNo);
+      this.lifecycleNotification
+        .notifyProductRejected({
+          manufacturerId,
+          urnNo,
+          productName,
+          reason,
+        })
+        .catch((err) =>
+          console.warn(
+            `[Payment] Auto-reject product notification failed urn=${urnNo} product=${productName}:`,
+            (err as Error)?.message,
+          ),
+        );
+    }
   }
 
   /**
@@ -1108,13 +1115,6 @@ export class PaymentsService {
         }
 
         const vendorObjectId = urnOwnerObjectId;
-
-        const urnProductBeforePayment = await this.findUrnProductForOrg(
-          normalizedUrnNo,
-          vendorObjectId,
-          'urnStatus',
-        );
-        const previousUrnStatus = Number(urnProductBeforePayment?.urnStatus ?? 0);
 
         // Get next payment ID
         const paymentId = await this.sequenceHelper.getPaymentId();
@@ -1193,6 +1193,12 @@ export class PaymentsService {
         let rejectedProductIds: number[] = [];
         let resequenceApplied = false;
         let updatedSequenceCount = 0;
+        let autoRejectedProducts: Array<{
+          manufacturerId?: Types.ObjectId | string;
+          productName?: string;
+          productId?: number;
+          eoiNo?: string;
+        }> = [];
 
         if (normalizedPaymentType === 'certification') {
           const parsed = parseProductsToBeCertified(productsToBeCertified);
@@ -1214,6 +1220,8 @@ export class PaymentsService {
                 productId: 1,
                 manufacturerId: 1,
                 productStatus: 1,
+                productName: 1,
+                eoiNo: 1,
               },
             )
             .session(session)
@@ -1269,6 +1277,13 @@ export class PaymentsService {
                 { session },
               )
               .exec();
+
+            autoRejectedProducts = unselected.map((p) => ({
+              manufacturerId: p.manufacturerId,
+              productName: p.productName,
+              productId: Number(p.productId),
+              eoiNo: p.eoiNo != null ? String(p.eoiNo) : undefined,
+            }));
 
             // Re-number remaining active EOIs (pending/submitted/certified).
             // Rejected products keep their original eoiNo — no conflict with active rows.
@@ -1386,13 +1401,12 @@ export class PaymentsService {
             normalizedPaymentType,
             savedPayment.quoteTotal,
           );
-          if (normalizedPaymentType === 'registration') {
-            this.tryNotifyUrnRegistrationApproved(
-              normalizedUrnNo,
-              vendorObjectId,
-              previousUrnStatus,
-            );
-          }
+        }
+        if (autoRejectedProducts.length > 0) {
+          this.tryNotifyCertificationFeeAutoRejected(
+            normalizedUrnNo,
+            autoRejectedProducts,
+          );
         }
         const response = await this.formatPaymentForApi(savedPayment);
         if (normalizedPaymentType === 'certification') {
@@ -1773,6 +1787,7 @@ export class PaymentsService {
         existingPayment,
         actorRole,
       );
+      let certifiedProductsForNotify = 0;
 
       const certificationProductsRequired =
         paymentType === 'certification' &&
@@ -1925,13 +1940,17 @@ export class PaymentsService {
         const productsRaw =
           updatedPayment.productsToBeCertified ??
           existingPayment.productsToBeCertified;
-        await this.certificationLifecycle.applyCertificationApproval({
-          urnNoOptions: urnOptions,
-          vendorId: effectiveVendorObjectId,
-          productsToBeCertifiedRaw: productsRaw,
-          approvedAt: now,
-          session,
-        });
+        const certificationResult =
+          await this.certificationLifecycle.applyCertificationApproval({
+            urnNoOptions: urnOptions,
+            vendorId: effectiveVendorObjectId,
+            productsToBeCertifiedRaw: productsRaw,
+            approvedAt: now,
+            session,
+          });
+        certifiedProductsForNotify = Number(
+          certificationResult?.certifiedCount ?? 0,
+        );
       }
 
       const previousPaymentStatus = Number(existingPayment.paymentStatus ?? 0);
@@ -1991,7 +2010,8 @@ export class PaymentsService {
         );
         if (
           deferredUrnLog.newUrnStatus === 2 &&
-          deferredUrnLog.previousUrnStatus < 2
+          deferredUrnLog.previousUrnStatus < 2 &&
+          !paymentStatusUpdate.adminRejectedPayment
         ) {
           this.lifecycleNotification
             .notifyUrnInitialApproved({
@@ -2045,18 +2065,6 @@ export class PaymentsService {
               paymentType,
               updatedPayment.quoteTotal,
             );
-            if (
-              paymentType === 'registration' &&
-              (!deferredUrnLog || deferredUrnLog.newUrnStatus !== 2)
-            ) {
-              const previousUrnStatus =
-                deferredUrnLog?.previousUrnStatus ?? urnStatus;
-              this.tryNotifyUrnRegistrationApproved(
-                normalizedUrn,
-                effectiveVendorObjectId,
-                previousUrnStatus,
-              );
-            }
           }
         }
       }
@@ -2150,7 +2158,7 @@ export class PaymentsService {
             urnNo: { $in: urnOptions },
             vendorId: effectiveVendorObjectId,
           })
-          .select('manufacturerId urnStatus')
+          .select('manufacturerId urnStatus productName')
           .lean()
           .exec();
         if (anyProduct) {
@@ -2197,6 +2205,39 @@ export class PaymentsService {
                   (err as Error)?.message,
                 ),
               );
+            // One PRODUCT_APPROVED for fee-approve flow (payment already set productStatus=2,
+            // so later admin product_status/urn_status patches must not notify again).
+            if (certifiedProductsForNotify > 0) {
+              this.lifecycleNotification
+                .notifyProductCertified({
+                  manufacturerId: anyProduct.manufacturerId.toString(),
+                  urnNo: normalizedUrn,
+                  productName: String(anyProduct.productName ?? normalizedUrn),
+                })
+                .catch((err) =>
+                  console.warn(
+                    '[Payment] Product certified notification failed:',
+                    (err as Error)?.message,
+                  ),
+                );
+            }
+          } else if (
+            paymentType === 'registration' ||
+            paymentType === 'renew'
+          ) {
+            this.lifecycleNotification
+              .notifyRegistrationPaymentApproved({
+                manufacturerId: anyProduct.manufacturerId.toString(),
+                urnNo: normalizedUrn,
+                paymentId: updatedPayment.paymentId,
+                paymentType,
+              })
+              .catch((err) =>
+                console.warn(
+                  '[Payment] Registration/renew payment approved notification failed:',
+                  (err as Error)?.message,
+                ),
+              );
           }
         }
       }
@@ -2210,17 +2251,33 @@ export class PaymentsService {
           .select('manufacturerId urnStatus')
           .lean()
           .exec();
-        if (anyProduct && paymentStatusUpdate.paymentRejectionRemarks) {
+        if (anyProduct) {
           const urnStatus =
             typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
-          await this.logAdminPaymentRejected(
-            effectiveVendorId,
-            anyProduct.manufacturerId.toString(),
-            normalizedUrn,
-            paymentType,
-            paymentStatusUpdate.paymentRejectionRemarks,
-            urnStatus,
-          );
+          if (paymentStatusUpdate.paymentRejectionRemarks) {
+            await this.logAdminPaymentRejected(
+              effectiveVendorId,
+              anyProduct.manufacturerId.toString(),
+              normalizedUrn,
+              paymentType,
+              paymentStatusUpdate.paymentRejectionRemarks,
+              urnStatus,
+            );
+          }
+          this.lifecycleNotification
+            .notifyRegistrationPaymentRejected({
+              manufacturerId: anyProduct.manufacturerId.toString(),
+              urnNo: normalizedUrn,
+              paymentId: updatedPayment.paymentId,
+              paymentType: String(paymentType ?? 'registration'),
+              remarks: paymentStatusUpdate.paymentRejectionRemarks,
+            })
+            .catch((err) =>
+              console.warn(
+                '[Payment] Payment rejected notification failed:',
+                (err as Error)?.message,
+              ),
+            );
         }
       }
 

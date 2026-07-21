@@ -398,6 +398,53 @@ describe('LifecycleNotificationService', () => {
     );
   });
 
+  it('sends vendor PAYMENT_REJECTED on registration payment rejected (no URN_INITIAL_APPROVED)', async () => {
+    await service.notifyRegistrationPaymentRejected({
+      manufacturerId: '507f1f77bcf86cd799439011',
+      urnNo: 'URN-1',
+      paymentId: 42,
+      paymentType: 'registration',
+      remarks: 'Invalid reference number',
+    });
+    expect(sendInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: NotificationTemplateCode.PAYMENT_REJECTED,
+        payload: expect.objectContaining({
+          urnNo: 'URN-1',
+          paymentId: '42',
+          paymentTypeLabel: 'Registration fee',
+          remarksBlock: 'Admin remarks: Invalid reference number',
+        }),
+      }),
+    );
+    expect(sendInBackground).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: NotificationTemplateCode.URN_INITIAL_APPROVED,
+      }),
+    );
+    expect(createFeedNotification).not.toHaveBeenCalled();
+  });
+
+  it('sends vendor PAYMENT_APPROVED on registration fee approval', async () => {
+    await service.notifyRegistrationPaymentApproved({
+      manufacturerId: '507f1f77bcf86cd799439011',
+      urnNo: 'URN-1',
+      paymentId: 55,
+      paymentType: 'registration',
+    });
+    expect(sendInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: NotificationTemplateCode.PAYMENT_APPROVED,
+        payload: expect.objectContaining({
+          urnNo: 'URN-1',
+          paymentId: '55',
+          paymentTypeLabel: 'Registration fee',
+        }),
+      }),
+    );
+    expect(createFeedNotification).not.toHaveBeenCalled();
+  });
+
   it('sends vendor + admin on product enquiry with sheshi CC', async () => {
     await service.notifyProductEnquiry({
       manufacturerId: '507f1f77bcf86cd799439011',
@@ -418,7 +465,7 @@ describe('LifecycleNotificationService', () => {
     );
   });
 
-  it('sends vendor email on URN merge', async () => {
+  it('sends vendor EMAIL + IN_APP on URN merge when userId present', async () => {
     await service.notifyUrnMerged({
       manufacturerId: '507f1f77bcf86cd799439011',
       sourceUrnNo: 'URN-A',
@@ -427,11 +474,28 @@ describe('LifecycleNotificationService', () => {
     });
     expect(sendInBackground).toHaveBeenCalledWith(
       expect.objectContaining({
+        type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
         template: NotificationTemplateCode.URN_MERGED,
       }),
     );
     expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({ ccGroups: ['TEAM_LEADS'] }),
+    );
+  });
+
+  it('sends vendor EMAIL + IN_APP on plant merged when userId present', async () => {
+    await service.notifyPlantMerged({
+      manufacturerId: '507f1f77bcf86cd799439011',
+      urnNo: 'URN-1',
+      eoiNo: 'EOI-1',
+      productName: 'Widget',
+      mergeSummary: '2 plant(s) were merged into "Main Plant".',
+    });
+    expect(sendInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
+        template: NotificationTemplateCode.PLANT_MERGED,
+      }),
     );
   });
 
@@ -462,13 +526,14 @@ describe('LifecycleNotificationService', () => {
     expect(createFeedNotification).toHaveBeenCalled();
   });
 
-  it('sends vendor + admin on renewal completed', async () => {
+  it('sends vendor EMAIL + IN_APP on renewal completed when userId present', async () => {
     await service.notifyRenewalCompleted({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
     });
     expect(sendInBackground).toHaveBeenCalledWith(
       expect.objectContaining({
+        type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
         template: NotificationTemplateCode.RENEWAL_COMPLETED,
       }),
     );

@@ -35,3 +35,11 @@ export class AdminCertifiedRejectProductDto {
   @MaxLength(2000)
   rejectedDetails?: string;
 }
+
+export class AdminCertifiedRejectUrnDto {
+  @ApiProperty({ example: 'URN-20260428123027' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  urnNo: string;
+}

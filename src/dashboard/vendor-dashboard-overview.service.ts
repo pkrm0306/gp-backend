@@ -328,7 +328,7 @@ export class VendorDashboardOverviewService {
       .exec();
   }
 
-  private static readonly PRODUCT_OUTCOMES_YEAR_WINDOW = 5;
+  private static readonly PRODUCT_OUTCOMES_START_YEAR = 2019;
 
   async getProductOutcomesChart(
     vendorId: Types.ObjectId,
@@ -368,8 +368,12 @@ export class VendorDashboardOverviewService {
 
   private listAvailableProductYears(currentYear: number): number[] {
     const years: number[] = [];
-    for (let index = 0; index < VendorDashboardOverviewService.PRODUCT_OUTCOMES_YEAR_WINDOW; index += 1) {
-      years.push(currentYear - index);
+    for (
+      let year = currentYear;
+      year >= VendorDashboardOverviewService.PRODUCT_OUTCOMES_START_YEAR;
+      year -= 1
+    ) {
+      years.push(year);
     }
     return years;
   }

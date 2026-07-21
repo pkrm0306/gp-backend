@@ -584,6 +584,76 @@ export class LifecycleNotificationService {
     });
   }
 
+  /**
+   * Vendor notice when admin rejects payment proof (registration / certification / renew).
+   * Does not send URN_INITIAL_APPROVED.
+   */
+  async notifyRegistrationPaymentRejected(params: {
+    manufacturerId: string;
+    urnNo: string;
+    paymentId: number | string;
+    paymentType: 'registration' | 'certification' | 'renew' | string;
+    remarks?: string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    if (!recipient?.email && !recipient?.userId) {
+      return;
+    }
+    const paymentTypeLabel =
+      params.paymentType === 'certification'
+        ? 'Certification fee'
+        : params.paymentType === 'renew'
+          ? 'Renewal fee'
+          : 'Registration fee';
+    const remarks = String(params.remarks ?? '').trim();
+    const remarksBlock = remarks
+      ? `Admin remarks: ${remarks}`
+      : '';
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.PAYMENT_REJECTED,
+      {
+        urnNo: params.urnNo,
+        paymentId: String(params.paymentId),
+        paymentTypeLabel,
+        remarksBlock,
+      },
+      `notifyRegistrationPaymentRejected manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
+    );
+  }
+
+  /**
+   * Vendor notice when admin approves registration / renew payment proof.
+   * Certification continues to use notifyCertificationPaymentApproved.
+   */
+  async notifyRegistrationPaymentApproved(params: {
+    manufacturerId: string;
+    urnNo: string;
+    paymentId: number | string;
+    paymentType: 'registration' | 'renew' | string;
+  }): Promise<void> {
+    const recipient = await this.recipientService.resolveByManufacturerId(
+      params.manufacturerId,
+    );
+    if (!recipient?.email && !recipient?.userId) {
+      return;
+    }
+    const paymentTypeLabel =
+      params.paymentType === 'renew' ? 'Renewal fee' : 'Registration fee';
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.PAYMENT_APPROVED,
+      {
+        urnNo: params.urnNo,
+        paymentId: String(params.paymentId),
+        paymentTypeLabel,
+      },
+      `notifyRegistrationPaymentApproved manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
+    );
+  }
+
   async notifyManufacturerApproved(
     manufacturerId: string,
     context?: { manufacturerName?: string; vendorEmail?: string },
@@ -770,6 +840,9 @@ export class LifecycleNotificationService {
         productName: params.productName,
         reason: params.reason ?? 'Not approved',
         rejectedBy: params.rejectedBy ?? 'GreenPro Admin',
+        reasonSuffix: params.reason?.trim()
+          ? ` ${params.reason.trim()}`
+          : '',
       },
       `notifyProductRejected manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
     );
@@ -1009,11 +1082,16 @@ export class LifecycleNotificationService {
       params.manufacturerId,
     );
     const manufacturerName = this.manufacturerLabelFromRecipient(recipient);
-    this.sendVendorNotificationInBackground(recipient, NotificationTemplateCode.URN_MERGED, {
-      sourceUrnNo: params.sourceUrnNo,
-      targetUrnNo: params.targetUrnNo,
-      movedCount: String(params.movedCount),
-    });
+    this.sendVendorNotificationInBackground(
+      recipient,
+      NotificationTemplateCode.URN_MERGED,
+      {
+        sourceUrnNo: params.sourceUrnNo,
+        targetUrnNo: params.targetUrnNo,
+        movedCount: String(params.movedCount),
+      },
+      `notifyUrnMerged manufacturerId=${params.manufacturerId} ${params.sourceUrnNo}→${params.targetUrnNo}`,
+    );
     await this.notifyAdminFeedAndEmail({
       copy: AdminNotificationMessages.urnMerged(
         manufacturerName,

@@ -30,6 +30,7 @@ import { buildVendorProgressTracking } from './vendor-progress.util';
 import { buildVendorApplicationRow } from './vendor-applications.util';
 import { ListVendorApplicationsQueryDto } from './dto/list-vendor-applications-query.dto';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
+import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
 
 @Injectable()
 export class DashboardService {
@@ -96,13 +97,11 @@ export class DashboardService {
       Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : 10;
     const skip = (currentPage - 1) * perPage;
 
-    const match: Record<string, unknown> = {
+    const match: Record<string, unknown> = matchActiveProducts({
       vendorId: vendorObjectId,
       productType: 0,
-    };
-    if (scopedUrn) {
-      match.urnNo = scopedUrn.urnNo;
-    }
+      ...(scopedUrn ? { urnNo: scopedUrn.urnNo } : {}),
+    });
 
     const search = String(query.search ?? '').trim();
     if (search) {
@@ -165,11 +164,14 @@ export class DashboardService {
     );
     await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
 
-    const urns = await this.productModel.distinct('urnNo', {
-      vendorId: vendorObjectId,
-      productType: 0,
-      urnNo: { $exists: true, $nin: [null, ''] },
-    });
+    const urns = await this.productModel.distinct(
+      'urnNo',
+      matchActiveProducts({
+        vendorId: vendorObjectId,
+        productType: 0,
+        urnNo: { $exists: true, $nin: [null, ''] },
+      }),
+    );
 
     return urns
       .map((urn) => String(urn ?? '').trim())
@@ -191,11 +193,13 @@ export class DashboardService {
     await this.assertVendorProfileComplete(authUserId, tokenManufacturerId);
 
     const products = await this.productModel
-      .find({
-        vendorId: vendorObjectId,
-        productType: 0,
-        urnNo: { $exists: true, $nin: [null, ''] },
-      })
+      .find(
+        matchActiveProducts({
+          vendorId: vendorObjectId,
+          productType: 0,
+          urnNo: { $exists: true, $nin: [null, ''] },
+        }),
+      )
       .select('urnNo urnStatus productId')
       .sort({ urnNo: -1, productId: -1 })
       .lean()
@@ -481,7 +485,7 @@ export class DashboardService {
   ): Promise<{ urnNo: string; urnStatus: number } | null> {
     if (urnNo) {
       const row = await this.productModel
-        .findOne({ vendorId, urnNo, productType: 0 })
+        .findOne(matchActiveProducts({ vendorId, urnNo, productType: 0 }))
         .select('urnNo urnStatus')
         .sort({ productId: -1 })
         .lean()
@@ -496,7 +500,7 @@ export class DashboardService {
     }
 
     const row = await this.productModel
-      .findOne({ vendorId, productType: 0 })
+      .findOne(matchActiveProducts({ vendorId, productType: 0 }))
       .select('urnNo urnStatus')
       .sort({ urnNo: -1, productId: -1 })
       .lean()

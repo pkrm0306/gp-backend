@@ -19,7 +19,10 @@ import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
 import { PRODUCTS_UPDATE_ANY } from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminCertifiedRejectService } from './services/admin-certified-reject.service';
-import { AdminCertifiedRejectProductDto } from './dto/admin-certified-reject.dto';
+import {
+  AdminCertifiedRejectProductDto,
+  AdminCertifiedRejectUrnDto,
+} from './dto/admin-certified-reject.dto';
 
 @ApiTags('Admin Products')
 @Controller('api/admin/products/certified-reject')
@@ -58,6 +61,24 @@ export class AdminCertifiedRejectController {
         rejectionReason: dto.rejectionReason,
         rejectedDetails: dto.rejectedDetails,
       },
+    );
+  }
+
+  @Patch('urn')
+  @AnyPermissions(...PRODUCTS_UPDATE_ANY)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reject all certified products on a URN (2 → 3); eoiNo unchanged',
+  })
+  @ApiResponse({ status: 200, description: 'URN certified products rejected' })
+  @ApiResponse({ status: 404, description: 'No certified products on this URN' })
+  async rejectUrn(
+    @Body() dto: AdminCertifiedRejectUrnDto,
+    @CurrentUser() user: { userId?: string; sub?: string; _id?: string },
+  ) {
+    return this.certifiedRejectService.rejectUrn(
+      dto.urnNo,
+      this.adminUserId(user),
     );
   }
 }

@@ -26,17 +26,17 @@ export const NOTIFICATION_TEMPLATES: Record<
   [NotificationTemplateCode.PRODUCT_APPROVED]: {
     code: NotificationTemplateCode.PRODUCT_APPROVED,
     email: {
-      subject: 'GreenPro — Product approved: {{productName}}',
+      subject: 'GreenPro — Product certified: {{productName}}',
       html: `
         <p>Hello,</p>
-        <p>Your product <strong>{{productName}}</strong> has been approved by {{approvedBy}}.</p>
+        <p>Your product <strong>{{productName}}</strong> has been certified successfully.</p>
         <p>Thank you,<br/>The GreenPro Team</p>
       `,
-      text: 'Your product {{productName}} has been approved by {{approvedBy}}.',
+      text: 'Your product {{productName}} has been certified successfully.',
     },
     inApp: {
-      title: 'Product approved',
-      content: '{{productName}} was approved by {{approvedBy}}.',
+      title: 'Product certified',
+      content: 'Your product has been certified successfully.',
       type: 'success',
       notifyType: 'PRODUCT_APPROVED',
     },
@@ -47,15 +47,17 @@ export const NOTIFICATION_TEMPLATES: Record<
       subject: 'GreenPro — Product rejected: {{productName}}',
       html: `
         <p>Hello,</p>
-        <p>Your product <strong>{{productName}}</strong> was not approved.</p>
+        <p>Your product <strong>{{productName}}</strong> has been rejected.</p>
+        <p>Please review the comments and take the necessary action.</p>
         <p>Reason: {{reason}}</p>
         <p>Reviewed by: {{rejectedBy}}</p>
       `,
-      text: 'Product {{productName}} was rejected. Reason: {{reason}}',
+      text: 'Your product {{productName}} has been rejected. Please review the comments and take the necessary action. Reason: {{reason}}',
     },
     inApp: {
       title: 'Product rejected',
-      content: '{{productName}} was rejected. {{reason}}',
+      content:
+        'Your product has been rejected. Please review the comments and take the necessary action.{{reasonSuffix}}',
       type: 'warning',
       notifyType: 'PRODUCT_REJECTED',
     },
@@ -233,6 +235,49 @@ export const NOTIFICATION_TEMPLATES: Record<
       notifyType: 'CERTIFICATION_PAYMENT_APPROVED',
     },
   },
+  [NotificationTemplateCode.PAYMENT_REJECTED]: {
+    code: NotificationTemplateCode.PAYMENT_REJECTED,
+    email: {
+      subject: 'GreenPro — {{paymentTypeLabel}} payment rejected for {{urnNo}}',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your {{paymentTypeLabel}} payment for URN <strong>{{urnNo}}</strong> has been rejected.</p>
+        <p>Please review the payment details and resubmit.</p>
+        <p>{{remarksBlock}}</p>
+        <p>Payment reference: {{paymentId}}.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Your {{paymentTypeLabel}} payment for {{urnNo}} has been rejected. Please review and resubmit.',
+    },
+    inApp: {
+      title: 'Payment rejected',
+      content:
+        'Your payment has been rejected. Please review the payment details and resubmit. URN {{urnNo}}.',
+      type: 'warning',
+      notifyType: 'PAYMENT_REJECTED',
+    },
+  },
+  [NotificationTemplateCode.PAYMENT_APPROVED]: {
+    code: NotificationTemplateCode.PAYMENT_APPROVED,
+    email: {
+      subject: 'GreenPro — {{paymentTypeLabel}} approved for {{urnNo}}',
+      html: `
+        <p>Hello {{manufacturerName}},</p>
+        <p>Your {{paymentTypeLabel}} for URN <strong>{{urnNo}}</strong> has been approved.</p>
+        <p>{{paymentTypeLabel}} approved successfully. You may proceed to the next stage.</p>
+        <p>Payment reference: {{paymentId}}.</p>
+        <p>Thank you,<br/>The GreenPro Team</p>
+      `,
+      text: 'Your {{paymentTypeLabel}} for {{urnNo}} has been approved. You may proceed to the next stage.',
+    },
+    inApp: {
+      title: '{{paymentTypeLabel}} approved',
+      content:
+        'Your {{paymentTypeLabel}} has been approved. {{paymentTypeLabel}} approved successfully. You may proceed to the next stage.',
+      type: 'success',
+      notifyType: 'PAYMENT_APPROVED',
+    },
+  },
   [NotificationTemplateCode.MANUFACTURER_APPROVED]: {
     code: NotificationTemplateCode.MANUFACTURER_APPROVED,
     email: {
@@ -383,6 +428,13 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Manufacturing plant merge completed for {{urnNo}}. {{mergeSummary}}',
+    },
+    inApp: {
+      title: 'Plant merge completed',
+      content:
+        'Manufacturing plant merge completed for {{productName}} on URN {{urnNo}}{{eoiSuffix}}. {{mergeSummary}}',
+      type: 'info',
+      notifyType: 'PLANT_MERGED',
     },
   },
   [NotificationTemplateCode.RENEWAL_SUBMITTED]: {
