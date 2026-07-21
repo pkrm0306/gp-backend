@@ -881,14 +881,18 @@ export class ManufacturersService {
       vendor_youtube: manufacturer.vendor_youtube ?? '',
       vendor_twitter: manufacturer.vendor_twitter ?? '',
       vendor_linkedin: manufacturer.vendor_linkedin ?? '',
+      vendor_whatsapp: manufacturer.vendor_whatsapp ?? '',
       facebook: manufacturer.vendor_facebook ?? '',
       youtube: manufacturer.vendor_youtube ?? '',
       twitter: manufacturer.vendor_twitter ?? '',
       linkedin: manufacturer.vendor_linkedin ?? '',
+      whatsapp: manufacturer.vendor_whatsapp ?? '',
       facebookUrl: manufacturer.vendor_facebook ?? '',
       youtubeUrl: manufacturer.vendor_youtube ?? '',
       twitterUrl: manufacturer.vendor_twitter ?? '',
       linkedinUrl: manufacturer.vendor_linkedin ?? '',
+      whatsappUrl: manufacturer.vendor_whatsapp ?? '',
+      whatsapp_url: manufacturer.vendor_whatsapp ?? '',
       vendor_designation: manufacturer.vendor_designation ?? '',
       vendor_gst: manufacturer.vendor_gst ?? '',
       gstPdf: manufacturer.vendorGstPdf ?? '',
@@ -924,10 +928,13 @@ export class ManufacturersService {
       youtube: manufacturer.vendor_youtube ?? '',
       twitter: manufacturer.vendor_twitter ?? '',
       linkedin: manufacturer.vendor_linkedin ?? '',
+      whatsapp: manufacturer.vendor_whatsapp ?? '',
       facebookUrl: manufacturer.vendor_facebook ?? '',
       youtubeUrl: manufacturer.vendor_youtube ?? '',
       twitterUrl: manufacturer.vendor_twitter ?? '',
       linkedinUrl: manufacturer.vendor_linkedin ?? '',
+      whatsappUrl: manufacturer.vendor_whatsapp ?? '',
+      whatsapp_url: manufacturer.vendor_whatsapp ?? '',
     };
   }
 
@@ -938,26 +945,37 @@ export class ManufacturersService {
     const pairs: Array<{
       canonical: keyof Pick<
         UpdateProfileDto,
-        'facebook' | 'youtube' | 'twitter' | 'linkedin'
+        'facebook' | 'youtube' | 'twitter' | 'linkedin' | 'whatsapp'
       >;
-      alias: keyof Pick<
-        UpdateProfileDto,
-        'facebookUrl' | 'youtubeUrl' | 'twitterUrl' | 'linkedinUrl'
+      aliases: Array<
+        keyof Pick<
+          UpdateProfileDto,
+          | 'facebookUrl'
+          | 'youtubeUrl'
+          | 'twitterUrl'
+          | 'linkedinUrl'
+          | 'whatsappUrl'
+          | 'whatsapp_url'
+        >
       >;
     }> = [
-      { canonical: 'facebook', alias: 'facebookUrl' },
-      { canonical: 'youtube', alias: 'youtubeUrl' },
-      { canonical: 'twitter', alias: 'twitterUrl' },
-      { canonical: 'linkedin', alias: 'linkedinUrl' },
+      { canonical: 'facebook', aliases: ['facebookUrl'] },
+      { canonical: 'youtube', aliases: ['youtubeUrl'] },
+      { canonical: 'twitter', aliases: ['twitterUrl'] },
+      { canonical: 'linkedin', aliases: ['linkedinUrl'] },
+      { canonical: 'whatsapp', aliases: ['whatsappUrl', 'whatsapp_url'] },
     ];
 
     const out = { ...dto };
-    for (const { canonical, alias } of pairs) {
+    for (const { canonical, aliases } of pairs) {
       if (out[canonical] !== undefined) {
         continue;
       }
-      if (out[alias] !== undefined) {
-        out[canonical] = out[alias];
+      for (const alias of aliases) {
+        if (out[alias] !== undefined) {
+          out[canonical] = out[alias];
+          break;
+        }
       }
     }
     return out;
@@ -1224,6 +1242,9 @@ export class ManufacturersService {
         'twitterUrl',
         'linkedin',
         'linkedinUrl',
+        'whatsapp',
+        'whatsappUrl',
+        'whatsapp_url',
       ] as (keyof UpdateProfileDto)[]
     ).forEach(fill);
 
@@ -1452,10 +1473,25 @@ export class ManufacturersService {
           youtube: updateDto.youtube ?? updateDto.youtubeUrl ?? '',
           twitter: updateDto.twitter ?? updateDto.twitterUrl ?? '',
           linkedin: updateDto.linkedin ?? updateDto.linkedinUrl ?? '',
+          whatsapp:
+            updateDto.whatsapp ??
+            updateDto.whatsappUrl ??
+            updateDto.whatsapp_url ??
+            '',
           facebookUrl: updateDto.facebook ?? updateDto.facebookUrl ?? '',
           youtubeUrl: updateDto.youtube ?? updateDto.youtubeUrl ?? '',
           twitterUrl: updateDto.twitter ?? updateDto.twitterUrl ?? '',
           linkedinUrl: updateDto.linkedin ?? updateDto.linkedinUrl ?? '',
+          whatsappUrl:
+            updateDto.whatsapp ??
+            updateDto.whatsappUrl ??
+            updateDto.whatsapp_url ??
+            '',
+          whatsapp_url:
+            updateDto.whatsapp ??
+            updateDto.whatsappUrl ??
+            updateDto.whatsapp_url ??
+            '',
         };
       }
 
@@ -1530,6 +1566,9 @@ export class ManufacturersService {
       }
       if (updateDto.linkedin !== undefined) {
         updateData.vendor_linkedin = String(updateDto.linkedin).trim();
+      }
+      if (updateDto.whatsapp !== undefined) {
+        updateData.vendor_whatsapp = String(updateDto.whatsapp).trim();
       }
       let profileEmailChanged = false;
       let profileNotifyEmail: string | null = null;

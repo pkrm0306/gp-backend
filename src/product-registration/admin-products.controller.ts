@@ -402,6 +402,37 @@ export class AdminProductsController {
     };
   }
 
+  @Get('certified/:productId')
+  @AnyPermissions(
+    PERMISSIONS.PRODUCTS_VIEW,
+    PERMISSIONS.PRODUCTS_CERTIFIED_VIEW,
+    PERMISSIONS.PRODUCTS_UPDATE,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get certified product for admin edit',
+    description:
+      'Returns a certified product (**productStatus = 2**) by Mongo `_id`, including manufacturer social URLs ' +
+      '(Facebook, YouTube, Twitter, LinkedIn, website) and website visibility toggles (default on).',
+  })
+  @ApiParam({
+    name: 'productId',
+    description: 'MongoDB product document _id',
+  })
+  @ApiResponse({ status: 200, description: 'Certified product retrieved' })
+  @ApiResponse({ status: 400, description: 'Product is not certified' })
+  @ApiResponse({ status: 404, description: 'Product not found' })
+  async getCertifiedProduct(@Param('productId') productId: string) {
+    const data = await this.productRegistrationService.adminGetCertifiedProduct(
+      productId.trim(),
+    );
+    return {
+      success: true,
+      message: 'Certified product retrieved successfully',
+      data,
+    };
+  }
+
   @Patch('certified/:productId')
   @AnyPermissions(...PRODUCTS_UPDATE_ANY)
   @HttpCode(HttpStatus.OK)
@@ -413,6 +444,7 @@ export class AdminProductsController {
     summary: 'Edit certified product (admin)',
     description:
       'PATCH only for products with **productStatus = 2** (certified). Updates product name, description, valid till date, and optional image. **Category is read-only** (`categoryEditable: false`) — send the existing category id or omit it. ' +
+      'Optional manufacturer social visibility toggles (`showFacebookOnWebsite`, etc., default **true**) are stored on the manufacturer and apply to **all** public website product detail pages for that vendor. ' +
       'Body must include matching **urnNo** and **eoiNo**. Changes apply to listings after cache invalidation.',
   })
   @ApiParam({
@@ -445,6 +477,28 @@ export class AdminProductsController {
           format: 'binary',
           description: 'Optional product image (JPEG, PNG, GIF, WebP)',
         },
+        showWebsiteOnWebsite: {
+          type: 'boolean',
+          description: 'Show manufacturer website on public product pages (default true)',
+        },
+        show_website_on_website: { type: 'boolean' },
+        showFacebookOnWebsite: { type: 'boolean' },
+        show_facebook_on_website: { type: 'boolean' },
+        showYoutubeOnWebsite: { type: 'boolean' },
+        show_youtube_on_website: { type: 'boolean' },
+        showTwitterOnWebsite: { type: 'boolean' },
+        show_twitter_on_website: { type: 'boolean' },
+        showLinkedinOnWebsite: { type: 'boolean' },
+        show_linkedin_on_website: { type: 'boolean' },
+        facebookUrl: { type: 'string' },
+        facebook_url: { type: 'string' },
+        youtubeUrl: { type: 'string' },
+        youtube_url: { type: 'string' },
+        twitterUrl: { type: 'string' },
+        twitter_url: { type: 'string' },
+        linkedinUrl: { type: 'string' },
+        linkedin_url: { type: 'string' },
+        website: { type: 'string' },
       },
     },
   })

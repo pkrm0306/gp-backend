@@ -64,12 +64,13 @@ import { GrievancesModule } from './grievances/grievances.module';
 import { AccountDeletionModule } from './account-deletion/account-deletion.module';
 import { CertificateCorrectionModule } from './certificate-correction/certificate-correction.module';
 import { SpocAllocationModule } from './spoc-allocation/spoc-allocation.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: ['.env', '.env.local'],
     }),
     EmailModule,
     RedisModule,
@@ -140,6 +141,7 @@ import { SpocAllocationModule } from './spoc-allocation/spoc-allocation.module';
     AccountDeletionModule,
     CertificateCorrectionModule,
     SpocAllocationModule,
+    AnalyticsModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -167,4 +167,31 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(1024)
   linkedinUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'WhatsApp profile or chat URL. Send an empty string to clear.',
+    example: 'https://wa.me/919876543210',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  whatsapp?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of `whatsapp` (vendor panel).',
+    example: 'https://wa.me/919876543210',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  whatsappUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake-case alias of `whatsapp` (vendor panel).',
+    example: 'https://wa.me/919876543210',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  whatsapp_url?: string;
 }

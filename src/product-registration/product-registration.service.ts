@@ -45,6 +45,11 @@ import {
   resolveAdminListValidTillMonthYearFilter,
 } from './helpers/admin-list-valid-till-filter.util';
 import { formatAdminCertifiedProductPatchResponse } from './helpers/format-admin-certified-product-patch.util';
+import {
+  buildManufacturerSocialVisibilityPayload,
+  filterManufacturerSocialUrlsForWebsite,
+  MANUFACTURER_SOCIAL_VISIBILITY_KEYS,
+} from './helpers/manufacturer-social-visibility.util';
 import { formatProcessFinalReviewPayload } from './helpers/format-process-final-review.util';
 import { formatProcessCommentsForApi } from '../process-comments/helpers/process-comments-payload.util';
 import {
@@ -727,6 +732,145 @@ export class ProductRegistrationService {
   private multipartTruthy(value: unknown): boolean {
     const v = String(value ?? '').trim().toLowerCase();
     return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+  }
+
+  private buildManufacturerSocialAdminPayload(
+    manufacturer: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> | null {
+    if (!manufacturer) {
+      return null;
+    }
+
+    const website = String(manufacturer.vendor_website ?? '').trim();
+    const facebook = String(manufacturer.vendor_facebook ?? '').trim();
+    const youtube = String(manufacturer.vendor_youtube ?? '').trim();
+    const twitter = String(manufacturer.vendor_twitter ?? '').trim();
+    const linkedin = String(manufacturer.vendor_linkedin ?? '').trim();
+    const visibility = buildManufacturerSocialVisibilityPayload(manufacturer);
+
+    const manufacturerSocialLinks = {
+      website,
+      facebook,
+      facebookUrl: facebook,
+      youtube,
+      youtubeUrl: youtube,
+      twitter,
+      twitterUrl: twitter,
+      linkedin,
+      linkedinUrl: linkedin,
+    };
+
+    return {
+      website,
+      vendor_website: website,
+      facebook,
+      facebookUrl: facebook,
+      vendor_facebook: facebook,
+      youtube,
+      youtubeUrl: youtube,
+      vendor_youtube: youtube,
+      twitter,
+      twitterUrl: twitter,
+      vendor_twitter: twitter,
+      linkedin,
+      linkedinUrl: linkedin,
+      vendor_linkedin: linkedin,
+      manufacturerSocialLinks,
+      socialLinks: manufacturerSocialLinks,
+      ...visibility,
+    };
+  }
+
+  private async loadManufacturerSocialAdminPayload(
+    manufacturerId: unknown,
+  ): Promise<Record<string, unknown> | null> {
+    const id = String(manufacturerId ?? '').trim();
+    if (!id || !Types.ObjectId.isValid(id)) {
+      return null;
+    }
+
+    const manufacturer = await this.manufacturerModel
+      .findById(id)
+      .select(
+        [
+          'vendor_website',
+          'vendor_facebook',
+          'vendor_youtube',
+          'vendor_twitter',
+          'vendor_linkedin',
+          ...MANUFACTURER_SOCIAL_VISIBILITY_KEYS,
+        ].join(' '),
+      )
+      .lean()
+      .exec();
+
+    return this.buildManufacturerSocialAdminPayload(
+      manufacturer as Record<string, unknown> | null,
+    );
+  }
+
+  private async applyManufacturerSocialVisibilityFromCertifiedPatch(
+    manufacturerId: unknown,
+    dto: AdminPatchCertifiedProductDto,
+  ): Promise<void> {
+    const updates: Record<string, string | boolean> = {};
+
+    for (const key of MANUFACTURER_SOCIAL_VISIBILITY_KEYS) {
+      const value = dto[key];
+      if (typeof value === 'boolean') {
+        updates[key] = value;
+      }
+    }
+
+    const pickUrl = (...candidates: Array<string | undefined>): string | undefined => {
+      for (const candidate of candidates) {
+        if (candidate !== undefined) {
+          return String(candidate).trim();
+        }
+      }
+      return undefined;
+    };
+
+    const website = pickUrl(dto.website, dto.vendor_website);
+    if (website !== undefined) {
+      updates.vendor_website = website;
+    }
+    const facebook = pickUrl(dto.facebook, dto.facebookUrl, dto.facebook_url);
+    if (facebook !== undefined) {
+      updates.vendor_facebook = facebook;
+    }
+    const youtube = pickUrl(dto.youtube, dto.youtubeUrl, dto.youtube_url);
+    if (youtube !== undefined) {
+      updates.vendor_youtube = youtube;
+    }
+    const twitter = pickUrl(dto.twitter, dto.twitterUrl, dto.twitter_url);
+    if (twitter !== undefined) {
+      updates.vendor_twitter = twitter;
+    }
+    const linkedin = pickUrl(dto.linkedin, dto.linkedinUrl, dto.linkedin_url);
+    if (linkedin !== undefined) {
+      updates.vendor_linkedin = linkedin;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return;
+    }
+
+    const id = String(manufacturerId ?? '').trim();
+    if (!id || !Types.ObjectId.isValid(id)) {
+      throw new BadRequestException(
+        'Certified product is missing a valid manufacturer for social visibility updates',
+      );
+    }
+
+    const result = await this.manufacturerModel
+      .updateOne({ _id: id }, { $set: updates })
+      .exec();
+    if (result.matchedCount === 0) {
+      throw new NotFoundException(
+        'Manufacturer not found for social visibility update',
+      );
+    }
   }
 
   private normalizeUrnForCompare(urn: string): string {
@@ -1579,6 +1723,7 @@ export class ProductRegistrationService {
       vendor_twitter: String(manufacturer.vendor_twitter ?? '').trim(),
       linkedin: String(manufacturer.vendor_linkedin ?? '').trim(),
       vendor_linkedin: String(manufacturer.vendor_linkedin ?? '').trim(),
+      ...buildManufacturerSocialVisibilityPayload(manufacturer),
       gst: String(manufacturer.vendor_gst ?? '').trim(),
       vendor_gst: String(manufacturer.vendor_gst ?? '').trim(),
       gstPdf: manufacturer.vendorGstPdf ?? null,
@@ -1590,6 +1735,8 @@ export class ProductRegistrationService {
       technicalContact,
       marketingContact,
     };
+
+    const socialAdmin = this.buildManufacturerSocialAdminPayload(manufacturer);
 
     return {
       _id: manufacturer._id,
@@ -1612,6 +1759,7 @@ export class ProductRegistrationService {
       youtube: String(manufacturer.vendor_youtube ?? '').trim(),
       twitter: String(manufacturer.vendor_twitter ?? '').trim(),
       linkedin: String(manufacturer.vendor_linkedin ?? '').trim(),
+      ...(socialAdmin ?? {}),
       vendor_designation: manufacturer.vendor_designation ?? '',
       vendor_gst: manufacturer.vendor_gst ?? '',
       vendorGstPdf: manufacturer.vendorGstPdf ?? null,
@@ -3643,7 +3791,7 @@ export class ProductRegistrationService {
     const productObjectId = this.toObjectId(productId, 'productId');
     const existing = await this.productModel
       .findById(productObjectId)
-      .select('productStatus urnNo eoiNo categoryId')
+      .select('productStatus urnNo eoiNo categoryId manufacturerId')
       .lean()
       .exec();
 
@@ -3701,11 +3849,15 @@ export class ProductRegistrationService {
     };
 
     await this.updateProduct(productId, updateDto);
+    await this.applyManufacturerSocialVisibilityFromCertifiedPatch(
+      existing.manufacturerId,
+      dto,
+    );
 
     const row = await this.productModel
       .findById(productObjectId)
       .select(
-        '_id urnNo eoiNo productName productDetails categoryId productImage productStatus validtillDate updatedDate',
+        '_id urnNo eoiNo productName productDetails categoryId productImage productStatus validtillDate updatedDate manufacturerId',
       )
       .lean()
       .exec();
@@ -3714,10 +3866,78 @@ export class ProductRegistrationService {
       throw new NotFoundException('Product not found after update');
     }
 
-    return formatAdminCertifiedProductPatchResponse(
+    return this.buildAdminCertifiedProductEditPayload(
       row as Record<string, unknown>,
-      (value) => this.toMongoIdString(value),
+      row.manufacturerId ?? existing.manufacturerId,
     );
+  }
+
+  /**
+   * Load a certified product for the admin edit screen (product fields +
+   * manufacturer social URLs and website visibility toggles).
+   */
+  async adminGetCertifiedProduct(productId: string) {
+    const productObjectId = this.toObjectId(productId, 'productId');
+    const row = await this.productModel
+      .findById(productObjectId)
+      .select(
+        '_id urnNo eoiNo productName productDetails categoryId productImage productStatus validtillDate updatedDate manufacturerId productPassport',
+      )
+      .lean()
+      .exec();
+
+    if (!row) {
+      throw new NotFoundException('Product not found');
+    }
+
+    if (Number(row.productStatus) !== 2) {
+      throw new BadRequestException(
+        'Only certified products (productStatus 2) can be loaded from the admin certified edit route',
+      );
+    }
+
+    return this.buildAdminCertifiedProductEditPayload(
+      row as Record<string, unknown>,
+      row.manufacturerId,
+    );
+  }
+
+  private async buildAdminCertifiedProductEditPayload(
+    row: Record<string, unknown>,
+    manufacturerId: unknown,
+  ) {
+    const socialPayload =
+      await this.loadManufacturerSocialAdminPayload(manufacturerId);
+    const base = formatAdminCertifiedProductPatchResponse(row, (value) =>
+      this.toMongoIdString(value),
+    );
+
+    return {
+      ...base,
+      manufacturerId: this.toMongoIdString(manufacturerId),
+      passport:
+        row.productPassport != null ? String(row.productPassport) : undefined,
+      ...(socialPayload ?? {
+        manufacturerSocialLinks: {
+          website: '',
+          facebook: '',
+          facebookUrl: '',
+          youtube: '',
+          youtubeUrl: '',
+          twitter: '',
+          twitterUrl: '',
+          linkedin: '',
+          linkedinUrl: '',
+        },
+        socialVisibility: buildManufacturerSocialVisibilityPayload(null)
+          .socialVisibility,
+        showWebsiteOnWebsite: true,
+        showFacebookOnWebsite: true,
+        showYoutubeOnWebsite: true,
+        showTwitterOnWebsite: true,
+        showLinkedinOnWebsite: true,
+      }),
+    };
   }
 
   async adminUpdateCertifiedProductPassport(
@@ -3853,7 +4073,18 @@ export class ProductRegistrationService {
     const m = await this.manufacturerModel
       .findById(id)
       .select(
-        'manufacturerName manufacturerImage companyLogo vendor_website vendor_facebook vendor_youtube vendor_twitter vendor_linkedin manufacturerStatus',
+        [
+          'manufacturerName',
+          'manufacturerImage',
+          'companyLogo',
+          'vendor_website',
+          'vendor_facebook',
+          'vendor_youtube',
+          'vendor_twitter',
+          'vendor_linkedin',
+          'manufacturerStatus',
+          ...MANUFACTURER_SOCIAL_VISIBILITY_KEYS,
+        ].join(' '),
       )
       .lean()
       .exec();
@@ -3863,6 +4094,16 @@ export class ProductRegistrationService {
 
     const manufacturerImageRaw = String(m.manufacturerImage ?? '').trim();
     const companyLogoRaw = String(m.companyLogo ?? '').trim();
+    const filtered = filterManufacturerSocialUrlsForWebsite(
+      {
+        website: m.vendor_website,
+        facebook: m.vendor_facebook,
+        youtube: m.vendor_youtube,
+        twitter: m.vendor_twitter,
+        linkedin: m.vendor_linkedin,
+      },
+      m,
+    );
 
     return {
       _id: this.toMongoIdString(m._id),
@@ -3873,16 +4114,16 @@ export class ProductRegistrationService {
       companyLogo: companyLogoRaw
         ? resolveStoredUploadUrl(companyLogoRaw) || companyLogoRaw
         : null,
-      website: String(m.vendor_website ?? '').trim(),
-      vendor_website: String(m.vendor_website ?? '').trim(),
-      facebook: String(m.vendor_facebook ?? '').trim(),
-      vendor_facebook: String(m.vendor_facebook ?? '').trim(),
-      youtube: String(m.vendor_youtube ?? '').trim(),
-      vendor_youtube: String(m.vendor_youtube ?? '').trim(),
-      twitter: String(m.vendor_twitter ?? '').trim(),
-      vendor_twitter: String(m.vendor_twitter ?? '').trim(),
-      linkedin: String(m.vendor_linkedin ?? '').trim(),
-      vendor_linkedin: String(m.vendor_linkedin ?? '').trim(),
+      website: filtered.website,
+      vendor_website: filtered.website,
+      facebook: filtered.facebook,
+      vendor_facebook: filtered.facebook,
+      youtube: filtered.youtube,
+      vendor_youtube: filtered.youtube,
+      twitter: filtered.twitter,
+      vendor_twitter: filtered.twitter,
+      linkedin: filtered.linkedin,
+      vendor_linkedin: filtered.linkedin,
     };
   }
 
@@ -4439,6 +4680,18 @@ export class ProductRegistrationService {
           manufacturerLinkedin: {
             $ifNull: ['$manufacturer.vendor_linkedin', ''],
           },
+          showFacebookOnWebsite: {
+            $ifNull: ['$manufacturer.showFacebookOnWebsite', true],
+          },
+          showYoutubeOnWebsite: {
+            $ifNull: ['$manufacturer.showYoutubeOnWebsite', true],
+          },
+          showTwitterOnWebsite: {
+            $ifNull: ['$manufacturer.showTwitterOnWebsite', true],
+          },
+          showLinkedinOnWebsite: {
+            $ifNull: ['$manufacturer.showLinkedinOnWebsite', true],
+          },
           sectorName: '$_adminSectorDoc.name',
           plants: 1,
         },
@@ -4480,39 +4733,49 @@ export class ProductRegistrationService {
     twitter?: unknown;
     linkedin?: unknown;
     website?: unknown;
+    showWebsiteOnWebsite?: unknown;
+    showFacebookOnWebsite?: unknown;
+    showYoutubeOnWebsite?: unknown;
+    showTwitterOnWebsite?: unknown;
+    showLinkedinOnWebsite?: unknown;
   }): Record<string, string | Record<string, string>> {
-    const facebook = String(fields.facebook ?? '').trim();
-    const youtube = String(fields.youtube ?? '').trim();
-    const twitter = String(fields.twitter ?? '').trim();
-    const linkedin = String(fields.linkedin ?? '').trim();
-    const website = String(fields.website ?? '').trim();
+    const filtered = filterManufacturerSocialUrlsForWebsite(
+      {
+        website: fields.website,
+        facebook: fields.facebook,
+        youtube: fields.youtube,
+        twitter: fields.twitter,
+        linkedin: fields.linkedin,
+      },
+      fields,
+    );
 
     const manufacturerSocialLinks: Record<string, string> = {
-      facebook,
-      facebookUrl: facebook,
-      youtube,
-      youtubeUrl: youtube,
-      twitter,
-      twitterUrl: twitter,
-      linkedin,
-      linkedinUrl: linkedin,
+      facebook: filtered.facebook,
+      facebookUrl: filtered.facebook,
+      youtube: filtered.youtube,
+      youtubeUrl: filtered.youtube,
+      twitter: filtered.twitter,
+      twitterUrl: filtered.twitter,
+      linkedin: filtered.linkedin,
+      linkedinUrl: filtered.linkedin,
     };
 
     return {
-      website,
-      vendor_website: website,
-      facebook,
-      facebookUrl: facebook,
-      vendor_facebook: facebook,
-      youtube,
-      youtubeUrl: youtube,
-      vendor_youtube: youtube,
-      twitter,
-      twitterUrl: twitter,
-      vendor_twitter: twitter,
-      linkedin,
-      linkedinUrl: linkedin,
-      vendor_linkedin: linkedin,
+      website: filtered.website,
+      vendor_website: filtered.website,
+      facebook: filtered.facebook,
+      facebookUrl: filtered.facebook,
+      vendor_facebook: filtered.facebook,
+      youtube: filtered.youtube,
+      youtubeUrl: filtered.youtube,
+      vendor_youtube: filtered.youtube,
+      twitter: filtered.twitter,
+      twitterUrl: filtered.twitter,
+      vendor_twitter: filtered.twitter,
+      linkedin: filtered.linkedin,
+      linkedinUrl: filtered.linkedin,
+      vendor_linkedin: filtered.linkedin,
       manufacturerSocialLinks,
       socialLinks: manufacturerSocialLinks,
     };
@@ -4524,6 +4787,10 @@ export class ProductRegistrationService {
     youtube?: unknown;
     twitter?: unknown;
     linkedin?: unknown;
+    showFacebookOnWebsite?: unknown;
+    showYoutubeOnWebsite?: unknown;
+    showTwitterOnWebsite?: unknown;
+    showLinkedinOnWebsite?: unknown;
   }): Record<string, string> | undefined {
     const mapped = this.mapPublicManufacturerSocialFields(fields);
     const nested = mapped.manufacturerSocialLinks as Record<string, string>;
@@ -4570,6 +4837,10 @@ export class ProductRegistrationService {
       youtube: row.manufacturerYoutube,
       twitter: row.manufacturerTwitter,
       linkedin: row.manufacturerLinkedin,
+      showFacebookOnWebsite: row.showFacebookOnWebsite,
+      showYoutubeOnWebsite: row.showYoutubeOnWebsite,
+      showTwitterOnWebsite: row.showTwitterOnWebsite,
+      showLinkedinOnWebsite: row.showLinkedinOnWebsite,
     });
 
     const {
@@ -4577,6 +4848,10 @@ export class ProductRegistrationService {
       manufacturerYoutube: _my,
       manufacturerTwitter: _mt,
       manufacturerLinkedin: _ml,
+      showFacebookOnWebsite: _sf,
+      showYoutubeOnWebsite: _sy,
+      showTwitterOnWebsite: _st,
+      showLinkedinOnWebsite: _sl,
       ...rest
     } = row;
 
@@ -9478,8 +9753,52 @@ export class ProductRegistrationService {
     return response;
   }
 
+  /**
+   * Resolve public/website category key: Mongo `_id` or numeric `category_id`.
+   */
+  private async resolveCategoryObjectId(
+    categoryId: string,
+  ): Promise<{ objectId: Types.ObjectId; resolvedId: string }> {
+    const trimmed = String(categoryId ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('categoryId is required');
+    }
+
+    if (/^[0-9a-fA-F]{24}$/.test(trimmed)) {
+      const objectId = this.toObjectId(trimmed, 'categoryId');
+      return { objectId, resolvedId: trimmed };
+    }
+
+    if (/^\d+$/.test(trimmed)) {
+      const numericId = parseInt(trimmed, 10);
+      if (!Number.isInteger(numericId) || numericId < 1) {
+        throw new BadRequestException('Invalid categoryId');
+      }
+      const doc = await this.categoryModel
+        .findOne({ category_id: numericId })
+        .select('_id')
+        .lean()
+        .exec();
+      if (!doc?._id) {
+        throw new NotFoundException(
+          `Category with category_id ${numericId} not found`,
+        );
+      }
+      const objectId =
+        doc._id instanceof Types.ObjectId
+          ? doc._id
+          : new Types.ObjectId(String(doc._id));
+      return { objectId, resolvedId: String(objectId) };
+    }
+
+    throw new BadRequestException(
+      'categoryId must be a mongodb id or numeric category_id',
+    );
+  }
+
   async getManufacturersByCategory(categoryId: string) {
-    const categoryObjectId = this.toObjectId(categoryId, 'categoryId');
+    const { objectId: categoryObjectId, resolvedId } =
+      await this.resolveCategoryObjectId(categoryId);
     const apiBaseUrl = (this.configService.get<string>('API_BASE_URL') ?? '')
       .trim()
       .replace(/\/+$/, '');
@@ -9543,6 +9862,21 @@ export class ProductRegistrationService {
             vendor_linkedin: {
               $ifNull: ['$manufacturer.vendor_linkedin', ''],
             },
+            showWebsiteOnWebsite: {
+              $ifNull: ['$manufacturer.showWebsiteOnWebsite', true],
+            },
+            showFacebookOnWebsite: {
+              $ifNull: ['$manufacturer.showFacebookOnWebsite', true],
+            },
+            showYoutubeOnWebsite: {
+              $ifNull: ['$manufacturer.showYoutubeOnWebsite', true],
+            },
+            showTwitterOnWebsite: {
+              $ifNull: ['$manufacturer.showTwitterOnWebsite', true],
+            },
+            showLinkedinOnWebsite: {
+              $ifNull: ['$manufacturer.showLinkedinOnWebsite', true],
+            },
             productCount: 1,
           },
         },
@@ -9561,13 +9895,23 @@ export class ProductRegistrationService {
         twitter: row.vendor_twitter,
         linkedin: row.vendor_linkedin,
         website: row.vendor_website,
+        showWebsiteOnWebsite: row.showWebsiteOnWebsite,
+        showFacebookOnWebsite: row.showFacebookOnWebsite,
+        showYoutubeOnWebsite: row.showYoutubeOnWebsite,
+        showTwitterOnWebsite: row.showTwitterOnWebsite,
+        showLinkedinOnWebsite: row.showLinkedinOnWebsite,
       });
       const {
         vendor_facebook: _vf,
         vendor_youtube: _vy,
         vendor_twitter: _vt,
         vendor_linkedin: _vl,
-        vendor_website: _vw,
+        vendor_website: _vweb,
+        showWebsiteOnWebsite: _swweb,
+        showFacebookOnWebsite: _sf,
+        showYoutubeOnWebsite: _sy,
+        showTwitterOnWebsite: _st,
+        showLinkedinOnWebsite: _sl,
         ...rest
       } = row;
       return {
@@ -9579,7 +9923,7 @@ export class ProductRegistrationService {
     });
 
     return {
-      categoryId,
+      categoryId: resolvedId,
       total: data.length,
       data,
     };

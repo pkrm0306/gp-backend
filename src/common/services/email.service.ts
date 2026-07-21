@@ -286,6 +286,8 @@ export class EmailService {
       primaryOnly?: boolean;
       /** Vendor-facing mail — do not CC admin ops addresses. */
       skipAdminCc?: boolean;
+      /** Nodemailer attachments (supports inline CID images). */
+      attachments?: nodemailer.SendMailOptions['attachments'];
     },
   ): Promise<boolean> {
     try {
@@ -311,6 +313,7 @@ export class EmailService {
           )
         : mergeOutgoingCc(this.configService, to, options?.cc);
       const ccList = cc?.length ? cc : undefined;
+      const attachments = options?.attachments;
 
       this.saveLocalMailPreview({
         to,
@@ -342,6 +345,7 @@ export class EmailService {
         fromDefault: defaultFrom,
         cc: ccList,
         primaryOnly: options?.primaryOnly === true,
+        attachments,
       });
 
       if (!outcome.delivered && ccList?.length) {
@@ -355,6 +359,7 @@ export class EmailService {
           text,
           fromDefault: defaultFrom,
           primaryOnly: options?.primaryOnly === true,
+          attachments,
         });
       }
 
@@ -387,6 +392,7 @@ export class EmailService {
     cc?: string[];
     bcc?: string | string[];
     primaryOnly?: boolean;
+    attachments?: nodemailer.SendMailOptions['attachments'];
   }): Promise<{
     delivered: boolean;
     primaryError?: string;
@@ -424,6 +430,9 @@ export class EmailService {
           text: params.text,
           ...(params.cc?.length ? { cc: params.cc } : {}),
           ...(bccList.length ? { bcc: bccList } : {}),
+          ...(params.attachments?.length
+            ? { attachments: params.attachments }
+            : {}),
           headers: {
             'X-GreenPro-Mail': '1',
             'X-Entity-Ref-ID': `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,

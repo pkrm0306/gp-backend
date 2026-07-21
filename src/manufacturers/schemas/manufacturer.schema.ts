@@ -54,6 +54,28 @@ export class Manufacturer {
   vendor_linkedin?: string;
 
   @Prop()
+  vendor_whatsapp?: string;
+
+  /**
+   * When false, hide this URL on public website product pages.
+   * Omitted / undefined = visible (default on).
+   */
+  @Prop({ default: true })
+  showWebsiteOnWebsite?: boolean;
+
+  @Prop({ default: true })
+  showFacebookOnWebsite?: boolean;
+
+  @Prop({ default: true })
+  showYoutubeOnWebsite?: boolean;
+
+  @Prop({ default: true })
+  showTwitterOnWebsite?: boolean;
+
+  @Prop({ default: true })
+  showLinkedinOnWebsite?: boolean;
+
+  @Prop()
   vendor_designation?: string;
 
   @Prop()

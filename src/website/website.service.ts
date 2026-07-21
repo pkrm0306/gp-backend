@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -44,6 +44,12 @@ import { EmailService } from '../common/services/email.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import { AdminSystemNotificationService } from '../notifications/helpers/admin-system-notification.service';
 import { WebsiteAnalyticsService } from './website-analytics.service';
+import { ShareProductByEmailDto } from './dto/share-product-by-email.dto';
+import {
+  buildProductShareEmailHtml,
+  buildProductShareEmailSubject,
+  buildProductShareEmailText,
+} from './utils/product-share-email.util';
 import {
   Notification,
   NotificationDocument,
@@ -1652,5 +1658,159 @@ ${visitorDetailsBlock}
     );
 
     return { sent: true, subject };
+  }
+
+  /**
+   * Public product share: send Outlook-ready HTML card email (not mailto).
+   * Product image is downloaded and embedded inline (CID) so Outlook shows it
+   * without loading remote images; also attached as a file.
+   */
+  async shareProductByEmail(dto: ShareProductByEmailDto) {
+    const PRODUCT_IMAGE_CID = 'greenpro-product-share-image';
+    const imageAttachment = await this.fetchProductShareImageAttachment(
+      dto.imageUrl,
+      PRODUCT_IMAGE_CID,
+    );
+
+    const subject = buildProductShareEmailSubject(dto.productName);
+    const html = buildProductShareEmailHtml({
+      productName: dto.productName,
+      manufacturerName: dto.manufacturerName,
+      productCode: dto.productCode || dto.eoiNo,
+      eoiNo: dto.eoiNo,
+      categoryName: dto.categoryName,
+      categoryBadge: dto.categoryBadge,
+      validFrom: dto.validFrom,
+      validTo: dto.validTo,
+      shareUrl: dto.shareUrl,
+      imageUrl: dto.imageUrl,
+      description: dto.description,
+      embeddedImageCid: imageAttachment ? PRODUCT_IMAGE_CID : undefined,
+    });
+    const text = buildProductShareEmailText({
+      productName: dto.productName,
+      manufacturerName: dto.manufacturerName,
+      productCode: dto.productCode || dto.eoiNo,
+      eoiNo: dto.eoiNo,
+      categoryName: dto.categoryName,
+      validFrom: dto.validFrom,
+      validTo: dto.validTo,
+      shareUrl: dto.shareUrl,
+      imageUrl: dto.imageUrl,
+    });
+
+    const sent = await this.emailService.sendEmail(
+      dto.to,
+      subject,
+      html,
+      text,
+      {
+        rawHtml: true,
+        skipAdminCc: true,
+        ...(imageAttachment ? { attachments: [imageAttachment] } : {}),
+      },
+    );
+
+    if (!sent) {
+      throw new InternalServerErrorException(
+        'Failed to send product share email. Please try again later.',
+      );
+    }
+
+    return {
+      sent: true,
+      to: dto.to,
+      subject,
+      imageAttached: Boolean(imageAttachment),
+    };
+  }
+
+  /** Download product image for inline CID embed + file attachment. */
+  private async fetchProductShareImageAttachment(
+    imageUrl: string | undefined,
+    cid: string,
+  ): Promise<{
+    filename: string;
+    content: Buffer;
+    contentType: string;
+    cid: string;
+    contentDisposition: 'inline';
+  } | null> {
+    const raw = String(imageUrl ?? '').trim();
+    if (!raw) return null;
+
+    try {
+      let buffer: Buffer | null = null;
+      let contentType = 'image/jpeg';
+
+      if (/^https?:\/\//i.test(raw)) {
+        const res = await fetch(raw, {
+          method: 'GET',
+          headers: { Accept: 'image/*,*/*' },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) {
+          this.logger.warn(
+            `Product share image download failed (${res.status}): ${raw}`,
+          );
+          return null;
+        }
+        const arrayBuffer = await res.arrayBuffer();
+        buffer = Buffer.from(arrayBuffer);
+        const headerType = String(res.headers.get('content-type') ?? '')
+          .split(';')[0]
+          .trim()
+          .toLowerCase();
+        if (headerType.startsWith('image/')) {
+          contentType = headerType;
+        }
+      } else {
+        const relative = raw.replace(/^\/+/, '');
+        const localPath = join(process.cwd(), relative.startsWith('uploads/')
+          ? relative
+          : join('uploads', relative));
+        if (!existsSync(localPath)) {
+          this.logger.warn(`Product share image not found locally: ${localPath}`);
+          return null;
+        }
+        buffer = readFileSync(localPath);
+        if (localPath.toLowerCase().endsWith('.png')) contentType = 'image/png';
+        else if (localPath.toLowerCase().endsWith('.webp'))
+          contentType = 'image/webp';
+        else if (localPath.toLowerCase().endsWith('.gif'))
+          contentType = 'image/gif';
+      }
+
+      if (!buffer || buffer.length === 0) return null;
+      // Cap ~4MB to keep SMTP reliable
+      if (buffer.length > 4 * 1024 * 1024) {
+        this.logger.warn(
+          `Product share image too large (${buffer.length} bytes); skipping embed`,
+        );
+        return null;
+      }
+
+      const ext =
+        contentType.includes('png')
+          ? 'png'
+          : contentType.includes('webp')
+            ? 'webp'
+            : contentType.includes('gif')
+              ? 'gif'
+              : 'jpg';
+
+      return {
+        filename: `greenpro-product.${ext}`,
+        content: buffer,
+        contentType,
+        cid,
+        contentDisposition: 'inline',
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Product share image fetch failed: ${(error as Error)?.message || 'unknown'}`,
+      );
+      return null;
+    }
   }
 }

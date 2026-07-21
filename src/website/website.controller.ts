@@ -31,6 +31,7 @@ import { PublicListSummitsQueryDto } from '../summits/dto/public-list-summits-qu
 import { SummitsService } from '../summits/summits.service';
 import { WebsiteAnalyticsService } from './website-analytics.service';
 import { WebsiteAnalyticsCollectDto } from './dto/website-analytics-collect.dto';
+import { ShareProductByEmailDto } from './dto/share-product-by-email.dto';
 
 @ApiTags('Website')
 @Controller('website')
@@ -295,12 +296,32 @@ export class WebsiteController {
     );
   }
 
+  @Post('public/products/share-by-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Share certified product by email (HTML card)',
+    description:
+      'Sends a rich HTML product card email (image, GREENPRO CERTIFIED badge, Product / Manufacturer / EOI / URN, View Product Details CTA). ' +
+      'Use this instead of mailto so Outlook/Gmail render the full card.',
+  })
+  @ApiBody({ type: ShareProductByEmailDto })
+  @ApiResponse({ status: 200, description: 'Share email sent' })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  async shareProductByEmail(@Body() dto: ShareProductByEmailDto) {
+    const data = await this.websiteService.shareProductByEmail(dto);
+    return {
+      success: true,
+      message: 'Product share email sent successfully',
+      data,
+    };
+  }
+
   @Post('public/manufacturers/by-category')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Public manufacturers by category',
     description:
-      'Accepts categoryId and returns distinct manufacturers mapped through products (products.categoryId -> products.manufacturerId).',
+      'Accepts category Mongo `_id` or numeric `category_id` and returns distinct manufacturers mapped through products (products.categoryId -> products.manufacturerId).',
   })
   @ApiBody({ type: PublicCategoryManufacturersDto })
   @ApiResponse({

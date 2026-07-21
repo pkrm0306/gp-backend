@@ -2573,6 +2573,7 @@ export class AdminController {
   }
 
   @Post('manufacturer/reply')
+  @Permissions(PERMISSIONS.INQUIRIES_REPLY)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Reply to customer (email)',
@@ -3534,6 +3535,7 @@ export class AdminController {
   }
 
   @Get('team-member/search/by-name')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Search team members by name',
@@ -3566,6 +3568,7 @@ export class AdminController {
   }
 
   @Get('team-member/search/by-email')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Search team members by email',
@@ -3598,6 +3601,7 @@ export class AdminController {
   }
 
   @Get('team-member/search')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Search team members by name and/or email',
@@ -3632,6 +3636,10 @@ export class AdminController {
   }
 
   @Get('team-member/:id')
+  @AnyPermissions(
+    PERMISSIONS.TEAM_MEMBERS_VIEW,
+    PERMISSIONS.TEAM_MEMBERS_UPDATE,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get team member by id',
@@ -3651,6 +3659,7 @@ export class AdminController {
   }
 
   @Patch('team-member/:id/status')
+  @Permissions(PERMISSIONS.TEAM_MEMBERS_STATUS)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Toggle team member status',
@@ -3705,6 +3714,11 @@ export class AdminController {
   }
 
   @Put('manufacturers/:id')
+  @AnyPermissions(
+    PERMISSIONS.MANUFACTURERS_UPDATE,
+    PERMISSIONS.MANUFACTURERS_VERIFIED_UPDATE,
+    PERMISSIONS.MANUFACTURERS_UNVERIFIED_UPDATE,
+  )
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileInterceptor('manufacturer_image', {
@@ -3807,6 +3821,11 @@ export class AdminController {
   }
 
   @Patch('manufacturers/:id/status')
+  @AnyPermissions(
+    PERMISSIONS.MANUFACTURERS_STATUS,
+    PERMISSIONS.MANUFACTURERS_VERIFIED_STATUS,
+    PERMISSIONS.MANUFACTURERS_UNVERIFIED_STATUS,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Toggle manufacturer status',
@@ -3828,6 +3847,11 @@ export class AdminController {
   }
 
   @Patch('vendors/:id/status')
+  @AnyPermissions(
+    PERMISSIONS.MANUFACTURERS_STATUS,
+    PERMISSIONS.MANUFACTURERS_VERIFIED_STATUS,
+    PERMISSIONS.MANUFACTURERS_UNVERIFIED_STATUS,
+  )
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Toggle vendor status',
