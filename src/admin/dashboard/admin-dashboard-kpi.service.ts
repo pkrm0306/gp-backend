@@ -90,25 +90,31 @@ export class AdminDashboardKpiService {
     filters: ResolvedDashboardFilters,
   ): Promise<ExecutiveKpiPayload> {
     const now = new Date();
-    const productSnapshotMatch = buildProductSnapshotMatch(filters, now);
-    const productTrendMatch = buildProductTrendMatch(filters, now);
+    const productMatch = buildProductTrendMatch(filters, now);
     const manufacturerMatch = buildManufacturerTrendMatch(filters);
     const paymentVendorScope = this.buildPaymentVendorScope(filters);
 
     const thresholdDate = new Date(now);
     thresholdDate.setDate(thresholdDate.getDate() + 60);
 
-    const renewMatch = this.buildRenewDueMatch(
-      productSnapshotMatch,
-      thresholdDate,
-    );
+    // Same eligibility + EOI grain as Renew listing "Total Renew Products".
+    const renewMatch = this.buildRenewDueMatch(filters, thresholdDate);
+
+    const pendingPaymentMatch: Record<string, unknown> = {
+      ...paymentVendorScope,
+      paymentStatus: PAYMENT_STATUS_PENDING,
+    };
+    if (filters.dateRange) {
+      pendingPaymentMatch.createdDate = {
+        $gte: filters.dateRange.from,
+        $lte: filters.dateRange.to,
+      };
+    }
 
     const [
       manufacturerFacet,
       productWidgets,
       activeUrnCount,
-      pendingProducts,
-      underReview,
       renewalsDue,
       pendingPayments,
       collections,
@@ -121,7 +127,7 @@ export class AdminDashboardKpiService {
         .aggregate<{ count: number }>([
           {
             $match: {
-              ...productTrendMatch,
+              ...productMatch,
               productStatus: {
                 $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
               },
@@ -132,34 +138,15 @@ export class AdminDashboardKpiService {
         ])
         .exec()
         .then((rows) => rows[0]?.count ?? 0),
-      this.productModel
-        .countDocuments({
-          ...productSnapshotMatch,
-          productStatus: PRODUCT_STATUS_PENDING,
-        })
-        .exec(),
-      this.productModel
-        .countDocuments({
-          ...productSnapshotMatch,
-          productStatus: PRODUCT_STATUS_SUBMITTED,
-        })
-        .exec(),
-      this.productModel
-        .aggregate<{ count: number }>([
-          { $match: renewMatch },
-          { $group: { _id: '$urnNo' } },
-          { $count: 'count' },
-        ])
-        .exec()
-        .then((rows) => rows[0]?.count ?? 0),
-      this.paymentDetailsModel
-        .countDocuments({
-          ...paymentVendorScope,
-          paymentStatus: PAYMENT_STATUS_PENDING,
-        })
-        .exec(),
+      this.productModel.countDocuments(renewMatch).exec(),
+      this.paymentDetailsModel.countDocuments(pendingPaymentMatch).exec(),
       this.aggregatePaidCollectionBuckets(paymentVendorScope, now, filters),
     ]);
+
+    // Align with Un-certified list banner: Pending = status 0, Submitted = status 1.
+    // Same date/category scope as Registered / Certified summary KPIs.
+    const pendingProducts = productWidgets.statusCounts.pending;
+    const underReview = productWidgets.statusCounts.approved;
 
     const registeredProducts =
       productWidgets.statusCounts.uncertified +
@@ -220,7 +207,7 @@ export class AdminDashboardKpiService {
       },
       {
         key: 'underReview',
-        label: 'Under review',
+        label: 'Submitted',
         value: underReview,
         changePercent: 0,
         higherIsBetter: false,
@@ -518,19 +505,17 @@ export class AdminDashboardKpiService {
     return { vendorId: { $in: ids } };
   }
 
-  /** Merge active-product `$or` with renew eligibility `$or` without overwriting. */
+  /**
+   * Same renew eligibility as `adminListRenewProducts` / Renew listing
+   * "Total Renew Products" (EOI/product rows, not distinct URNs).
+   * Overall = listing total; optional category / date / manufacturer filters apply.
+   */
   private buildRenewDueMatch(
-    productMatch: Record<string, unknown>,
+    filters: ResolvedDashboardFilters,
     thresholdDate: Date,
   ): Record<string, unknown> {
-    const { $or: activeOr, ...rest } = productMatch as {
-      $or?: unknown[];
-    } & Record<string, unknown>;
-    const andClauses: Record<string, unknown>[] = [];
-    if (activeOr) {
-      andClauses.push({ $or: activeOr });
-    }
-    andClauses.push({
+    const match: Record<string, unknown> = {
+      productStatus: PRODUCT_STATUS_CERTIFIED,
       $or: [
         {
           validtillDate: {
@@ -541,12 +526,22 @@ export class AdminDashboardKpiService {
         },
         { urnStatus: { $gte: 12, $lte: 17 } },
       ],
-    });
-    return {
-      ...rest,
-      productStatus: PRODUCT_STATUS_CERTIFIED,
-      $and: andClauses,
     };
+
+    if (filters.categoryObjectId) {
+      match.categoryId = filters.categoryObjectId;
+    }
+    const manufacturerIds = resolveManufacturerScopeIds(filters);
+    if (manufacturerIds) {
+      match.manufacturerId = { $in: manufacturerIds };
+    }
+    if (filters.dateRange) {
+      match.createdDate = {
+        $gte: filters.dateRange.from,
+        $lte: filters.dateRange.to,
+      };
+    }
+    return match;
   }
 
   private percentChange(current: number, previous: number): number {
