@@ -280,7 +280,7 @@ export class AdminDashboardController {
     summary: 'Inquiry analytics summary cards',
     description:
       'All-time counts for contact + product enquiries: total, contact, product, ' +
-      'acknowledged (`isAcknowledged`), and reminded (`isReminded`).',
+      'acknowledged (`isAcknowledged`), unacknowledged (`isAcknowledged` not true), and reminded (`isReminded`).',
   })
   async getInquiryAnalytics() {
     const data = await this.dashboardKpi.getInquiryAnalytics();

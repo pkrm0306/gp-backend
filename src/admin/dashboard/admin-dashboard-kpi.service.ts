@@ -890,6 +890,7 @@ export class AdminDashboardKpiService {
     contactEnquiries: number;
     productEnquiries: number;
     acknowledgedEnquiries: number;
+    unacknowledgedEnquiries: number;
     remindedEnquiries: number;
   }> {
     const contactMatch = {
@@ -901,21 +902,28 @@ export class AdminDashboardKpiService {
       ],
     };
 
-    const [contactEnquiries, productEnquiries, acknowledgedEnquiries, remindedEnquiries] =
-      await Promise.all([
-        this.contactMessageModel.countDocuments(contactMatch).exec(),
-        this.contactMessageModel.countDocuments({ inquiryType: 'product' }).exec(),
-        this.contactMessageModel
-          .countDocuments({ isAcknowledged: true })
-          .exec(),
-        this.contactMessageModel.countDocuments({ isReminded: true }).exec(),
-      ]);
+    const [
+      contactEnquiries,
+      productEnquiries,
+      acknowledgedEnquiries,
+      unacknowledgedEnquiries,
+      remindedEnquiries,
+    ] = await Promise.all([
+      this.contactMessageModel.countDocuments(contactMatch).exec(),
+      this.contactMessageModel.countDocuments({ inquiryType: 'product' }).exec(),
+      this.contactMessageModel.countDocuments({ isAcknowledged: true }).exec(),
+      this.contactMessageModel
+        .countDocuments({ isAcknowledged: { $ne: true } })
+        .exec(),
+      this.contactMessageModel.countDocuments({ isReminded: true }).exec(),
+    ]);
 
     return {
       totalEnquiries: contactEnquiries + productEnquiries,
       contactEnquiries,
       productEnquiries,
       acknowledgedEnquiries,
+      unacknowledgedEnquiries,
       remindedEnquiries,
     };
   }

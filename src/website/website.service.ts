@@ -592,6 +592,49 @@ export class WebsiteService {
     return payload;
   }
 
+  /** Public single active article with absolute asset URLs. */
+  async getPublicArticleById(id: string, origin: string) {
+    const trimmed = String(id ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('Invalid article id');
+    }
+
+    const normalizeImageUrl = (raw: unknown) => {
+      const v = String(raw ?? '').trim();
+      if (!v) return v;
+      if (/^https?:\/\//i.test(v)) return v;
+      if (v.startsWith('/uploads/')) return `${origin}${v}`;
+      if (v.startsWith('uploads/')) return `${origin}/${v}`;
+      return v;
+    };
+
+    const article = await this.adminService.getArticleById(trimmed);
+    if (!article?.is_active) {
+      throw new NotFoundException('Article not found');
+    }
+
+    const externalUrl = article.externalUrl === true;
+    const shortDescription = String(article.shortDescription ?? '').trim();
+    const legacyShort =
+      externalUrl && !shortDescription
+        ? String(article.description ?? '').trim()
+        : shortDescription;
+
+    return {
+      message: 'Article retrieved successfully',
+      data: {
+        ...article,
+        description: externalUrl ? '' : article.description,
+        shortDescription: legacyShort,
+        image: normalizeImageUrl(article.image),
+        article_image: normalizeImageUrl(article.article_image),
+        pdf: normalizeImageUrl(article.pdf),
+        article_pdf: normalizeImageUrl(article.article_pdf),
+        is_active: true,
+      },
+    };
+  }
+
   /** Filter options for public certified products page (categories + country/state tree). */
   async getPublicCertifiedProductsFilterOptions() {
     const cacheKey = this.redisService.buildKey(

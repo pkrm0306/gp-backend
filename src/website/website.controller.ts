@@ -134,6 +134,20 @@ export class WebsiteController {
     return this.listPublicArticles(req, query);
   }
 
+  @Get('public/articles/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public article by id',
+    description:
+      'Returns one active article for the public website (title, description, date, image, pdf).',
+  })
+  @ApiResponse({ status: 200, description: 'Article retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Article not found' })
+  async getPublicArticleById(@Req() req: Request, @Param('id') id: string) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.websiteService.getPublicArticleById(id, origin);
+  }
+
   @Get('public/summits/list')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
