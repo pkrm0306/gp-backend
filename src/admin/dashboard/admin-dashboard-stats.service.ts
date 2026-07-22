@@ -94,11 +94,17 @@ export class AdminDashboardStatsService {
 
   /**
    * Accurate widget counts — active products only, same rules as admin product list.
-   * Period/year filters do **not** change these totals (only trend charts).
+   * By default period/year filters do **not** change these totals (backlog snapshot).
+   * Pass `applyDateRange: true` to scope by `createdDate` (executive summary KPIs).
    */
-  async getProductWidgetStats(filters: ResolvedDashboardFilters) {
+  async getProductWidgetStats(
+    filters: ResolvedDashboardFilters,
+    options?: { applyDateRange?: boolean },
+  ) {
     const now = new Date();
-    const snapshotMatch = buildProductSnapshotMatch(filters, now);
+    const snapshotMatch = options?.applyDateRange
+      ? buildProductTrendMatch(filters, now)
+      : buildProductSnapshotMatch(filters, now);
     const certifiedActive = this.certifiedActiveExpr(now);
     const expired = this.expiredExpr(now);
     const renewed = this.renewedExpr();
@@ -222,6 +228,9 @@ export class AdminDashboardStatsService {
 
     const totalProducts = totalRow ?? 0;
     const uncertifiedForPie = Math.max(0, totalProducts - certified);
+    /** Non-deleted registered EOIs across listing buckets (no double-count across buckets). */
+    const registeredProducts =
+      uncertified + certified + expiredCount + rejected;
 
     const categoryCertified = categoryRows.map((r) => ({
       name: r.name,
@@ -252,10 +261,11 @@ export class AdminDashboardStatsService {
       statusCounts: {
         pending,
         approved,
+        uncertified,
         certified,
         rejected,
         expired: expiredCount,
-        total: totalProducts,
+        total: registeredProducts,
       },
     };
   }

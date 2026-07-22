@@ -69,9 +69,7 @@ export class AdminRevenueDashboardService {
     const paymentMatch = buildPaymentRevenueBaseMatch(filters, scopeUrns);
     const granularity = filters.granularity;
     const useWeekOfMonth =
-      query.period === 'this_month' ||
-      query.period === 'last_month' ||
-      (!query.period && !query.year && query.month === undefined);
+      query.period === 'this_month' || query.period === 'last_month';
 
     const bucketId = useWeekOfMonth
       ? revenueWeekOfMonthBucketExpr('revenueDate')

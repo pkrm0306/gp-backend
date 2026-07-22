@@ -30,7 +30,9 @@ import { manufacturerStatusKey } from '../admin-dashboard-metrics.util';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
 import {
   buildManufacturerSnapshotMatch,
+  buildManufacturerTrendMatch,
   buildProductSnapshotMatch,
+  buildProductTrendMatch,
   resolveManufacturerScopeIds,
   resolvePreviousDashboardDateRange,
 } from '../utils/dashboard-metrics-filters.util';
@@ -79,6 +81,8 @@ export class AdminDashboardKpiService {
 
   /**
    * Executive KPI strip for the admin dashboard home.
+   * Summary cards (manufacturers, URNs, registered, certified) respect date range
+   * via manufacturer `createdAt` / product `createdDate` when filters.dateRange is set.
    * Revenue cards: paid payments only (`paymentStatus` 2), sum of `quoteTotal`,
    * bucketed by recognition date (cheque date → updated → created).
    */
@@ -86,14 +90,18 @@ export class AdminDashboardKpiService {
     filters: ResolvedDashboardFilters,
   ): Promise<ExecutiveKpiPayload> {
     const now = new Date();
-    const productMatch = buildProductSnapshotMatch(filters, now);
-    const manufacturerMatch = buildManufacturerSnapshotMatch(filters);
+    const productSnapshotMatch = buildProductSnapshotMatch(filters, now);
+    const productTrendMatch = buildProductTrendMatch(filters, now);
+    const manufacturerMatch = buildManufacturerTrendMatch(filters);
     const paymentVendorScope = this.buildPaymentVendorScope(filters);
 
     const thresholdDate = new Date(now);
     thresholdDate.setDate(thresholdDate.getDate() + 60);
 
-    const renewMatch = this.buildRenewDueMatch(productMatch, thresholdDate);
+    const renewMatch = this.buildRenewDueMatch(
+      productSnapshotMatch,
+      thresholdDate,
+    );
 
     const [
       manufacturerFacet,
@@ -106,12 +114,14 @@ export class AdminDashboardKpiService {
       collections,
     ] = await Promise.all([
       this.aggregateManufacturerFacet(manufacturerMatch),
-      this.dashboardStatsService.getProductWidgetStats(filters),
+      this.dashboardStatsService.getProductWidgetStats(filters, {
+        applyDateRange: true,
+      }),
       this.productModel
         .aggregate<{ count: number }>([
           {
             $match: {
-              ...productMatch,
+              ...productTrendMatch,
               productStatus: {
                 $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
               },
@@ -124,13 +134,13 @@ export class AdminDashboardKpiService {
         .then((rows) => rows[0]?.count ?? 0),
       this.productModel
         .countDocuments({
-          ...productMatch,
+          ...productSnapshotMatch,
           productStatus: PRODUCT_STATUS_PENDING,
         })
         .exec(),
       this.productModel
         .countDocuments({
-          ...productMatch,
+          ...productSnapshotMatch,
           productStatus: PRODUCT_STATUS_SUBMITTED,
         })
         .exec(),
@@ -150,6 +160,12 @@ export class AdminDashboardKpiService {
         .exec(),
       this.aggregatePaidCollectionBuckets(paymentVendorScope, now, filters),
     ]);
+
+    const registeredProducts =
+      productWidgets.statusCounts.uncertified +
+      productWidgets.statusCounts.certified +
+      productWidgets.statusCounts.expired +
+      productWidgets.statusCounts.rejected;
 
     const cards: ExecutiveKpiCard[] = [
       {
@@ -175,12 +191,12 @@ export class AdminDashboardKpiService {
       {
         key: 'registeredProducts',
         label: 'Registered Products',
-        value: productWidgets.statusCounts.total,
+        value: registeredProducts,
         changePercent: 0,
         higherIsBetter: true,
         format: 'number',
         href: '/products/un-certified',
-        sparkline: this.buildSparkline(productWidgets.statusCounts.total),
+        sparkline: this.buildSparkline(registeredProducts),
       },
       {
         key: 'certifiedProducts',

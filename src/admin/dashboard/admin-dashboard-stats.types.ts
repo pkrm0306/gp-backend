@@ -19,9 +19,15 @@ export interface AdminDashboardStatsBundle {
     statusCounts: {
       pending: number;
       approved: number;
+      /** productStatus ∈ {0, 1} */
+      uncertified: number;
       certified: number;
       rejected: number;
       expired: number;
+      /**
+       * Registered products = uncertified + certified + expired + rejected
+       * (non-deleted snapshot only; deleted products are excluded upstream).
+       */
       total: number;
     };
   };

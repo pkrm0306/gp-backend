@@ -10,6 +10,7 @@ exports.revenuePeriodDisplayLabel = revenuePeriodDisplayLabel;
 exports.buildAppliedDashboardFilters = buildAppliedDashboardFilters;
 exports.resolveManufacturerScopeIds = resolveManufacturerScopeIds;
 exports.buildManufacturerSnapshotMatch = buildManufacturerSnapshotMatch;
+exports.buildManufacturerTrendMatch = buildManufacturerTrendMatch;
 exports.buildProductSnapshotMatch = buildProductSnapshotMatch;
 exports.buildProductTrendMatch = buildProductTrendMatch;
 exports.buildProductBaseMatch = buildProductBaseMatch;
@@ -343,11 +344,15 @@ function buildAppliedDashboardFilters(query, resolved) {
                 to: resolved.dateRange.to.toISOString(),
             }
             : null,
-        manufacturersScope: 'snapshot (current platform totals; not limited by product date range)',
+        manufacturersScope: resolved.dateRange
+            ? 'executive KPIs: createdAt within dateRange; other manufacturer cards may be snapshot'
+            : 'snapshot (current platform totals; not limited by product date range)',
         productsScope: resolved.dateRange
-            ? 'time-series charts only: createdDate within dateRange'
+            ? 'executive KPIs + trends: createdDate within dateRange; backlog/pending actions stay snapshot'
             : 'all time for trend charts',
-        countsScope: 'current active products (non-deleted); not limited by period/year filters',
+        countsScope: resolved.dateRange
+            ? 'executive summary KPIs respect dateRange; pending/pipeline backlog ignores date'
+            : 'current active products (non-deleted); not limited by period/year filters',
     };
 }
 /** Resolve manufacturer ObjectId list for product/payment/manufacturer scoping. */
@@ -363,8 +368,8 @@ function resolveManufacturerScopeIds(filters) {
     return filters.manufacturerIdsForRegion;
 }
 /**
- * Manufacturer KPI cards use current platform snapshot (status counts),
- * optionally scoped by region / manufacturer — not by registration date.
+ * Manufacturer snapshot: optionally scoped by region / manufacturer —
+ * not by registration date.
  */
 function buildManufacturerSnapshotMatch(filters) {
     var match = {};
@@ -374,13 +379,27 @@ function buildManufacturerSnapshotMatch(filters) {
     }
     return match;
 }
+/** Manufacturer counts with optional `createdAt` window (executive KPIs). */
+function buildManufacturerTrendMatch(filters) {
+    var match = buildManufacturerSnapshotMatch(filters);
+    if (filters.dateRange) {
+        match.createdAt = {
+            $gte: filters.dateRange.from,
+            $lte: filters.dateRange.to,
+        };
+    }
+    return match;
+}
 /**
  * Current platform product counts (matches admin product list).
- * Uses active (non-deleted) products only. Does **not** filter by registration date.
+ * Uses active (non-deleted) EOI products only (`productType: 0`).
+ * Does **not** filter by registration date.
  */
 function buildProductSnapshotMatch(filters, now) {
     var match = {
         $or: [{ is_deleted: { $ne: true } }, { is_deleted: { $exists: false } }],
+        // Admin product lists always scope to EOI rows (`product_type: 0`).
+        productType: 0,
     };
     if (filters.categoryObjectId) {
         match.categoryId = filters.categoryObjectId;

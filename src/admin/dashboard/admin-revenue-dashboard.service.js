@@ -117,8 +117,7 @@ var AdminRevenueDashboardService = function () {
                             paymentMatch = (0, admin_dashboard_revenue_util_1.buildPaymentRevenueBaseMatch)(filters, scopeUrns);
                             granularity = filters.granularity;
                             useWeekOfMonth = query.period === 'this_month' ||
-                                query.period === 'last_month' ||
-                                (!query.period && !query.year && query.month === undefined);
+                                query.period === 'last_month';
                             bucketId = useWeekOfMonth
                                 ? (0, admin_dashboard_revenue_util_1.revenueWeekOfMonthBucketExpr)('revenueDate')
                                 : (0, dashboard_metrics_filters_util_1.bucketDateExpression)(granularity, 'revenueDate');

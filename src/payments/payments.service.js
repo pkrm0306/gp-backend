@@ -2084,7 +2084,7 @@ var PaymentsService = function () {
         };
         PaymentsService_1.prototype.queryPaymentsPaginated = function (listPaymentsDto, baseMatch, options) {
             return __awaiter(this, void 0, void 0, function () {
-                var _a, page, _b, limit, _c, sort, skip, mongoSort, query, _d, totalCount, rows, data, enriched;
+                var _a, page, _b, limit, _c, sort, skip, mongoSort, query, _d, totalCount, amountAgg, rows, totalAmount, data, enriched;
                 return __generator(this, function (_e) {
                     switch (_e.label) {
                         case 0:
@@ -2095,6 +2095,26 @@ var PaymentsService = function () {
                             return [4 /*yield*/, Promise.all([
                                     this.paymentDetailsModel.countDocuments(query).exec(),
                                     this.paymentDetailsModel
+                                        .aggregate([
+                                        { $match: query },
+                                        {
+                                            $group: {
+                                                _id: null,
+                                                totalAmount: {
+                                                    $sum: {
+                                                        $convert: {
+                                                            input: { $ifNull: ['$quoteTotal', 0] },
+                                                            to: 'double',
+                                                            onError: 0,
+                                                            onNull: 0,
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    ])
+                                        .exec(),
+                                    this.paymentDetailsModel
                                         .find(query)
                                         .sort(mongoSort)
                                         .skip(skip)
@@ -2103,7 +2123,8 @@ var PaymentsService = function () {
                                         .exec(),
                                 ])];
                         case 1:
-                            _d = _e.sent(), totalCount = _d[0], rows = _d[1];
+                            _d = _e.sent(), totalCount = _d[0], amountAgg = _d[1], rows = _d[2];
+                            totalAmount = Number((amountAgg[0] && amountAgg[0].totalAmount) || 0);
                             data = (0, payment_proposal_util_1.formatPaymentRecords)(rows).map(function (payment) {
                                 var _a, _b, _c, _d;
                                 return (options === null || options === void 0 ? void 0 : options.vendorHistoryStatusFilter)
@@ -2119,6 +2140,7 @@ var PaymentsService = function () {
                                         limit: limit,
                                         totalCount: totalCount,
                                         totalPages: Math.ceil(totalCount / limit),
+                                        totalAmount: Number.isFinite(totalAmount) ? totalAmount : 0,
                                     },
                                 }];
                     }

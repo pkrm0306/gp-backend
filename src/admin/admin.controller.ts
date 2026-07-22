@@ -316,6 +316,9 @@ export class AdminController {
       pagination: result.pagination,
       meta: result.meta,
       totalCount: result.pagination.totalCount,
+      totalAmount: result.pagination.totalAmount ?? 0,
+      totalPaidAmount:
+        result.pagination.totalPaidAmount ?? result.pagination.totalAmount ?? 0,
       page: result.pagination.page,
       limit: result.pagination.limit,
       totalPages: result.pagination.totalPages,

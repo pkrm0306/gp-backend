@@ -2481,7 +2481,7 @@ export class PaymentsService {
       vendorHistoryStatusFilter?: boolean;
     },
   ): Record<string, unknown> {
-    const { search, status, paymentType } = listPaymentsDto;
+    const { search, status, paymentType, from, to } = listPaymentsDto;
     const andClauses: Record<string, unknown>[] = [baseMatch];
 
     if (status !== undefined && status !== null) {
@@ -2505,7 +2505,48 @@ export class PaymentsService {
       });
     }
 
+    const createdRange = this.buildCreatedDateRangeFilter(from, to);
+    if (createdRange) {
+      andClauses.push({ createdDate: createdRange });
+    }
+
     return andClauses.length === 1 ? andClauses[0] : { $and: andClauses };
+  }
+
+  /** Inclusive createdDate window from optional `from` / `to` query params. */
+  private buildCreatedDateRangeFilter(
+    fromRaw?: string,
+    toRaw?: string,
+  ): Record<string, Date> | null {
+    const fromDay = String(fromRaw ?? '').trim();
+    const toDay = String(toRaw ?? '').trim();
+    if (!fromDay && !toDay) return null;
+
+    const range: Record<string, Date> = {};
+    if (fromDay) {
+      const from = new Date(fromDay);
+      if (Number.isNaN(from.getTime())) {
+        throw new BadRequestException('from must be a valid date');
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(fromDay)) {
+        from.setHours(0, 0, 0, 0);
+      }
+      range.$gte = from;
+    }
+    if (toDay) {
+      const to = new Date(toDay);
+      if (Number.isNaN(to.getTime())) {
+        throw new BadRequestException('to must be a valid date');
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(toDay)) {
+        to.setHours(23, 59, 59, 999);
+      }
+      range.$lte = to;
+    }
+    if (range.$gte && range.$lte && range.$gte > range.$lte) {
+      throw new BadRequestException('from must be before or equal to to');
+    }
+    return range;
   }
 
   private async enrichPaymentsWithManufacturer(
@@ -2569,8 +2610,52 @@ export class PaymentsService {
       options,
     );
 
-    const [totalCount, rows] = await Promise.all([
+    const [totalCount, amountAgg, paidAmountAgg, rows] = await Promise.all([
       this.paymentDetailsModel.countDocuments(query).exec(),
+      this.paymentDetailsModel
+        .aggregate<{ totalAmount: number }>([
+          { $match: query },
+          {
+            $group: {
+              _id: null,
+              totalAmount: {
+                $sum: {
+                  $convert: {
+                    input: { $ifNull: ['$quoteTotal', 0] },
+                    to: 'double',
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+              },
+            },
+          },
+        ])
+        .exec(),
+      this.paymentDetailsModel
+        .aggregate<{ totalAmount: number }>([
+          {
+            $match: {
+              $and: [query, { paymentStatus: 2 }],
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              totalAmount: {
+                $sum: {
+                  $convert: {
+                    input: { $ifNull: ['$quoteTotal', 0] },
+                    to: 'double',
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+              },
+            },
+          },
+        ])
+        .exec(),
       this.paymentDetailsModel
         .find(query)
         .sort(mongoSort)
@@ -2579,6 +2664,9 @@ export class PaymentsService {
         .lean()
         .exec(),
     ]);
+
+    const totalAmountAll = Number(amountAgg[0]?.totalAmount ?? 0);
+    const totalPaidAmount = Number(paidAmountAgg[0]?.totalAmount ?? 0);
 
     const data = formatPaymentRecords(rows as Record<string, unknown>[]).map(
       (payment) =>
@@ -2605,6 +2693,10 @@ export class PaymentsService {
         limit,
         totalCount,
         totalPages: Math.ceil(totalCount / limit),
+        /** Paid (`paymentStatus` 2) sum — primary banner total. */
+        totalAmount: Number.isFinite(totalPaidAmount) ? totalPaidAmount : 0,
+        totalPaidAmount: Number.isFinite(totalPaidAmount) ? totalPaidAmount : 0,
+        totalAmountAll: Number.isFinite(totalAmountAll) ? totalAmountAll : 0,
       },
     };
   }

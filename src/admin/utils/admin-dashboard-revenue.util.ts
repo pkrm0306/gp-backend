@@ -7,10 +7,11 @@ import type {
 } from '../admin-dashboard-revenue.types';
 
 /**
- * Revenue-recognized payments: vendor-submitted (1) or admin-approved/completed (2).
- * Excludes created (0) and cancelled (3).
+ * Revenue-recognized payments: admin-approved / paid only (`paymentStatus` 2).
+ * Matches executive collection cards (Total Revenue / Today / Month / Year).
+ * Excludes pending (1), created (0), and cancelled (3).
  */
-export const REVENUE_RECOGNIZED_PAYMENT_STATUSES = [1, 2] as const;
+export const REVENUE_RECOGNIZED_PAYMENT_STATUSES = [2] as const;
 
 export const REVENUE_PAYMENT_TYPE_KEYS: RevenuePaymentTypeKey[] = [
   'registration',
@@ -35,36 +36,28 @@ export function paymentRevenueRecognitionDateExpr(): Record<string, unknown> {
   };
 }
 
+/**
+ * Match payments whose recognition date (cheque → updated → created) falls in range.
+ * Same date rule as executive collection KPI cards.
+ */
 export function buildPaymentRevenueDateRangeMatch(
   dateRange: DashboardDateRange,
 ): Record<string, unknown> {
   const { from, to } = dateRange;
   return {
-    $or: [
-      { paymentChequeDate: { $gte: from, $lte: to } },
-      {
-        $and: [
-          {
-            $or: [
-              { paymentChequeDate: { $exists: false } },
-              { paymentChequeDate: null },
-            ],
-          },
-          { createdDate: { $gte: from, $lte: to } },
-        ],
+    $expr: {
+      $let: {
+        vars: {
+          revenueDate: paymentRevenueRecognitionDateExpr(),
+        },
+        in: {
+          $and: [
+            { $gte: ['$$revenueDate', from] },
+            { $lte: ['$$revenueDate', to] },
+          ],
+        },
       },
-      {
-        $and: [
-          {
-            $or: [
-              { paymentChequeDate: { $exists: false } },
-              { paymentChequeDate: null },
-            ],
-          },
-          { updatedDate: { $gte: from, $lte: to } },
-        ],
-      },
-    ],
+    },
   };
 }
 

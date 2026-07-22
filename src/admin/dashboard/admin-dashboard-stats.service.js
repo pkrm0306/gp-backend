@@ -162,9 +162,10 @@ var AdminDashboardStatsService = function () {
         };
         /**
          * Accurate widget counts — active products only, same rules as admin product list.
-         * Period/year filters do **not** change these totals (only trend charts).
+         * By default period/year filters do **not** change these totals (backlog snapshot).
+         * Pass `applyDateRange: true` to scope by `createdDate` (executive summary KPIs).
          */
-        AdminDashboardStatsService_1.prototype.getProductWidgetStats = function (filters) {
+        AdminDashboardStatsService_1.prototype.getProductWidgetStats = function (filters, options) {
             return __awaiter(this, void 0, void 0, function () {
                 var now, snapshotMatch, certifiedActive, expired, renewed, baseStages, _a, statusFacet, urnRows, categoryRows, totalRow, row, certified, uncertified, expiredCount, renewedCount, rejected, pending, approved, productStatusBreakdown, totalProducts, uncertifiedForPie, categoryCertified;
                 var _b, _c, _d, _e, _f, _g, _h, _j, _k;
@@ -172,7 +173,9 @@ var AdminDashboardStatsService = function () {
                     switch (_l.label) {
                         case 0:
                             now = new Date();
-                            snapshotMatch = (0, dashboard_metrics_filters_util_1.buildProductSnapshotMatch)(filters, now);
+                            snapshotMatch = (options === null || options === void 0 ? void 0 : options.applyDateRange)
+                                ? (0, dashboard_metrics_filters_util_1.buildProductTrendMatch)(filters, now)
+                                : (0, dashboard_metrics_filters_util_1.buildProductSnapshotMatch)(filters, now);
                             certifiedActive = this.certifiedActiveExpr(now);
                             expired = this.expiredExpr(now);
                             renewed = this.renewedExpr();

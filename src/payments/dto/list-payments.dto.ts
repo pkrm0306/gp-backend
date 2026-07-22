@@ -97,4 +97,34 @@ export class ListPaymentsDto {
       'sort must be asc, desc, or field:asc|field:desc (e.g. createdAt:desc)',
   })
   sort?: string = 'desc';
+
+  @ApiProperty({
+    description:
+      'Created-date range start (inclusive). Accepts `YYYY-MM-DD` or ISO datetime. Alias: `fromDate`.',
+    example: '2026-01-01',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value, obj }) => {
+    const raw = value ?? obj?.fromDate;
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    return String(raw).trim();
+  })
+  from?: string;
+
+  @ApiProperty({
+    description:
+      'Created-date range end (inclusive). Accepts `YYYY-MM-DD` or ISO datetime. Alias: `toDate`.',
+    example: '2026-07-22',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value, obj }) => {
+    const raw = value ?? obj?.toDate;
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    return String(raw).trim();
+  })
+  to?: string;
 }

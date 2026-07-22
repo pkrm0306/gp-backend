@@ -4557,25 +4557,7 @@ export class ProductRegistrationService {
     };
 
     if (statuses.length > 0) {
-      const now = new Date();
-      const includeExpired = statuses.includes(4);
-      const regularStatuses = statuses.filter((s) => s !== 4);
-      if (includeExpired && regularStatuses.length > 0) {
-        productQuery.$or = [
-          { productStatus: { $in: regularStatuses } },
-          {
-            productStatus: 2,
-            validtillDate: { $exists: true, $ne: null, $lt: now },
-          },
-        ];
-      } else if (includeExpired) {
-        productQuery.productStatus = 2;
-        productQuery.validtillDate = { $exists: true, $ne: null, $lt: now };
-      } else if (regularStatuses.length === 1) {
-        productQuery.productStatus = regularStatuses[0];
-      } else {
-        productQuery.productStatus = { $in: regularStatuses };
-      }
+      Object.assign(productQuery, this.buildVendorListProductStatusMatch(statuses));
     }
 
     const rows = await this.productModel
@@ -9177,25 +9159,13 @@ export class ProductRegistrationService {
       }
       return [];
     })();
-    const includeExpired = statuses.includes(4);
-    const regularStatuses = statuses.filter((s) => s !== 4);
 
     let statusMatch: Record<string, unknown> | null = null;
     if (statuses.length > 0) {
-      if (includeExpired && regularStatuses.length > 0) {
-        statusMatch = {
-          $or: [
-            { productStatus: { $in: regularStatuses } },
-            matchExpiredProducts(now),
-          ],
-        };
-      } else if (includeExpired) {
-        statusMatch = matchExpiredProducts(now);
-      } else if (regularStatuses.length === 1) {
-        statusMatch = { productStatus: regularStatuses[0] };
-      } else {
-        statusMatch = { productStatus: { $in: regularStatuses } };
-      }
+      // Same status semantics as vendor list / dashboard KPIs:
+      // status=[2] → active certified only (excludes expired certificates).
+      // status=[4] → expired/discontinued.
+      statusMatch = this.buildVendorListProductStatusMatch(statuses);
     }
 
     const rowBase: any[] = [...basePipeline];
@@ -9229,6 +9199,7 @@ export class ProductRegistrationService {
         total: number;
         page: number;
         limit: number;
+        productCount?: number;
         statusCounts: Record<string, number>;
       }>(cacheKey);
       if (cached && Array.isArray(cached.data)) {
@@ -9252,6 +9223,7 @@ export class ProductRegistrationService {
         total: 0,
         page,
         limit,
+        productCount: 0,
         statusCounts: {},
       };
     }
@@ -9378,6 +9350,7 @@ export class ProductRegistrationService {
               },
             ],
             total: [...manufacturerGroupPipeline, { $count: 'count' }],
+            eoiTotal: [...rowBase, { $count: 'count' }],
             byStatus: [
               ...rowBase,
               { $group: { _id: '$productStatus', count: { $sum: 1 } } },
@@ -9395,23 +9368,28 @@ export class ProductRegistrationService {
     const payload = facetResult[0] ?? {
       data: [],
       total: [],
+      eoiTotal: [],
       byStatus: [],
       expired: [],
     };
     const total = payload.total?.[0]?.count ?? 0;
+    const productCount = payload.eoiTotal?.[0]?.count ?? 0;
 
     const statusCounts: Record<string, number> = {
       0: 0,
       1: 0,
       2: 0,
       3: 0,
-      4: payload.expired?.[0]?.count ?? 0,
+      4: 0,
     };
     for (const row of payload.byStatus ?? []) {
       if (row?._id !== undefined && row?._id !== null) {
         statusCounts[String(row._id)] = row.count ?? 0;
       }
     }
+    // Virtual expired bucket (certified past valid-till + discontinued) — set after
+    // byStatus so raw productStatus=4 does not replace the full expired total.
+    statusCounts['4'] = payload.expired?.[0]?.count ?? 0;
 
     let grouped = (payload.data ?? []).map((m: any) =>
       this.formatAdminListManufacturerGroup(m),
@@ -9426,6 +9404,7 @@ export class ProductRegistrationService {
       total,
       page,
       limit,
+      productCount,
       statusCounts,
     };
     this.redisService
@@ -9451,6 +9430,7 @@ export class ProductRegistrationService {
         total: number;
         page: number;
         limit: number;
+        productCount?: number;
         statusCounts: Record<string, number>;
       }>(cacheKey);
       if (cached && Array.isArray(cached.data)) {
@@ -9474,6 +9454,7 @@ export class ProductRegistrationService {
         total: 0,
         page,
         limit,
+        productCount: 0,
         statusCounts: {},
       };
     }
@@ -9684,6 +9665,7 @@ export class ProductRegistrationService {
           $facet: {
             data: urnDataPipeline,
             total: totalUrnPipeline,
+            eoiTotal: [...rowBase, { $count: 'count' }],
             byStatus: [
               ...rowBase,
               { $group: { _id: '$productStatus', count: { $sum: 1 } } },
@@ -9701,23 +9683,27 @@ export class ProductRegistrationService {
     const payload = facetResult[0] ?? {
       data: [],
       total: [],
+      eoiTotal: [],
       byStatus: [],
       expired: [],
     };
     const total = payload.total?.[0]?.count ?? 0;
+    const productCount = payload.eoiTotal?.[0]?.count ?? 0;
 
     const statusCounts: Record<string, number> = {
       0: 0,
       1: 0,
       2: 0,
       3: 0,
-      4: payload.expired?.[0]?.count ?? 0,
+      4: 0,
     };
     for (const row of payload.byStatus ?? []) {
       if (row?._id !== undefined && row?._id !== null) {
         statusCounts[String(row._id)] = row.count ?? 0;
       }
     }
+    // Virtual expired bucket — set after byStatus so discontinued-only overwrite is avoided.
+    statusCounts['4'] = payload.expired?.[0]?.count ?? 0;
 
     const grouped = (payload.data ?? []).map((u: any) => {
       const eoiSummaryStatus = this.deriveAdminUrnStatus(
@@ -9741,6 +9727,7 @@ export class ProductRegistrationService {
       total,
       page,
       limit,
+      productCount,
       statusCounts,
     };
     this.redisService
