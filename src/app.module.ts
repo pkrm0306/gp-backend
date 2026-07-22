@@ -140,7 +140,6 @@ import { SpocAllocationModule } from './spoc-allocation/spoc-allocation.module';
     AccountDeletionModule,
     CertificateCorrectionModule,
     SpocAllocationModule,
-    AnalyticsModule,
   ],
 })
 export class AppModule implements NestModule {
