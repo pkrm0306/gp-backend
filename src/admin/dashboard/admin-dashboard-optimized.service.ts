@@ -743,7 +743,7 @@ export class AdminDashboardOptimizedService {
   async getCharts(filters: ResolvedDashboardFilters) {
     return this.cached('charts', filters, async () => {
       const [products, trends, rejectionTrend, paymentStatus] = await Promise.all([
-        this.statsService.getProductWidgetStats(filters),
+        this.statsService.getProductWidgetStats(filters, { applyDateRange: true }),
         this.statsService.getTrendCharts(filters, filters.granularity),
         this.statsService.getRejectionTrend(filters),
         this.widgetsService.getPaymentStatus(filters),

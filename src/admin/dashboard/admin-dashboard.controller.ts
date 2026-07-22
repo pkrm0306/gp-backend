@@ -363,7 +363,7 @@ export class AdminDashboardController {
     const filters = await this.adminService.resolveDashboardMetricsFilters(query);
     const appliedFilters = this.dashboardStats.buildAppliedFilters(query, filters);
     const [products, charts, rejectionTrend] = await Promise.all([
-      this.dashboardStats.getProductWidgetStats(filters),
+      this.dashboardStats.getProductWidgetStats(filters, { applyDateRange: true }),
       this.dashboardStats.getTrendCharts(filters, filters.granularity),
       this.dashboardStats.getRejectionTrend(filters),
     ]);
@@ -394,7 +394,9 @@ export class AdminDashboardController {
   })
   async getProductSummary(@Query() query: DashboardMetricsQueryDto) {
     const filters = await this.adminService.resolveDashboardMetricsFilters(query);
-    const products = await this.dashboardStats.getProductWidgetStats(filters);
+    const products = await this.dashboardStats.getProductWidgetStats(filters, {
+      applyDateRange: true,
+    });
     return {
       message: 'Dashboard product summary retrieved successfully',
       data: {

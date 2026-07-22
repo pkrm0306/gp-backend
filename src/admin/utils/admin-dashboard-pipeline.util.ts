@@ -1,6 +1,8 @@
 /**
- * Admin dashboard URN pipeline (6 steps) — labels match the admin UI stepper.
- * Maps raw `products.urnStatus` (0–11) into grouped pipeline buckets.
+ * Admin dashboard certification pipeline (6 steps) — labels match the admin UI stepper.
+ * Counts **EOI/product rows** (not distinct URNs):
+ * - Stages 1–5: `productStatus ∈ {0,1}` grouped by `urnStatus` buckets
+ * - Stage 6 (Certified): active certified EOIs (`productStatus = 2`, not expired)
  */
 export const ADMIN_URN_PIPELINE_STEPS = [
   {

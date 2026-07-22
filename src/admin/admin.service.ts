@@ -4495,6 +4495,7 @@ export class AdminService {
   }) {
     const widgets = await this.dashboardStatsService.getProductWidgetStats(
       input.filters,
+      { applyDateRange: true },
     );
     return {
       appliedFilters: this.buildAppliedFiltersPayload(input.query, input.filters),
@@ -4509,6 +4510,7 @@ export class AdminService {
   }) {
     const widgets = await this.dashboardStatsService.getProductWidgetStats(
       input.filters,
+      { applyDateRange: true },
     );
     return {
       appliedFilters: this.buildAppliedFiltersPayload(input.query, input.filters),

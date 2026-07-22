@@ -4,8 +4,10 @@ exports.ADMIN_URN_PIPELINE_STEPS = void 0;
 exports.mapUrnStatusToPipelineStep = mapUrnStatusToPipelineStep;
 exports.buildUrnPipelineChart = buildUrnPipelineChart;
 /**
- * Admin dashboard URN pipeline (6 steps) — labels match the admin UI stepper.
- * Maps raw `products.urnStatus` (0–11) into grouped pipeline buckets.
+ * Admin dashboard certification pipeline (6 steps) — labels match the admin UI stepper.
+ * Counts EOI/product rows (not distinct URNs):
+ * - Stages 1–5: productStatus in {0,1} grouped by urnStatus buckets
+ * - Stage 6 (Certified): active certified EOIs
  */
 exports.ADMIN_URN_PIPELINE_STEPS = [
     {

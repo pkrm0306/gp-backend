@@ -14,7 +14,7 @@ export function emptyProductStatusBreakdown(): DashboardProductStatusBreakdown {
       { key: 'certified', label: 'Certified', count: 0 },
       { key: 'uncertified', label: 'Uncertified', count: 0 },
       { key: 'expired', label: 'Expired', count: 0 },
-      { key: 'renewed', label: 'Renewed', count: 0 },
+      { key: 'renewed', label: 'Renewal pending', count: 0 },
     ],
   };
 }
@@ -45,7 +45,7 @@ export function buildProductStatusBreakdownFromCounts(input: {
       { key: 'certified', label: 'Certified', count: input.certified },
       { key: 'uncertified', label: 'Uncertified', count: input.uncertified },
       { key: 'expired', label: 'Expired', count: input.expired },
-      { key: 'renewed', label: 'Renewed', count: input.renewed },
+      { key: 'renewed', label: 'Renewal pending', count: input.renewed },
     ],
   };
 }

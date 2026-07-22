@@ -62,7 +62,9 @@ export class AdminDashboardWidgetsService {
         this.getRecentPayments(filters, limit),
         this.getRecentApplications(filters, limit),
         this.getAlerts(filters),
-        this.dashboardStats.getProductWidgetStats(filters),
+        this.dashboardStats.getProductWidgetStats(filters, {
+          applyDateRange: true,
+        }),
         this.dashboardStats.getTrendCharts(filters, filters.granularity),
         this.dashboardStats.getRejectionTrend(filters),
         this.sustainability.getSustainabilityContributions(filters),

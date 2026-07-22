@@ -5,7 +5,7 @@ import {
   Product,
   ProductDocument,
 } from '../../product-registration/schemas/product.schema';
-import { PRODUCT_STATUS_DISCONTINUED } from '../../renew/constants/product-status.constants';
+import { PRODUCT_STATUS_CERTIFIED, PRODUCT_STATUS_DISCONTINUED } from '../../renew/constants/product-status.constants';
 import type { DashboardMetricsQueryDto } from '../dto/dashboard-metrics-query.dto';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
 import {
@@ -14,12 +14,12 @@ import {
   buildProductSnapshotMatch,
   buildProductTrendMatch,
   formatBucketLabel,
+  resolveManufacturerScopeIds,
   type DashboardGranularity,
 } from '../utils/dashboard-metrics-filters.util';
 import { buildUrnPipelineChart } from '../utils/admin-dashboard-pipeline.util';
 import {
   buildProductStatusBreakdownFromCounts,
-  emptyProductStatusBreakdown,
 } from '../utils/admin-dashboard-product-status.util';
 import type { AdminDashboardCharts } from '../admin-dashboard-metrics.types';
 import type { AdminDashboardStatsBundle } from './admin-dashboard-stats.types';
@@ -68,13 +68,42 @@ export class AdminDashboardStatsService {
     };
   }
 
-  private renewedExpr(): Record<string, unknown> {
-    return {
+  /**
+   * Same eligibility as `adminListRenewProducts` / Renew listing total
+   * and dashboard "Renewal pending" KPI (EOI rows).
+   */
+  private buildRenewListMatch(
+    filters: ResolvedDashboardFilters,
+    thresholdDate: Date,
+    applyDateRange: boolean,
+  ): Record<string, unknown> {
+    const match: Record<string, unknown> = {
+      productStatus: PRODUCT_STATUS_CERTIFIED,
       $or: [
-        { $gte: ['$productRenewStatus', 1] },
-        { $ne: [{ $ifNull: ['$renewedDate', null] }, null] },
+        {
+          validtillDate: {
+            $exists: true,
+            $ne: null,
+            $lt: thresholdDate,
+          },
+        },
+        { urnStatus: { $gte: 12, $lte: 17 } },
       ],
     };
+    if (filters.categoryObjectId) {
+      match.categoryId = filters.categoryObjectId;
+    }
+    const manufacturerIds = resolveManufacturerScopeIds(filters);
+    if (manufacturerIds) {
+      match.manufacturerId = { $in: manufacturerIds };
+    }
+    if (applyDateRange && filters.dateRange) {
+      match.createdDate = {
+        $gte: filters.dateRange.from,
+        $lte: filters.dateRange.to,
+      };
+    }
+    return match;
   }
 
   private compareChartBuckets(
@@ -102,23 +131,30 @@ export class AdminDashboardStatsService {
     options?: { applyDateRange?: boolean },
   ) {
     const now = new Date();
-    const snapshotMatch = options?.applyDateRange
+    const applyDateRange = Boolean(options?.applyDateRange);
+    const snapshotMatch = applyDateRange
       ? buildProductTrendMatch(filters, now)
       : buildProductSnapshotMatch(filters, now);
     const certifiedActive = this.certifiedActiveExpr(now);
     const expired = this.expiredExpr(now);
-    const renewed = this.renewedExpr();
+    const thresholdDate = new Date(now);
+    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const renewListMatch = this.buildRenewListMatch(
+      filters,
+      thresholdDate,
+      applyDateRange,
+    );
 
     const baseStages: any[] = [{ $match: snapshotMatch }];
 
-    const [statusFacet, urnRows, categoryRows, totalRow] = await Promise.all([
+    const [statusFacet, pipelineFacetRows, categoryRows, totalRow, renewalPendingCount] =
+      await Promise.all([
       this.productModel
         .aggregate<{
           statusCounts: Array<{
             certified: number;
             uncertified: number;
             expired: number;
-            renewed: number;
             rejected: number;
             pending: number;
             approved: number;
@@ -138,7 +174,6 @@ export class AdminDashboardStatsService {
                       },
                     },
                     expired: { $sum: { $cond: [expired, 1, 0] } },
-                    renewed: { $sum: { $cond: [renewed, 1, 0] } },
                     rejected: {
                       $sum: {
                         $cond: [{ $eq: ['$productStatus', 3] }, 1, 0],
@@ -162,15 +197,30 @@ export class AdminDashboardStatsService {
         ])
         .exec(),
       this.productModel
-        .aggregate<{ _id: number; count: number }>([
+        .aggregate<{
+          inProgress: Array<{ _id: number; count: number }>;
+          certified: Array<{ count: number }>;
+        }>([
           ...baseStages,
           {
-            $group: {
-              _id: '$urnNo',
-              urnStatus: { $max: '$urnStatus' },
+            $facet: {
+              // Uncertified certification journey (EOI rows by urnStatus 0–10).
+              inProgress: [
+                {
+                  $match: {
+                    productStatus: { $in: [0, 1] },
+                    urnStatus: { $gte: 0, $lte: 10 },
+                  },
+                },
+                { $group: { _id: '$urnStatus', count: { $sum: 1 } } },
+              ],
+              // Certified stage = active certified EOIs (same rule as Certified listing).
+              certified: [
+                { $match: { $expr: certifiedActive } },
+                { $count: 'count' },
+              ],
             },
           },
-          { $group: { _id: '$urnStatus', count: { $sum: 1 } } },
         ])
         .exec(),
       this.productModel
@@ -205,26 +255,26 @@ export class AdminDashboardStatsService {
         ])
         .exec(),
       this.productModel.countDocuments(snapshotMatch).exec(),
+      // Exact Renew listing total (same match as dashboard Renewal pending card).
+      this.productModel.countDocuments(renewListMatch).exec(),
     ]);
 
     const row = statusFacet[0]?.statusCounts?.[0];
     const certified = row?.certified ?? 0;
     const uncertified = row?.uncertified ?? 0;
     const expiredCount = row?.expired ?? 0;
-    const renewedCount = row?.renewed ?? 0;
+    const renewedCount = renewalPendingCount;
     const rejected = row?.rejected ?? 0;
     const pending = row?.pending ?? 0;
     const approved = row?.approved ?? 0;
 
-    const productStatusBreakdown = row
-      ? buildProductStatusBreakdownFromCounts({
-          certified,
-          uncertified,
-          expired: expiredCount,
-          renewed: renewedCount,
-          rejected,
-        })
-      : emptyProductStatusBreakdown();
+    const productStatusBreakdown = buildProductStatusBreakdownFromCounts({
+      certified,
+      uncertified,
+      expired: expiredCount,
+      renewed: renewedCount,
+      rejected,
+    });
 
     const totalProducts = totalRow ?? 0;
     const uncertifiedForPie = Math.max(0, totalProducts - certified);
@@ -237,6 +287,18 @@ export class AdminDashboardStatsService {
       certifiedProducts: r.certifiedProducts,
       products: r.certifiedProducts,
     }));
+
+    const pipelineFacet = pipelineFacetRows[0];
+    const pipelineByStatus = [
+      ...(pipelineFacet?.inProgress ?? []).map((r) => ({
+        status: Number(r._id ?? 0),
+        count: r.count ?? 0,
+      })),
+      {
+        status: 11,
+        count: pipelineFacet?.certified?.[0]?.count ?? 0,
+      },
+    ];
 
     return {
       statusBreakdown: productStatusBreakdown,
@@ -251,12 +313,7 @@ export class AdminDashboardStatsService {
           { key: 'uncertified', label: 'Uncertified', count: uncertifiedForPie },
         ],
       },
-      urnPipeline: buildUrnPipelineChart(
-        urnRows.map((r) => ({
-          status: Number(r._id ?? 0),
-          count: r.count ?? 0,
-        })),
-      ),
+      urnPipeline: buildUrnPipelineChart(pipelineByStatus),
       categoryCertified,
       statusCounts: {
         pending,
@@ -388,7 +445,8 @@ export class AdminDashboardStatsService {
 
   async getCharts(filters: ResolvedDashboardFilters): Promise<AdminDashboardCharts> {
     const [widgets, trends] = await Promise.all([
-      this.getProductWidgetStats(filters),
+      // Analytics graphs respect global date + category (Overall = all-time).
+      this.getProductWidgetStats(filters, { applyDateRange: true }),
       this.getTrendCharts(filters, filters.granularity),
     ]);
 
