@@ -11,6 +11,7 @@ import { PERMISSIONS_MATCH_MODE_KEY } from '../decorators/any-permissions.decora
 import { RbacService } from '../../rbac/rbac.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ALLOW_STAFF_SELF_ROLE_READ_KEY } from '../decorators/allow-staff-self-role-read.decorator';
+import { ALLOW_AUTHENTICATED_ADMIN_PORTAL_USER_KEY } from '../decorators/allow-authenticated-admin-portal-user.decorator';
 import {
   hasEffectivePermission,
   wouldExactMatchAllow,
@@ -56,6 +57,15 @@ export class PermissionsGuard implements CanActivate {
         context.getClass(),
       ]) || false;
     if (allowStaffSelfRoleRead && user.role === 'staff') {
+      return true;
+    }
+
+    const allowAuthenticatedAdminPortalUser =
+      this.reflector.getAllAndOverride<boolean>(
+        ALLOW_AUTHENTICATED_ADMIN_PORTAL_USER_KEY,
+        [context.getHandler(), context.getClass()],
+      ) || false;
+    if (allowAuthenticatedAdminPortalUser) {
       return true;
     }
 

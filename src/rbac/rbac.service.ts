@@ -28,7 +28,7 @@ import {
   hasEffectivePermission,
   minimizePermissionSet,
 } from '../common/permissions/permission-hierarchy';
-import { ALL_KNOWN_PERMISSION_VALUES } from '../common/constants/permissions.constants';
+import { ALL_KNOWN_PERMISSION_VALUES, isProfilePermissionKey } from '../common/constants/permissions.constants';
 import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
 import { EmailService } from '../common/services/email.service';
 import { RedisService } from '../common/redis/redis.service';
@@ -227,7 +227,8 @@ export class RbacService {
       new Set(
         (permissions || [])
           .map((permission) => this.canonicalizePermission(permission))
-          .filter(Boolean),
+          .filter(Boolean)
+          .filter((permission) => !isProfilePermissionKey(permission)),
       ),
     );
     return minimizePermissionSet(normalized);

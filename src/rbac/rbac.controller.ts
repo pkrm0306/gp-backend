@@ -16,7 +16,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
 import {
-  ALL_KNOWN_PERMISSION_VALUES,
+  RBAC_ASSIGNABLE_PERMISSION_VALUES,
   DASHBOARD_PERMISSION_CATALOG,
   PERMISSIONS,
 } from '../common/constants/permissions.constants';
@@ -73,7 +73,7 @@ export class RbacController {
       message: 'Permission catalog retrieved successfully',
       data: {
         dashboard: DASHBOARD_PERMISSION_CATALOG,
-        allPermissions: ALL_KNOWN_PERMISSION_VALUES,
+        allPermissions: RBAC_ASSIGNABLE_PERMISSION_VALUES,
       },
     };
   }

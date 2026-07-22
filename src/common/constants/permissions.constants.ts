@@ -144,6 +144,17 @@ export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 /** All registered permission strings; used to expand effective permissions for UI. */
 export const ALL_KNOWN_PERMISSION_VALUES: readonly PermissionKey[] = Object.values(PERMISSIONS);
 
+/** Profile is self-service for every admin-portal user — not assignable via designation RBAC. */
+export function isProfilePermissionKey(permission: string): boolean {
+  const raw = String(permission ?? '').trim().toLowerCase();
+  if (!raw) return false;
+  const normalized = raw.replace(/\./g, ':');
+  return normalized === 'profile' || normalized.startsWith('profile:');
+}
+
+export const RBAC_ASSIGNABLE_PERMISSION_VALUES: readonly PermissionKey[] =
+  ALL_KNOWN_PERMISSION_VALUES.filter((key) => !isProfilePermissionKey(key));
+
 /**
  * Shared product list/detail/export APIs.
  * Accept parent `products:view` or any Products submenu `:view` (child does not imply parent).

@@ -72,6 +72,19 @@ describe('RbacService', () => {
     );
   });
 
+  it('strips profile permissions from role create payload', async () => {
+    roleModel.create.mockResolvedValue({ _id: 'new' });
+    await service.createRole('507f1f77bcf86cd799439012', {
+      name: 'Profile stripped',
+      permissions: ['profile:update', 'profile:notifications', 'banners:view'],
+    });
+    expect(roleModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        permissions: ['banners:view'],
+      }),
+    );
+  });
+
   it('effectivePermissionsFromRaw expands parent grants to known child keys', () => {
     const eff = service.effectivePermissionsFromRaw(['products:view']);
     expect(eff).toContain('products:certified:view');

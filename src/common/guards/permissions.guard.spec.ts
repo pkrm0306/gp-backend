@@ -40,6 +40,7 @@ describe('PermissionsGuard', () => {
     (reflector.getAllAndOverride as jest.Mock)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
       .mockReturnValueOnce(['products:view']);
     (rbacService.getStaffPermissions as jest.Mock).mockResolvedValue([
       'products:view',
@@ -58,6 +59,7 @@ describe('PermissionsGuard', () => {
 
   it('denies staff without required permission', async () => {
     (reflector.getAllAndOverride as jest.Mock)
+      .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(['products:delete']);
@@ -80,6 +82,7 @@ describe('PermissionsGuard', () => {
     (reflector.getAllAndOverride as jest.Mock)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
       .mockReturnValueOnce(['products:certified:view']);
     (rbacService.getStaffPermissions as jest.Mock).mockResolvedValue(['products:view']);
 
@@ -95,6 +98,7 @@ describe('PermissionsGuard', () => {
 
   it('denies staff when only sibling nested permission is granted', async () => {
     (reflector.getAllAndOverride as jest.Mock)
+      .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(['products:uncertified:view']);
@@ -117,6 +121,7 @@ describe('PermissionsGuard', () => {
     (reflector.getAllAndOverride as jest.Mock)
       .mockReturnValueOnce(false) // isPublic
       .mockReturnValueOnce(false) // allowStaffSelfRoleRead
+      .mockReturnValueOnce(false) // allowAuthenticatedAdminPortalUser
       .mockReturnValueOnce([
         'products:view',
         'products:uncertified:view',
@@ -141,6 +146,7 @@ describe('PermissionsGuard', () => {
     (reflector.getAllAndOverride as jest.Mock)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
       .mockReturnValueOnce(['products:view', 'products:uncertified:view'])
       .mockReturnValueOnce('any');
     (rbacService.getStaffPermissions as jest.Mock).mockResolvedValue([
@@ -161,6 +167,7 @@ describe('PermissionsGuard', () => {
     (reflector.getAllAndOverride as jest.Mock)
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
       .mockReturnValueOnce(['products:view', 'products:uncertified:view'])
       .mockReturnValueOnce('any');
     (rbacService.getStaffPermissions as jest.Mock).mockResolvedValue([
@@ -176,6 +183,23 @@ describe('PermissionsGuard', () => {
         }),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('allows authenticated admin-portal user on self-service routes without RBAC grants', async () => {
+    (reflector.getAllAndOverride as jest.Mock)
+      .mockReturnValueOnce(false) // isPublic
+      .mockReturnValueOnce(false) // allowStaffSelfRoleRead
+      .mockReturnValueOnce(true); // allowAuthenticatedAdminPortalUser
+
+    const ok = await guard.canActivate(
+      makeContext({
+        role: 'staff',
+        userId: '507f1f77bcf86cd799439011',
+        manufacturerId: '507f1f77bcf86cd799439012',
+      }),
+    );
+    expect(ok).toBe(true);
+    expect(rbacService.getStaffPermissions).not.toHaveBeenCalled();
   });
 });
 

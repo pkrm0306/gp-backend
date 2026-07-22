@@ -23,8 +23,7 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Permissions } from '../common/decorators/permissions.decorator';
-import { PERMISSIONS } from '../common/constants/permissions.constants';
+import { AllowAuthenticatedAdminPortalUser } from '../common/decorators/allow-authenticated-admin-portal-user.decorator';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { UpdateProfileDto } from '../manufacturers/dto/update-manufacturer-profile.dto';
 import { vendorProfileBrandingMemoryMulterOptions } from '../manufacturers/vendor-profile-upload.config';
@@ -37,7 +36,7 @@ export class AdminVendorUserController {
   constructor(private readonly manufacturersService: ManufacturersService) {}
 
   @Get('profile')
-  @Permissions(PERMISSIONS.PROFILE_VIEW)
+  @AllowAuthenticatedAdminPortalUser()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get vendor user profile (admin portal)',
@@ -53,7 +52,7 @@ export class AdminVendorUserController {
   }
 
   @Patch('profile')
-  @Permissions(PERMISSIONS.PROFILE_UPDATE)
+  @AllowAuthenticatedAdminPortalUser()
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileFieldsInterceptor(

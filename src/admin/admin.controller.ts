@@ -79,6 +79,7 @@ import { plainToClass } from 'class-transformer';
 import type { Express, Request } from 'express';
 import { Permissions } from '../common/decorators/permissions.decorator';
 import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
+import { AllowAuthenticatedAdminPortalUser } from '../common/decorators/allow-authenticated-admin-portal-user.decorator';
 import {
   DASHBOARD_PERMISSION_CATALOG,
   PERMISSIONS,
@@ -954,7 +955,7 @@ export class AdminController {
   }
 
   @Patch('profile/edit')
-  @Permissions(PERMISSIONS.PROFILE_UPDATE)
+  @AllowAuthenticatedAdminPortalUser()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Edit profile (unique GST + phone)',
@@ -2624,7 +2625,7 @@ export class AdminController {
 
   @Get('notifications')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
-  @Permissions(PERMISSIONS.PROFILE_NOTIFICATIONS)
+  @AllowAuthenticatedAdminPortalUser()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List admin in-app notifications',
@@ -2663,7 +2664,7 @@ export class AdminController {
 
   @Patch('notifications/seen-all')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
-  @Permissions(PERMISSIONS.PROFILE_NOTIFICATIONS)
+  @AllowAuthenticatedAdminPortalUser()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Mark all admin notifications as seen',
@@ -2682,7 +2683,7 @@ export class AdminController {
 
   @Patch('notifications/:id/seen')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
-  @Permissions(PERMISSIONS.PROFILE_NOTIFICATIONS)
+  @AllowAuthenticatedAdminPortalUser()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mark an admin notification as seen' })
   @ApiParam({
@@ -3685,7 +3686,7 @@ export class AdminController {
   }
 
   @Patch('change-password')
-  @Permissions(PERMISSIONS.PROFILE_UPDATE)
+  @AllowAuthenticatedAdminPortalUser()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Change password',

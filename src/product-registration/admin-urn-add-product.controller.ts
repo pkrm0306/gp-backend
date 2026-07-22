@@ -21,7 +21,6 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { AnyPermissions } from '../common/decorators/any-permissions.decorator';
 import {
   PRODUCTS_ADD_ANY,
-  PRODUCTS_VIEW_ANY,
 } from '../common/constants/permissions.constants';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminAddProductToUrnService } from './services/admin-add-product-to-urn.service';
@@ -45,7 +44,7 @@ export class AdminUrnAddProductController {
   }
 
   @Get(':urnNo/add-product/context')
-  @AnyPermissions(...PRODUCTS_VIEW_ANY)
+  @AnyPermissions(...PRODUCTS_ADD_ANY)
   @ApiOperation({ summary: 'Add-product form context for an existing URN' })
   @ApiParam({ name: 'urnNo', type: String })
   @ApiResponse({ status: 200, description: 'URN context for add-product form' })
