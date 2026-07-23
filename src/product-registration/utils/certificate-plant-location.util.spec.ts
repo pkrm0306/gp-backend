@@ -55,4 +55,14 @@ describe('formatCertificatePlantLocation', () => {
       }),
     ).toBe('Mumbai, Maharashtra');
   });
+
+  it('formats Unit A, Pune, Maharashtra style locations', () => {
+    expect(
+      formatCertificatePlantLocation({
+        additionalPlantInfo: 'Unit A',
+        city: 'Pune',
+        stateName: 'Maharashtra',
+      }),
+    ).toBe('Unit A, Pune, Maharashtra');
+  });
 });

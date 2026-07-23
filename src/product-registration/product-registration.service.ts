@@ -1119,7 +1119,8 @@ export class ProductRegistrationService {
         productId: p?.productId,
         plantName: p?.plantName,
         plantLocation: p?.plantLocation,
-        additionalPlantInfo: p?.additionalPlantInfo ?? null,
+        additionalPlantInfo:
+          p?.additionalPlantInfo ?? p?.additional_plant_info ?? null,
         countryId: p?.countryId,
         stateId: p?.stateId,
         stateName: p?.stateName ?? null,
@@ -1475,7 +1476,8 @@ export class ProductRegistrationService {
         eoiNo: p.eoiNo,
         plantName: p.plantName,
         plantLocation: p.plantLocation,
-        additionalPlantInfo: p.additionalPlantInfo ?? null,
+        additionalPlantInfo:
+          p.additionalPlantInfo ?? p.additional_plant_info ?? null,
         countryId: p.countryId,
         stateId: p.stateId,
         city: p.city,
@@ -4850,10 +4852,19 @@ export class ProductRegistrationService {
       showYoutubeOnWebsite: _sy,
       showTwitterOnWebsite: _st,
       showLinkedinOnWebsite: _sl,
+      plants: _plantsRaw,
+      plantDetails: _plantDetailsRaw,
       ...rest
     } = row;
 
     const manufacturerId = String(row.manufacturerId ?? '').trim();
+    const plants = this.formatProductDetailsPlants(
+      Array.isArray(row.plants)
+        ? (row.plants as Array<Record<string, unknown>>)
+        : Array.isArray(row.plantDetails)
+          ? (row.plantDetails as Array<Record<string, unknown>>)
+          : [],
+    );
 
     return {
       ...rest,
@@ -4863,6 +4874,8 @@ export class ProductRegistrationService {
       productImageUrl: productImage,
       categoryImage,
       categoryImageUrl: categoryImage,
+      plants,
+      plantDetails: plants,
       manufacturerSocialLinks:
         manufacturerSocialLinks ?? {
           facebook: '',
@@ -9137,7 +9150,9 @@ export class ProductRegistrationService {
                 urnNo: 1,
                 plantName: 1,
                 plantLocation: 1,
-                additionalPlantInfo: 1,
+                additionalPlantInfo: {
+                  $ifNull: ['$additionalPlantInfo', '$additional_plant_info'],
+                },
                 countryId: 1,
                 stateId: 1,
                 city: 1,
@@ -9633,7 +9648,12 @@ export class ProductRegistrationService {
                       urnNo: 1,
                       plantName: 1,
                       plantLocation: 1,
-                      additionalPlantInfo: 1,
+                      additionalPlantInfo: {
+                        $ifNull: [
+                          '$additionalPlantInfo',
+                          '$additional_plant_info',
+                        ],
+                      },
                       countryId: 1,
                       stateId: 1,
                       city: 1,

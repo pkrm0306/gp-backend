@@ -105,4 +105,40 @@ describe('VendorCertificateService', () => {
     expect(file.buffer.subarray(0, 5).toString()).toBe('%PDF-');
     expect(file.fileName).toBe('GreenPro_Certificate_GPABC001.pdf');
   });
+
+  it('lists plant certificates with additional plant info in location', async () => {
+    const product = mockCertifiedProduct();
+    productModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(product),
+    });
+    categoryModel.findById.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ categoryName: 'Category' }),
+      }),
+    });
+    manufacturerModel.findById.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ manufacturerName: 'Acme' }),
+      }),
+    });
+    mockPlantsAggregate([
+      {
+        _id: plantObjectId,
+        productPlantId: 1,
+        plantName: 'Pune Plant',
+        plantLocation: 'Legacy Yard',
+        city: 'Pune',
+        additionalPlantInfo: 'Unit A',
+        state: [{ stateName: 'Maharashtra' }],
+      },
+    ]);
+
+    const list = await service.listEoiPlantCertificates(
+      String(vendorId),
+      String(productObjectId),
+    );
+
+    expect(list.plants).toHaveLength(1);
+    expect(list.plants[0].location).toBe('Unit A, Pune, Maharashtra');
+  });
 });

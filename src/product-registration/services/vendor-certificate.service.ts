@@ -1139,7 +1139,7 @@ export class VendorCertificateService {
       StandardFonts.HelveticaBoldOblique,
     );
 
-    // Fixed typography + baselines (kept aligned with provided template math).
+    // Fixed typography + baselines (pdf-lib bottom-origin — match website/vendor).
     const PRODUCT_SZ = 18;
     const EOI_SZ = 15;
     const P_SZ = 12;
@@ -1236,7 +1236,8 @@ export class VendorCertificateService {
     size: number,
     boxLeft: number,
     boxWidth: number,
-    yFromTop: number,
+    /** pdf-lib Y (bottom-origin), same constants as website/vendor certificates */
+    y: number,
   ): void {
     const safe = text || 'N/A';
     try {
@@ -1244,7 +1245,7 @@ export class VendorCertificateService {
       const x = boxLeft + Math.max(0, (boxWidth - width) / 2);
       page.drawText(safe, {
         x,
-        y: this.topToBottomY(yFromTop, size),
+        y,
         size,
         font,
         color: rgb(0, 0, 0),
@@ -1252,7 +1253,7 @@ export class VendorCertificateService {
     } catch {
       page.drawText('N/A', {
         x: boxLeft + boxWidth / 2 - 10,
-        y: this.topToBottomY(yFromTop, size),
+        y,
         size,
         font,
         color: rgb(0, 0, 0),
@@ -1265,7 +1266,8 @@ export class VendorCertificateService {
     segments: Array<{ text: string; font: PDFFont; size: number }>,
     boxLeft: number,
     boxWidth: number,
-    yFromTop: number,
+    /** pdf-lib Y (bottom-origin), same constants as website/vendor certificates */
+    y: number,
   ): void {
     const safeSegments = segments.map((s) => ({
       ...s,
@@ -1281,7 +1283,7 @@ export class VendorCertificateService {
         if (!s.text) continue;
         page.drawText(s.text, {
           x,
-          y: this.topToBottomY(yFromTop, s.size),
+          y,
           size: s.size,
           font: s.font,
           color: rgb(0, 0, 0),
@@ -1291,16 +1293,12 @@ export class VendorCertificateService {
     } catch {
       page.drawText('N/A', {
         x: boxLeft + boxWidth / 2 - 10,
-        y: this.topToBottomY(yFromTop, 12),
+        y,
         size: 12,
         font: safeSegments[0]?.font,
         color: rgb(0, 0, 0),
       });
     }
-  }
-
-  private topToBottomY(yFromTop: number, fontSize: number): number {
-    return PAGE_H - yFromTop - fontSize;
   }
 
   private deriveLocation(product: ProductWithRelations): string {

@@ -1234,16 +1234,21 @@ var VendorCertificateService = function () {
                             this.centerInBox(page, productName, bold, PRODUCT_SZ, 0, PAGE_W, Y_PRODUCT);
                             this.centerInBox(page, "(".concat(eoiNo, ")"), regular, EOI_SZ, 0, PAGE_W, Y_EOI);
                             hasLocation = location.trim().length > 0;
+                            // Boundary space on preceding run — pdf-lib drops leading spaces after font changes.
                             this.centerSegments(page, __spreadArray(__spreadArray([
                                 { text: 'Manufactured by ', font: italic, size: P_SZ },
-                                { text: manufacturerName, font: boldItalic, size: P_SZ }
+                                {
+                                    text: hasLocation ? manufacturerName : "".concat(manufacturerName, " "),
+                                    font: boldItalic,
+                                    size: P_SZ,
+                                }
                             ], (hasLocation
                                 ? [
                                     { text: ' at ', font: italic, size: P_SZ },
-                                    { text: location, font: boldItalic, size: P_SZ },
+                                    { text: "".concat(location, " "), font: boldItalic, size: P_SZ },
                                 ]
                                 : []), true), [
-                                { text: ' meets the requirements of', font: italic, size: P_SZ },
+                                { text: 'meets the requirements of', font: italic, size: P_SZ },
                             ], false), 0, PAGE_W, Y_MANU1);
                             this.centerSegments(page, [
                                 {
@@ -1272,14 +1277,14 @@ var VendorCertificateService = function () {
                 .replace(/[^\x20-\x7E]/g, '?')
                 .trim();
         };
-        VendorCertificateService_1.prototype.centerInBox = function (page, text, font, size, boxLeft, boxWidth, yFromTop) {
+        VendorCertificateService_1.prototype.centerInBox = function (page, text, font, size, boxLeft, boxWidth, y) {
             var safe = text || 'N/A';
             try {
                 var width = font.widthOfTextAtSize(safe, size);
                 var x = boxLeft + Math.max(0, (boxWidth - width) / 2);
                 page.drawText(safe, {
                     x: x,
-                    y: this.topToBottomY(yFromTop, size),
+                    y: y,
                     size: size,
                     font: font,
                     color: (0, pdf_lib_1.rgb)(0, 0, 0),
@@ -1288,14 +1293,14 @@ var VendorCertificateService = function () {
             catch (_a) {
                 page.drawText('N/A', {
                     x: boxLeft + boxWidth / 2 - 10,
-                    y: this.topToBottomY(yFromTop, size),
+                    y: y,
                     size: size,
                     font: font,
                     color: (0, pdf_lib_1.rgb)(0, 0, 0),
                 });
             }
         };
-        VendorCertificateService_1.prototype.centerSegments = function (page, segments, boxLeft, boxWidth, yFromTop) {
+        VendorCertificateService_1.prototype.centerSegments = function (page, segments, boxLeft, boxWidth, y) {
             var _a;
             var safeSegments = segments.map(function (s) { return (__assign(__assign({}, s), { text: s.text || '' })); });
             try {
@@ -1307,7 +1312,7 @@ var VendorCertificateService = function () {
                         continue;
                     page.drawText(s.text, {
                         x: x,
-                        y: this.topToBottomY(yFromTop, s.size),
+                        y: y,
                         size: s.size,
                         font: s.font,
                         color: (0, pdf_lib_1.rgb)(0, 0, 0),
@@ -1318,15 +1323,12 @@ var VendorCertificateService = function () {
             catch (_b) {
                 page.drawText('N/A', {
                     x: boxLeft + boxWidth / 2 - 10,
-                    y: this.topToBottomY(yFromTop, 12),
+                    y: y,
                     size: 12,
                     font: (_a = safeSegments[0]) === null || _a === void 0 ? void 0 : _a.font,
                     color: (0, pdf_lib_1.rgb)(0, 0, 0),
                 });
             }
-        };
-        VendorCertificateService_1.prototype.topToBottomY = function (yFromTop, fontSize) {
-            return PAGE_H - yFromTop - fontSize;
         };
         VendorCertificateService_1.prototype.deriveLocation = function (product) {
             var city = product === null || product === void 0 ? void 0 : product.city;
@@ -1338,13 +1340,21 @@ var VendorCertificateService = function () {
             return c || s || '';
         };
         VendorCertificateService_1.prototype.derivePlantLocation = function (plant) {
-            var _a, _b, _c;
-            var city = String((_a = plant.city) !== null && _a !== void 0 ? _a : '').trim();
-            var state = String((_b = plant.stateName) !== null && _b !== void 0 ? _b : '').trim();
-            if (city && state) {
-                return "".concat(city, ", ").concat(state);
+            var additional = String(plant.additionalPlantInfo !== null && plant.additionalPlantInfo !== void 0 ? plant.additionalPlantInfo : '').trim();
+            var city = String(plant.city !== null && plant.city !== void 0 ? plant.city : '').trim();
+            var state = String(plant.stateName !== null && plant.stateName !== void 0 ? plant.stateName : '').trim();
+            var legacy = String(plant.plantLocation !== null && plant.plantLocation !== void 0 ? plant.plantLocation : '').trim();
+            var structured = [additional, city, state].filter(Boolean);
+            var parts = structured.length > 0 ? structured : legacy ? [legacy] : [];
+            var unique = [];
+            for (var _i = 0, parts_1 = parts; _i < parts_1.length; _i++) {
+                var part = parts_1[_i];
+                var prev = unique[unique.length - 1];
+                if (prev && prev.toLowerCase() === part.toLowerCase())
+                    continue;
+                unique.push(part);
             }
-            return city || state || String((_c = plant.plantLocation) !== null && _c !== void 0 ? _c : '').trim();
+            return unique.join(', ');
         };
         VendorCertificateService_1.prototype.formatValidityMonthYear = function (value) {
             if (!value) {
