@@ -138,12 +138,13 @@ export class CertificateCorrectionService {
 
   async update(dto: UpdateCertificateCorrectionDto) {
     const eoi = String(dto.eoi ?? '').trim();
-    const neweoi = String(dto.neweoi ?? '').trim();
+    const neweoiInput = String(dto.neweoi ?? '').trim();
+    const neweoi = neweoiInput || eoi;
     const productName = String(dto.product ?? '').trim();
     const manufacturerId = String(dto.manufacturer ?? '').trim();
     const validDate = String(dto.valid_date ?? '').trim();
 
-    if (!eoi || !neweoi || !productName || !manufacturerId || !validDate) {
+    if (!eoi || !productName || !manufacturerId || !validDate) {
       throw new BadRequestException('Missing required fields');
     }
     if (!Types.ObjectId.isValid(manufacturerId)) {

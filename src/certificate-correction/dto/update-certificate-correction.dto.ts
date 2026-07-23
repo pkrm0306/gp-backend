@@ -36,10 +36,10 @@ export class UpdateCertificateCorrectionDto {
   @MaxLength(15)
   eoi: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(15)
-  neweoi: string;
+  neweoi?: string;
 
   @IsString()
   @IsNotEmpty()

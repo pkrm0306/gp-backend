@@ -3,6 +3,7 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
+  StreamableFile,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
@@ -21,6 +22,7 @@ export class ResponseInterceptor implements NestInterceptor {
       url.includes('/api/manufacturers/export') ||
       url.includes('/api/admin/products/export') ||
       url.includes('/products/certificates/') ||
+      url.includes('/certificate-correction/preview') ||
       /\/api\/standards\/[^/]+\/file(?:\?|$)/.test(url)
     ) {
       return next.handle();
@@ -28,6 +30,10 @@ export class ResponseInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       map((data) => {
+        // Binary downloads (PDF/Excel) — never wrap as JSON success envelopes
+        if (data instanceof StreamableFile) {
+          return data;
+        }
         if (data == null || typeof data !== 'object') {
           return data;
         }

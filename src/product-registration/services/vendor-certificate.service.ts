@@ -34,6 +34,7 @@ import {
   ProductPlantDocument,
 } from '../schemas/product-plant.schema';
 import { readUploadedFileBuffer } from '../../utils/upload-file-read.util';
+import { formatCertificatePlantLocation } from '../utils/certificate-plant-location.util';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -75,6 +76,7 @@ type PlantWithGeo = {
   plantLocation?: string;
   city?: string;
   stateName?: string | null;
+  additionalPlantInfo?: string;
 };
 
 export type EoiPlantCertificateItem = {
@@ -526,6 +528,9 @@ export class VendorCertificateService {
         plantName: row.plantName,
         plantLocation: row.plantLocation,
         city: row.city,
+        additionalPlantInfo: String(
+          row.additionalPlantInfo ?? row.additional_plant_info ?? '',
+        ).trim() || undefined,
         stateName:
           (stateDoc?.stateName as string | undefined) ??
           (stateDoc?.name as string | undefined) ??
@@ -566,6 +571,7 @@ export class VendorCertificateService {
         plantName: `Plant ${index + 1}`,
         plantLocation: plants[0]?.plantLocation ?? '',
         city: plants[0]?.city ?? '',
+        additionalPlantInfo: plants[0]?.additionalPlantInfo,
         stateName: plants[0]?.stateName ?? null,
       });
     }
@@ -730,6 +736,9 @@ export class VendorCertificateService {
         plantName: row.plantName,
         plantLocation: row.plantLocation,
         city: row.city,
+        additionalPlantInfo: String(
+          row.additionalPlantInfo ?? row.additional_plant_info ?? '',
+        ).trim() || undefined,
         stateName:
           (stateDoc?.stateName as string | undefined) ??
           (stateDoc?.name as string | undefined) ??
@@ -785,6 +794,9 @@ export class VendorCertificateService {
       plantName: row.plantName,
       plantLocation: row.plantLocation,
       city: row.city,
+      additionalPlantInfo: String(
+        row.additionalPlantInfo ?? row.additional_plant_info ?? '',
+      ).trim() || undefined,
       stateName:
         (stateDoc?.stateName as string | undefined) ??
         (stateDoc?.name as string | undefined) ??
@@ -1295,12 +1307,12 @@ export class VendorCertificateService {
   }
 
   private derivePlantLocation(plant: PlantWithGeo): string {
-    const city = String(plant.city ?? '').trim();
-    const state = String(plant.stateName ?? '').trim();
-    if (city && state) {
-      return `${city}, ${state}`;
-    }
-    return city || state || String(plant.plantLocation ?? '').trim();
+    return formatCertificatePlantLocation({
+      additionalPlantInfo: plant.additionalPlantInfo,
+      city: plant.city,
+      stateName: plant.stateName,
+      plantLocation: plant.plantLocation,
+    });
   }
 
   private formatValidityMonthYear(value?: Date | string | null): string | null {
