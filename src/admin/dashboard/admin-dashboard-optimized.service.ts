@@ -897,10 +897,10 @@ export class AdminDashboardOptimizedService {
   async getSmartAlerts(
     filters: ResolvedDashboardFilters,
   ): Promise<{ alerts: DashboardSmartAlert[]; generatedAt: string }> {
-    return this.cached('smart-alerts', filters, async () => {
-      const signals = await this.getOpsSignals(filters);
+    return this.cached('smart-alerts-urn', filters, async () => {
+      const alerts = await this.loadUrnSmartAlerts(filters);
       return {
-        alerts: this.buildSmartAlerts(signals),
+        alerts,
         generatedAt: new Date().toISOString(),
       };
     });
@@ -1094,92 +1094,237 @@ export class AdminDashboardOptimizedService {
     return 'low';
   }
 
-  private buildSmartAlerts(signals: DashboardOpsSignals): DashboardSmartAlert[] {
-    const now = Date.now();
+  /**
+   * Latest actionable updates as **per-URN** rows (not aggregated group counts).
+   * Categories: recent URN applications (urnStatus 0), payment approval pending, form validation (urnStatus 3).
+   */
+  private async loadUrnSmartAlerts(
+    filters: ResolvedDashboardFilters,
+    perCategoryLimit = 5,
+    maxAlerts = 5,
+  ): Promise<DashboardSmartAlert[]> {
+    const now = new Date();
+    const snapshot = buildProductSnapshotMatch(filters, now);
+    const paymentIds = resolveManufacturerScopeIds(filters);
+
+    const recentUrnMatch: Record<string, unknown> = {
+      ...snapshot,
+      productStatus: {
+        $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
+      },
+      urnNo: { $exists: true, $nin: [null, ''] },
+      urnStatus: 0,
+    };
+
+    const formValidationMatch: Record<string, unknown> = {
+      ...snapshot,
+      productStatus: {
+        $in: [PRODUCT_STATUS_PENDING, PRODUCT_STATUS_SUBMITTED],
+      },
+      urnNo: { $exists: true, $nin: [null, ''] },
+      urnStatus: 3,
+    };
+
+    const paymentMatch: Record<string, unknown> = {
+      paymentStatus: PAYMENT_STATUS_PENDING,
+      urnNo: { $exists: true, $nin: [null, ''] },
+      ...(paymentIds ? { vendorId: { $in: paymentIds } } : {}),
+    };
+
+    const [recentUrns, pendingPayments, formValidationUrns] = await Promise.all([
+      this.productModel
+        .aggregate<{
+          urnNo: string;
+          manufacturerName?: string;
+          updatedAt?: Date;
+          totalEoi: number;
+        }>([
+          { $match: recentUrnMatch },
+          { $sort: { updatedDate: -1, createdDate: -1 } },
+          {
+            $group: {
+              _id: '$urnNo',
+              urnNo: { $first: '$urnNo' },
+              manufacturerId: { $first: '$manufacturerId' },
+              updatedAt: {
+                $max: { $ifNull: ['$updatedDate', '$createdDate'] },
+              },
+              totalEoi: { $sum: 1 },
+            },
+          },
+          { $sort: { updatedAt: -1 } },
+          { $limit: perCategoryLimit },
+          {
+            $lookup: {
+              from: 'manufacturers',
+              localField: 'manufacturerId',
+              foreignField: '_id',
+              as: 'manufacturer',
+            },
+          },
+          {
+            $project: {
+              urnNo: 1,
+              updatedAt: 1,
+              totalEoi: 1,
+              manufacturerName: {
+                $ifNull: [
+                  { $arrayElemAt: ['$manufacturer.manufacturerName', 0] },
+                  { $arrayElemAt: ['$manufacturer.vendor_name', 0] },
+                ],
+              },
+            },
+          },
+        ])
+        .exec(),
+
+      this.paymentDetailsModel
+        .find(paymentMatch)
+        .sort({ updatedDate: -1, createdDate: -1 })
+        .limit(perCategoryLimit)
+        .select({
+          urnNo: 1,
+          paymentType: 1,
+          quoteTotal: 1,
+          updatedDate: 1,
+          createdDate: 1,
+          vendorId: 1,
+        })
+        .lean()
+        .exec(),
+
+      this.productModel
+        .aggregate<{
+          urnNo: string;
+          manufacturerName?: string;
+          updatedAt?: Date;
+          totalEoi: number;
+        }>([
+          { $match: formValidationMatch },
+          { $sort: { updatedDate: -1, createdDate: -1 } },
+          {
+            $group: {
+              _id: '$urnNo',
+              urnNo: { $first: '$urnNo' },
+              manufacturerId: { $first: '$manufacturerId' },
+              updatedAt: {
+                $max: { $ifNull: ['$updatedDate', '$createdDate'] },
+              },
+              totalEoi: { $sum: 1 },
+            },
+          },
+          { $sort: { updatedAt: -1 } },
+          { $limit: perCategoryLimit },
+          {
+            $lookup: {
+              from: 'manufacturers',
+              localField: 'manufacturerId',
+              foreignField: '_id',
+              as: 'manufacturer',
+            },
+          },
+          {
+            $project: {
+              urnNo: 1,
+              updatedAt: 1,
+              totalEoi: 1,
+              manufacturerName: {
+                $ifNull: [
+                  { $arrayElemAt: ['$manufacturer.manufacturerName', 0] },
+                  { $arrayElemAt: ['$manufacturer.vendor_name', 0] },
+                ],
+              },
+            },
+          },
+        ])
+        .exec(),
+    ]);
+
+    const paymentVendorIds = pendingPayments
+      .map((p) => p.vendorId)
+      .filter((id): id is Types.ObjectId => !!id);
+    const manufacturerMap = await this.loadManufacturerNameMap(paymentVendorIds);
+
     const alerts: DashboardSmartAlert[] = [];
 
-    if (signals.vendorsAwaitingApproval > 0) {
+    for (const row of recentUrns) {
+      const urnNo = String(row.urnNo ?? '').trim();
+      if (!urnNo) continue;
+      const mfr = String(row.manufacturerName ?? 'Unknown').trim() || 'Unknown';
+      const eoiCount = Number(row.totalEoi ?? 0);
+      const ts = row.updatedAt
+        ? new Date(row.updatedAt).toISOString()
+        : now.toISOString();
       alerts.push({
-        id: 'alert-vendors-awaiting',
-        key: 'vendorsAwaitingApproval',
-        title: 'Vendors awaiting approval',
-        message: `${signals.vendorsAwaitingApproval} manufacturers pending verification.`,
-        severity: signals.vendorsAwaitingApproval >= 15 ? 'critical' : 'warning',
-        timestamp: new Date(now - 25 * 60 * 1000).toISOString(),
-        actionLabel: 'Review vendors',
-        href: '/vendors/unverified',
-        count: signals.vendorsAwaitingApproval,
+        id: `alert-urn-registration-${urnNo}`,
+        key: 'recentUrnRegistration',
+        title: `New URN · ${urnNo}`,
+        message: `${mfr}${eoiCount > 0 ? ` · ${eoiCount} EOI${eoiCount === 1 ? '' : 's'}` : ''} awaiting admin approval.`,
+        severity: 'warning',
+        timestamp: ts,
+        actionLabel: 'Open URN',
+        href: `/products/un-certified/urn/${encodeURIComponent(urnNo)}`,
+        count: eoiCount || undefined,
       });
     }
-    if (signals.paymentsPendingVerification > 0) {
+
+    for (const row of pendingPayments) {
+      const urnNo = String(row.urnNo ?? '').trim();
+      if (!urnNo) continue;
+      const vendorKey = row.vendorId?.toString() ?? '';
+      const mfrDoc = manufacturerMap.get(vendorKey);
+      const mfr = mfrDoc?.manufacturerName ?? mfrDoc?.vendor_name ?? 'Unknown';
+      const feeType = this.formatPaymentType(row.paymentType);
+      const amount = Number(row.quoteTotal ?? 0);
+      const ts = row.updatedDate ?? row.createdDate
+        ? new Date((row.updatedDate ?? row.createdDate) as Date).toISOString()
+        : now.toISOString();
+      const paymentTypeKey = String(row.paymentType ?? '').trim().toLowerCase();
+      const href =
+        paymentTypeKey === 'renew' || paymentTypeKey === 'renewal'
+          ? `/products/renew/urn/${encodeURIComponent(urnNo)}`
+          : `/products/un-certified/urn/${encodeURIComponent(urnNo)}`;
       alerts.push({
-        id: 'alert-payments-pending',
-        key: 'paymentsPendingVerification',
-        title: 'Payments pending verification',
-        message: `${signals.paymentsPendingVerification} payments need finance confirmation.`,
-        severity: signals.paymentsPendingVerification >= 10 ? 'critical' : 'warning',
-        timestamp: new Date(now - 55 * 60 * 1000).toISOString(),
-        actionLabel: 'Verify payments',
-        href: '/payment-history',
-        count: signals.paymentsPendingVerification,
+        id: `alert-urn-payment-${urnNo}-${paymentTypeKey || 'payment'}`,
+        key: 'paymentApprovalPending',
+        title: `Payment pending · ${urnNo}`,
+        message: `${mfr} · ${feeType}${amount > 0 ? ` · ₹${amount.toLocaleString('en-IN')}` : ''} awaiting approval.`,
+        severity: 'critical',
+        timestamp: ts,
+        actionLabel: 'Open URN',
+        href,
       });
     }
-    if (signals.certificatesExpiringSoon > 0) {
+
+    for (const row of formValidationUrns) {
+      const urnNo = String(row.urnNo ?? '').trim();
+      if (!urnNo) continue;
+      const mfr = String(row.manufacturerName ?? 'Unknown').trim() || 'Unknown';
+      const eoiCount = Number(row.totalEoi ?? 0);
+      const ts = row.updatedAt
+        ? new Date(row.updatedAt).toISOString()
+        : now.toISOString();
       alerts.push({
-        id: 'alert-certs-expiring',
-        key: 'certificatesExpiringSoon',
-        title: 'Certificates expiring soon',
-        message: `${signals.certificatesExpiringSoon} certificates expire within 60 days.`,
-        severity: signals.certificatesExpiringSoon >= 10 ? 'critical' : 'warning',
-        timestamp: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
-        actionLabel: 'View renewals',
-        href: '/products/renew',
-        count: signals.certificatesExpiringSoon,
-      });
-    }
-    if (signals.assessmentBacklog > 0) {
-      alerts.push({
-        id: 'alert-assessment-backlog',
-        key: 'assessmentBacklog',
-        title: 'Assessment backlog',
-        message: `${signals.assessmentBacklog} products waiting for assessor action.`,
-        severity: signals.assessmentBacklog >= 20 ? 'critical' : 'warning',
-        timestamp: new Date(now - 3.5 * 60 * 60 * 1000).toISOString(),
-        actionLabel: 'Clear backlog',
-        href: '/products/un-certified',
-        count: signals.assessmentBacklog,
-      });
-    }
-    if (signals.revenueChangePercent < 0) {
-      alerts.push({
-        id: 'alert-revenue-decrease',
-        key: 'revenueDecrease',
-        title: 'Revenue decrease',
-        message: `Collections are down ${Math.abs(signals.revenueChangePercent).toFixed(1)}% versus the previous period.`,
-        severity: signals.revenueChangePercent <= -10 ? 'critical' : 'warning',
-        timestamp: new Date(now - 5 * 60 * 60 * 1000).toISOString(),
-        actionLabel: 'View revenue',
-        href: '/payment-history',
-      });
-    }
-    if (signals.renewalsDue > 0) {
-      alerts.push({
-        id: 'alert-renewal-reminders',
-        key: 'renewalReminders',
-        title: 'Renewal reminders',
-        message: `${signals.renewalsDue} renewals ready for outreach.`,
-        severity: signals.renewalsDue >= 10 ? 'warning' : 'info',
-        timestamp: new Date(now - 7 * 60 * 60 * 1000).toISOString(),
-        actionLabel: 'Send reminders',
-        href: '/products/renew',
-        count: signals.renewalsDue,
+        id: `alert-urn-form-${urnNo}`,
+        key: 'formValidationPending',
+        title: `Form validation · ${urnNo}`,
+        message: `${mfr}${eoiCount > 0 ? ` · ${eoiCount} product form${eoiCount === 1 ? '' : 's'}` : ''} submitted for review.`,
+        severity: 'warning',
+        timestamp: ts,
+        actionLabel: 'Open URN',
+        href: `/products/un-certified/urn/${encodeURIComponent(urnNo)}`,
+        count: eoiCount || undefined,
       });
     }
 
     const order = { critical: 0, warning: 1, info: 2, success: 3 } as const;
-    return alerts.sort(
-      (a, b) => order[a.severity] - order[b.severity] || b.timestamp.localeCompare(a.timestamp),
-    );
+    return alerts
+      .sort(
+        (a, b) =>
+          order[a.severity] - order[b.severity] ||
+          b.timestamp.localeCompare(a.timestamp),
+      )
+      .slice(0, maxAlerts);
   }
 
   private buildOperationalInsights(

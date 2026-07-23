@@ -149,6 +149,7 @@ export class CertificationLifecycleService {
         $set: {
           urnStatus: URN_STATUS_VERIFICATION_COMPLETED,
           productStatus: PRODUCT_STATUS_REJECTED,
+          rejectedAt: now,
           updatedDate: now,
         },
       },

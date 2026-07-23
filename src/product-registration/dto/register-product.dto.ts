@@ -7,6 +7,8 @@ import {
   ValidateNested,
   IsNumber,
   IsMongoId,
+  IsBoolean,
+  Equals,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PlantDto } from './plant.dto';
@@ -51,6 +53,18 @@ export class RegisterProductDto {
   @IsNumber()
   @IsOptional()
   productType?: number;
+
+  @ApiProperty({
+    description:
+      'Manufacturer consent to display product information on the public website (must be true)',
+    example: true,
+  })
+  @Type(() => Boolean)
+  @IsBoolean()
+  @Equals(true, {
+    message: 'Website display consent is required',
+  })
+  websiteDisplayConsent: boolean;
 
   @ApiProperty({
     description: 'Plants array',

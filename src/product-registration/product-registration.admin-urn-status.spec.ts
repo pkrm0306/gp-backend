@@ -215,7 +215,10 @@ describe('ProductRegistrationService.adminUpdateUrnStatus', () => {
     expect(updateMany).toHaveBeenCalledWith(
       { urnNo: 'URN-202604010001' },
       expect.objectContaining({
-        $set: expect.objectContaining({ productStatus: 3 }),
+        $set: expect.objectContaining({
+          productStatus: 3,
+          rejectedAt: expect.any(Date),
+        }),
       }),
       expect.any(Object),
     );

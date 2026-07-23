@@ -334,7 +334,9 @@ export class AdminListProductsDto {
   manufacturer_names?: string[];
 
   @ApiPropertyOptional({
-    description: 'Created date start (ISO date string). Alias: fromDate',
+    description:
+      'Date range start (ISO / YYYY-MM-DD). For most lists filters `createdDate`. ' +
+      'For rejected-only lists (`status: [3]`) filters `rejectedAt` (fallback `updatedDate`) — same as Rejection Trend.',
     example: '2026-01-01',
   })
   @IsOptional()
@@ -342,7 +344,9 @@ export class AdminListProductsDto {
   from?: string;
 
   @ApiPropertyOptional({
-    description: 'Created date end (ISO date string). Alias: toDate',
+    description:
+      'Date range end (ISO / YYYY-MM-DD). For most lists filters `createdDate`. ' +
+      'For rejected-only lists (`status: [3]`) filters `rejectedAt` (fallback `updatedDate`) — same as Rejection Trend.',
     example: '2026-12-31',
   })
   @IsOptional()
@@ -364,6 +368,56 @@ export class AdminListProductsDto {
   @IsOptional()
   @IsString()
   toDate?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Certified date range start (ISO date / YYYY-MM-DD). Filters on `products.certifiedDate`.',
+    example: '2026-01-01',
+  })
+  @IsOptional()
+  @IsString()
+  certifiedFrom?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Certified date range end (ISO date / YYYY-MM-DD). Filters on `products.certifiedDate` (inclusive end of day).',
+    example: '2026-12-31',
+  })
+  @IsOptional()
+  @IsString()
+  certifiedTo?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `certifiedFrom`.',
+    example: '2026-01-01',
+  })
+  @IsOptional()
+  @IsString()
+  certified_from?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of `certifiedTo`.',
+    example: '2026-12-31',
+  })
+  @IsOptional()
+  @IsString()
+  certified_to?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of `certifiedFrom`.',
+    example: '2026-01-01',
+  })
+  @IsOptional()
+  @IsString()
+  certifiedFromDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of `certifiedTo`.',
+    example: '2026-12-31',
+  })
+  @IsOptional()
+  @IsString()
+  certifiedToDate?: string;
 
   @ApiPropertyOptional({
     description: 'Filter by valid till year',

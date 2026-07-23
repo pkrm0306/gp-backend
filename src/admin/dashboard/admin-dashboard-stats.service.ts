@@ -338,13 +338,38 @@ export class AdminDashboardStatsService {
   > {
     const now = new Date();
     const trendMatch = buildProductTrendMatch(filters, now);
-    const bucketId = bucketDateExpression(granularity, 'createdDate');
-    const certifiedCond = this.certifiedActiveExpr(now);
+    const createdBucketId = bucketDateExpression(granularity, 'createdDate');
+    const certifiedBucketId = bucketDateExpression(granularity, 'certifiedDate');
+
+    /**
+     * Certified series must match Certified Products listing month filter:
+     * active certified EOIs bucketed by `certifiedDate` (not `createdDate`).
+     */
+    const certifiedTrendMatch: Record<string, unknown> = {
+      $and: [
+        buildProductSnapshotMatch(filters, now),
+        {
+          productStatus: PRODUCT_STATUS_CERTIFIED,
+          certifiedDate:
+            filters.dateRange != null
+              ? {
+                  $gte: filters.dateRange.from,
+                  $lte: filters.dateRange.to,
+                }
+              : { $exists: true, $ne: null },
+          $or: [
+            { validtillDate: null },
+            { validtillDate: { $exists: false } },
+            { validtillDate: { $gte: now } },
+          ],
+        },
+      ],
+    };
 
     const baseStages: any[] = [{ $match: trendMatch }];
 
-    const [submissionRows, certifiedRows, onlineOfflineRows] = await Promise.all(
-      [
+    const [submissionRows, uncertifiedRows, certifiedOnlyRows, onlineOfflineRows] =
+      await Promise.all([
         this.productModel
           .aggregate<{
             _id: {
@@ -356,7 +381,30 @@ export class AdminDashboardStatsService {
             count: number;
           }>([
             ...baseStages,
-            { $group: { _id: bucketId, count: { $sum: 1 } } },
+            { $group: { _id: createdBucketId, count: { $sum: 1 } } },
+          ])
+          .exec(),
+        this.productModel
+          .aggregate<{
+            _id: {
+              year?: number;
+              month?: number;
+              quarter?: number;
+              week?: number;
+            };
+            uncertified: number;
+          }>([
+            ...baseStages,
+            {
+              $group: {
+                _id: createdBucketId,
+                uncertified: {
+                  $sum: {
+                    $cond: [{ $in: ['$productStatus', [0, 1]] }, 1, 0],
+                  },
+                },
+              },
+            },
           ])
           .exec(),
         this.productModel
@@ -368,18 +416,12 @@ export class AdminDashboardStatsService {
               week?: number;
             };
             certified: number;
-            uncertified: number;
           }>([
-            ...baseStages,
+            { $match: certifiedTrendMatch },
             {
               $group: {
-                _id: bucketId,
-                certified: { $sum: { $cond: [certifiedCond, 1, 0] } },
-                uncertified: {
-                  $sum: {
-                    $cond: [{ $in: ['$productStatus', [0, 1]] }, 1, 0],
-                  },
-                },
+                _id: certifiedBucketId,
+                certified: { $sum: 1 },
               },
             },
           ])
@@ -398,7 +440,7 @@ export class AdminDashboardStatsService {
             ...baseStages,
             {
               $group: {
-                _id: bucketId,
+                _id: createdBucketId,
                 online: {
                   $sum: { $cond: [{ $eq: ['$productType', 0] }, 1, 0] },
                 },
@@ -409,32 +451,56 @@ export class AdminDashboardStatsService {
             },
           ])
           .exec(),
-      ],
-    );
+      ]);
 
-    type ChartBucketRow = {
-      _id: {
-        year?: number;
-        month?: number;
-        quarter?: number;
-        week?: number;
-      };
+    type ChartBucketId = {
+      year?: number;
+      month?: number;
+      quarter?: number;
+      week?: number;
     };
+    type ChartBucketRow = { _id: ChartBucketId };
     const sortBuckets = <T extends ChartBucketRow>(rows: T[]): T[] =>
       [...rows].sort((a, b) =>
         this.compareChartBuckets(a._id, b._id, granularity),
       );
+
+    const bucketKey = (id: ChartBucketId): string =>
+      `${id.year ?? 0}|${id.month ?? 0}|${id.quarter ?? 0}|${id.week ?? 0}`;
+
+    const certifiedMap = new Map(
+      certifiedOnlyRows.map((r) => [bucketKey(r._id), r.certified ?? 0]),
+    );
+    const uncertifiedMap = new Map(
+      uncertifiedRows.map((r) => [bucketKey(r._id), r.uncertified ?? 0]),
+    );
+    const mergedIds = new Map<string, ChartBucketId>();
+    for (const row of certifiedOnlyRows) {
+      mergedIds.set(bucketKey(row._id), row._id);
+    }
+    for (const row of uncertifiedRows) {
+      if ((row.uncertified ?? 0) > 0) {
+        mergedIds.set(bucketKey(row._id), row._id);
+      }
+    }
+    const monthlyCertified = sortBuckets(
+      [...mergedIds.entries()].map(([key, id]) => ({
+        _id: id,
+        certified: certifiedMap.get(key) ?? 0,
+        uncertified: uncertifiedMap.get(key) ?? 0,
+      })),
+    ).map((r) => ({
+      month: formatBucketLabel(granularity, r._id),
+      certified: r.certified,
+      uncertified: r.uncertified,
+    }));
 
     return {
       monthlySubmissions: sortBuckets(submissionRows).map((r) => ({
         month: formatBucketLabel(granularity, r._id),
         count: r.count,
       })),
-      monthlyCertified: sortBuckets(certifiedRows).map((r) => ({
-        month: formatBucketLabel(granularity, r._id),
-        certified: r.certified,
-        uncertified: r.uncertified,
-      })),
+      monthlyCertified,
       onlineOffline: sortBuckets(onlineOfflineRows).map((r) => ({
         month: formatBucketLabel(granularity, r._id),
         online: r.online,

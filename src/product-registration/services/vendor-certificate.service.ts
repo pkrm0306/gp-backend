@@ -1167,18 +1167,24 @@ export class VendorCertificateService {
     this.centerInBox(page, `(${eoiNo})`, regular, EOI_SZ, 0, PAGE_W, Y_EOI);
 
     const hasLocation = location.trim().length > 0;
+    // Put the boundary space on the preceding run (location or manufacturer).
+    // pdf-lib drawText often drops a leading space on the next segment after a font change.
     this.centerSegments(
       page,
       [
         { text: 'Manufactured by ', font: italic, size: P_SZ },
-        { text: manufacturerName, font: boldItalic, size: P_SZ },
+        {
+          text: hasLocation ? manufacturerName : `${manufacturerName} `,
+          font: boldItalic,
+          size: P_SZ,
+        },
         ...(hasLocation
           ? [
               { text: ' at ', font: italic, size: P_SZ },
-              { text: location, font: boldItalic, size: P_SZ },
+              { text: `${location} `, font: boldItalic, size: P_SZ },
             ]
           : []),
-        { text: ' meets the requirements of', font: italic, size: P_SZ },
+        { text: 'meets the requirements of', font: italic, size: P_SZ },
       ],
       0,
       PAGE_W,

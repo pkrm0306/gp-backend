@@ -531,6 +531,13 @@ export class ProductRegistrationService {
       cities: this.resolveAdminListCities(dto)?.join('|') ?? null,
       from: dto.from ?? dto.fromDate ?? null,
       to: dto.to ?? dto.toDate ?? null,
+      certifiedFrom:
+        dto.certifiedFrom ??
+        dto.certified_from ??
+        dto.certifiedFromDate ??
+        null,
+      certifiedTo:
+        dto.certifiedTo ?? dto.certified_to ?? dto.certifiedToDate ?? null,
       validTillYear: dto.validTillYear ?? dto.valid_till_year ?? null,
       validTillYears:
         this.resolveAdminListValidTillYears(dto)?.join(',') ?? null,
@@ -2096,6 +2103,7 @@ export class ProductRegistrationService {
       categoryId: product.categoryId ?? categoryDoc?._id ?? null,
       productDetails: product.productDetails,
       productType: product.productType,
+      websiteDisplayConsent: Boolean(product.websiteDisplayConsent),
       productStatus: product.productStatus,
       productRenewStatus: product.productRenewStatus,
       renewedDate: product.renewedDate,
@@ -2642,6 +2650,9 @@ export class ProductRegistrationService {
           plantCount: registerProductDto.plants.length,
           productDetails: registerProductDto.productDetails,
           productType: registerProductDto.productType || 0,
+          websiteDisplayConsent: Boolean(
+            registerProductDto.websiteDisplayConsent,
+          ),
           productStatus: 0,
           productRenewStatus: 0,
           urnStatus: 0,
@@ -3111,6 +3122,9 @@ export class ProductRegistrationService {
         plantCount: registerProductDto.plants.length,
         productDetails: registerProductDto.productDetails,
         productType: registerProductDto.productType || 0,
+        websiteDisplayConsent: Boolean(
+          registerProductDto.websiteDisplayConsent,
+        ),
         productStatus: 0,
         productRenewStatus: 0,
         urnStatus: 0,
@@ -5684,6 +5698,10 @@ export class ProductRegistrationService {
       if (dto.updateStatusTo === 2) {
         updateFilter.productStatus = 1;
       }
+      // Align with Rejection Trend bucketing (`rejectedAt` ?? `updatedDate`).
+      if (dto.updateStatusTo === 3) {
+        setDoc.rejectedAt = now;
+      }
     }
 
     const session = await this.connection.startSession();
@@ -7391,6 +7409,7 @@ export class ProductRegistrationService {
           plantCount: 1,
           productDetails: 1,
           productType: 1,
+          websiteDisplayConsent: 1,
           productStatus: 1,
           productRenewStatus: 1,
           renewedDate: 1,
@@ -7745,6 +7764,7 @@ export class ProductRegistrationService {
           categoryId: product.categoryId ?? product.category?._id ?? null,
           productDetails: product.productDetails,
           productType: product.productType,
+          websiteDisplayConsent: Boolean(product.websiteDisplayConsent),
           productStatus: product.productStatus,
           productRenewStatus: product.productRenewStatus,
           renewedDate: product.renewedDate,
@@ -8969,16 +8989,56 @@ export class ProductRegistrationService {
     const createdFrom = dto.from ?? dto.fromDate;
     const createdTo = dto.to ?? dto.toDate;
     if (createdFrom || createdTo) {
-      const createdRange: Record<string, Date> = {};
-      if (createdFrom) {
-        createdRange.$gte = new Date(createdFrom);
+      /**
+       * Rejected listing must match Rejection Trend month buckets:
+       * filter by `rejectedAt` (fallback `updatedDate`), not `createdDate`.
+       */
+      if (this.isAdminRejectedOnlyListFilter(dto)) {
+        const rejectionDateExpr = {
+          $ifNull: ['$rejectedAt', '$updatedDate'],
+        };
+        const clauses: Record<string, unknown>[] = [];
+        if (createdFrom) {
+          clauses.push({
+            $gte: [rejectionDateExpr, new Date(createdFrom)],
+          });
+        }
+        if (createdTo) {
+          const to = new Date(createdTo);
+          to.setHours(23, 59, 59, 999);
+          clauses.push({
+            $lte: [rejectionDateExpr, to],
+          });
+        }
+        mergeMongoExpr(nativeMatch, { $and: clauses });
+      } else {
+        const createdRange: Record<string, Date> = {};
+        if (createdFrom) {
+          createdRange.$gte = new Date(createdFrom);
+        }
+        if (createdTo) {
+          const to = new Date(createdTo);
+          to.setHours(23, 59, 59, 999);
+          createdRange.$lte = to;
+        }
+        nativeMatch.createdDate = createdRange;
       }
-      if (createdTo) {
-        const to = new Date(createdTo);
+    }
+    const certifiedFrom =
+      dto.certifiedFrom ?? dto.certified_from ?? dto.certifiedFromDate;
+    const certifiedTo =
+      dto.certifiedTo ?? dto.certified_to ?? dto.certifiedToDate;
+    if (certifiedFrom || certifiedTo) {
+      const certifiedRange: Record<string, Date> = {};
+      if (certifiedFrom) {
+        certifiedRange.$gte = new Date(certifiedFrom);
+      }
+      if (certifiedTo) {
+        const to = new Date(certifiedTo);
         to.setHours(23, 59, 59, 999);
-        createdRange.$lte = to;
+        certifiedRange.$lte = to;
       }
-      nativeMatch.createdDate = createdRange;
+      nativeMatch.certifiedDate = certifiedRange;
     }
     const validTillMonthYearFilter = resolveAdminListValidTillMonthYearFilter(dto);
     if (validTillMonthYearFilter) {

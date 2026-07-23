@@ -123,6 +123,13 @@ export class Product {
 
   @Prop()
   discontinueReason?: string;
+
+  /**
+   * Manufacturer consent to display product information on the public website.
+   * Collected at registration; existing records without the field are treated as false.
+   */
+  @Prop({ default: false })
+  websiteDisplayConsent?: boolean;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);
