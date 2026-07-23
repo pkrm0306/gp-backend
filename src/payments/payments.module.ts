@@ -20,6 +20,7 @@ import {
 } from '../manufacturers/schemas/manufacturer.schema';
 import { ZohoModule } from '../zoho/zoho.module';
 import { RenewalModule } from '../renew/renewal.module';
+import { RedisModule } from '../common/redis/redis.module';
 import {
   RenewalCycle,
   RenewalCycleSchema,
@@ -38,6 +39,7 @@ import {
     PassportModule,
     AuthModule,
     ZohoModule,
+    RedisModule,
     forwardRef(() => RenewalModule),
   ],
   controllers: [PaymentsController],

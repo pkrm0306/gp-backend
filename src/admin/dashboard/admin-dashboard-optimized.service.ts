@@ -897,13 +897,12 @@ export class AdminDashboardOptimizedService {
   async getSmartAlerts(
     filters: ResolvedDashboardFilters,
   ): Promise<{ alerts: DashboardSmartAlert[]; generatedAt: string }> {
-    return this.cached('smart-alerts-urn', filters, async () => {
-      const alerts = await this.loadUrnSmartAlerts(filters);
-      return {
-        alerts,
-        generatedAt: new Date().toISOString(),
-      };
-    });
+    // Actionable queue — always read live (do not serve stale Redis hits after payment approve).
+    const alerts = await this.loadUrnSmartAlerts(filters);
+    return {
+      alerts,
+      generatedAt: new Date().toISOString(),
+    };
   }
 
   async getOperationalInsights(
@@ -1128,6 +1127,13 @@ export class AdminDashboardOptimizedService {
     const paymentMatch: Record<string, unknown> = {
       paymentStatus: PAYMENT_STATUS_PENDING,
       urnNo: { $exists: true, $nin: [null, ''] },
+      // Only vendor-submitted proof awaiting admin review (not fee-created / draft rows).
+      $or: [
+        { paymentMode: { $exists: true, $nin: [null, ''] } },
+        { paymentReferenceNo: { $exists: true, $nin: [null, ''] } },
+        { tdsFile: { $exists: true, $nin: [null, ''] } },
+        { chequeOrDdFile: { $exists: true, $nin: [null, ''] } },
+      ],
       ...(paymentIds ? { vendorId: { $in: paymentIds } } : {}),
     };
 
@@ -1179,18 +1185,33 @@ export class AdminDashboardOptimizedService {
         .exec(),
 
       this.paymentDetailsModel
-        .find(paymentMatch)
-        .sort({ updatedDate: -1, createdDate: -1 })
-        .limit(perCategoryLimit)
-        .select({
-          urnNo: 1,
-          paymentType: 1,
-          quoteTotal: 1,
-          updatedDate: 1,
-          createdDate: 1,
-          vendorId: 1,
-        })
-        .lean()
+        .aggregate<{
+          urnNo: string;
+          paymentType?: string;
+          quoteTotal?: number;
+          updatedDate?: Date;
+          createdDate?: Date;
+          vendorId?: Types.ObjectId;
+        }>([
+          { $match: paymentMatch },
+          { $sort: { updatedDate: -1, createdDate: -1 } },
+          {
+            $group: {
+              _id: {
+                urnNo: '$urnNo',
+                paymentType: { $toLower: { $ifNull: ['$paymentType', ''] } },
+              },
+              urnNo: { $first: '$urnNo' },
+              paymentType: { $first: '$paymentType' },
+              quoteTotal: { $first: '$quoteTotal' },
+              updatedDate: { $first: '$updatedDate' },
+              createdDate: { $first: '$createdDate' },
+              vendorId: { $first: '$vendorId' },
+            },
+          },
+          { $sort: { updatedDate: -1, createdDate: -1 } },
+          { $limit: perCategoryLimit },
+        ])
         .exec(),
 
       this.productModel

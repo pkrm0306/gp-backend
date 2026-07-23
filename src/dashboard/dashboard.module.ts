@@ -25,6 +25,27 @@ import {
 } from '../activity-log/schemas/activity-log.schema';
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { VendorDashboardOverviewService } from './vendor-dashboard-overview.service';
+import { VendorDashboardSustainabilityService } from './vendor-dashboard-sustainability.service';
+import {
+  ProcessMpManufacturingUnit,
+  ProcessMpManufacturingUnitSchema,
+} from '../process-mp-manufacturing-units/schemas/process-mp-manufacturing-unit.schema';
+import {
+  RawMaterialsRecycledContent,
+  RawMaterialsRecycledContentSchema,
+} from '../raw-materials-recycled-content/schemas/raw-materials-recycled-content.schema';
+import {
+  RawMaterialsRecovery,
+  RawMaterialsRecoverySchema,
+} from '../raw-materials-recovery/schemas/raw-materials-recovery.schema';
+import {
+  RawMaterialsRapidlyRenewableMaterials,
+  RawMaterialsRapidlyRenewableMaterialsSchema,
+} from '../raw-materials-rapidly-renewable-materials/schemas/raw-materials-rapidly-renewable-materials.schema';
+import {
+  RawMaterialsUtilizationRmc,
+  RawMaterialsUtilizationRmcSchema,
+} from '../raw-materials-utilization-rmc/schemas/raw-materials-utilization-rmc.schema';
 
 @Module({
   imports: [
@@ -36,10 +57,26 @@ import { VendorDashboardOverviewService } from './vendor-dashboard-overview.serv
       { name: Event.name, schema: EventSchema },
       { name: Manufacturer.name, schema: ManufacturerSchema },
       { name: ActivityLog.name, schema: ActivityLogSchema },
+      { name: ProcessMpManufacturingUnit.name, schema: ProcessMpManufacturingUnitSchema },
+      { name: RawMaterialsRecycledContent.name, schema: RawMaterialsRecycledContentSchema },
+      { name: RawMaterialsRecovery.name, schema: RawMaterialsRecoverySchema },
+      {
+        name: RawMaterialsRapidlyRenewableMaterials.name,
+        schema: RawMaterialsRapidlyRenewableMaterialsSchema,
+      },
+      { name: RawMaterialsUtilizationRmc.name, schema: RawMaterialsUtilizationRmcSchema },
     ]),
   ],
   controllers: [DashboardController],
-  providers: [DashboardService, VendorDashboardOverviewService],
-  exports: [DashboardService, VendorDashboardOverviewService],
+  providers: [
+    DashboardService,
+    VendorDashboardOverviewService,
+    VendorDashboardSustainabilityService,
+  ],
+  exports: [
+    DashboardService,
+    VendorDashboardOverviewService,
+    VendorDashboardSustainabilityService,
+  ],
 })
 export class DashboardModule {}

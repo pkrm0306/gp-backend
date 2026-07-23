@@ -7,6 +7,7 @@ import {
   Inject,
   forwardRef,
   Optional,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types, ClientSession } from 'mongoose';
@@ -86,12 +87,16 @@ import {
   buildRenewPaymentFindFilter,
 } from '../renew/helpers/renew-cycle-scope.util';
 import { toRenewObjectId } from '../renew/helpers/renew-common.util';
+import { RedisService } from '../common/redis/redis.service';
+import { invalidateAdminDashboardCache } from '../admin/helpers/invalidate-admin-dashboard-cache.util';
 
 const PAYMENT_REFERENCE_MAX_LENGTH = 50;
 const PAYMENT_REFERENCE_ALPHANUMERIC = /^[a-zA-Z0-9]+$/;
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     @InjectModel(PaymentDetails.name)
     private paymentDetailsModel: Model<PaymentDetailsDocument>,
@@ -110,6 +115,7 @@ export class PaymentsService {
     private readonly certificationLifecycle: CertificationLifecycleService,
     private readonly productSoftDeleteService: ProductSoftDeleteService,
     private readonly documentVersioningService: DocumentVersioningService,
+    private readonly redisService: RedisService,
     @Inject(forwardRef(() => RenewalOrchestrationService))
     @Optional()
     private readonly renewalOrchestration?: RenewalOrchestrationService,
@@ -1999,6 +2005,13 @@ export class PaymentsService {
 
       await session.commitTransaction();
       session.endSession();
+
+      if (
+        paymentStatusUpdate.adminApprovedPayment ||
+        paymentStatusUpdate.adminRejectedPayment
+      ) {
+        void invalidateAdminDashboardCache(this.redisService, this.logger);
+      }
 
       if (deferredUrnLog) {
         await this.tryLogUrnLifecycleAfterPayment(

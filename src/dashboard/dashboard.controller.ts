@@ -14,6 +14,7 @@ import {
 } from '@nestjs/swagger';
 import { DashboardService } from './dashboard.service';
 import { VendorDashboardOverviewService } from './vendor-dashboard-overview.service';
+import { VendorDashboardSustainabilityService } from './vendor-dashboard-sustainability.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ListVendorApplicationsQueryDto } from './dto/list-vendor-applications-query.dto';
@@ -26,6 +27,7 @@ export class DashboardController {
   constructor(
     private readonly dashboardService: DashboardService,
     private readonly dashboardOverview: VendorDashboardOverviewService,
+    private readonly dashboardSustainability: VendorDashboardSustainabilityService,
   ) {}
 
   @Get()
@@ -255,7 +257,8 @@ export class DashboardController {
     description:
       'Single payload for the vendor panel home page: six KPI cards with trend %, ' +
       'registration vs certification trend, product status donut, products by category bar chart, ' +
-      'recent EOIs table, and recent activity feed (last 7 days). Scoped to the authenticated vendor.',
+      'recent EOIs table, recent activity feed (last 7 days), and sustainability contributions. ' +
+      'Scoped to the authenticated vendor.',
   })
   @ApiResponse({ status: 200, description: 'Vendor dashboard overview retrieved' })
   async getDashboardOverview(
@@ -276,9 +279,61 @@ export class DashboardController {
         user.vendorId || user.manufacturerId,
       );
 
-    const data = await this.dashboardOverview.getOverview(vendorObjectId);
+    const [overview, sustainabilityContributions] = await Promise.all([
+      this.dashboardOverview.getOverview(vendorObjectId),
+      this.dashboardSustainability.getSustainabilityContributions(vendorObjectId),
+    ]);
+
     return {
       message: 'Vendor dashboard overview retrieved successfully',
+      data: {
+        ...overview,
+        sustainabilityContributions,
+      },
+    };
+  }
+
+  @Get('sustainability-contributions')
+  @ApiOperation({
+    summary: 'Vendor sustainability contributions',
+    description:
+      'Energy saved, water saved, recyclability, and carbon offset averages from the ' +
+      'authenticated vendor’s active certified products. Optional **urn** scopes to one batch.',
+  })
+  @ApiQuery({
+    name: 'urn',
+    required: false,
+    type: String,
+    description: 'Scope metrics to a single URN batch. Omit for all batches.',
+    example: 'URN-20260305124230',
+  })
+  @ApiResponse({ status: 200, description: 'Sustainability contributions retrieved' })
+  async getSustainabilityContributions(
+    @CurrentUser()
+    user: {
+      userId?: string;
+      vendorId?: string;
+      manufacturerId?: string;
+    },
+    @Query('urn') urn?: string,
+  ) {
+    if (!user?.userId) {
+      throw new UnauthorizedException('Unauthorized. Please login.');
+    }
+
+    const vendorObjectId =
+      await this.dashboardService.resolveVendorObjectIdForOverview(
+        user.userId,
+        user.vendorId || user.manufacturerId,
+      );
+
+    const data = await this.dashboardSustainability.getSustainabilityContributions(
+      vendorObjectId,
+      urn?.trim() || undefined,
+    );
+
+    return {
+      message: 'Sustainability contributions retrieved successfully',
       data,
     };
   }
