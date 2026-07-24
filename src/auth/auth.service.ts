@@ -886,11 +886,9 @@ export class AuthService {
       throw new UnauthorizedException('Email not verified');
     }
 
-    if (user && !isStagingMasterPassword) {
+    // Account status always enforced — staging master password must not bypass inactive users.
+    if (user) {
       await this.assertVendorPortalUserAccountActive(user._id.toString());
-    }
-
-    if (user && !isStagingMasterPassword) {
       await this.assertAdminPortalUserAccountActive(user);
     }
 
@@ -922,7 +920,7 @@ export class AuthService {
       await this.assertVendorOrganizationActive(manufacturerId);
     }
 
-    // Portal access is authoritative by active RBAC role mapping + active Role for staff.
+    // RBAC always enforced for staff — master password must not bypass empty/no permissions.
     if (user && resolvedUserType === 'staff') {
       await this.assertStaffPortalAccess(user);
     }
