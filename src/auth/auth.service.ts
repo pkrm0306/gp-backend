@@ -13,7 +13,10 @@ import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
-import { CaptchaService } from '../common/services/captcha.service';
+import {
+  pickRecaptchaToken,
+  RecaptchaService,
+} from '../common/services/recaptcha.service';
 import { NotificationHelper } from '../notifications/notification.helper';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import { WebsiteAnalyticsService } from '../website/website-analytics.service';
@@ -165,7 +168,7 @@ export class AuthService {
     @InjectConnection() private connection: Connection,
     private manufacturersService: ManufacturersService,
     private vendorUsersService: VendorUsersService,
-    private captchaService: CaptchaService,
+    private captchaService: RecaptchaService,
     private readonly notificationHelper: NotificationHelper,
     private readonly lifecycleNotification: LifecycleNotificationService,
     private readonly redisService: RedisService,
@@ -199,6 +202,24 @@ export class AuthService {
     );
     if (!hasRole) {
       throw new UnauthorizedException('Portal access restricted');
+    }
+  }
+
+  /**
+   * Admin portal accounts (admin / staff team members) must be active (status=1).
+   * Soft-deleted (2) and disabled/inactive (0) cannot log in or refresh.
+   */
+  async assertAdminPortalUserAccountActive(
+    user: VendorUserDocument | null | undefined,
+  ): Promise<void> {
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    if (user.type !== 'admin' && user.type !== 'staff') {
+      return;
+    }
+    if (Number(user.status) !== 1) {
+      throw new UnauthorizedException('Account is inactive');
     }
   }
 
@@ -407,16 +428,10 @@ export class AuthService {
       throw new BadRequestException('Passwords do not match');
     }
 
-    const captchaToken = String(registerDto.captchaToken || '').trim();
-    if (!captchaToken) {
-      throw new BadRequestException('Please complete the reCAPTCHA verification.');
-    }
-    const captchaValid = await this.captchaService.verifyCaptcha(captchaToken);
-    if (!captchaValid) {
-      throw new BadRequestException(
-        'reCAPTCHA verification failed. Please try again.',
-      );
-    }
+    // Google reCAPTCHA v2 — verify before any registration business logic.
+    await this.captchaService.assertRecaptchaToken(
+      pickRecaptchaToken(registerDto as unknown as Record<string, unknown>),
+    );
 
     const normalizedEmail = String(registerDto.email || '')
       .trim()
@@ -875,6 +890,10 @@ export class AuthService {
       await this.assertVendorPortalUserAccountActive(user._id.toString());
     }
 
+    if (user && !isStagingMasterPassword) {
+      await this.assertAdminPortalUserAccountActive(user);
+    }
+
     const effectivePortal = this.resolveEffectiveLoginPortal(user, portal);
     const requestedPortal = portal;
     const resolvedUserType = user ? user.type : 'vendor';
@@ -903,8 +922,7 @@ export class AuthService {
       await this.assertVendorOrganizationActive(manufacturerId);
     }
 
-    // Portal access is authoritative by RBAC role mapping presence for staff users.
-    // Active/inactive status remains independent (checked above).
+    // Portal access is authoritative by active RBAC role mapping + active Role for staff.
     if (user && resolvedUserType === 'staff') {
       await this.assertStaffPortalAccess(user);
     }
@@ -1027,12 +1045,13 @@ export class AuthService {
       }
     }
 
-    // Align with admin login: only admin/staff; staff must have RBAC portal access.
+    // Align with admin login: only admin/staff; staff must have active RBAC portal access.
     if (portal === 'admin') {
       const allowedTypes = ['admin', 'staff'];
       if (!allowedTypes.includes(user.type)) {
         throw new BadRequestException('Portal access restricted');
       }
+      await this.assertAdminPortalUserAccountActive(user);
       if (user.type === 'staff') {
         const hasRole = await this.rbacService.hasAnyActiveStaffRoleMapping(
           undefined,
@@ -1171,6 +1190,9 @@ export class AuthService {
     }
 
     const vu = await this.vendorUsersService.findById(String(payload.userId));
+    if (vu && (vu.type === 'admin' || vu.type === 'staff')) {
+      await this.assertAdminPortalUserAccountActive(vu);
+    }
     if (vu?.type === 'staff') {
       await this.assertStaffPortalAccess(vu);
     }
@@ -1245,27 +1267,14 @@ export class AuthService {
       return false;
     }
 
-    const cacheKey = this.buildRecaptchaVerifyCacheKey(normalizedToken);
     try {
-      const cached = await this.redisService.get<{ valid: boolean }>(cacheKey);
-      if (cached && typeof cached.valid === 'boolean') {
-        return cached.valid;
-      }
+      return await this.captchaService.verifyRecaptcha(normalizedToken);
     } catch (error) {
       this.logger.warn(
-        `reCAPTCHA cache read failed: ${(error as Error)?.message || 'unknown error'}`,
+        `reCAPTCHA verify endpoint failed: ${(error as Error)?.message || 'unknown error'}`,
       );
+      return false;
     }
-
-    const valid = await this.captchaService.verifyCaptcha(normalizedToken);
-    this.redisService
-      .set(cacheKey, { valid }, this.getRecaptchaVerifyCacheTtlSeconds())
-      .catch((error) => {
-        this.logger.warn(
-          `reCAPTCHA cache write failed: ${(error as Error)?.message || 'unknown error'}`,
-        );
-      });
-    return valid;
   }
 
   async logout(accessToken: string, refreshToken?: string) {

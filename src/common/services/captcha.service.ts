@@ -1,67 +1,10 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
-
-@Injectable()
-export class CaptchaService {
-  private readonly secretKey: string;
-  private readonly isDevelopment: boolean;
-  private readonly verifyUrl =
-    'https://www.google.com/recaptcha/api/siteverify';
-
-  constructor(private configService: ConfigService) {
-    this.secretKey = this.configService.get<string>('RECAPTCHA_SECRET_KEY');
-    this.isDevelopment =
-      this.configService.get<string>('NODE_ENV') !== 'production';
-  }
-
-  /**
-   * Verify only when a non-empty token was supplied; missing token is treated as valid (optional captcha flows).
-   */
-  async verifyCaptchaIfProvided(token: string | undefined | null): Promise<boolean> {
-    const normalized = String(token ?? '').trim();
-    if (!normalized) {
-      return true;
-    }
-    return this.verifyCaptcha(normalized);
-  }
-
-  async verifyCaptcha(token: string): Promise<boolean> {
-    if (this.isDevelopment && !this.secretKey) {
-      console.warn(
-        '⚠️  reCAPTCHA bypassed in development mode. Set RECAPTCHA_SECRET_KEY for production.',
-      );
-      if (token === 'test-token' || token === 'bypass') {
-        return true;
-      }
-    }
-
-    if (!this.secretKey) {
-      throw new HttpException(
-        'reCAPTCHA secret key not configured',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-
-    if (this.isDevelopment && (token === 'test-token' || token === 'bypass')) {
-      console.warn(
-        '⚠️  reCAPTCHA bypassed with test token in development mode',
-      );
-      return true;
-    }
-
-    try {
-      const response = await axios.post(this.verifyUrl, null, {
-        params: {
-          secret: this.secretKey,
-          response: token,
-        },
-      });
-
-      return response.data.success === true;
-    } catch (error) {
-      console.error('reCAPTCHA verification error:', error);
-      return false;
-    }
-  }
-}
+/**
+ * @deprecated Prefer {@link RecaptchaService} from `./recaptcha.service`.
+ * Kept as a compatibility alias for existing AuthModule imports.
+ */
+export {
+  RecaptchaService as CaptchaService,
+  RecaptchaService,
+  RecaptchaUnreachableError,
+  pickRecaptchaToken,
+} from './recaptcha.service';

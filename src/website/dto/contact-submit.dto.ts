@@ -55,4 +55,20 @@ export class ContactSubmitDto {
   @IsOptional()
   @IsString()
   message?: string;
+
+  @ApiProperty({
+    description: 'Google reCAPTCHA v2 response token from the website widget.',
+    example: '03AFcWeA...',
+  })
+  @IsOptional()
+  @IsString()
+  recaptchaToken?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Legacy alias of `recaptchaToken`.',
+  })
+  @IsOptional()
+  @IsString()
+  captchaToken?: string;
 }

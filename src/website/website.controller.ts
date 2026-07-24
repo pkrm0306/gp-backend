@@ -386,7 +386,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Newsletter subscribe',
     description:
-      'Public website newsletter subscribe form. Accepts email + preferences (Green Products / Events) and returns a row-like payload for the subscribers list table.',
+      'Public website newsletter subscribe form. Accepts email + preferences (Green Products / Events) and `recaptchaToken` (required). reCAPTCHA is verified server-side before subscribe.',
   })
   @ApiResponse({ status: 201, description: 'Subscribed/updated successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })
@@ -421,7 +421,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Website contact form submit',
     description:
-      'Accepts contact form fields: name, email, phoneNumber, subject, message.',
+      'Accepts contact form fields: name, email, phoneNumber, subject, message, and `recaptchaToken` (required). reCAPTCHA is verified server-side before the message is saved.',
   })
   @ApiResponse({ status: 201, description: 'Message submitted successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })
@@ -469,7 +469,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Manufacturer inquiry (send email to customer)',
     description:
-      'Accepts name, email, countryCode (+ dial code from selector), phoneNumber (local digits), optional manufacturerId, and optional message/subject. **reCAPTCHA is not required** (no `x-recaptcha-token` header needed). Matches the public manufacturer contact form. Sends a confirmation email to the visitor.',
+      'Accepts name, email, countryCode (+ dial code from selector), phoneNumber (local digits), optional manufacturerId, optional message/subject, and `recaptchaToken` (required). reCAPTCHA is verified server-side before the inquiry is processed. Sends a confirmation email to the visitor.',
   })
   @ApiResponse({ status: 200, description: 'Email sent successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })

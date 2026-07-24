@@ -13,7 +13,7 @@ import { Transform } from 'class-transformer';
 
 /**
  * Manufacturer inquiry POST body — visitor fields from the public form.
- * reCAPTCHA is **not required** for this endpoint (optional widget on the UI only).
+ * `recaptchaToken` is required and verified server-side before processing.
  * Manufacturer can be provided via body/query `manufacturerId`.
  */
 export class ManufacturerInquiryDto {

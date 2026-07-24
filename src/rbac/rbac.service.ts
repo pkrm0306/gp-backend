@@ -107,19 +107,38 @@ export class RbacService {
     return { manufacturerId: new Types.ObjectId(id) };
   }
 
+  /**
+   * Staff portal login eligibility: at least one active mapping to an active Role
+   * that grants at least one non-profile permission.
+   * Profile-only / empty permission roles do not count (Profile is universal after auth).
+   */
   async hasAnyActiveStaffRoleMapping(
     manufacturerId: string | undefined | null,
     vendorUserId: string,
   ): Promise<boolean> {
     const vendorUserObjectId = this.toObjectId(vendorUserId, 'vendorUserId');
-    const count = await this.mappingModel
-      .countDocuments({
+    const rows = await this.mappingModel
+      .find({
         ...this.rbacScope(manufacturerId),
         vendorUserId: vendorUserObjectId,
         status: 1,
       })
+      .populate('roleId', 'status permissions')
+      .lean()
       .exec();
-    return count > 0;
+
+    return rows.some((row) => {
+      const role = row.roleId as
+        | { status?: number; permissions?: string[] | null }
+        | null
+        | undefined;
+      if (!role || typeof role !== 'object') return false;
+      if (Number(role.status) !== 1) return false;
+      const nonProfilePerms = this.normalizePermissions(
+        Array.isArray(role.permissions) ? role.permissions : [],
+      );
+      return nonProfilePerms.length > 0;
+    });
   }
 
   private toObjectId(id: string, field: string): Types.ObjectId {

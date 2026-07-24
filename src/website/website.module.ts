@@ -39,6 +39,7 @@ import {
 } from '../common/schemas/notification.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { WebsiteAnalyticsModule } from './website-analytics.module';
+import { RecaptchaService } from '../common/services/recaptcha.service';
 
 @Module({
   imports: [
@@ -62,6 +63,6 @@ import { WebsiteAnalyticsModule } from './website-analytics.module';
     WebsiteAnalyticsModule,
   ],
   controllers: [WebsiteController],
-  providers: [WebsiteService],
+  providers: [WebsiteService, RecaptchaService],
 })
 export class WebsiteModule {}

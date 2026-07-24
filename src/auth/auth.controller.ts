@@ -211,13 +211,15 @@ export class AuthController {
   @Post('verify-recaptcha')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Verify reCAPTCHA token',
+    summary: 'Verify reCAPTCHA token (legacy helper)',
     description:
-      'Verifies a frontend reCAPTCHA token using RECAPTCHA_SECRET_KEY and returns whether it is valid.',
+      'Legacy helper only. Prefer sending `recaptchaToken` on the protected form endpoint so verification runs inline before business logic. Tokens are single-use — do not call this and then reuse the same token on another API.',
   })
   @ApiBody({ type: VerifyRecaptchaDto })
   async verifyRecaptcha(@Body() dto: VerifyRecaptchaDto) {
-    const valid = await this.authService.verifyRecaptcha(dto.captchaToken);
+    const valid = await this.authService.verifyRecaptcha(
+      dto.captchaToken || (dto as any).recaptchaToken,
+    );
     return {
       success: true,
       message: valid ? 'reCAPTCHA verified' : 'Invalid reCAPTCHA token',

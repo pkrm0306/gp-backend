@@ -30,7 +30,7 @@ import { Types } from 'mongoose';
 @ApiTags('Admin Audit Log')
 @Controller('admin/audit-log')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin', 'staff')
+@Roles('admin')
 @ApiBearerAuth()
 export class AuditLogAdminController {
   private readonly logger = new Logger(AuditLogAdminController.name);

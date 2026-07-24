@@ -44,6 +44,10 @@ import { EmailService } from '../common/services/email.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import { AdminSystemNotificationService } from '../notifications/helpers/admin-system-notification.service';
 import { WebsiteAnalyticsService } from './website-analytics.service';
+import {
+  pickRecaptchaToken,
+  RecaptchaService,
+} from '../common/services/recaptcha.service';
 import { ShareProductByEmailDto } from './dto/share-product-by-email.dto';
 import {
   buildProductShareEmailHtml,
@@ -153,6 +157,7 @@ export class WebsiteService {
     private readonly configService: ConfigService,
     private readonly redisService: RedisService,
     private readonly websiteAnalytics: WebsiteAnalyticsService,
+    private readonly recaptchaService: RecaptchaService,
   ) {}
 
   private getWebsitePublicListCacheTtlSeconds(): number {
@@ -197,7 +202,7 @@ export class WebsiteService {
   private normalizeWebsiteImageUrl(
     raw: unknown,
     origin: string,
-    kind: 'product' | 'category' = 'product',
+    kind: 'product' | 'category' | 'manufacturer' = 'product',
   ): string | null {
     const v = this.pickImagePath(raw);
     if (!v) {
@@ -215,7 +220,12 @@ export class WebsiteService {
     if (v.startsWith('/')) {
       return `${origin}${v}`;
     }
-    const folder = kind === 'category' ? 'categories' : 'products';
+    const folder =
+      kind === 'category'
+        ? 'categories'
+        : kind === 'manufacturer'
+          ? 'manufacturers'
+          : 'products';
     const encoded = v
       .split('/')
       .filter(Boolean)
@@ -234,6 +244,13 @@ export class WebsiteService {
     const categoryOnly = this.pickImagePath(
       row.categoryImageUrl ?? row.categoryImage ?? row.category_image,
     );
+    const manufacturerOnly = this.pickImagePath(
+      row.manufacturerImageUrl ??
+        row.manufacturerImage ??
+        row.manufacturer_image ??
+        row.companyLogo ??
+        row.company_logo,
+    );
     const normalizedProductImage = productOnly
       ? this.normalizeWebsiteImageUrl(productOnly, origin, 'product')
       : null;
@@ -242,6 +259,13 @@ export class WebsiteService {
       origin,
       'category',
     );
+    const normalizedManufacturerImage = manufacturerOnly
+      ? this.normalizeWebsiteImageUrl(
+          manufacturerOnly,
+          origin,
+          'manufacturer',
+        )
+      : null;
     const cardImage = normalizedProductImage ?? normalizedCategoryImage;
 
     return {
@@ -250,6 +274,9 @@ export class WebsiteService {
       productImageUrl: normalizedProductImage,
       categoryImage: categoryOnly,
       categoryImageUrl: normalizedCategoryImage,
+      manufacturerImage: normalizedManufacturerImage,
+      manufacturerImageUrl: normalizedManufacturerImage,
+      manufacturer_image: normalizedManufacturerImage,
     };
   }
 
@@ -282,7 +309,7 @@ export class WebsiteService {
       'public',
       'manufacturers',
       'with-certified-products',
-      'v4',
+      'v5',
       this.shortHash(this.stableJsonStringify(normalized)),
     );
   }
@@ -803,7 +830,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'flat',
-      'v11',
+      'v12',
       this.shortHash(this.stableJsonStringify({ ...(dto as object), origin })),
     );
     try {
@@ -1156,6 +1183,11 @@ export class WebsiteService {
   }
 
   async subscribeNewsletter(dto: NewsletterSubscribeDto) {
+    // Google reCAPTCHA v2 — verify before any newsletter business logic.
+    await this.recaptchaService.assertRecaptchaToken(
+      pickRecaptchaToken(dto as unknown as Record<string, unknown>),
+    );
+
     const email = dto.email.trim().toLowerCase();
     if (!email) {
       throw new BadRequestException('Email is required');
@@ -1328,6 +1360,11 @@ export class WebsiteService {
    *   await doc.save();
    */
   async submitContact(dto: ContactSubmitDto) {
+    // Google reCAPTCHA v2 — verify before any contact business logic.
+    await this.recaptchaService.assertRecaptchaToken(
+      pickRecaptchaToken(dto as unknown as Record<string, unknown>),
+    );
+
     const name = String(dto.name ?? '').trim();
     const email = String(dto.email ?? '').trim().toLowerCase();
     const phoneNumber = String(dto.phoneNumber ?? dto.phone ?? '').trim();
@@ -1529,6 +1566,11 @@ export class WebsiteService {
     dto: ManufacturerInquiryDto,
     manufacturerIdFromQuery?: string,
   ) {
+    // Google reCAPTCHA v2 — verify before any inquiry business logic.
+    await this.recaptchaService.assertRecaptchaToken(
+      pickRecaptchaToken(dto as unknown as Record<string, unknown>),
+    );
+
     const manufacturerId = String(
       dto.manufacturerId ?? manufacturerIdFromQuery ?? '',
     ).trim();

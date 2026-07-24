@@ -94,7 +94,7 @@ var roles_decorator_1 = require("../common/decorators/roles.decorator");
 var audit_log_response_dto_1 = require("./dto/audit-log-response.dto");
 var mongoose_1 = require("mongoose");
 var AuditLogAdminController = function () {
-    var _classDecorators = [(0, swagger_1.ApiTags)('Admin Audit Log'), (0, common_1.Controller)('admin/audit-log'), (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard), (0, roles_decorator_1.Roles)('admin', 'staff'), (0, swagger_1.ApiBearerAuth)()];
+    var _classDecorators = [(0, swagger_1.ApiTags)('Admin Audit Log'), (0, common_1.Controller)('admin/audit-log'), (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard), (0, roles_decorator_1.Roles)('admin'), (0, swagger_1.ApiBearerAuth)()];
     var _classDescriptor;
     var _classExtraInitializers = [];
     var _classThis;

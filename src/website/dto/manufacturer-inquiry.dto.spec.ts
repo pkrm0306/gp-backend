@@ -26,7 +26,7 @@ describe('ManufacturerInquiryDto', () => {
     expect(errors.some((e) => e.property === 'countryCode')).toBe(true);
   });
 
-  it('accepts optional captcha fields in body without validating them', async () => {
+  it('accepts captcha fields in body without validating them at DTO layer', async () => {
     const dto = plainToInstance(ManufacturerInquiryDto, {
       manufacturerId: '680c9ccbe5fce6d879ec4aa1',
       name: 'Meghana',

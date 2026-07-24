@@ -151,5 +151,66 @@ describe('RbacService', () => {
       'Staff User',
     );
   });
+
+  describe('hasAnyActiveStaffRoleMapping (portal login eligibility)', () => {
+    const uid = '507f1f77bcf86cd799439099';
+
+    function mockMappings(rows: unknown[]) {
+      mappingModel.find.mockReturnValue({
+        populate: () => ({
+          lean: () => ({
+            exec: jest.fn().mockResolvedValue(rows),
+          }),
+        }),
+      });
+    }
+
+    it('rejects when there are no active mappings', async () => {
+      mockMappings([]);
+      await expect(
+        service.hasAnyActiveStaffRoleMapping(undefined, uid),
+      ).resolves.toBe(false);
+    });
+
+    it('rejects when mapped role has empty permissions', async () => {
+      mockMappings([{ roleId: { status: 1, permissions: [] } }]);
+      await expect(
+        service.hasAnyActiveStaffRoleMapping(undefined, uid),
+      ).resolves.toBe(false);
+    });
+
+    it('rejects when mapped role has only profile permissions', async () => {
+      mockMappings([
+        {
+          roleId: {
+            status: 1,
+            permissions: ['profile:view', 'profile:update', 'profile:notifications'],
+          },
+        },
+      ]);
+      await expect(
+        service.hasAnyActiveStaffRoleMapping(undefined, uid),
+      ).resolves.toBe(false);
+    });
+
+    it('rejects inactive roles even if they have permissions', async () => {
+      mockMappings([
+        { roleId: { status: 0, permissions: ['banners:view'] } },
+      ]);
+      await expect(
+        service.hasAnyActiveStaffRoleMapping(undefined, uid),
+      ).resolves.toBe(false);
+    });
+
+    it('allows when at least one active role has a non-profile permission', async () => {
+      mockMappings([
+        { roleId: { status: 1, permissions: [] } },
+        { roleId: { status: 1, permissions: ['profile:view', 'banners:view'] } },
+      ]);
+      await expect(
+        service.hasAnyActiveStaffRoleMapping(undefined, uid),
+      ).resolves.toBe(true);
+    });
+  });
 });
 

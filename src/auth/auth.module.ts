@@ -8,7 +8,7 @@ import { AuthSessionInvalidationService } from './auth-session-invalidation.serv
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { ManufacturersModule } from '../manufacturers/manufacturers.module';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
-import { CaptchaService } from '../common/services/captcha.service';
+import { RecaptchaService } from '../common/services/recaptcha.service';
 import { RbacModule } from '../rbac/rbac.module';
 import { ZohoModule } from '../zoho/zoho.module';
 import { WebsiteAnalyticsModule } from '../website/website-analytics.module';
@@ -37,8 +37,13 @@ import { WebsiteAnalyticsModule } from '../website/website-analytics.module';
     AuthService,
     AuthSessionInvalidationService,
     JwtStrategy,
-    CaptchaService,
+    RecaptchaService,
   ],
-  exports: [AuthService, AuthSessionInvalidationService, JwtStrategy],
+  exports: [
+    AuthService,
+    AuthSessionInvalidationService,
+    JwtStrategy,
+    RecaptchaService,
+  ],
 })
 export class AuthModule {}

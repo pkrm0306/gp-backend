@@ -799,6 +799,26 @@ export class AdminProductsController {
     );
   }
 
+  /**
+   * Browser/Swagger convenience alias. Prefer POST /list with a JSON body for
+   * full filters; GET accepts the same DTO fields as query parameters.
+   */
+  @Get('list')
+  @AnyPermissions(...PRODUCTS_VIEW_ANY)
+  @ApiOperation({
+    summary: 'Admin product list (GET alias of POST /list)',
+    description:
+      'Same response as `POST /api/admin/products/list`. Prefer POST with a JSON body for complex filters; GET accepts query params mapped to AdminListProductsDto.',
+  })
+  @ApiResponse({ status: 200, description: 'Products listed successfully' })
+  @HttpCode(HttpStatus.OK)
+  async listGet(
+    @Query() dto: AdminListProductsDto,
+    @CurrentUser() user: AdminJwtUser,
+  ) {
+    return this.list(dto, user);
+  }
+
   @Post('export')
   @AnyPermissions(...PRODUCTS_VIEW_ANY)
   @HttpCode(HttpStatus.OK)

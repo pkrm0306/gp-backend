@@ -1,4 +1,12 @@
-/** Read optional reCAPTCHA token from header or body (not required for manufacturer inquiry). */
+/**
+ * Manufacturer inquiry does not use a separate verify endpoint.
+ * Token is sent as `recaptchaToken` on the inquiry payload and verified inline.
+ */
+export function isManufacturerInquiryRecaptchaRequired(): boolean {
+  return true;
+}
+
+/** Read reCAPTCHA token from header or body (preferred field: recaptchaToken). */
 export function extractOptionalRecaptchaToken(
   headers: Record<string, unknown> | undefined,
   body?: Record<string, unknown> | undefined,
@@ -15,8 +23,8 @@ export function extractOptionalRecaptchaToken(
 
   const b = body ?? {};
   for (const key of [
-    'captchaToken',
     'recaptchaToken',
+    'captchaToken',
     'gRecaptchaResponse',
     'g-recaptcha-response',
     'recaptcha_response',
@@ -28,12 +36,4 @@ export function extractOptionalRecaptchaToken(
     }
   }
   return '';
-}
-
-/**
- * Manufacturer inquiry does not require reCAPTCHA.
- * When a token is sent, it may be verified elsewhere (e.g. POST /auth/verify-recaptcha) but this endpoint never blocks on it.
- */
-export function isManufacturerInquiryRecaptchaRequired(): boolean {
-  return false;
 }

@@ -87,9 +87,19 @@ export class RegisterVendorDto {
 
   @ApiProperty({
     description: 'Google reCAPTCHA v2 response token from the signup checkbox.',
+    required: false,
   })
+  @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  @IsNotEmpty({ message: 'Please complete the reCAPTCHA verification.' })
-  captchaToken: string;
+  captchaToken?: string;
+
+  @ApiProperty({
+    description:
+      'Google reCAPTCHA v2 response token (preferred). Alias of captchaToken.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  recaptchaToken?: string;
 }

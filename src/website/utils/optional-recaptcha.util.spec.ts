@@ -13,13 +13,16 @@ describe('optional-recaptcha.util', () => {
     ).toBe('header-token');
   });
 
-  it('extractOptionalRecaptchaToken reads body aliases', () => {
+  it('extractOptionalRecaptchaToken prefers recaptchaToken in body', () => {
     expect(
-      extractOptionalRecaptchaToken({}, { captchaToken: 'body-token' }),
-    ).toBe('body-token');
+      extractOptionalRecaptchaToken(
+        {},
+        { recaptchaToken: 'preferred', captchaToken: 'legacy' },
+      ),
+    ).toBe('preferred');
   });
 
-  it('manufacturer inquiry never requires recaptcha', () => {
-    expect(isManufacturerInquiryRecaptchaRequired()).toBe(false);
+  it('manufacturer inquiry requires recaptcha on the payload', () => {
+    expect(isManufacturerInquiryRecaptchaRequired()).toBe(true);
   });
 });

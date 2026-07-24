@@ -519,6 +519,22 @@ export class ManufacturersService {
     return resolvePublicUploadUrl(manufacturerImage);
   }
 
+  /** Prefer manufacturerImage; fall back to vendor companyLogo for list/detail APIs. */
+  private pickManufacturerListImage(m: {
+    manufacturerImage?: string | null;
+    companyLogo?: string | null;
+  }): string | null {
+    const primary = String(m.manufacturerImage ?? '').trim();
+    if (primary) {
+      return this.resolveManufacturerImageUrl(primary);
+    }
+    const logo = String(m.companyLogo ?? '').trim();
+    if (logo) {
+      return this.resolveManufacturerImageUrl(logo);
+    }
+    return null;
+  }
+
   private formatManufacturerApiRow(
     m: {
       _id: Types.ObjectId | string;
@@ -527,6 +543,7 @@ export class ManufacturersService {
       gpInternalId?: string | null;
       manufacturerInitial?: string | null;
       manufacturerImage?: string | null;
+      companyLogo?: string | null;
       manufacturerStatus?: number | null;
       vendor_email?: string | null;
       vendor_phone?: string | null;
@@ -543,7 +560,6 @@ export class ManufacturersService {
       productCount?: number;
     } = {},
   ) {
-    const idStr = String(m._id);
     const vendorDisplay = this.resolveVendorDisplayName(
       m,
       options.primaryVendorUserName,
@@ -553,9 +569,8 @@ export class ManufacturersService {
     const mSt = Number(m.manufacturerStatus ?? 0);
     const vSt = Number(m.vendor_status ?? 0);
     const companyName = String(m.manufacturerName ?? '').trim();
-    const resolvedManufacturerImage = this.resolveManufacturerImageUrl(
-      m.manufacturerImage,
-    );
+    const resolvedManufacturerImage = this.pickManufacturerListImage(m);
+    const resolvedCompanyLogo = this.resolveManufacturerImageUrl(m.companyLogo);
     const accountDeletedAt = m.accountDeletedAt
       ? new Date(m.accountDeletedAt)
       : null;
@@ -571,6 +586,9 @@ export class ManufacturersService {
       initial: manufacturerInitial,
       manufacturerImage: resolvedManufacturerImage,
       manufacturerImageUrl: resolvedManufacturerImage,
+      manufacturer_image: resolvedManufacturerImage,
+      companyLogo: resolvedCompanyLogo,
+      companyLogoUrl: resolvedCompanyLogo,
       manufacturerStatus: mSt,
       manufacturerStatusLabel: manufacturerStatusLabel(mSt),
       vendor_name: vendorDisplay,
@@ -870,7 +888,11 @@ export class ManufacturersService {
       manufacturerInitial: showGpIdentifiers
         ? (manufacturer.manufacturerInitial ?? null)
         : null,
-      manufacturerImage: manufacturer.manufacturerImage ?? null,
+      manufacturerImage:
+        this.pickManufacturerListImage({
+          manufacturerImage: manufacturer.manufacturerImage,
+          companyLogo: manufacturer.companyLogo,
+        }) ?? null,
       manufacturerStatus: manufacturer.manufacturerStatus ?? 0,
       vendor_name: vendorDisplay,
       vendorName: vendorDisplay,
@@ -1547,6 +1569,12 @@ export class ManufacturersService {
         const logo = String(updateDto.companyLogo).trim();
         if (logo) {
           updateData.companyLogo = logo;
+          // Keep list/image fields in sync when vendor uploads a logo and no profile image exists yet.
+          if (!String(resolvedManufacturer.manufacturerImage ?? '').trim()) {
+            updateData.manufacturerImage = logo;
+          }
+        } else {
+          updateData.companyLogo = '';
         }
       }
       if (panNumberToApply) {

@@ -47,10 +47,26 @@ export class NewsletterSubscribeDto {
   @ApiProperty({
     required: false,
     description:
-      'Captcha text user typed (backend does not validate image captcha)',
+      'Legacy image/text captcha field (ignored). Prefer `recaptchaToken`.',
     example: 'n7cUb',
   })
   @IsOptional()
   @IsString()
   captcha?: string;
+
+  @ApiProperty({
+    description: 'Google reCAPTCHA v2 response token from the website widget.',
+    example: '03AFcWeA...',
+  })
+  @IsOptional()
+  @IsString()
+  recaptchaToken?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Legacy alias of `recaptchaToken`.',
+  })
+  @IsOptional()
+  @IsString()
+  captchaToken?: string;
 }

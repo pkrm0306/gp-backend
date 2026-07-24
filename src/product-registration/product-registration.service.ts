@@ -4668,6 +4668,12 @@ export class ProductRegistrationService {
           },
           manufacturerName: '$manufacturer.manufacturerName',
           manufacturerId: { $toString: '$manufacturerId' },
+          manufacturerImage: {
+            $ifNull: [
+              '$manufacturer.manufacturerImage',
+              '$manufacturer.companyLogo',
+            ],
+          },
           manufacturerFacebook: {
             $ifNull: ['$manufacturer.vendor_facebook', ''],
           },
@@ -4821,11 +4827,21 @@ export class ProductRegistrationService {
     const categoryImageRaw = String(
       row.categoryImage ?? row.category_image ?? '',
     ).trim();
+    const manufacturerImageRaw = String(
+      row.manufacturerImage ??
+        row.manufacturer_image ??
+        row.companyLogo ??
+        row.company_logo ??
+        '',
+    ).trim();
     const productImage = productImageRaw
       ? resolveStoredUploadUrl(productImageRaw) || productImageRaw
       : null;
     const categoryImage = categoryImageRaw
       ? resolveStoredUploadUrl(categoryImageRaw) || categoryImageRaw
+      : null;
+    const manufacturerImage = manufacturerImageRaw
+      ? resolveStoredUploadUrl(manufacturerImageRaw) || manufacturerImageRaw
       : null;
 
     const productDetails = String(

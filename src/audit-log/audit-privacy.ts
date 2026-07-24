@@ -9,5 +9,6 @@ export const AUDIT_SENSITIVE_BODY_KEYS = new Set([
   'refreshToken',
   'accessToken',
   'captchaToken',
+  'recaptchaToken',
   'otp',
 ]);
