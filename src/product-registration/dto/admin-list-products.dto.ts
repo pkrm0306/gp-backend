@@ -911,4 +911,52 @@ export class AdminListProductsDto {
   @Transform(({ value }) => normalizeOptionalMongoId(value))
   @IsMongoId()
   productId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Public website SEO filter: unique product slug (resolved to productId; preferred over productId when both set).',
+    example: 'green-cement-pro',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+    message: 'productSlug must be lowercase kebab-case',
+  })
+  productSlug?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Public website SEO filter: unique category slug (resolved to categoryIds; preferred over categoryId(s) when set).',
+    example: 'cement',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+    message: 'categorySlug must be lowercase kebab-case',
+  })
+  categorySlug?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Public website SEO filter: multiple category slugs (resolved to categoryIds).',
+    type: [String],
+    example: ['cement', 'paints'],
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeStringArray(value))
+  @IsArray()
+  @IsString({ each: true })
+  categorySlugs?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Public website SEO filter: unique manufacturer slug (resolved to manufacturerId; preferred over manufacturerId(s) when set).',
+    example: 'asian-paints',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+    message: 'manufacturerSlug must be lowercase kebab-case',
+  })
+  manufacturerSlug?: string;
 }

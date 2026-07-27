@@ -4,6 +4,7 @@ import {
   NotFoundException,
   InternalServerErrorException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
@@ -71,6 +72,10 @@ import { matchExpiredProducts } from './constants/expired-product.filter';
 import { matchWebsitePublicActiveCertifiedProducts } from './constants/website-public-product.filter';
 import { matchPublicWebsiteManufacturerVisibility } from '../manufacturers/constants/public-website-manufacturer-visibility.filter';
 import { invalidateProductListingsCache as invalidateAllProductListingsCache } from './helpers/invalidate-product-listings-cache.util';
+import {
+  allocateUniqueSlug,
+  isValidPublicSlug,
+} from '../common/utils/unique-slug.util';
 import { AdminRenewValidityDto } from './dto/admin-renew-validity.dto';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { CountriesService } from '../countries/countries.service';
@@ -211,7 +216,7 @@ type AdminExportJob = {
 };
 
 @Injectable()
-export class ProductRegistrationService {
+export class ProductRegistrationService implements OnModuleInit {
   private readonly logger = new Logger(ProductRegistrationService.name);
   private readonly exportJobs = new Map<string, AdminExportJob>();
   private readonly exportDir = join(process.cwd(), 'uploads', 'exports');
@@ -249,6 +254,115 @@ export class ProductRegistrationService {
     private readonly emailService: EmailService,
     private readonly spocAllocationRepository: SpocAllocationRepository,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.backfillProductSlugs();
+    } catch (error) {
+      this.logger.warn(
+        `Product slug backfill skipped: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+  }
+
+  async backfillProductSlugs(): Promise<{ scanned: number; updated: number }> {
+    const cursor = this.productModel
+      .find({
+        $or: [{ slug: { $exists: false } }, { slug: null }, { slug: '' }],
+      })
+      .select('_id productName')
+      .lean()
+      .cursor();
+
+    let scanned = 0;
+    let updated = 0;
+    for await (const doc of cursor) {
+      scanned += 1;
+      const slug = await this.allocateProductSlug(
+        String((doc as { productName?: string }).productName ?? ''),
+        doc._id as Types.ObjectId,
+      );
+      await this.productModel
+        .updateOne({ _id: doc._id }, { $set: { slug } })
+        .exec();
+      updated += 1;
+    }
+    if (updated > 0) {
+      this.logger.log(
+        `[products] backfilled slug on ${updated}/${scanned} product row(s)`,
+      );
+    }
+    return { scanned, updated };
+  }
+
+  private async allocateProductSlug(
+    name: string,
+    excludeId?: Types.ObjectId,
+  ): Promise<string> {
+    return allocateUniqueSlug(
+      name,
+      async (candidate) => {
+        const filter: Record<string, unknown> = { slug: candidate };
+        if (excludeId) {
+          filter._id = { $ne: excludeId };
+        }
+        const existing = await this.productModel
+          .findOne(filter)
+          .select('_id')
+          .lean()
+          .exec();
+        return Boolean(existing);
+      },
+      { fallback: 'product' },
+    );
+  }
+
+  async resolveProductIdBySlug(productSlug: string): Promise<string | null> {
+    const slug = String(productSlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (!isValidPublicSlug(slug)) {
+      return null;
+    }
+    const doc = await this.productModel
+      .findOne({ slug })
+      .select('_id')
+      .lean()
+      .exec();
+    return doc?._id ? String(doc._id) : null;
+  }
+
+  async resolveCategoryIdBySlug(categorySlug: string): Promise<string | null> {
+    const slug = String(categorySlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (!isValidPublicSlug(slug)) {
+      return null;
+    }
+    const doc = await this.categoryModel
+      .findOne({ slug })
+      .select('_id')
+      .lean()
+      .exec();
+    return doc?._id ? String(doc._id) : null;
+  }
+
+  async resolveManufacturerIdBySlug(
+    manufacturerSlug: string,
+  ): Promise<string | null> {
+    const slug = String(manufacturerSlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (!isValidPublicSlug(slug)) {
+      return null;
+    }
+    const doc = await this.manufacturerModel
+      .findOne({ slug })
+      .select('_id')
+      .lean()
+      .exec();
+    return doc?._id ? String(doc._id) : null;
+  }
 
   private async syncUrnProductsToZohoDeal(
     urnNo: string,
@@ -2646,6 +2760,9 @@ export class ProductRegistrationService {
         );
 
         // Create product data with URN and EOI
+        const productSlug = await this.allocateProductSlug(
+          registerProductDto.productName,
+        );
         const productData = {
           productId,
           categoryId: categoryObjectId,
@@ -2654,6 +2771,8 @@ export class ProductRegistrationService {
           eoiNo,
           urnNo,
           productName: registerProductDto.productName,
+          slug: productSlug,
+          slugLocked: false,
           productImage: registerProductDto.productImage,
           plantCount: registerProductDto.plants.length,
           productDetails: registerProductDto.productDetails,
@@ -3289,6 +3408,19 @@ export class ProductRegistrationService {
         productName: updateProductDto.productName,
         productDetails: updateProductDto.productDetails,
       };
+
+      if (
+        nextProductName &&
+        nextProductName.localeCompare(storedProductName, undefined, {
+          sensitivity: 'accent',
+        }) !== 0 &&
+        !(existingProduct as { slugLocked?: boolean }).slugLocked
+      ) {
+        updateData.slug = await this.allocateProductSlug(
+          updateProductDto.productName,
+          productObjectId,
+        );
+      }
 
       if (updateProductDto.productImage !== undefined) {
         updateData.productImage = updateProductDto.productImage;
@@ -4087,7 +4219,7 @@ export class ProductRegistrationService {
         }),
       )
       .select(
-        '_id urnNo eoiNo productName productImage validtillDate productPassport productDetails productStatus manufacturerId meta_title meta_description meta_image meta_keywords',
+        '_id urnNo eoiNo productName slug productImage validtillDate productPassport productDetails productStatus categoryId manufacturerId meta_title meta_description meta_image meta_keywords',
       )
       .lean()
       .exec();
@@ -4108,9 +4240,103 @@ export class ProductRegistrationService {
       ? resolveStoredUploadUrl(productImageRaw) || productImageRaw
       : null;
 
-    const manufacturer = await this.getPublicManufacturerDetailsForProduct(
+    const [manufacturer, category] = await Promise.all([
+      this.getPublicManufacturerDetailsForProduct(row.manufacturerId),
+      this.categoryModel
+        .findById(row.categoryId)
+        .select('_id category_id category_name slug category_image')
+        .lean()
+        .exec(),
+    ]);
+    const seo = resolveSeoMeta({
+      meta_title: (row as { meta_title?: string }).meta_title,
+      meta_description: (row as { meta_description?: string }).meta_description,
+      meta_image: (row as { meta_image?: string }).meta_image,
+      meta_keywords: (row as { meta_keywords?: string[] }).meta_keywords,
+      primaryImage: productImage ?? productImageRaw,
+    });
+
+    const categorySlug = String((category as { slug?: string } | null)?.slug ?? '').trim() || null;
+    const manufacturerSlug =
+      String((manufacturer as { slug?: string } | null)?.slug ?? '').trim() || null;
+
+    return {
+      _id: this.toMongoIdString(row._id),
+      id: this.toMongoIdString(row._id),
+      urnNo: String(row.urnNo ?? ''),
+      eoiNo: String(row.eoiNo ?? ''),
+      productName: String(row.productName ?? ''),
+      slug: String((row as { slug?: string }).slug ?? '').trim() || null,
+      productImage,
+      productImageUrl: productImage,
+      validtillDate: row.validtillDate ?? null,
+      passport: String(row.productPassport ?? ''),
+      productDetails: String(row.productDetails ?? '').trim() || null,
+      productStatus: Number(row.productStatus ?? 0),
+      categoryId: row.categoryId ? this.toMongoIdString(row.categoryId) : null,
+      categoryName: String((category as { category_name?: string } | null)?.category_name ?? '').trim() || null,
+      categorySlug,
+      manufacturerId: row.manufacturerId
+        ? this.toMongoIdString(row.manufacturerId)
+        : null,
+      manufacturerName: manufacturer?.manufacturerName ?? '',
+      manufacturerSlug,
+      manufacturer,
+      manufacturer_details: manufacturer,
+      ...seo,
+    };
+  }
+
+  /**
+   * Public certified product detail by unique product slug
+   * (includes category/manufacturer slug triad for nested SEO URLs).
+   */
+  async getPublicCertifiedProductBySlug(productSlug: string) {
+    const slug = String(productSlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (!isValidPublicSlug(slug)) {
+      throw new NotFoundException('Certified product not found');
+    }
+
+    const row = await this.productModel
+      .findOne(
+        matchActiveProducts({
+          slug,
+          productStatus: 2,
+        }),
+      )
+      .select(
+        '_id productId urnNo eoiNo productName slug productImage validtillDate productPassport productDetails productStatus categoryId manufacturerId meta_title meta_description meta_image meta_keywords',
+      )
+      .lean()
+      .exec();
+
+    if (!row) {
+      throw new NotFoundException('Certified product not found');
+    }
+
+    const manufacturerVisible = await this.isManufacturerVisibleOnPublicWebsite(
       row.manufacturerId,
     );
+    if (!manufacturerVisible) {
+      throw new NotFoundException('Certified product not found');
+    }
+
+    const productImageRaw = row.productImage ? String(row.productImage).trim() : '';
+    const productImage = productImageRaw
+      ? resolveStoredUploadUrl(productImageRaw) || productImageRaw
+      : null;
+
+    const [manufacturer, category] = await Promise.all([
+      this.getPublicManufacturerDetailsForProduct(row.manufacturerId),
+      this.categoryModel
+        .findById(row.categoryId)
+        .select('_id category_id category_name slug category_image category_status sector')
+        .lean()
+        .exec(),
+    ]);
+
     const seo = resolveSeoMeta({
       meta_title: (row as { meta_title?: string }).meta_title,
       meta_description: (row as { meta_description?: string }).meta_description,
@@ -4121,20 +4347,69 @@ export class ProductRegistrationService {
 
     return {
       _id: this.toMongoIdString(row._id),
+      id: this.toMongoIdString(row._id),
+      productId: Number((row as { productId?: number }).productId ?? 0) || null,
       urnNo: String(row.urnNo ?? ''),
       eoiNo: String(row.eoiNo ?? ''),
       productName: String(row.productName ?? ''),
+      slug: String((row as { slug?: string }).slug ?? '').trim() || null,
       productImage,
       productImageUrl: productImage,
       validtillDate: row.validtillDate ?? null,
       passport: String(row.productPassport ?? ''),
       productDetails: String(row.productDetails ?? '').trim() || null,
       productStatus: Number(row.productStatus ?? 0),
+      categoryId: row.categoryId ? this.toMongoIdString(row.categoryId) : null,
+      categoryName:
+        String((category as { category_name?: string } | null)?.category_name ?? '').trim() ||
+        null,
+      categorySlug:
+        String((category as { slug?: string } | null)?.slug ?? '').trim() || null,
+      manufacturerId: row.manufacturerId
+        ? this.toMongoIdString(row.manufacturerId)
+        : null,
       manufacturerName: manufacturer?.manufacturerName ?? '',
+      manufacturerSlug:
+        String((manufacturer as { slug?: string } | null)?.slug ?? '').trim() ||
+        null,
       manufacturer,
       manufacturer_details: manufacturer,
       ...seo,
     };
+  }
+
+  async getPublicCertifiedProductPassportBySlug(productSlug: string) {
+    const product = await this.getPublicCertifiedProductBySlug(productSlug);
+    return this.getPublicCertifiedProductPassport(String(product._id));
+  }
+
+  /**
+   * Assert product slug belongs to the given category + manufacturer slug pair.
+   * Returns passport/detail id or throws 404.
+   */
+  async assertPublicProductSlugBelongsToParents(input: {
+    productSlug: string;
+    categorySlug?: string;
+    manufacturerSlug?: string;
+  }): Promise<string> {
+    const product = await this.getPublicCertifiedProductBySlug(input.productSlug);
+    const categorySlug = String(input.categorySlug ?? '').trim().toLowerCase();
+    const manufacturerSlug = String(input.manufacturerSlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (
+      categorySlug &&
+      String(product.categorySlug ?? '').toLowerCase() !== categorySlug
+    ) {
+      throw new NotFoundException('Certified product not found');
+    }
+    if (
+      manufacturerSlug &&
+      String(product.manufacturerSlug ?? '').toLowerCase() !== manufacturerSlug
+    ) {
+      throw new NotFoundException('Certified product not found');
+    }
+    return String(product._id);
   }
 
   private async isManufacturerVisibleOnPublicWebsite(
@@ -4172,6 +4447,7 @@ export class ProductRegistrationService {
       .select(
         [
           'manufacturerName',
+          'slug',
           'manufacturerImage',
           'companyLogo',
           'vendor_website',
@@ -4205,6 +4481,7 @@ export class ProductRegistrationService {
     return {
       _id: this.toMongoIdString(m._id),
       manufacturerName: String(m.manufacturerName ?? '').trim(),
+      slug: String((m as { slug?: string }).slug ?? '').trim() || null,
       manufacturerImage: manufacturerImageRaw
         ? resolveStoredUploadUrl(manufacturerImageRaw) || manufacturerImageRaw
         : null,
@@ -4482,6 +4759,7 @@ export class ProductRegistrationService {
               { eoiNo: rx },
               { urnNo: rx },
               { 'manufacturer.manufacturerName': rx },
+              { 'category.category_name': rx },
             ],
           },
         },
@@ -4493,11 +4771,20 @@ export class ProductRegistrationService {
             id: { $toString: '$_id' },
             productId: 1,
             productName: 1,
+            slug: { $ifNull: ['$slug', null] },
             eoiNo: 1,
             urnNo: 1,
             productImage: {
               $ifNull: ['$productImage', '$product_image'],
             },
+            categoryName: {
+              $ifNull: ['$category.category_name', '$category.categoryName'],
+            },
+            categorySlug: { $ifNull: ['$category.slug', null] },
+            manufacturerName: {
+              $ifNull: ['$manufacturer.manufacturerName', null],
+            },
+            manufacturerSlug: { $ifNull: ['$manufacturer.slug', null] },
             meta_title: 1,
             meta_description: 1,
             meta_image: 1,
@@ -4737,6 +5024,7 @@ export class ProductRegistrationService {
           eoiNo: 1,
           urnNo: 1,
           productName: 1,
+          slug: { $ifNull: ['$slug', null] },
           productDetails: 1,
           productImage: {
             $ifNull: ['$productImage', '$product_image'],
@@ -4753,8 +5041,10 @@ export class ProductRegistrationService {
           categoryName: {
             $ifNull: ['$category.categoryName', '$category.category_name'],
           },
+          categorySlug: { $ifNull: ['$category.slug', null] },
           manufacturerName: '$manufacturer.manufacturerName',
           manufacturerId: { $toString: '$manufacturerId' },
+          manufacturerSlug: { $ifNull: ['$manufacturer.slug', null] },
           manufacturerImage: {
             $ifNull: [
               '$manufacturer.manufacturerImage',
@@ -10011,6 +10301,7 @@ export class ProductRegistrationService {
           $project: {
             _id: '$manufacturer._id',
             manufacturerName: '$manufacturer.manufacturerName',
+            slug: { $ifNull: ['$manufacturer.slug', null] },
             gpInternalId: '$manufacturer.gpInternalId',
             manufacturerInitial: '$manufacturer.manufacturerInitial',
             manufacturerImage: {
@@ -10147,6 +10438,7 @@ export class ProductRegistrationService {
             _id: '$category._id',
             category_id: '$category.category_id',
             category_name: '$category.category_name',
+            slug: { $ifNull: ['$category.slug', null] },
             category_image: '$category.category_image',
             category_status: '$category.category_status',
             sector: '$category.sector',

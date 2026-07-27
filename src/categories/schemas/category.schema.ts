@@ -15,6 +15,17 @@ export class Category {
   @Prop()
   category_name_normalized?: string;
 
+  /**
+   * Unique public URL slug (kebab-case). Required for website SEO paths.
+   * Backfilled on boot; unique index synced when SYNC_INDEXES_ON_BOOT=true.
+   */
+  @Prop({ lowercase: true, trim: true })
+  slug?: string;
+
+  /** When true, name changes do not regenerate `slug`. */
+  @Prop({ default: false })
+  slugLocked?: boolean;
+
   @Prop()
   category_image?: string;
 
@@ -55,5 +66,6 @@ CategorySchema.index(
   { category_name_normalized: 1 },
   { unique: true, sparse: true },
 );
+CategorySchema.index({ slug: 1 }, { unique: true, sparse: true });
 /** Backfill + syncIndexes in CategoriesService.onModuleInit — avoid building unique index before backfill */
 CategorySchema.set('autoIndex', false);

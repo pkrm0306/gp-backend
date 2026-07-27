@@ -44,6 +44,17 @@ export class Product {
   @Prop({ required: true })
   productName: string;
 
+  /**
+   * Unique public URL slug (kebab-case) for ecolabelled product SEO paths.
+   * Backfilled via migrate script / onModuleInit; sparse unique until all rows have values.
+   */
+  @Prop({ lowercase: true, trim: true })
+  slug?: string;
+
+  /** When true, name changes do not regenerate `slug`. */
+  @Prop({ default: false })
+  slugLocked?: boolean;
+
   @Prop()
   productImage?: string;
 
@@ -146,6 +157,8 @@ export class Product {
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product);
+
+ProductSchema.index({ slug: 1 }, { unique: true, sparse: true });
 
 // Unified lifecycle listing indexes
 ProductSchema.index({ productStatus: 1 });

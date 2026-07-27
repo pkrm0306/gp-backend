@@ -77,6 +77,88 @@ export class WebsiteController {
     };
   }
 
+  @Get('public/categories/by-slug/:categorySlug')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public category by unique slug',
+    description:
+      'Resolve an active category for SEO paths `/categories/{categorySlug}`. Returns 404 when missing or inactive / without certified products.',
+  })
+  @ApiResponse({ status: 200, description: 'Category retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Category not found' })
+  async getPublicCategoryBySlug(@Param('categorySlug') categorySlug: string) {
+    const data =
+      await this.categoriesService.findBySlugForWebsitePublic(categorySlug);
+    return {
+      message: 'Category retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('public/manufacturers/by-slug/:manufacturerSlug')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public manufacturer by unique slug',
+    description:
+      'Resolve a website-visible manufacturer for SEO paths `/manufacturers/{manufacturerSlug}`.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Manufacturer retrieved successfully',
+  })
+  @ApiResponse({ status: 404, description: 'Manufacturer not found' })
+  async getPublicManufacturerBySlug(
+    @Param('manufacturerSlug') manufacturerSlug: string,
+  ) {
+    return this.websiteService.getPublicManufacturerBySlug(manufacturerSlug);
+  }
+
+  @Get('public/products/certified/by-slug/:productSlug/passport')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public certified product passport by slug',
+    description:
+      'Same payload as the ID passport route, resolved via unique product slug.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Certified product passport retrieved successfully',
+  })
+  @ApiResponse({ status: 404, description: 'Certified product not found' })
+  async getPublicCertifiedProductPassportBySlug(
+    @Req() req: Request,
+    @Param('productSlug') productSlug: string,
+  ) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.websiteService.getPublicCertifiedProductPassportBySlug(
+      productSlug,
+      origin,
+    );
+  }
+
+  @Get('public/products/certified/by-slug/:productSlug')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Public certified product by unique slug',
+    description:
+      'Product detail for SEO paths. Includes `slug`, `categorySlug`, and `manufacturerSlug` for nested category/manufacturer trees.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Certified product retrieved successfully',
+  })
+  @ApiResponse({ status: 404, description: 'Certified product not found' })
+  async getPublicCertifiedProductBySlug(
+    @Req() req: Request,
+    @Param('productSlug') productSlug: string,
+  ) {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return this.websiteService.getPublicCertifiedProductBySlug(
+      productSlug,
+      origin,
+    );
+  }
+
   @Get('public/stats')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -234,7 +316,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public certified product search (typeahead)',
     description:
-      'Active search suggestions (min 2 characters). Use returned `id` as `productId` in the list API when user selects a row.',
+      'Active search suggestions (min 2 characters). Each hit includes `slug`, `categorySlug`, and `manufacturerSlug` for SEO navigation without Mongo IDs. Searching by category name also returns matching certified products.',
   })
   @ApiResponse({ status: 200, description: 'Search suggestions' })
   async searchPublicCertifiedProducts(
@@ -254,7 +336,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public certified products listing (website grid)',
     description:
-      'Flat product cards for the public website. Requires at least one filter: `search` (min 2 chars), `categoryIds`, `countryId`, `stateIds`, or `productId` from search. Certified only (status 2). Each row includes `productImage`, `productImageUrl` (absolute URL), and category image fallbacks when the product has no image.',
+      'Flat product cards for the public website. Requires at least one filter: `search` (min 2 chars), `categoryIds` / `categorySlug(s)`, `manufacturerId` / `manufacturerSlug`, `countryId`, `stateIds`, `productId` / `productSlug`. Certified only (status 2). Every row includes `slug`, `categorySlug`, and `manufacturerSlug`.',
   })
   @ApiBody({ type: AdminListProductsDto })
   @ApiResponse({
@@ -292,7 +374,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public certified product passport',
     description:
-      'Public API for product detail page. Returns passport content and product image URLs for a certified product only.',
+      'Public API for product detail page. Returns passport content, product image URLs, and `slug` / `categorySlug` / `manufacturerSlug` for a certified product only. Prefer the by-slug passport route for SEO URLs.',
   })
   @ApiResponse({
     status: 200,
@@ -335,7 +417,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public manufacturers by category',
     description:
-      'Accepts category Mongo `_id` or numeric `category_id` and returns distinct manufacturers mapped through products (products.categoryId -> products.manufacturerId).',
+      'Accepts `categorySlug` (preferred) or category Mongo `_id` / numeric `category_id` and returns distinct manufacturers mapped through certified products. Each manufacturer includes `slug`.',
   })
   @ApiBody({ type: PublicCategoryManufacturersDto })
   @ApiResponse({
@@ -353,7 +435,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public categories by manufacturer',
     description:
-      'Accepts manufacturerId and returns distinct categories mapped through products (products.manufacturerId -> products.categoryId).',
+      'Accepts `manufacturerSlug` (preferred) or `manufacturerId` and returns distinct categories mapped through certified products. Each category includes `slug`.',
   })
   @ApiBody({ type: PublicManufacturerCategoriesDto })
   @ApiResponse({

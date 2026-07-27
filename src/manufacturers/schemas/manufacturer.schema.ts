@@ -12,6 +12,17 @@ export class Manufacturer {
   @Prop({ required: true })
   manufacturerName: string;
 
+  /**
+   * Unique public URL slug (kebab-case) for website manufacturer tree.
+   * Backfilled via migrate script / onModuleInit; sparse unique until all rows have values.
+   */
+  @Prop({ lowercase: true, trim: true })
+  slug?: string;
+
+  /** When true, name changes do not regenerate `slug`. */
+  @Prop({ default: false })
+  slugLocked?: boolean;
+
   @Prop({ required: false, unique: true, sparse: true, default: undefined })
   gpInternalId?: string;
 
@@ -146,6 +157,8 @@ export class Manufacturer {
 }
 
 export const ManufacturerSchema = SchemaFactory.createForClass(Manufacturer);
+
+ManufacturerSchema.index({ slug: 1 }, { unique: true, sparse: true });
 
 /** Admin dashboard vendor activity / pending approval aggregations */
 ManufacturerSchema.index({ manufacturerStatus: 1, vendor_status: 1, createdAt: -1 });

@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
   UnauthorizedException,
   forwardRef,
 } from '@nestjs/common';
@@ -60,6 +61,10 @@ import { AuthService } from '../auth/auth.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import {
+  allocateUniqueSlug,
+  isValidPublicSlug,
+} from '../common/utils/unique-slug.util';
 import ExcelJS from 'exceljs';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
@@ -127,7 +132,7 @@ type VendorProfileBrandingMulterFiles = {
 };
 
 @Injectable()
-export class ManufacturersService {
+export class ManufacturersService implements OnModuleInit {
   private readonly logger = new Logger(ManufacturersService.name);
 
   constructor(
@@ -148,6 +153,126 @@ export class ManufacturersService {
     @Inject(forwardRef(() => LifecycleNotificationService))
     private readonly lifecycleNotification: LifecycleNotificationService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.backfillManufacturerSlugs();
+    } catch (error) {
+      this.logger.warn(
+        `Manufacturer slug backfill skipped: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+  }
+
+  async backfillManufacturerSlugs(): Promise<{ scanned: number; updated: number }> {
+    const cursor = this.manufacturerModel
+      .find({
+        $or: [{ slug: { $exists: false } }, { slug: null }, { slug: '' }],
+      })
+      .select('_id manufacturerName')
+      .lean()
+      .cursor();
+
+    let scanned = 0;
+    let updated = 0;
+    for await (const doc of cursor) {
+      scanned += 1;
+      const slug = await this.allocateManufacturerSlug(
+        String((doc as { manufacturerName?: string }).manufacturerName ?? ''),
+        doc._id as Types.ObjectId,
+      );
+      await this.manufacturerModel
+        .updateOne({ _id: doc._id }, { $set: { slug } })
+        .exec();
+      updated += 1;
+    }
+    if (updated > 0) {
+      this.logger.log(
+        `[manufacturers] backfilled slug on ${updated}/${scanned} manufacturer row(s)`,
+      );
+    }
+    return { scanned, updated };
+  }
+
+  private async allocateManufacturerSlug(
+    name: string,
+    excludeId?: Types.ObjectId,
+  ): Promise<string> {
+    return allocateUniqueSlug(
+      name,
+      async (candidate) => {
+        const filter: Record<string, unknown> = { slug: candidate };
+        if (excludeId) {
+          filter._id = { $ne: excludeId };
+        }
+        const existing = await this.manufacturerModel
+          .findOne(filter)
+          .select('_id')
+          .lean()
+          .exec();
+        return Boolean(existing);
+      },
+      { fallback: 'manufacturer' },
+    );
+  }
+
+  /**
+   * Public website: manufacturer by unique slug (must be website-visible
+   * and have at least one certified public product).
+   */
+  async findBySlugForWebsitePublic(manufacturerSlug: string) {
+    const slug = String(manufacturerSlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (!isValidPublicSlug(slug)) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+
+    const m = await this.manufacturerModel
+      .findOne({
+        slug,
+        ...matchPublicWebsiteManufacturerVisibility(''),
+      })
+      .lean()
+      .exec();
+    if (!m) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+
+    const productCount = await this.productModel
+      .countDocuments(
+        matchWebsitePublicCertifiedProducts({
+          manufacturerId: m._id,
+        }),
+      )
+      .exec();
+    if (productCount < 1) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+
+    return this.formatManufacturerApiRow(m as any, {
+      productCount,
+      manufacturer_product_count: productCount,
+      applySeoDefa: true,
+    });
+  }
+
+  async resolveManufacturerIdBySlug(
+    manufacturerSlug: string,
+  ): Promise<string | null> {
+    const slug = String(manufacturerSlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (!isValidPublicSlug(slug)) {
+      return null;
+    }
+    const doc = await this.manufacturerModel
+      .findOne({ slug })
+      .select('_id')
+      .lean()
+      .exec();
+    return doc?._id ? String(doc._id) : null;
+  }
 
   private normalizeVendorEmail(raw: unknown): string {
     return String(raw ?? '').trim().toLowerCase();
@@ -600,6 +725,7 @@ export class ManufacturersService {
       manufacturerName: companyName,
       /** Company / organization name (admin grid "Manufacturer Name"). */
       companyName,
+      slug: String((m as { slug?: string | null }).slug ?? '').trim() || null,
       gpInternalId: m.gpInternalId ?? null,
       manufacturerInitial,
       initial: manufacturerInitial,
@@ -673,7 +799,14 @@ export class ManufacturersService {
     data: Partial<Manufacturer>,
     session?: ClientSession,
   ): Promise<ManufacturerDocument> {
-    const manufacturer = new this.manufacturerModel(data);
+    const payload: Partial<Manufacturer> = { ...data };
+    if (!String(payload.slug ?? '').trim()) {
+      payload.slug = await this.allocateManufacturerSlug(
+        String(payload.manufacturerName ?? ''),
+      );
+      payload.slugLocked = false;
+    }
+    const manufacturer = new this.manufacturerModel(payload);
     if (session) {
       return manufacturer.save({ session });
     }
@@ -1874,6 +2007,18 @@ export class ManufacturersService {
             manufacturerName: dto.manufacturerName,
             updatedAt: new Date(),
           };
+          const prevName = String(existing.manufacturerName ?? '').trim();
+          const nextName = String(dto.manufacturerName ?? '').trim();
+          if (
+            nextName &&
+            nextName !== prevName &&
+            !(existing as { slugLocked?: boolean }).slugLocked
+          ) {
+            updateData.slug = await this.allocateManufacturerSlug(
+              nextName,
+              existing._id,
+            );
+          }
           let vendorEmailChanged = false;
           if (dto.vendor_email !== undefined) {
             const newEmail = this.normalizeVendorEmail(dto.vendor_email);

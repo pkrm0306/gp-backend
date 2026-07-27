@@ -332,7 +332,7 @@ export class WebsiteService {
       'public',
       'manufacturers',
       'with-certified-products',
-      'v5',
+      'v6-slugs',
       this.shortHash(this.stableJsonStringify(normalized)),
     );
   }
@@ -749,17 +749,22 @@ export class WebsiteService {
     if (search.length >= 2) {
       return true;
     }
-    if (dto.productId) {
+    if (dto.productId || dto.productSlug) {
       return true;
     }
     const categoryIds = dto.categoryIds ?? dto.category_ids;
     if (categoryIds && categoryIds.length > 0) {
       return true;
     }
-    if (dto.categoryId) {
+    if (dto.categoryId || dto.categorySlug || dto.categorySlugs?.length) {
       return true;
     }
-    if (dto.manufacturerId || dto.manufacturerIds?.length || dto.manufacturer_ids?.length) {
+    if (
+      dto.manufacturerId ||
+      dto.manufacturerSlug ||
+      dto.manufacturerIds?.length ||
+      dto.manufacturer_ids?.length
+    ) {
       return true;
     }
     if (dto.manufacturerNames?.length || dto.manufacturer_names?.length) {
@@ -790,6 +795,83 @@ export class WebsiteService {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Resolve public SEO slug filters → Mongo ids before list query.
+   * Slug fields take precedence over id fields when provided.
+   */
+  private async resolvePublicCertifiedListSlugFilters(
+    dto: AdminListProductsDto,
+  ): Promise<AdminListProductsDto> {
+    const next: AdminListProductsDto = { ...dto };
+
+    const productSlug = String(dto.productSlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (productSlug) {
+      const productId =
+        await this.productRegistrationService.resolveProductIdBySlug(
+          productSlug,
+        );
+      if (!productId) {
+        throw new NotFoundException('Certified product not found');
+      }
+      next.productId = productId;
+    }
+
+    const categorySlugs = [
+      ...(dto.categorySlugs ?? []),
+      ...(dto.categorySlug ? [dto.categorySlug] : []),
+    ]
+      .map((s) => String(s ?? '').trim().toLowerCase())
+      .filter(Boolean);
+    if (categorySlugs.length > 0) {
+      const resolvedIds: string[] = [];
+      for (const slug of categorySlugs) {
+        const id =
+          await this.productRegistrationService.resolveCategoryIdBySlug(slug);
+        if (!id) {
+          throw new NotFoundException(`Category not found: ${slug}`);
+        }
+        resolvedIds.push(id);
+      }
+      next.categoryIds = [...new Set(resolvedIds)];
+      next.category_ids = next.categoryIds;
+      next.categoryId = undefined;
+    }
+
+    const manufacturerSlug = String(dto.manufacturerSlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (manufacturerSlug) {
+      const manufacturerId =
+        await this.productRegistrationService.resolveManufacturerIdBySlug(
+          manufacturerSlug,
+        );
+      if (!manufacturerId) {
+        throw new NotFoundException('Manufacturer not found');
+      }
+      next.manufacturerId = manufacturerId;
+      next.manufacturerIds = [manufacturerId];
+      next.manufacturer_ids = [manufacturerId];
+    }
+
+    // Nested deep-link: product must belong to category + manufacturer pair.
+    if (
+      productSlug &&
+      (categorySlugs.length > 0 || manufacturerSlug)
+    ) {
+      await this.productRegistrationService.assertPublicProductSlugBelongsToParents(
+        {
+          productSlug,
+          categorySlug: categorySlugs[0],
+          manufacturerSlug: manufacturerSlug || undefined,
+        },
+      );
+    }
+
+    return next;
   }
 
   private toAdminListDtoFromPublicWebsite(
@@ -848,13 +930,15 @@ export class WebsiteService {
       };
     }
 
+    const resolvedDto = await this.resolvePublicCertifiedListSlugFilters(dto);
+
     const cacheKey = this.redisService.buildKey(
       'website',
       'public',
       'certified-products',
       'flat',
-      'v14',
-      this.shortHash(this.stableJsonStringify({ ...(dto as object), origin })),
+      'v13-slugs',
+      this.shortHash(this.stableJsonStringify({ ...(resolvedDto as object), origin })),
     );
     try {
       const cached = await this.redisService.get<Record<string, unknown>>(cacheKey);
@@ -870,11 +954,11 @@ export class WebsiteService {
       );
     }
 
-    const adminDto = this.toAdminListDtoFromPublicWebsite(dto);
+    const adminDto = this.toAdminListDtoFromPublicWebsite(resolvedDto);
     const result =
       await this.productRegistrationService.listPublicCertifiedProductsFlat(
         adminDto,
-        dto.productId,
+        resolvedDto.productId,
       );
 
     const data = (result.data ?? []).map((row: Record<string, unknown>) =>
@@ -882,7 +966,7 @@ export class WebsiteService {
     );
 
     const hasLocationFilter = Boolean(
-      dto.countryId ?? (dto.stateIds ?? dto.state_ids)?.length,
+      resolvedDto.countryId ?? (resolvedDto.stateIds ?? resolvedDto.state_ids)?.length,
     );
     const message =
       result.total === 0 && hasLocationFilter
@@ -960,6 +1044,57 @@ export class WebsiteService {
         normalizedProductId,
       );
 
+    return this.finalizePublicCertifiedProductPassport(data, origin);
+  }
+
+  async getPublicCertifiedProductPassportBySlug(
+    productSlug: string,
+    origin?: string,
+  ) {
+    const data =
+      await this.productRegistrationService.getPublicCertifiedProductPassportBySlug(
+        productSlug,
+      );
+    return this.finalizePublicCertifiedProductPassport(data, origin);
+  }
+
+  async getPublicCertifiedProductBySlug(productSlug: string, origin?: string) {
+    const data =
+      await this.productRegistrationService.getPublicCertifiedProductBySlug(
+        productSlug,
+      );
+    const resolvedOrigin = String(origin ?? '').trim();
+    if (!resolvedOrigin) {
+      return {
+        message: 'Certified product retrieved successfully',
+        data,
+      };
+    }
+    const mapped = this.mapCertifiedProductCardForWebsite(
+      data as Record<string, unknown>,
+      resolvedOrigin,
+    );
+    return {
+      message: 'Certified product retrieved successfully',
+      data: mapped,
+    };
+  }
+
+  async getPublicManufacturerBySlug(manufacturerSlug: string) {
+    const data =
+      await this.manufacturersService.findBySlugForWebsitePublic(
+        manufacturerSlug,
+      );
+    return {
+      message: 'Manufacturer retrieved successfully',
+      data,
+    };
+  }
+
+  private finalizePublicCertifiedProductPassport(
+    data: Record<string, unknown>,
+    origin?: string,
+  ) {
     const resolvedOrigin = String(origin ?? '').trim();
     if (!resolvedOrigin) {
       return {
@@ -1120,17 +1255,46 @@ export class WebsiteService {
   }
 
   async getManufacturersByCategoryPublic(dto: PublicCategoryManufacturersDto) {
-    const id = String(dto.categoryId ?? '').trim();
+    const categorySlug = String(dto.categorySlug ?? '')
+      .trim()
+      .toLowerCase();
+    let categoryId = String(dto.categoryId ?? '').trim();
+    let resolvedCategorySlug: string | null = categorySlug || null;
+
+    if (categorySlug) {
+      const resolved =
+        await this.productRegistrationService.resolveCategoryIdBySlug(
+          categorySlug,
+        );
+      if (!resolved) {
+        throw new NotFoundException('Category not found');
+      }
+      categoryId = resolved;
+    } else if (!categoryId) {
+      throw new BadRequestException('categoryId or categorySlug is required');
+    }
+
+    if (!resolvedCategorySlug && Types.ObjectId.isValid(categoryId)) {
+      const cat = await this.categoryModel
+        .findById(categoryId)
+        .select('slug')
+        .lean()
+        .exec();
+      resolvedCategorySlug =
+        String((cat as { slug?: string } | null)?.slug ?? '').trim() || null;
+    }
+
     const cacheKey = this.redisService.buildKey(
       'website',
       'public',
       'manufacturers-by-category',
-      'v5',
-      id,
+      'v6-slugs',
+      categorySlug || categoryId,
     );
     try {
       const cached = await this.redisService.get<{
         categoryId: string;
+        categorySlug?: string | null;
         total: number;
         data: unknown[];
       }>(cacheKey);
@@ -1146,31 +1310,67 @@ export class WebsiteService {
       );
     }
 
-    const result = await this.productRegistrationService.getManufacturersByCategory(
-      dto.categoryId,
-    );
+    const result =
+      await this.productRegistrationService.getManufacturersByCategory(
+        categoryId,
+      );
+    const payload = {
+      ...result,
+      categorySlug: resolvedCategorySlug,
+    };
     this.redisService
-      .set(cacheKey, result, this.getWebsitePublicListCacheTtlSeconds())
+      .set(cacheKey, payload, this.getWebsitePublicListCacheTtlSeconds())
       .catch((error) => {
         this.logger.warn(
           `Website manufacturers-by-category cache write failed: ${(error as Error)?.message || 'unknown error'}`,
         );
       });
-    return { message: 'Manufacturers retrieved successfully', ...result };
+    return { message: 'Manufacturers retrieved successfully', ...payload };
   }
 
   async getCategoriesByManufacturerPublic(dto: PublicManufacturerCategoriesDto) {
-    const id = String(dto.manufacturerId ?? '').trim();
+    const manufacturerSlug = String(dto.manufacturerSlug ?? '')
+      .trim()
+      .toLowerCase();
+    let manufacturerId = String(dto.manufacturerId ?? '').trim();
+    let resolvedManufacturerSlug: string | null = manufacturerSlug || null;
+
+    if (manufacturerSlug) {
+      const resolved =
+        await this.productRegistrationService.resolveManufacturerIdBySlug(
+          manufacturerSlug,
+        );
+      if (!resolved) {
+        throw new NotFoundException('Manufacturer not found');
+      }
+      manufacturerId = resolved;
+    } else if (!manufacturerId) {
+      throw new BadRequestException(
+        'manufacturerId or manufacturerSlug is required',
+      );
+    }
+
+    if (!resolvedManufacturerSlug && manufacturerId) {
+      const m = await this.manufacturerModel
+        .findById(manufacturerId)
+        .select('slug')
+        .lean()
+        .exec();
+      resolvedManufacturerSlug =
+        String((m as { slug?: string } | null)?.slug ?? '').trim() || null;
+    }
+
     const cacheKey = this.redisService.buildKey(
       'website',
       'public',
       'categories-by-manufacturer',
-      'v3',
-      id,
+      'v4-slugs',
+      manufacturerSlug || manufacturerId,
     );
     try {
       const cached = await this.redisService.get<{
         manufacturerId: string;
+        manufacturerSlug?: string | null;
         total: number;
         data: unknown[];
       }>(cacheKey);
@@ -1186,17 +1386,22 @@ export class WebsiteService {
       );
     }
 
-    const result = await this.productRegistrationService.getCategoriesByManufacturer(
-      dto.manufacturerId,
-    );
+    const result =
+      await this.productRegistrationService.getCategoriesByManufacturer(
+        manufacturerId,
+      );
+    const payload = {
+      ...result,
+      manufacturerSlug: resolvedManufacturerSlug,
+    };
     this.redisService
-      .set(cacheKey, result, this.getWebsitePublicListCacheTtlSeconds())
+      .set(cacheKey, payload, this.getWebsitePublicListCacheTtlSeconds())
       .catch((error) => {
         this.logger.warn(
           `Website categories-by-manufacturer cache write failed: ${(error as Error)?.message || 'unknown error'}`,
         );
       });
-    return { message: 'Categories retrieved successfully', ...result };
+    return { message: 'Categories retrieved successfully', ...payload };
   }
 
   private async createNotification(input: {

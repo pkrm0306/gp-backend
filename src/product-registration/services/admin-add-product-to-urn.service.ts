@@ -37,6 +37,7 @@ import { invalidateProductListingsCache } from '../helpers/invalidate-product-li
 import { RedisService } from '../../common/redis/redis.service';
 import { PlantDto } from '../dto/plant.dto';
 import { assertStateBelongsToCountry } from '../helpers/validate-state-country.util';
+import { allocateUniqueSlug } from '../../common/utils/unique-slug.util';
 
 @Injectable()
 export class AdminAddProductToUrnService {
@@ -141,6 +142,19 @@ export class AdminAddProductToUrnService {
         );
 
         const numericProductId = await this.sequenceHelper.getProductId();
+        const productSlug = await allocateUniqueSlug(
+          dto.productName.trim(),
+          async (candidate) => {
+            const existing = await this.productModel
+              .findOne({ slug: candidate })
+              .session(session)
+              .select('_id')
+              .lean()
+              .exec();
+            return Boolean(existing);
+          },
+          { fallback: 'product' },
+        );
         const productData = {
           productId: numericProductId,
           categoryId: bundle.categoryId,
@@ -150,6 +164,8 @@ export class AdminAddProductToUrnService {
           eoiSequence: assignment.eoiSequence,
           urnNo: trimmedUrn,
           productName: dto.productName.trim(),
+          slug: productSlug,
+          slugLocked: false,
           productImage: dto.productImage?.trim() || undefined,
           plantCount: dto.plants.length,
           productDetails: dto.productDetails.trim(),

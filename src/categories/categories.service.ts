@@ -43,6 +43,10 @@ import {
   resolveSeoMeta,
   validateSeoMetaWrite,
 } from '../common/constants/seo-meta.constants';
+import {
+  allocateUniqueSlug,
+  isValidPublicSlug,
+} from '../common/utils/unique-slug.util';
 
 /** Listing row: Mongo lean doc plus computed image URL */
 export type CategoryListItem = Record<string, unknown> & {
@@ -149,6 +153,7 @@ export class CategoriesService implements OnModuleInit {
     this.ensureCategoryUploadDirs();
     await this.backfillCategoryNameNormalized();
     await this.dedupeCategoryNameNormalized();
+    await this.backfillCategorySlugs();
     await this.syncCategoryIdCounterFromCategories();
     const shouldSyncIndexes =
       String(process.env.SYNC_INDEXES_ON_BOOT || 'false').toLowerCase() ===
@@ -162,6 +167,125 @@ export class CategoriesService implements OnModuleInit {
         err,
       );
     }
+  }
+
+  /** Ensures every category has a unique public `slug` (legacy + missing rows). */
+  async backfillCategorySlugs(): Promise<{ scanned: number; updated: number }> {
+    const cursor = this.categoryModel
+      .find({
+        $or: [{ slug: { $exists: false } }, { slug: null }, { slug: '' }],
+      })
+      .select('_id category_name')
+      .lean()
+      .cursor();
+
+    let scanned = 0;
+    let updated = 0;
+    for await (const doc of cursor) {
+      scanned += 1;
+      const slug = await this.allocateCategorySlug(
+        String((doc as { category_name?: string }).category_name ?? ''),
+        doc._id as Types.ObjectId,
+      );
+      await this.categoryModel
+        .updateOne({ _id: doc._id }, { $set: { slug } })
+        .exec();
+      updated += 1;
+    }
+    if (updated > 0) {
+      this.logger.log(
+        `[categories] backfilled slug on ${updated}/${scanned} category row(s)`,
+      );
+    }
+    return { scanned, updated };
+  }
+
+  private async allocateCategorySlug(
+    name: string,
+    excludeId?: Types.ObjectId,
+  ): Promise<string> {
+    return allocateUniqueSlug(
+      name,
+      async (candidate) => {
+        const filter: Record<string, unknown> = { slug: candidate };
+        if (excludeId) {
+          filter._id = { $ne: excludeId };
+        }
+        const existing = await this.categoryModel
+          .findOne(filter)
+          .select('_id')
+          .lean()
+          .exec();
+        return Boolean(existing);
+      },
+      { fallback: 'category' },
+    );
+  }
+
+  /**
+   * Public website: resolve an active category by unique slug.
+   */
+  async findBySlugForWebsitePublic(categorySlug: string) {
+    const slug = String(categorySlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (!isValidPublicSlug(slug)) {
+      throw new NotFoundException('Category not found');
+    }
+
+    const doc = await this.categoryModel
+      .findOne({ slug, category_status: 1 })
+      .lean()
+      .exec();
+    if (!doc) {
+      throw new NotFoundException('Category not found');
+    }
+
+    const categoryObjectIds = [doc._id as Types.ObjectId];
+    const countsByCategoryId =
+      await this.countWebsitePublicProductsAndManufacturersByCategory(
+        categoryObjectIds,
+      );
+    const counts = countsByCategoryId.get(String(doc._id)) ?? {
+      category_product_count: 0,
+      category_manufacturer_count: 0,
+    };
+    if (counts.category_product_count < 1) {
+      throw new NotFoundException('Category not found');
+    }
+
+    const category_image_url = this.resolveCategoryImageUrl(doc.category_image);
+    const seo = resolveSeoMeta({
+      meta_title: (doc as { meta_title?: string }).meta_title,
+      meta_description: (doc as { meta_description?: string }).meta_description,
+      meta_image: (doc as { meta_image?: string }).meta_image,
+      meta_keywords: (doc as { meta_keywords?: string[] }).meta_keywords,
+      primaryImage: category_image_url ?? doc.category_image,
+    });
+
+    return {
+      ...(doc as Record<string, unknown>),
+      category_image: category_image_url ?? doc.category_image ?? null,
+      category_image_url,
+      categoryImageUrl: category_image_url,
+      ...seo,
+      ...counts,
+    };
+  }
+
+  async resolveCategoryIdBySlug(categorySlug: string): Promise<string | null> {
+    const slug = String(categorySlug ?? '')
+      .trim()
+      .toLowerCase();
+    if (!isValidPublicSlug(slug)) {
+      return null;
+    }
+    const doc = await this.categoryModel
+      .findOne({ slug })
+      .select('_id')
+      .lean()
+      .exec();
+    return doc?._id ? String(doc._id) : null;
   }
 
   /**
@@ -472,7 +596,7 @@ export class CategoriesService implements OnModuleInit {
     const cacheKey = this.redisService.buildKey(
       'categories',
       'list',
-      'website-public-certified-products-v3',
+      'website-public-certified-products-v4-slugs',
       JSON.stringify({
         sector: query.sector ?? null,
         sectors: String(query.sectors || '')
@@ -696,12 +820,15 @@ export class CategoriesService implements OnModuleInit {
     const category_image = dto.category_image;
     const meta_title = String(dto.meta_title ?? '').trim();
     const meta_description = String(dto.meta_description ?? '').trim();
+    const slug = await this.allocateCategorySlug(displayName);
 
     let doc: CategoryDocument;
     try {
       doc = await this.categoryModel.create({
         category_name: displayName,
         category_name_normalized,
+        slug,
+        slugLocked: false,
         category_image,
         category_raw_material_forms: dto.category_raw_material_forms,
         category_status: dto.category_status ?? 1,
@@ -836,6 +963,9 @@ export class CategoriesService implements OnModuleInit {
       await this.assertCategoryNameUnique(category_name_normalized, oid);
       set.category_name = displayName;
       set.category_name_normalized = category_name_normalized;
+      if (!existing.slugLocked) {
+        set.slug = await this.allocateCategorySlug(displayName, oid);
+      }
     }
     if (dto.category_raw_material_forms !== undefined) {
       set.category_raw_material_forms = dto.category_raw_material_forms;
