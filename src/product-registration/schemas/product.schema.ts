@@ -47,6 +47,19 @@ export class Product {
   @Prop()
   productImage?: string;
 
+  @Prop()
+  meta_title?: string;
+
+  @Prop()
+  meta_description?: string;
+
+  /** Synced from productImage on write. */
+  @Prop()
+  meta_image?: string;
+
+  @Prop({ type: [String], default: undefined })
+  meta_keywords?: string[];
+
   @Prop({ required: true, default: 0 })
   plantCount: number;
 

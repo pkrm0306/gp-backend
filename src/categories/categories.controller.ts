@@ -290,6 +290,9 @@ export class CategoriesController {
       category_raw_material_forms: dto.category_raw_material_forms,
       category_status: dto.category_status,
       sector: dto.sector,
+      meta_title: dto.meta_title,
+      meta_description: dto.meta_description,
+      meta_keywords: dto.meta_keywords,
     });
     return {
       message: 'Category created successfully',

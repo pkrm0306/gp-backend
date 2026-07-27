@@ -23,6 +23,7 @@ describe('AdminController Banner Endpoints', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
   });
 

@@ -36,6 +36,12 @@ import {
 } from './utils/list-manufacturers-query.util';
 import { matchPublicWebsiteManufacturerVisibility } from './constants/public-website-manufacturer-visibility.filter';
 import {
+  parseMetaKeywords,
+  rawSeoMeta,
+  resolveSeoMeta,
+  validateSeoMetaWrite,
+} from '../common/constants/seo-meta.constants';
+import {
   resolvePublicUploadUrl,
   uploadFile,
 } from '../utils/upload-file.util';
@@ -558,6 +564,7 @@ export class ManufacturersService {
       manufacturer_product_count?: number;
       manufacturer_vendor_count?: number;
       productCount?: number;
+      applySeoDefa?: boolean;
     } = {},
   ) {
     const vendorDisplay = this.resolveVendorDisplayName(
@@ -575,6 +582,18 @@ export class ManufacturersService {
       ? new Date(m.accountDeletedAt)
       : null;
     const accountDeleted = Boolean(accountDeletedAt);
+    const seoSource = {
+      meta_title: (m as { meta_title?: string | null }).meta_title,
+      meta_description: (m as { meta_description?: string | null })
+        .meta_description,
+      meta_image: (m as { meta_image?: string | null }).meta_image,
+      meta_keywords: (m as { meta_keywords?: string[] | string | null })
+        .meta_keywords,
+      primaryImage: resolvedManufacturerImage,
+    };
+    const seo = options.applySeoDefa
+      ? resolveSeoMeta(seoSource)
+      : rawSeoMeta(seoSource);
 
     return {
       _id: m._id,
@@ -607,6 +626,7 @@ export class ManufacturersService {
       ...(options.productCount !== undefined
         ? { productCount: options.productCount }
         : {}),
+      ...seo,
       createdAt: m.createdAt,
       updatedAt: m.updatedAt,
     };
@@ -1876,6 +1896,47 @@ export class ManufacturersService {
           }
           if (imagePath) {
             updateData.manufacturerImage = imagePath;
+            updateData.meta_image = imagePath;
+          }
+
+          const isVerified = !isUnverified;
+          if (isVerified) {
+            if (
+              dto.meta_title !== undefined ||
+              dto.meta_description !== undefined
+            ) {
+              const metaErr = validateSeoMetaWrite({
+                meta_title:
+                  dto.meta_title !== undefined
+                    ? dto.meta_title
+                    : existing.meta_title,
+                meta_description:
+                  dto.meta_description !== undefined
+                    ? dto.meta_description
+                    : existing.meta_description,
+              });
+              if (metaErr) {
+                throw new BadRequestException(metaErr);
+              }
+            }
+            if (dto.meta_title !== undefined) {
+              updateData.meta_title = String(dto.meta_title).trim();
+            }
+            if (dto.meta_description !== undefined) {
+              updateData.meta_description = String(dto.meta_description).trim();
+            }
+            if (dto.meta_keywords !== undefined) {
+              updateData.meta_keywords = parseMetaKeywords(dto.meta_keywords);
+            }
+            if (
+              !imagePath &&
+              existing.manufacturerImage &&
+              (dto.meta_title !== undefined ||
+                dto.meta_description !== undefined ||
+                dto.meta_keywords !== undefined)
+            ) {
+              updateData.meta_image = existing.manufacturerImage;
+            }
           }
 
           if (isUnverified) {
@@ -2794,6 +2855,7 @@ export class ManufacturersService {
             primaryVendorUserId: primaryVendor?.userId,
             manufacturer_product_count,
             productCount: manufacturer_product_count,
+            applySeoDefa: true,
           });
         }
         const counts = await this.countForManufacturer(mid);
@@ -2802,6 +2864,7 @@ export class ManufacturersService {
           primaryVendorUserId: primaryVendor?.userId,
           manufacturer_product_count: counts.manufacturer_product_count,
           manufacturer_vendor_count: counts.manufacturer_vendor_count,
+          applySeoDefa: true,
         });
       }),
     );

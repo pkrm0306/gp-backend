@@ -283,4 +283,24 @@ export class AdminPatchCertifiedProductDto {
 
   @Allow()
   show_linkedin_on_website?: boolean | string;
+
+  @ApiPropertyOptional({ description: 'SEO meta title' })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(250)
+  meta_title?: string;
+
+  @ApiPropertyOptional({ description: 'SEO meta description' })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  meta_description?: string;
+
+  @ApiPropertyOptional({ description: 'Comma-separated SEO keywords' })
+  @Transform(({ value }) => omitEmptyOptional(value))
+  @IsOptional()
+  @IsString()
+  meta_keywords?: string;
 }

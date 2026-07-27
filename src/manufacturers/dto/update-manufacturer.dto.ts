@@ -6,7 +6,12 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
 } from 'class-validator';
+import {
+  SEO_META_DESCRIPTION_MAX,
+  SEO_META_TITLE_MAX,
+} from '../../common/constants/seo-meta.constants';
 
 /** GP + 2-letter initial: `###` (001–999) or `####` (1000–9999). Legacy non-GP ids: three digits only. */
 const GP_INTERNAL_ID_PATTERN =
@@ -73,4 +78,33 @@ export class UpdateManufacturerDto {
   @IsOptional()
   @IsString()
   vendor_phone?: string;
+
+  @ApiPropertyOptional({ description: 'SEO meta title (verified manufacturer edit)' })
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    return typeof value === 'string' ? value.trim() : value;
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(SEO_META_TITLE_MAX)
+  meta_title?: string;
+
+  @ApiPropertyOptional({ description: 'SEO meta description' })
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    return typeof value === 'string' ? value.trim() : value;
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(SEO_META_DESCRIPTION_MAX)
+  meta_description?: string;
+
+  @ApiPropertyOptional({ description: 'Comma-separated SEO keywords' })
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return undefined;
+    return typeof value === 'string' ? value : String(value);
+  })
+  @IsOptional()
+  @IsString()
+  meta_keywords?: string;
 }

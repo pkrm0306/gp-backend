@@ -114,6 +114,19 @@ export class Manufacturer {
   @Prop()
   manufacturerImage?: string;
 
+  @Prop()
+  meta_title?: string;
+
+  @Prop()
+  meta_description?: string;
+
+  /** Synced from manufacturerImage on write. */
+  @Prop()
+  meta_image?: string;
+
+  @Prop({ type: [String], default: undefined })
+  meta_keywords?: string[];
+
   /** Company logo image URL path (e.g. /uploads/manufacturers/...). */
   @Prop()
   companyLogo?: string;

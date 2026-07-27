@@ -18,6 +18,19 @@ export class Category {
   @Prop()
   category_image?: string;
 
+  @Prop()
+  meta_title?: string;
+
+  @Prop()
+  meta_description?: string;
+
+  /** Same as category_image (synced on write). */
+  @Prop()
+  meta_image?: string;
+
+  @Prop({ type: [String], default: undefined })
+  meta_keywords?: string[];
+
   /** Comma-separated raw material form ids, e.g. "1,3,2" */
   @Prop()
   category_raw_material_forms?: string;

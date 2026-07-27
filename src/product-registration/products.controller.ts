@@ -742,13 +742,80 @@ export class ProductsController {
     };
   }
 
+  @Get('certificates/vendor/bulk')
+  @ApiOperation({
+    summary: 'Bulk download certificates (batched at 100)',
+    description:
+      'Vendor-only. If ≤100 plant certificates → streams a merged PDF. ' +
+      'If >100 and no `batch` query → returns JSON batch metadata. ' +
+      'If `batch=N` → streams PDF for that batch (≤100 pages).',
+  })
+  @ApiResponse({ status: 200, description: 'PDF stream or batch metadata JSON' })
+  @ApiResponse({ status: 404, description: 'No certified products found' })
+  async bulkDownloadVendorCertificates(
+    @CurrentUser() user: { manufacturerId?: string },
+    @Query('batch') batchRaw?: string,
+    @Res({ passthrough: true })
+    res?: {
+      setHeader: (k: string, v: string) => void;
+    },
+  ): Promise<StreamableFile | Record<string, unknown>> {
+    if (!user?.manufacturerId) {
+      throw new BadRequestException('Manufacturer ID not found in token');
+    }
+    const batchNum = batchRaw != null && String(batchRaw).trim() !== ''
+      ? Number(batchRaw)
+      : undefined;
+    if (
+      batchNum != null &&
+      (!Number.isFinite(batchNum) || batchNum < 1 || !Number.isInteger(batchNum))
+    ) {
+      throw new BadRequestException('batch must be a positive integer');
+    }
+
+    const result = await this.vendorCertificateService.resolveBulkCertificates(
+      user.manufacturerId,
+      {
+        batch: batchNum,
+        downloadUrlBase: '/products/certificates/vendor/bulk',
+      },
+    );
+
+    if (result.kind === 'meta') {
+      return {
+        message: 'Bulk certificate batches available',
+        data: result.meta,
+        ...result.meta,
+      };
+    }
+
+    const file = result.file;
+    if (res) {
+      if (file.certificateCount != null) {
+        res.setHeader('X-GreenPro-Certificate-Count', String(file.certificateCount));
+      }
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${file.fileName}"`,
+      );
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        'Content-Disposition, Content-Type, X-GreenPro-Certificate-Count',
+      );
+    }
+    return new StreamableFile(file.buffer, {
+      type: 'application/pdf',
+      disposition: `inline; filename="${file.fileName}"`,
+    });
+  }
+
   @Get('certificates/vendor/download')
   @ApiOperation({
-    summary: 'Download all plant certificates for the vendor portfolio',
+    summary: 'Download all plant certificates for the vendor portfolio (legacy ZIP)',
     description:
-      'Vendor-only. Always returns a ZIP with one PDF per manufacturing plant across **active** certified EOIs ' +
-      '(productStatus = 2, not past validtillDate) — same scope as the vendor certified list. ' +
-      'Merged PDF is not used for portfolio downloads (it truncates around ~200 pages).',
+      'Vendor-only. Prefer GET /products/certificates/vendor/bulk for batched PDFs. ' +
+      'This endpoint still returns a ZIP of all plant certificates for backward compatibility.',
   })
   @ApiResponse({ status: 200, description: 'ZIP of plant certificate PDFs' })
   async downloadVendorAllCertifiedCertificates(

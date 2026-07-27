@@ -85,6 +85,12 @@ import {
 } from '../activity-log/activity-lifecycle.constants';
 import { formatPaymentRecordsForUrnDetails } from '../payments/payment-response.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import {
+  parseMetaKeywords,
+  rawSeoMeta,
+  resolveSeoMeta,
+  validateSeoMetaWrite,
+} from '../common/constants/seo-meta.constants';
 import { enrichUrnDetailRowsWithSharedProcessData } from './utils/consolidate-urn-detail-items.util';
 import { collectUrnScopedProductPerformanceDocuments } from './utils/urn-product-performance-documents.util';
 import {
@@ -3830,13 +3836,12 @@ export class ProductRegistrationService {
       throw new BadRequestException(CATEGORY_CHANGE_CERTIFIED_MESSAGE);
     }
 
-    const existingImage = String(
-      (await this.productModel
-        .findById(productObjectId)
-        .select('productImage')
-        .lean()
-        .exec())?.productImage ?? '',
-    ).trim();
+    const existingMeta = await this.productModel
+      .findById(productObjectId)
+      .select('meta_title meta_description meta_keywords productImage')
+      .lean()
+      .exec();
+    const existingImage = String(existingMeta?.productImage ?? '').trim();
 
     const removeImage =
       this.multipartTruthy(dto.remove_image) ||
@@ -3856,6 +3861,22 @@ export class ProductRegistrationService {
       }
     }
 
+    if (dto.meta_title !== undefined || dto.meta_description !== undefined) {
+      const metaErr = validateSeoMetaWrite({
+        meta_title:
+          dto.meta_title !== undefined
+            ? dto.meta_title
+            : existingMeta?.meta_title,
+        meta_description:
+          dto.meta_description !== undefined
+            ? dto.meta_description
+            : existingMeta?.meta_description,
+      });
+      if (metaErr) {
+        throw new BadRequestException(metaErr);
+      }
+    }
+
     const validTillRaw = dto.validtillDate ?? dto.validTillDate;
     const updateDto: UpdateProductDto = {
       productName: dto.productName.trim(),
@@ -3867,6 +3888,33 @@ export class ProductRegistrationService {
     };
 
     await this.updateProduct(productId, updateDto);
+
+    const metaSet: Record<string, unknown> = {};
+    if (dto.meta_title !== undefined) {
+      metaSet.meta_title = String(dto.meta_title).trim();
+    }
+    if (dto.meta_description !== undefined) {
+      metaSet.meta_description = String(dto.meta_description).trim();
+    }
+    if (dto.meta_keywords !== undefined) {
+      metaSet.meta_keywords = parseMetaKeywords(dto.meta_keywords);
+    }
+    if (productImage !== undefined) {
+      metaSet.meta_image = productImage || undefined;
+    } else if (
+      existingMeta?.productImage &&
+      (dto.meta_title !== undefined ||
+        dto.meta_description !== undefined ||
+        dto.meta_keywords !== undefined)
+    ) {
+      metaSet.meta_image = existingMeta.productImage;
+    }
+    if (Object.keys(metaSet).length > 0) {
+      await this.productModel
+        .updateOne({ _id: productObjectId }, { $set: metaSet })
+        .exec();
+    }
+
     await this.applyManufacturerSocialVisibilityFromCertifiedPatch(
       existing.manufacturerId,
       dto,
@@ -3875,7 +3923,7 @@ export class ProductRegistrationService {
     const row = await this.productModel
       .findById(productObjectId)
       .select(
-        '_id urnNo eoiNo productName productDetails categoryId productImage productStatus validtillDate updatedDate manufacturerId',
+        '_id urnNo eoiNo productName productDetails categoryId productImage productStatus validtillDate updatedDate manufacturerId meta_title meta_description meta_image meta_keywords',
       )
       .lean()
       .exec();
@@ -3899,7 +3947,7 @@ export class ProductRegistrationService {
     const row = await this.productModel
       .findById(productObjectId)
       .select(
-        '_id urnNo eoiNo productName productDetails categoryId productImage productStatus validtillDate updatedDate manufacturerId productPassport',
+        '_id urnNo eoiNo productName productDetails categoryId productImage productStatus validtillDate updatedDate manufacturerId productPassport meta_title meta_description meta_image meta_keywords',
       )
       .lean()
       .exec();
@@ -3929,9 +3977,23 @@ export class ProductRegistrationService {
     const base = formatAdminCertifiedProductPatchResponse(row, (value) =>
       this.toMongoIdString(value),
     );
+    const productImageRaw = row.productImage
+      ? String(row.productImage).trim()
+      : '';
+    const productImageResolved = productImageRaw
+      ? resolveStoredUploadUrl(productImageRaw) || productImageRaw
+      : null;
+    const seo = rawSeoMeta({
+      meta_title: row.meta_title as string | undefined,
+      meta_description: row.meta_description as string | undefined,
+      meta_image: row.meta_image as string | undefined,
+      meta_keywords: row.meta_keywords as string[] | string | undefined,
+      primaryImage: productImageResolved ?? productImageRaw,
+    });
 
     return {
       ...base,
+      ...seo,
       manufacturerId: this.toMongoIdString(manufacturerId),
       passport:
         row.productPassport != null ? String(row.productPassport) : undefined,
@@ -4016,7 +4078,7 @@ export class ProductRegistrationService {
         }),
       )
       .select(
-        '_id urnNo eoiNo productName productImage validtillDate productPassport productDetails productStatus manufacturerId',
+        '_id urnNo eoiNo productName productImage validtillDate productPassport productDetails productStatus manufacturerId meta_title meta_description meta_image meta_keywords',
       )
       .lean()
       .exec();
@@ -4040,6 +4102,13 @@ export class ProductRegistrationService {
     const manufacturer = await this.getPublicManufacturerDetailsForProduct(
       row.manufacturerId,
     );
+    const seo = resolveSeoMeta({
+      meta_title: (row as { meta_title?: string }).meta_title,
+      meta_description: (row as { meta_description?: string }).meta_description,
+      meta_image: (row as { meta_image?: string }).meta_image,
+      meta_keywords: (row as { meta_keywords?: string[] }).meta_keywords,
+      primaryImage: productImage ?? productImageRaw,
+    });
 
     return {
       _id: this.toMongoIdString(row._id),
@@ -4055,6 +4124,7 @@ export class ProductRegistrationService {
       manufacturerName: manufacturer?.manufacturerName ?? '',
       manufacturer,
       manufacturer_details: manufacturer,
+      ...seo,
     };
   }
 
@@ -4658,6 +4728,10 @@ export class ProductRegistrationService {
           productImage: {
             $ifNull: ['$productImage', '$product_image'],
           },
+          meta_title: 1,
+          meta_description: 1,
+          meta_image: 1,
+          meta_keywords: 1,
           categoryImage: {
             $ifNull: ['$category.category_image', '$category.categoryImage'],
           },

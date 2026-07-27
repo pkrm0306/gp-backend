@@ -41,6 +41,8 @@ import { join } from 'path';
 const CERTIFIED_PRODUCT_STATUS = 2;
 const PAGE_W = 787;
 const PAGE_H = 590;
+/** Max certificate pages per bulk PDF (legacy PHP BATCH_SIZE). */
+export const BULK_CERTIFICATE_BATCH_SIZE = 100;
 const CERTIFICATE_BACKGROUND_FILES = [
   'GPAMNS281001 2_page-0001.jpg',
   'cert-bg2.jpg',
@@ -54,6 +56,25 @@ export type CertificateDownloadFile = {
   /** Present for portfolio downloads — number of plant certificate PDFs inside. */
   certificateCount?: number;
 };
+
+export type BulkCertificateBatchInfo = {
+  batch: number;
+  from: number;
+  to: number;
+  downloadUrl: string;
+};
+
+export type BulkCertificateMeta = {
+  needsBatching: true;
+  totalCount: number;
+  batchSize: number;
+  totalBatches: number;
+  batches: BulkCertificateBatchInfo[];
+};
+
+export type BulkCertificateResolveResult =
+  | { kind: 'meta'; meta: BulkCertificateMeta }
+  | { kind: 'pdf'; file: CertificateDownloadFile };
 
 type CategoryLean = {
   categoryName?: string;
@@ -340,60 +361,23 @@ export class VendorCertificateService {
     vendorId: string,
     _format: 'merged' | 'zip' = 'zip',
   ): Promise<CertificateDownloadFile> {
+    // Legacy bulk uses batched merged PDFs (≤100 pages). Prefer resolveBulkCertificates.
+    // Kept for backward compatibility: still ZIP when called directly.
     const vendorObjectId = this.toObjectId(vendorId, 'manufacturerId');
-    const products = await this.listCertifiedProductsForVendor(vendorObjectId);
+    const entries = await this.collectManufacturerCertificateEntries(vendorObjectId);
 
-    if (!products.length) {
-      throw new NotFoundException(
-        'No certified products found for this vendor',
-      );
+    if (!entries.length) {
+      throw new NotFoundException('No Certified Products Found');
     }
 
-    // Warm background once for the whole portfolio download.
-    this.certificateBackgroundBytesPromise = this.loadCertificateBackgroundBytesFresh();
+    this.certificateBackgroundBytesPromise =
+      this.loadCertificateBackgroundBytesFresh();
     try {
-      const hydrated = await this.hydrateProductsInBatches(products);
-      const plantsByProductId = await this.loadPlantsGroupedByProductIds(
-        hydrated.map((product) => product._id as Types.ObjectId),
-      );
-
-      const entries: Array<{
-        product: ProductWithRelations;
-        plant: PlantWithGeo;
-        orderKey: string;
-      }> = [];
-
-      for (const product of hydrated) {
-        const productId = String(product._id);
-        const plants = plantsByProductId.get(productId) ?? [];
-        const effectivePlants = this.resolveEffectivePlantsForCertificates(
-          product,
-          plants,
-        );
-
-        for (const [index, plant] of effectivePlants.entries()) {
-          entries.push({
-            product,
-            plant,
-            orderKey: `${String(product.eoiNo ?? '')}_${String(plant.productPlantId || index + 1)}_${plant.id}`,
-          });
-        }
-      }
-
-      if (!entries.length) {
-        throw new NotFoundException(
-          'No certificate files are available for this vendor',
-        );
-      }
-
       this.logger.log(
-        `[downloadVendorAll] vendor=${vendorId} products=${hydrated.length} certificates=${entries.length} format=zip`,
+        `[downloadVendorAll] vendor=${vendorId} certificates=${entries.length} format=zip`,
       );
 
-      // Always ZIP for portfolio downloads. Merged PDFs truncate around ~200 pages
-      // (pdf-lib / client limits) — that is why vendors saw 199 of 209.
       const files: Array<{ name: string; buffer: Buffer }> = [];
-
       for (const [index, entry] of entries.entries()) {
         const buffer = await this.generateCertificatePdfSafe(
           entry.product,
@@ -425,21 +409,178 @@ export class VendorCertificateService {
     }
   }
 
-  async countVendorCertifiedPlantCertificates(vendorId: string): Promise<number> {
-    const vendorObjectId = this.toObjectId(vendorId, 'manufacturerId');
-    const products = await this.productModel
-      .find(this.matchCertifiedProductsForVendor(vendorObjectId))
-      .select({ _id: 1, plantCount: 1 })
-      .lean()
-      .exec();
+  /**
+   * Legacy bulk download decision tree:
+   * - 0 → 404
+   * - 1..100, no batch → merged PDF
+   * - >100, no batch → JSON batch meta
+   * - batch=N → merged PDF for that slice (≤100 pages)
+   */
+  async resolveBulkCertificates(
+    manufacturerId: string,
+    options: {
+      batch?: number;
+      downloadUrlBase: string;
+    },
+  ): Promise<BulkCertificateResolveResult> {
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const entries =
+      await this.collectManufacturerCertificateEntries(manufacturerObjectId);
+    const totalCount = entries.length;
 
-    // Exact same total as the certified-products list: sum of each EOI `plantCount`.
-    let total = 0;
-    for (const product of products) {
-      const declared = Number((product as { plantCount?: number }).plantCount ?? 0);
-      total += declared > 0 ? declared : 1;
+    if (totalCount === 0) {
+      throw new NotFoundException('No Certified Products Found');
     }
-    return total;
+
+    const batchSize = BULK_CERTIFICATE_BATCH_SIZE;
+    const totalBatches = Math.ceil(totalCount / batchSize);
+    const requestedBatchRaw = options.batch;
+    const batchRequested =
+      requestedBatchRaw != null &&
+      Number.isFinite(Number(requestedBatchRaw)) &&
+      Number(requestedBatchRaw) > 0;
+
+    if (totalCount > batchSize && !batchRequested) {
+      const base = String(options.downloadUrlBase ?? '')
+        .trim()
+        .replace(/\?.*$/, '')
+        .replace(/\/+$/, '');
+      const batches: BulkCertificateBatchInfo[] = [];
+      for (let batch = 1; batch <= totalBatches; batch += 1) {
+        const from = (batch - 1) * batchSize + 1;
+        const to = Math.min(batch * batchSize, totalCount);
+        batches.push({
+          batch,
+          from,
+          to,
+          downloadUrl: `${base}?batch=${batch}`,
+        });
+      }
+      return {
+        kind: 'meta',
+        meta: {
+          needsBatching: true,
+          totalCount,
+          batchSize,
+          totalBatches,
+          batches,
+        },
+      };
+    }
+
+    const batch = batchRequested
+      ? Math.max(1, Math.floor(Number(requestedBatchRaw)))
+      : 1;
+
+    if (batch > totalBatches) {
+      throw new NotFoundException(
+        'No Certified Products Found for this batch',
+      );
+    }
+
+    const offset = (batch - 1) * batchSize;
+    const slice = entries.slice(offset, offset + batchSize);
+    if (!slice.length) {
+      throw new NotFoundException(
+        'No Certified Products Found for this batch',
+      );
+    }
+
+    const file = await this.buildMergedCertificatePdfForEntries(slice, batch);
+    return { kind: 'pdf', file };
+  }
+
+  async countManufacturerCertifiedPlantCertificates(
+    manufacturerId: string,
+  ): Promise<number> {
+    const manufacturerObjectId = this.toObjectId(
+      manufacturerId,
+      'manufacturerId',
+    );
+    const entries =
+      await this.collectManufacturerCertificateEntries(manufacturerObjectId);
+    return entries.length;
+  }
+
+  async countVendorCertifiedPlantCertificates(vendorId: string): Promise<number> {
+    return this.countManufacturerCertifiedPlantCertificates(vendorId);
+  }
+
+  private async collectManufacturerCertificateEntries(
+    manufacturerObjectId: Types.ObjectId,
+  ): Promise<
+    Array<{ product: ProductWithRelations; plant: PlantWithGeo; orderKey: string }>
+  > {
+    const products = await this.listCertifiedProductsForVendor(
+      manufacturerObjectId,
+    );
+    if (!products.length) return [];
+
+    const hydrated = await this.hydrateProductsInBatches(products);
+    const plantsByProductId = await this.loadPlantsGroupedByProductIds(
+      hydrated.map((product) => product._id as Types.ObjectId),
+    );
+
+    const entries: Array<{
+      product: ProductWithRelations;
+      plant: PlantWithGeo;
+      orderKey: string;
+    }> = [];
+
+    for (const product of hydrated) {
+      const productId = String(product._id);
+      const plants = plantsByProductId.get(productId) ?? [];
+      const effectivePlants = this.resolveEffectivePlantsForCertificates(
+        product,
+        plants,
+      );
+
+      for (const [index, plant] of effectivePlants.entries()) {
+        entries.push({
+          product,
+          plant,
+          orderKey: `${String(product.eoiNo ?? '')}_${String(plant.productPlantId || index + 1)}_${plant.id}`,
+        });
+      }
+    }
+
+    entries.sort((a, b) => a.orderKey.localeCompare(b.orderKey));
+    return entries;
+  }
+
+  private async buildMergedCertificatePdfForEntries(
+    entries: Array<{ product: ProductWithRelations; plant: PlantWithGeo }>,
+    batch: number,
+  ): Promise<CertificateDownloadFile> {
+    this.certificateBackgroundBytesPromise =
+      this.loadCertificateBackgroundBytesFresh();
+    try {
+      const mergedPdf = await PDFLibDocument.create();
+      let addedPages = 0;
+      for (const entry of entries) {
+        const buffer = await this.generateCertificatePdfSafe(
+          entry.product,
+          this.derivePlantLocation(entry.plant),
+        );
+        addedPages += await this.appendBufferToMergedPdf(mergedPdf, buffer);
+      }
+      if (addedPages === 0) {
+        throw new NotFoundException(
+          'No Certified Products Found for this batch',
+        );
+      }
+      return {
+        buffer: Buffer.from(await mergedPdf.save()),
+        fileName: `product_certificates_batch_${batch}.pdf`,
+        contentType: 'application/pdf',
+        certificateCount: entries.length,
+      };
+    } finally {
+      this.certificateBackgroundBytesPromise = null;
+    }
   }
 
   private matchCertifiedProductsForVendor(

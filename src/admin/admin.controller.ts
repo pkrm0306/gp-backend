@@ -9,6 +9,7 @@ import {
   Query,
   Body,
   Req,
+  Res,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -17,6 +18,8 @@ import {
   HttpStatus,
   Header,
   BadRequestException,
+  NotFoundException,
+  StreamableFile,
   applyDecorators,
 } from '@nestjs/common';
 import {
@@ -114,6 +117,8 @@ import {
 import { PaymentsService } from '../payments/payments.service';
 import { AdminListPaymentsDto } from '../payments/dto/admin-list-payments.dto';
 import { normalizeEventBrochuresInput } from '../events/utils/event-brochures.util';
+import { VendorCertificateService } from '../product-registration/services/vendor-certificate.service';
+import { Types } from 'mongoose';
 
 const bannerImageMultipartFields = BANNER_MEDIA_MULTIPART_FIELDS;
 
@@ -295,6 +300,7 @@ export class AdminController {
     private readonly galleryService: GalleryService,
     private readonly manufacturersService: ManufacturersService,
     private readonly paymentsService: PaymentsService,
+    private readonly vendorCertificateService: VendorCertificateService,
   ) {}
 
   @Get('payments/list')
@@ -3715,6 +3721,117 @@ export class AdminController {
       changePasswordDto,
     );
     return { message: 'Password changed successfully' };
+  }
+
+  @Get('manufacturers/:manufacturerId/certificates/plant-count')
+  @AnyPermissions(PERMISSIONS.MANUFACTURERS_VERIFIED_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Count certified plant certificates for a manufacturer',
+    description:
+      'Admin verified-manufacturers view. Returns plant-certificate page count (productStatus=2).',
+  })
+  @ApiParam({ name: 'manufacturerId', description: 'Manufacturer MongoDB ObjectId' })
+  async countManufacturerPlantCertificates(
+    @Param('manufacturerId') manufacturerId: string,
+  ) {
+    const id = String(manufacturerId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid manufacturer ID format');
+    }
+    const manufacturer = await this.manufacturersService.findById(id);
+    if (!manufacturer) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+    const plantCount =
+      await this.vendorCertificateService.countManufacturerCertifiedPlantCertificates(
+        id,
+      );
+    return {
+      message: 'Manufacturer plant certificate count retrieved successfully',
+      data: { plantCount, manufacturerId: id },
+    };
+  }
+
+  @Get('manufacturers/:manufacturerId/certificates/bulk')
+  @AnyPermissions(PERMISSIONS.MANUFACTURERS_VERIFIED_VIEW)
+  @ApiOperation({
+    summary: 'Bulk download manufacturer certificates (batched at 100)',
+    description:
+      'Admin verified-manufacturers view. If ≤100 plant certificates → streams a merged PDF. ' +
+      'If >100 and no `batch` query → returns JSON batch metadata. ' +
+      'If `batch=N` → streams PDF for that batch (≤100 pages).',
+  })
+  @ApiParam({ name: 'manufacturerId', description: 'Manufacturer MongoDB ObjectId' })
+  @ApiQuery({ name: 'batch', required: false, description: '1-based batch number' })
+  @ApiResponse({ status: 200, description: 'PDF stream or batch metadata JSON' })
+  @ApiResponse({ status: 404, description: 'No certified products found' })
+  async bulkDownloadManufacturerCertificates(
+    @Param('manufacturerId') manufacturerId: string,
+    @Query('batch') batchRaw?: string,
+    @Res({ passthrough: true })
+    res?: {
+      setHeader: (k: string, v: string) => void;
+    },
+  ): Promise<StreamableFile | Record<string, unknown>> {
+    const id = String(manufacturerId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid manufacturer ID format');
+    }
+    const manufacturer = await this.manufacturersService.findById(id);
+    if (!manufacturer) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+
+    const batchNum =
+      batchRaw != null && String(batchRaw).trim() !== ''
+        ? Number(batchRaw)
+        : undefined;
+    if (
+      batchNum != null &&
+      (!Number.isFinite(batchNum) || batchNum < 1 || !Number.isInteger(batchNum))
+    ) {
+      throw new BadRequestException('batch must be a positive integer');
+    }
+
+    const result = await this.vendorCertificateService.resolveBulkCertificates(
+      id,
+      {
+        batch: batchNum,
+        downloadUrlBase: `/admin/manufacturers/${encodeURIComponent(id)}/certificates/bulk`,
+      },
+    );
+
+    if (result.kind === 'meta') {
+      return {
+        message: 'Bulk certificate batches available',
+        data: result.meta,
+        ...result.meta,
+      };
+    }
+
+    const file = result.file;
+    if (res) {
+      if (file.certificateCount != null) {
+        res.setHeader(
+          'X-GreenPro-Certificate-Count',
+          String(file.certificateCount),
+        );
+      }
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${file.fileName}"`,
+      );
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        'Content-Disposition, Content-Type, X-GreenPro-Certificate-Count',
+      );
+    }
+    return new StreamableFile(file.buffer, {
+      type: 'application/pdf',
+      disposition: `inline; filename="${file.fileName}"`,
+    });
   }
 
   @Put('manufacturers/:id')

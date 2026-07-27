@@ -37,6 +37,12 @@ import { UpdateCategoryMultipartDto } from './dto/update-category-multipart.dto'
 import { RedisService } from '../common/redis/redis.service';
 import { resolvePublicUploadUrl, uploadFile } from '../utils/upload-file.util';
 import { matchWebsitePublicCertifiedProducts } from '../product-registration/constants/website-public-product.filter';
+import {
+  parseMetaKeywords,
+  rawSeoMeta,
+  resolveSeoMeta,
+  validateSeoMetaWrite,
+} from '../common/constants/seo-meta.constants';
 
 /** Listing row: Mongo lean doc plus computed image URL */
 export type CategoryListItem = Record<string, unknown> & {
@@ -382,10 +388,11 @@ export class CategoriesService implements OnModuleInit {
       .exec();
     const out: CategoryListItem[] = [];
     for (const doc of rows) {
-      out.push({
-        ...(doc as Record<string, unknown>),
-        category_image_url: this.resolveCategoryImageUrl(doc.category_image),
-      });
+      out.push(
+        this.toCategoryResponse(
+          doc as unknown as Record<string, unknown>,
+        ) as CategoryListItem,
+      );
     }
     this.redisService
       .set(cacheKey, out, this.getCategoryListCacheTtlSeconds())
@@ -527,11 +534,19 @@ export class CategoriesService implements OnModuleInit {
         category_manufacturer_count: 0,
       };
       const category_image_url = this.resolveCategoryImageUrl(doc.category_image);
+      const seo = resolveSeoMeta({
+        meta_title: (doc as { meta_title?: string }).meta_title,
+        meta_description: (doc as { meta_description?: string }).meta_description,
+        meta_image: (doc as { meta_image?: string }).meta_image,
+        meta_keywords: (doc as { meta_keywords?: string[] }).meta_keywords,
+        primaryImage: category_image_url ?? doc.category_image,
+      });
       return {
         ...(doc as Record<string, unknown>),
         category_image: category_image_url ?? doc.category_image ?? null,
         category_image_url,
         categoryImageUrl: category_image_url,
+        ...seo,
         ...counts,
       };
     });
@@ -663,6 +678,13 @@ export class CategoriesService implements OnModuleInit {
     if (!displayName) {
       throw new BadRequestException('Category name is required');
     }
+    const metaErr = validateSeoMetaWrite({
+      meta_title: dto.meta_title,
+      meta_description: dto.meta_description,
+    });
+    if (metaErr) {
+      throw new BadRequestException(metaErr);
+    }
     const category_name_normalized = normalizeCategoryNameKey(displayName);
     await this.assertCategoryNameUnique(category_name_normalized);
 
@@ -670,16 +692,24 @@ export class CategoriesService implements OnModuleInit {
     const updated_date = this.formatUpdatedDate();
 
     const category_id = await this.nextCategoryIdFromCounter();
+    const meta_keywords = parseMetaKeywords(dto.meta_keywords);
+    const category_image = dto.category_image;
+    const meta_title = String(dto.meta_title ?? '').trim();
+    const meta_description = String(dto.meta_description ?? '').trim();
 
     let doc: CategoryDocument;
     try {
       doc = await this.categoryModel.create({
         category_name: displayName,
         category_name_normalized,
-        category_image: dto.category_image,
+        category_image,
         category_raw_material_forms: dto.category_raw_material_forms,
         category_status: dto.category_status ?? 1,
         sector: dto.sector ?? 1,
+        meta_title,
+        meta_description,
+        meta_image: category_image || undefined,
+        meta_keywords: meta_keywords.length ? meta_keywords : undefined,
         created_date,
         updated_date,
         category_id,
@@ -690,10 +720,9 @@ export class CategoriesService implements OnModuleInit {
     }
     const plain = doc.toObject();
     await this.invalidateCategoryListCache();
-    return {
-      ...plain,
-      category_image_url: this.resolveCategoryImageUrl(plain.category_image),
-    };
+    return this.toCategoryResponse(
+      plain as unknown as Record<string, unknown>,
+    );
   }
 
   private parseCategoryObjectId(id: string): Types.ObjectId {
@@ -705,11 +734,21 @@ export class CategoriesService implements OnModuleInit {
   }
 
   private toCategoryResponse(plain: Record<string, unknown>) {
+    const category_image_url = this.resolveCategoryImageUrl(
+      plain.category_image as string | undefined,
+    );
+    const seo = rawSeoMeta({
+      meta_title: plain.meta_title as string | undefined,
+      meta_description: plain.meta_description as string | undefined,
+      meta_image: plain.meta_image as string | undefined,
+      meta_keywords: plain.meta_keywords as string[] | string | undefined,
+      primaryImage: category_image_url ?? (plain.category_image as string | undefined),
+    });
     return {
       ...plain,
-      category_image_url: this.resolveCategoryImageUrl(
-        plain.category_image as string | undefined,
-      ),
+      category_image_url,
+      ...seo,
+      meta_image: seo.meta_image,
     };
   }
 
@@ -753,10 +792,32 @@ export class CategoriesService implements OnModuleInit {
       dto.category_raw_material_forms !== undefined ||
       dto.category_status !== undefined ||
       dto.sector !== undefined ||
+      dto.meta_title !== undefined ||
+      dto.meta_description !== undefined ||
+      dto.meta_keywords !== undefined ||
       !!image;
 
     if (!hasFieldUpdate) {
       throw new BadRequestException('No fields to update');
+    }
+
+    if (
+      dto.meta_title !== undefined ||
+      dto.meta_description !== undefined
+    ) {
+      const metaErr = validateSeoMetaWrite({
+        meta_title:
+          dto.meta_title !== undefined
+            ? dto.meta_title
+            : existing.meta_title,
+        meta_description:
+          dto.meta_description !== undefined
+            ? dto.meta_description
+            : existing.meta_description,
+      });
+      if (metaErr) {
+        throw new BadRequestException(metaErr);
+      }
     }
 
     const set: Record<string, unknown> = {
@@ -785,9 +846,29 @@ export class CategoriesService implements OnModuleInit {
     if (dto.sector !== undefined) {
       set.sector = dto.sector;
     }
+    if (dto.meta_title !== undefined) {
+      set.meta_title = String(dto.meta_title).trim();
+    }
+    if (dto.meta_description !== undefined) {
+      set.meta_description = String(dto.meta_description).trim();
+    }
+    if (dto.meta_keywords !== undefined) {
+      const keywords = parseMetaKeywords(dto.meta_keywords);
+      set.meta_keywords = keywords;
+    }
     if (image) {
       const uploaded = await uploadFile(image, 'categories');
       set.category_image = uploaded.fileUrl;
+      set.meta_image = uploaded.fileUrl;
+    } else if (
+      set.category_image === undefined &&
+      existing.category_image &&
+      (dto.meta_title !== undefined ||
+        dto.meta_description !== undefined ||
+        dto.meta_keywords !== undefined)
+    ) {
+      // Keep meta_image in sync with current primary image on meta-only updates.
+      set.meta_image = existing.category_image;
     }
 
     let updated: CategoryDocument | null;

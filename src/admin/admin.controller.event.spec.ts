@@ -30,6 +30,7 @@ describe('AdminController Event Endpoints', () => {
       galleryServiceMock as any,
       {} as any,
       {} as any,
+      {} as any,
     );
   });
 

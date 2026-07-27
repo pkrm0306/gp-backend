@@ -1,6 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import {
+  SEO_META_DESCRIPTION_MAX,
+  SEO_META_TITLE_MAX,
+} from '../../common/constants/seo-meta.constants';
 
 /** category_id is assigned only by the server — do not send it in the body */
 export class CreateCategoryDto {
@@ -38,4 +49,20 @@ export class CreateCategoryDto {
   @IsInt()
   @Min(1)
   sector?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(SEO_META_TITLE_MAX)
+  meta_title?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(SEO_META_DESCRIPTION_MAX)
+  meta_description?: string;
+
+  @ApiPropertyOptional({ description: 'Comma-separated or already-parsed keywords' })
+  @IsOptional()
+  meta_keywords?: string | string[];
 }

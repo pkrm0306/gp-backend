@@ -48,6 +48,7 @@ import {
   pickRecaptchaToken,
   RecaptchaService,
 } from '../common/services/recaptcha.service';
+import { resolveSeoMeta } from '../common/constants/seo-meta.constants';
 import { ShareProductByEmailDto } from './dto/share-product-by-email.dto';
 import {
   buildProductShareEmailHtml,
@@ -267,6 +268,13 @@ export class WebsiteService {
         )
       : null;
     const cardImage = normalizedProductImage ?? normalizedCategoryImage;
+    const seo = resolveSeoMeta({
+      meta_title: row.meta_title as string | undefined,
+      meta_description: row.meta_description as string | undefined,
+      meta_image: row.meta_image as string | undefined,
+      meta_keywords: row.meta_keywords as string[] | string | undefined,
+      primaryImage: normalizedProductImage ?? productOnly,
+    });
 
     return {
       ...row,
@@ -277,6 +285,12 @@ export class WebsiteService {
       manufacturerImage: normalizedManufacturerImage,
       manufacturerImageUrl: normalizedManufacturerImage,
       manufacturer_image: normalizedManufacturerImage,
+      ...seo,
+      meta_image:
+        seo.meta_image != null
+          ? this.normalizeWebsiteImageUrl(seo.meta_image, origin, 'product') ??
+            seo.meta_image
+          : null,
     };
   }
 
@@ -958,6 +972,18 @@ export class WebsiteService {
         ...data,
         productImage,
         productImageUrl: productImageUrl ?? data.productImageUrl ?? null,
+        meta_image:
+          this.normalizeWebsiteImageUrl(
+            this.pickImagePath(
+              (data as { meta_image?: string | null }).meta_image ??
+                productImageUrl ??
+                productImage,
+            ),
+            resolvedOrigin,
+            'product',
+          ) ??
+          (data as { meta_image?: string | null }).meta_image ??
+          null,
       },
     };
   }
