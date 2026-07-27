@@ -3902,12 +3902,19 @@ export class ProductRegistrationService {
     if (productImage !== undefined) {
       metaSet.meta_image = productImage || undefined;
     } else if (
-      existingMeta?.productImage &&
-      (dto.meta_title !== undefined ||
-        dto.meta_description !== undefined ||
-        dto.meta_keywords !== undefined)
+      dto.meta_title !== undefined ||
+      dto.meta_description !== undefined ||
+      dto.meta_keywords !== undefined
     ) {
-      metaSet.meta_image = existingMeta.productImage;
+      const latestImage = await this.productModel
+        .findById(productObjectId)
+        .select('productImage')
+        .lean()
+        .exec();
+      const syncedImage = String(latestImage?.productImage ?? existingMeta?.productImage ?? '').trim();
+      if (syncedImage) {
+        metaSet.meta_image = syncedImage;
+      }
     }
     if (Object.keys(metaSet).length > 0) {
       await this.productModel
@@ -3919,6 +3926,8 @@ export class ProductRegistrationService {
       existing.manufacturerId,
       dto,
     );
+
+    await this.invalidateProductListingsCache();
 
     const row = await this.productModel
       .findById(productObjectId)
@@ -4489,6 +4498,10 @@ export class ProductRegistrationService {
             productImage: {
               $ifNull: ['$productImage', '$product_image'],
             },
+            meta_title: 1,
+            meta_description: 1,
+            meta_image: 1,
+            meta_keywords: 1,
             categoryImage: {
               $ifNull: ['$category.category_image', '$category.categoryImage'],
             },

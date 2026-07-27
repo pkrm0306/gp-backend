@@ -273,8 +273,21 @@ export class WebsiteService {
       meta_description: row.meta_description as string | undefined,
       meta_image: row.meta_image as string | undefined,
       meta_keywords: row.meta_keywords as string[] | string | undefined,
-      primaryImage: normalizedProductImage ?? productOnly,
+      primaryImage:
+        normalizedProductImage ??
+        productOnly ??
+        normalizedCategoryImage ??
+        categoryOnly,
     });
+    const metaImageSource =
+      seo.meta_image ?? cardImage ?? productOnly ?? categoryOnly;
+    const meta_image = metaImageSource
+      ? this.normalizeWebsiteImageUrl(
+          this.pickImagePath(metaImageSource),
+          origin,
+          'product',
+        ) ?? metaImageSource
+      : null;
 
     return {
       ...row,
@@ -286,11 +299,7 @@ export class WebsiteService {
       manufacturerImageUrl: normalizedManufacturerImage,
       manufacturer_image: normalizedManufacturerImage,
       ...seo,
-      meta_image:
-        seo.meta_image != null
-          ? this.normalizeWebsiteImageUrl(seo.meta_image, origin, 'product') ??
-            seo.meta_image
-          : null,
+      meta_image,
     };
   }
 
@@ -844,7 +853,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'flat',
-      'v12',
+      'v14',
       this.shortHash(this.stableJsonStringify({ ...(dto as object), origin })),
     );
     try {
@@ -965,6 +974,21 @@ export class WebsiteService {
     const productImageUrl = productImage
       ? this.normalizeWebsiteImageUrl(productImage, resolvedOrigin, 'product')
       : null;
+    const metaImageSource = this.pickImagePath(
+      (data as { meta_image?: string | null }).meta_image ??
+        productImageUrl ??
+        productImage,
+    );
+    const meta_image = metaImageSource
+      ? this.normalizeWebsiteImageUrl(
+          metaImageSource,
+          resolvedOrigin,
+          'product',
+        ) ??
+        productImageUrl ??
+        productImage ??
+        metaImageSource
+      : null;
 
     return {
       message: 'Certified product passport retrieved successfully',
@@ -972,18 +996,7 @@ export class WebsiteService {
         ...data,
         productImage,
         productImageUrl: productImageUrl ?? data.productImageUrl ?? null,
-        meta_image:
-          this.normalizeWebsiteImageUrl(
-            this.pickImagePath(
-              (data as { meta_image?: string | null }).meta_image ??
-                productImageUrl ??
-                productImage,
-            ),
-            resolvedOrigin,
-            'product',
-          ) ??
-          (data as { meta_image?: string | null }).meta_image ??
-          null,
+        meta_image,
       },
     };
   }
