@@ -3009,7 +3009,7 @@ export class ManufacturersService implements OnModuleInit {
           primaryVendorUserId: primaryVendor?.userId,
           manufacturer_product_count: counts.manufacturer_product_count,
           manufacturer_vendor_count: counts.manufacturer_vendor_count,
-          applySeoDefa: true,
+          // Admin list: raw DB SEO only (no website DEFAULT_SEO_META).
         });
       }),
     );
