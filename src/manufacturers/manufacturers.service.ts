@@ -61,6 +61,11 @@ import { AuthService } from '../auth/auth.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import { countCertifiedPlantCertificatesByManufacturerIds } from '../product-registration/helpers/certified-plant-certificate-count.util';
+import {
+  ProductPlant,
+  ProductPlantDocument,
+} from '../product-registration/schemas/product-plant.schema';
 import {
   allocateUniqueSlug,
   isValidPublicSlug,
@@ -140,6 +145,8 @@ export class ManufacturersService implements OnModuleInit {
     private manufacturerModel: Model<ManufacturerDocument>,
     @InjectModel(Product.name)
     private productModel: Model<ProductDocument>,
+    @InjectModel(ProductPlant.name)
+    private productPlantModel: Model<ProductPlantDocument>,
     @InjectModel(VendorUser.name)
     private vendorUserModel: Model<VendorUserDocument>,
     @InjectConnection() private connection: Connection,
@@ -689,6 +696,7 @@ export class ManufacturersService implements OnModuleInit {
       manufacturer_product_count?: number;
       manufacturer_vendor_count?: number;
       productCount?: number;
+      certifiedPlantCount?: number;
       applySeoDefa?: boolean;
     } = {},
   ) {
@@ -749,6 +757,9 @@ export class ManufacturersService implements OnModuleInit {
       accountDeletedAt,
       manufacturer_product_count: options.manufacturer_product_count,
       manufacturer_vendor_count: options.manufacturer_vendor_count,
+      ...(options.certifiedPlantCount !== undefined
+        ? { certifiedPlantCount: options.certifiedPlantCount }
+        : {}),
       ...(options.productCount !== undefined
         ? { productCount: options.productCount }
         : {}),
@@ -2988,6 +2999,15 @@ export class ManufacturersService implements OnModuleInit {
           : Promise.resolve(undefined),
       ]);
 
+    const certifiedPlantCountsByManufacturerId =
+      useWebsitePublicCertifiedProductCount
+        ? undefined
+        : await countCertifiedPlantCertificatesByManufacturerIds(
+            this.productModel,
+            this.productPlantModel,
+            manufacturerIds,
+          );
+
     const data = await Promise.all(
       rows.map(async (m) => {
         const mid = new Types.ObjectId(String(m._id));
@@ -3009,6 +3029,8 @@ export class ManufacturersService implements OnModuleInit {
           primaryVendorUserId: primaryVendor?.userId,
           manufacturer_product_count: counts.manufacturer_product_count,
           manufacturer_vendor_count: counts.manufacturer_vendor_count,
+          certifiedPlantCount:
+            certifiedPlantCountsByManufacturerId?.get(mid.toString()) ?? 0,
           // Admin list: raw DB SEO only (no website DEFAULT_SEO_META).
         });
       }),

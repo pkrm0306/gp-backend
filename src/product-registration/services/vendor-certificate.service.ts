@@ -35,6 +35,7 @@ import {
 } from '../schemas/product-plant.schema';
 import { readUploadedFileBuffer } from '../../utils/upload-file-read.util';
 import { formatCertificatePlantLocation } from '../utils/certificate-plant-location.util';
+import { countCertifiedPlantCertificatesByManufacturerIds as countCertifiedPlantCertificatesByManufacturerIdsUtil } from '../helpers/certified-plant-certificate-count.util';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -503,6 +504,20 @@ export class VendorCertificateService {
     const entries =
       await this.collectManufacturerCertificateEntries(manufacturerObjectId);
     return entries.length;
+  }
+
+  /**
+   * Lightweight batch count for admin manufacturer lists — same plant-page rules as
+   * bulk download without hydrating products or generating PDFs.
+   */
+  async countCertifiedPlantCertificatesByManufacturerIds(
+    manufacturerIds: Types.ObjectId[],
+  ): Promise<Map<string, number>> {
+    return countCertifiedPlantCertificatesByManufacturerIdsUtil(
+      this.productModel,
+      this.productPlantModel,
+      manufacturerIds,
+    );
   }
 
   async countVendorCertifiedPlantCertificates(vendorId: string): Promise<number> {

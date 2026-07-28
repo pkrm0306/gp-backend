@@ -16,6 +16,10 @@ import {
   ProductSchema,
 } from '../product-registration/schemas/product.schema';
 import {
+  ProductPlant,
+  ProductPlantSchema,
+} from '../product-registration/schemas/product-plant.schema';
+import {
   VendorUser,
   VendorUserSchema,
 } from '../vendor-users/schemas/vendor-user.schema';
@@ -36,6 +40,10 @@ import { ZohoModule } from '../zoho/zoho.module';
         schema: ManufacturerInternalIdCounterSchema,
       },
       { name: Product.name, schema: ProductSchema },
+      {
+        name: ProductPlant.name,
+        schema: ProductPlantSchema,
+      },
       { name: VendorUser.name, schema: VendorUserSchema },
     ]),
     VendorUsersModule,
