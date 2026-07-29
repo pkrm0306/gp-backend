@@ -937,7 +937,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'flat',
-      'v13-slugs',
+      'v14-social-display',
       this.shortHash(this.stableJsonStringify({ ...(resolvedDto as object), origin })),
     );
     try {

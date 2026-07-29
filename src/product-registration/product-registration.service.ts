@@ -50,6 +50,7 @@ import {
   buildManufacturerSocialVisibilityPayload,
   filterManufacturerSocialUrlsForWebsite,
   MANUFACTURER_SOCIAL_VISIBILITY_KEYS,
+  pickManufacturerSocialLinksForWebsite,
 } from './helpers/manufacturer-social-visibility.util';
 import { formatProcessFinalReviewPayload } from './helpers/format-process-final-review.util';
 import { formatProcessCommentsForApi } from '../process-comments/helpers/process-comments-payload.util';
@@ -4477,6 +4478,16 @@ export class ProductRegistrationService implements OnModuleInit {
       },
       m,
     );
+    const socialLinks = pickManufacturerSocialLinksForWebsite(
+      {
+        website: m.vendor_website,
+        facebook: m.vendor_facebook,
+        youtube: m.vendor_youtube,
+        twitter: m.vendor_twitter,
+        linkedin: m.vendor_linkedin,
+      },
+      m,
+    );
 
     return {
       _id: this.toMongoIdString(m._id),
@@ -4498,6 +4509,8 @@ export class ProductRegistrationService implements OnModuleInit {
       vendor_twitter: filtered.twitter,
       linkedin: filtered.linkedin,
       vendor_linkedin: filtered.linkedin,
+      socialLinks,
+      manufacturerSocialLinks: socialLinks,
     };
   }
 
@@ -5063,6 +5076,12 @@ export class ProductRegistrationService implements OnModuleInit {
           manufacturerLinkedin: {
             $ifNull: ['$manufacturer.vendor_linkedin', ''],
           },
+          manufacturerWebsite: {
+            $ifNull: ['$manufacturer.vendor_website', ''],
+          },
+          showWebsiteOnWebsite: {
+            $ifNull: ['$manufacturer.showWebsiteOnWebsite', true],
+          },
           showFacebookOnWebsite: {
             $ifNull: ['$manufacturer.showFacebookOnWebsite', true],
           },
@@ -5109,7 +5128,11 @@ export class ProductRegistrationService implements OnModuleInit {
     };
   }
 
-  /** Public manufacturer social links — flat fields always returned; nested object always present. */
+  /**
+   * Public manufacturer social links.
+   * Nested `socialLinks` / `manufacturerSocialLinks` omit disabled or empty networks
+   * (Display-on-Website must be on and URL non-empty). Flat fields stay empty string when hidden.
+   */
   private mapPublicManufacturerSocialFields(fields: {
     facebook?: unknown;
     youtube?: unknown;
@@ -5133,16 +5156,16 @@ export class ProductRegistrationService implements OnModuleInit {
       fields,
     );
 
-    const manufacturerSocialLinks: Record<string, string> = {
-      facebook: filtered.facebook,
-      facebookUrl: filtered.facebook,
-      youtube: filtered.youtube,
-      youtubeUrl: filtered.youtube,
-      twitter: filtered.twitter,
-      twitterUrl: filtered.twitter,
-      linkedin: filtered.linkedin,
-      linkedinUrl: filtered.linkedin,
-    };
+    const socialLinks = pickManufacturerSocialLinksForWebsite(
+      {
+        website: fields.website,
+        facebook: fields.facebook,
+        youtube: fields.youtube,
+        twitter: fields.twitter,
+        linkedin: fields.linkedin,
+      },
+      fields,
+    );
 
     return {
       website: filtered.website,
@@ -5159,39 +5182,34 @@ export class ProductRegistrationService implements OnModuleInit {
       linkedin: filtered.linkedin,
       linkedinUrl: filtered.linkedin,
       vendor_linkedin: filtered.linkedin,
-      manufacturerSocialLinks,
-      socialLinks: manufacturerSocialLinks,
+      manufacturerSocialLinks: socialLinks,
+      socialLinks,
     };
   }
 
-  /** @deprecated use mapPublicManufacturerSocialFields */
+  /** Sparse social object for certified product cards (enabled + non-empty only). */
   private buildPublicManufacturerSocialLinks(fields: {
     facebook?: unknown;
     youtube?: unknown;
     twitter?: unknown;
     linkedin?: unknown;
+    website?: unknown;
+    showWebsiteOnWebsite?: unknown;
     showFacebookOnWebsite?: unknown;
     showYoutubeOnWebsite?: unknown;
     showTwitterOnWebsite?: unknown;
     showLinkedinOnWebsite?: unknown;
-  }): Record<string, string> | undefined {
-    const mapped = this.mapPublicManufacturerSocialFields(fields);
-    const nested = mapped.manufacturerSocialLinks as Record<string, string>;
-    const hasAny = ['facebook', 'youtube', 'twitter', 'linkedin'].some(
-      (key) => String(nested[key] ?? '').trim(),
+  }): Record<string, string> {
+    return pickManufacturerSocialLinksForWebsite(
+      {
+        website: fields.website,
+        facebook: fields.facebook,
+        youtube: fields.youtube,
+        twitter: fields.twitter,
+        linkedin: fields.linkedin,
+      },
+      fields,
     );
-    if (!hasAny) {
-      return undefined;
-    }
-    const out: Record<string, string> = {};
-    for (const key of ['facebook', 'youtube', 'twitter', 'linkedin'] as const) {
-      const value = String(nested[key] ?? '').trim();
-      if (value) {
-        out[key] = value;
-        out[`${key}Url`] = value;
-      }
-    }
-    return out;
   }
 
   /** Resolve stored upload paths for public website certified product cards. */
@@ -5225,11 +5243,13 @@ export class ProductRegistrationService implements OnModuleInit {
       row.productDetails ?? row.product_details ?? '',
     ).trim();
 
-    const manufacturerSocialLinks = this.buildPublicManufacturerSocialLinks({
+    const socialLinks = this.buildPublicManufacturerSocialLinks({
       facebook: row.manufacturerFacebook,
       youtube: row.manufacturerYoutube,
       twitter: row.manufacturerTwitter,
       linkedin: row.manufacturerLinkedin,
+      website: row.manufacturerWebsite,
+      showWebsiteOnWebsite: row.showWebsiteOnWebsite,
       showFacebookOnWebsite: row.showFacebookOnWebsite,
       showYoutubeOnWebsite: row.showYoutubeOnWebsite,
       showTwitterOnWebsite: row.showTwitterOnWebsite,
@@ -5241,6 +5261,8 @@ export class ProductRegistrationService implements OnModuleInit {
       manufacturerYoutube: _my,
       manufacturerTwitter: _mt,
       manufacturerLinkedin: _ml,
+      manufacturerWebsite: _mw,
+      showWebsiteOnWebsite: _sw,
       showFacebookOnWebsite: _sf,
       showYoutubeOnWebsite: _sy,
       showTwitterOnWebsite: _st,
@@ -5269,17 +5291,9 @@ export class ProductRegistrationService implements OnModuleInit {
       categoryImageUrl: categoryImage,
       plants,
       plantDetails: plants,
-      manufacturerSocialLinks:
-        manufacturerSocialLinks ?? {
-          facebook: '',
-          facebookUrl: '',
-          youtube: '',
-          youtubeUrl: '',
-          twitter: '',
-          twitterUrl: '',
-          linkedin: '',
-          linkedinUrl: '',
-        },
+      // Sparse: only Display-on-Website + non-empty URLs (frontend renders what it gets).
+      socialLinks,
+      manufacturerSocialLinks: socialLinks,
     };
   }
 
