@@ -1,6 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class UpdateVendorStatusDto {
   @ApiProperty({
@@ -28,4 +34,53 @@ export class UpdateVendorStatusDto {
   @IsInt()
   @IsIn([0, 1], { message: 'vendor_status must be 0 or 1' })
   vendor_status?: 0 | 1;
+
+  @ApiProperty({
+    description:
+      'Required when setting vendor_status to 0 (deactivate). Max 500 characters. Ignored when activating.',
+    required: false,
+    maxLength: 500,
+    example: 'Non-compliant documentation; account suspended pending re-submission.',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value),
+  )
+  @IsString()
+  @MaxLength(500, {
+    message: 'Remark must be at most 500 characters',
+  })
+  remark?: string;
+
+  /** Alias for {@link remark} (admin UI / alternate clients). */
+  @ApiProperty({
+    description: 'Alias for remark',
+    required: false,
+    maxLength: 500,
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value),
+  )
+  @IsString()
+  @MaxLength(500, {
+    message: 'Remark must be at most 500 characters',
+  })
+  deactivationRemark?: string;
+
+  /** Alias for {@link remark} (some admin clients send `remarks`). */
+  @ApiProperty({
+    description: 'Alias for remark',
+    required: false,
+    maxLength: 500,
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : String(value),
+  )
+  @IsString()
+  @MaxLength(500, {
+    message: 'Remark must be at most 500 characters',
+  })
+  remarks?: string;
 }

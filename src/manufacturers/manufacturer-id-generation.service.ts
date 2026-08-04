@@ -258,6 +258,10 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
         .findOne({
           manufacturerInitial: candidate,
           _id: { $ne: excludeManufacturerId },
+          $or: [
+            { accountDeletedAt: { $exists: false } },
+            { accountDeletedAt: null },
+          ],
         })
         .select('_id')
         .session(session)
@@ -325,6 +329,10 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
         .findOne({
           gpInternalId,
           _id: { $ne: excludeManufacturerId },
+          $or: [
+            { accountDeletedAt: { $exists: false } },
+            { accountDeletedAt: null },
+          ],
         })
         .session(session)
         .select('_id')

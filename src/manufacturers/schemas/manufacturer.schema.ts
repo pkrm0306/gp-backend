@@ -104,6 +104,13 @@ export class Manufacturer {
   vendor_status: number;
 
   /**
+   * Admin remark captured when a verified manufacturer is set inactive (vendor_status = 0).
+   * Overwritten on each deactivation; not required for activation.
+   */
+  @Prop({ trim: true })
+  deactivationRemark?: string;
+
+  /**
    * Soft account deletion (DPDP). When set, portal access is blocked, products are hidden
    * from the public website, and login email/phone are released for re-registration.
    */

@@ -471,7 +471,7 @@ export class AuthService {
       registrationConflicts.push('Phone number already exists');
     }
     if (existingManufacturerByCompanyName) {
-      registrationConflicts.push('Company name already exists');
+      registrationConflicts.push('Manufacturer name already exists');
     }
     if (registrationConflicts.length > 0) {
       throw new ConflictException(registrationConflicts);

@@ -3957,6 +3957,48 @@ export class AdminService {
             throw new NotFoundException('Manufacturer not found');
           }
 
+          const prevName = String(existing.manufacturerName ?? '').trim();
+          const nextName = String(updateDto.manufacturerName ?? '').trim();
+          const nameChanging =
+            prevName.toLowerCase() !== nextName.toLowerCase() ||
+            prevName.replace(/\s+/g, ' ') !== nextName.replace(/\s+/g, ' ');
+          // Use manufacturers name uniqueness among non-deleted rows only.
+          if (nextName && nameChanging) {
+            const normalizedNext = nextName.replace(/\s+/g, ' ').trim();
+            const nameTaken = await this.manufacturerModel
+              .findOne({
+                manufacturerName: {
+                  $regex: new RegExp(
+                    `^${normalizedNext
+                      .split(/\s+/)
+                      .filter(Boolean)
+                      .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+                      .join('\\s+')}$`,
+                    'i',
+                  ),
+                },
+                _id: { $ne: existing._id },
+                $or: [
+                  { accountDeletedAt: { $exists: false } },
+                  { accountDeletedAt: null },
+                ],
+              })
+              .session(session)
+              .select('_id')
+              .lean()
+              .exec();
+            if (nameTaken) {
+              throw new ConflictException({
+                statusCode: 409,
+                error: 'Conflict',
+                message: 'Manufacturer name already exists',
+                fieldErrors: {
+                  manufacturerName: 'Manufacturer name already exists',
+                },
+              });
+            }
+          }
+
           const isUnverified = (existing.manufacturerStatus ?? 0) !== 1;
           const updateData: Record<string, unknown> = {
             manufacturerName: updateDto.manufacturerName,

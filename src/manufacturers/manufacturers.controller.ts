@@ -270,6 +270,10 @@ export class ManufacturersController {
         ? await this.manufacturersService.setVendorStatusForVerified(
             id,
             dto.vendor_status,
+            {
+              remark:
+                dto.remark ?? dto.deactivationRemark ?? dto.remarks,
+            },
           )
         : await this.manufacturersService.toggleManufacturerStatus(id);
     return { message: 'Manufacturer status updated successfully', data };
@@ -280,7 +284,7 @@ export class ManufacturersController {
   @ApiOperation({
     summary: 'Update vendor active/inactive (verified only)',
     description:
-      'Lightweight status update for verified manufacturers. manufacturerStatus stays 1; only vendor_status changes (0/1).',
+      'Lightweight status update for verified manufacturers. manufacturerStatus stays 1; only vendor_status changes (0/1). Deactivating (vendor_status=0) requires a remark (max 500 chars).',
   })
   @ApiParam({ name: 'id', description: 'Manufacturer MongoDB id' })
   @ApiBody({ type: UpdateVendorStatusDto })
@@ -291,13 +295,23 @@ export class ManufacturersController {
     @Param('id') id: string,
     @Body() dto: UpdateVendorStatusDto,
   ) {
+    if (dto.vendor_status !== 0 && dto.vendor_status !== 1) {
+      throw new BadRequestException('vendor_status must be 0 or 1');
+    }
     const data = await this.manufacturersService.setVendorStatusForVerified(
       id,
       dto.vendor_status,
+      {
+        remark: dto.remark ?? dto.deactivationRemark ?? dto.remarks,
+      },
     );
     return {
       message: 'Vendor status updated',
-      data: { _id: data._id, vendor_status: data.vendor_status },
+      data: {
+        _id: data._id,
+        vendor_status: data.vendor_status,
+        deactivationRemark: data.deactivationRemark ?? null,
+      },
     };
   }
 

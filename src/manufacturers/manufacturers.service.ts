@@ -208,7 +208,10 @@ export class ManufacturersService implements OnModuleInit {
     return allocateUniqueSlug(
       name,
       async (candidate) => {
-        const filter: Record<string, unknown> = { slug: candidate };
+        const filter: Record<string, unknown> = {
+          slug: candidate,
+          ...this.activeManufacturerNameFilter(),
+        };
         if (excludeId) {
           filter._id = { $ne: excludeId };
         }
@@ -332,8 +335,78 @@ export class ManufacturersService implements OnModuleInit {
     return 'This email id is already registered';
   }
 
+  private manufacturerNameDuplicateMessage(): string {
+    return 'Manufacturer name already exists';
+  }
+
+  private activeManufacturerNameFilter(): Record<string, unknown> {
+    return {
+      $or: [
+        { accountDeletedAt: { $exists: false } },
+        { accountDeletedAt: null },
+      ],
+    };
+  }
+
   private vendorEmailCaseInsensitiveRegex(normalized: string): RegExp {
     return new RegExp(`^${escapeRegex(normalized)}$`, 'i');
+  }
+
+  /**
+   * True when another non-deleted manufacturer already uses this company name.
+   * Soft-deleted manufacturers (`accountDeletedAt` set) do not block the name.
+   */
+  async isManufacturerNameAvailable(
+    manufacturerId: string | null | undefined,
+    companyName: string,
+    session?: ClientSession,
+  ): Promise<boolean> {
+    const normalized = normalizeManufacturerName(companyName);
+    if (!normalized) {
+      return true;
+    }
+    const filter: Record<string, unknown> = {
+      manufacturerName: { $regex: companyNameExactRegex(normalized) },
+      ...this.activeManufacturerNameFilter(),
+    };
+    if (manufacturerId && Types.ObjectId.isValid(manufacturerId)) {
+      filter._id = { $ne: new Types.ObjectId(manufacturerId) };
+    }
+    const query = this.manufacturerModel
+      .findOne(filter)
+      .select('_id')
+      .lean();
+    if (session) query.session(session);
+    return !(await query.exec());
+  }
+
+  /**
+   * Assert manufacturer display name is free among non-deleted manufacturers.
+   */
+  async assertManufacturerNameAvailable(
+    companyName: string,
+    excludeManufacturerId?: string | Types.ObjectId | null,
+    session?: ClientSession,
+  ): Promise<void> {
+    const excludeId =
+      excludeManufacturerId != null
+        ? String(excludeManufacturerId)
+        : undefined;
+    const available = await this.isManufacturerNameAvailable(
+      excludeId,
+      companyName,
+      session,
+    );
+    if (!available) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        message: this.manufacturerNameDuplicateMessage(),
+        fieldErrors: {
+          manufacturerName: this.manufacturerNameDuplicateMessage(),
+        },
+      });
+    }
   }
 
   /** Ensures login email is not used by another manufacturer or portal user account. */
@@ -753,6 +826,11 @@ export class ManufacturersService implements OnModuleInit {
       vendor_status: vSt,
       vendorStatusLabel: vendorStatusLabel(vSt),
       statusToggle: vSt === 1 ? ('On' as const) : ('Off' as const),
+      deactivationRemark:
+        String(
+          (m as { deactivationRemark?: string | null }).deactivationRemark ??
+            '',
+        ).trim() || null,
       accountDeleted,
       accountDeletedAt,
       manufacturer_product_count: options.manufacturer_product_count,
@@ -987,10 +1065,7 @@ export class ManufacturersService implements OnModuleInit {
     return this.manufacturerModel
       .findOne({
         manufacturerName: { $regex: companyNameExactRegex(normalized) },
-        $or: [
-          { accountDeletedAt: { $exists: false } },
-          { accountDeletedAt: null },
-        ],
+        ...this.activeManufacturerNameFilter(),
       })
       .exec();
   }
@@ -1715,7 +1790,19 @@ export class ManufacturersService implements OnModuleInit {
 
       const updateData: Partial<Manufacturer> = {};
       if (updateDto.companyName) {
-        updateData.manufacturerName = updateDto.companyName;
+        const nextCompanyName = normalizeManufacturerName(updateDto.companyName);
+        const prevCompanyName = normalizeManufacturerName(
+          String(resolvedManufacturer.manufacturerName ?? ''),
+        );
+        if (nextCompanyName && nextCompanyName !== prevCompanyName) {
+          await this.assertManufacturerNameAvailable(
+            nextCompanyName,
+            resolvedManufacturer._id,
+          );
+        }
+        if (nextCompanyName) {
+          updateData.manufacturerName = nextCompanyName;
+        }
       }
       if (updateDto.name) {
         updateData.vendor_name = updateDto.name;
@@ -1990,15 +2077,36 @@ export class ManufacturersService implements OnModuleInit {
             throw new NotFoundException('Manufacturer not found');
           }
 
-          if (dto.vendor_email !== undefined || dto.vendor_phone !== undefined) {
-            const emailChanging = this.isVendorEmailChanging(
-              dto.vendor_email,
-              existing.vendor_email,
+          const prevName = String(existing.manufacturerName ?? '').trim();
+          const nextName = String(dto.manufacturerName ?? '').trim();
+          const nameChanging =
+            normalizeManufacturerName(nextName) !==
+            normalizeManufacturerName(prevName);
+
+          const emailChanging =
+            dto.vendor_email !== undefined &&
+            this.isVendorEmailChanging(dto.vendor_email, existing.vendor_email);
+          const phoneChanging =
+            dto.vendor_phone !== undefined &&
+            this.isVendorPhoneChanging(dto.vendor_phone, existing.vendor_phone);
+
+          const fieldErrors: Record<string, string> = {};
+          const conflictMessages: string[] = [];
+
+          if (nameChanging && nextName) {
+            const nameAvailable = await this.isManufacturerNameAvailable(
+              id,
+              nextName,
+              session,
             );
-            const phoneChanging = this.isVendorPhoneChanging(
-              dto.vendor_phone,
-              existing.vendor_phone,
-            );
+            if (!nameAvailable) {
+              const msg = this.manufacturerNameDuplicateMessage();
+              conflictMessages.push(msg);
+              fieldErrors.manufacturerName = msg;
+            }
+          }
+
+          if (emailChanging || phoneChanging) {
             const contactConflicts =
               await this.collectManufacturerContactConflicts(
                 id,
@@ -2008,9 +2116,31 @@ export class ManufacturersService implements OnModuleInit {
                 },
                 { session },
               );
-            if (contactConflicts.length > 0) {
-              throw new ConflictException(contactConflicts);
+            for (const msg of contactConflicts) {
+              conflictMessages.push(msg);
+              if (
+                /email/i.test(msg) &&
+                !fieldErrors.vendor_email &&
+                !fieldErrors.vendorEmail
+              ) {
+                fieldErrors.vendor_email = msg;
+              } else if (
+                /phone|mobile/i.test(msg) &&
+                !fieldErrors.vendor_phone &&
+                !fieldErrors.vendorPhone
+              ) {
+                fieldErrors.vendor_phone = msg;
+              }
             }
+          }
+
+          if (conflictMessages.length > 0) {
+            throw new ConflictException({
+              statusCode: 409,
+              error: 'Conflict',
+              message: conflictMessages,
+              fieldErrors,
+            });
           }
 
           const isUnverified = (existing.manufacturerStatus ?? 0) !== 1;
@@ -2018,8 +2148,6 @@ export class ManufacturersService implements OnModuleInit {
             manufacturerName: dto.manufacturerName,
             updatedAt: new Date(),
           };
-          const prevName = String(existing.manufacturerName ?? '').trim();
-          const nextName = String(dto.manufacturerName ?? '').trim();
           if (
             nextName &&
             nextName !== prevName &&
@@ -2131,6 +2259,10 @@ export class ManufacturersService implements OnModuleInit {
               .findOne({
                 manufacturerInitial: updateData.manufacturerInitial,
                 _id: { $ne: existing._id },
+                $or: [
+                  { accountDeletedAt: { $exists: false } },
+                  { accountDeletedAt: null },
+                ],
               })
               .session(session)
               .select('_id')
@@ -2147,6 +2279,10 @@ export class ManufacturersService implements OnModuleInit {
               .findOne({
                 gpInternalId: updateData.gpInternalId,
                 _id: { $ne: existing._id },
+                $or: [
+                  { accountDeletedAt: { $exists: false } },
+                  { accountDeletedAt: null },
+                ],
               })
               .session(session)
               .select('_id')
@@ -2447,8 +2583,13 @@ export class ManufacturersService implements OnModuleInit {
   /**
    * Lightweight vendor_status update for verified manufacturer.
    * Ensures manufacturerStatus stays 1 and rejects toggling for unverified manufacturers.
+   * Deactivation (vendor_status = 0) requires a remark of 1–500 characters.
    */
-  async setVendorStatusForVerified(id: string, vendor_status: 0 | 1) {
+  async setVendorStatusForVerified(
+    id: string,
+    vendor_status: 0 | 1,
+    options?: { remark?: string },
+  ) {
     try {
       const manufacturerId = new Types.ObjectId(id);
       const manufacturer = await this.manufacturerModel
@@ -2468,16 +2609,39 @@ export class ManufacturersService implements OnModuleInit {
         this.assertCoreFieldsPresentForActivation(manufacturer);
       }
 
+      const updateData: Record<string, unknown> = {
+        manufacturerStatus: 1,
+        vendor_status,
+        updatedAt: new Date(),
+      };
+
+      if (vendor_status === 0) {
+        const remark = String(options?.remark ?? '').trim();
+        if (!remark) {
+          throw new BadRequestException({
+            statusCode: 400,
+            error: 'Bad Request',
+            message: 'Remark is required when deactivating a manufacturer',
+            fieldErrors: {
+              remark: 'Remark is required',
+            },
+          });
+        }
+        if (remark.length > 500) {
+          throw new BadRequestException({
+            statusCode: 400,
+            error: 'Bad Request',
+            message: 'Remark must be at most 500 characters',
+            fieldErrors: {
+              remark: 'Remark must be at most 500 characters',
+            },
+          });
+        }
+        updateData.deactivationRemark = remark;
+      }
+
       const updated = await this.manufacturerModel
-        .findByIdAndUpdate(
-          manufacturerId,
-          {
-            manufacturerStatus: 1,
-            vendor_status,
-            updatedAt: new Date(),
-          },
-          { new: true },
-        )
+        .findByIdAndUpdate(manufacturerId, updateData, { new: true })
         .exec();
 
       if (updated && vendor_status === 0) {
@@ -2503,7 +2667,8 @@ export class ManufacturersService implements OnModuleInit {
     } catch (error: any) {
       if (
         error instanceof NotFoundException ||
-        error instanceof ConflictException
+        error instanceof ConflictException ||
+        error instanceof BadRequestException
       ) {
         throw error;
       }
@@ -2545,6 +2710,9 @@ export class ManufacturersService implements OnModuleInit {
     const originalPhone = String(manufacturer.vendor_phone ?? '').trim();
     const freedEmail = `deleted.${idStr}.${stamp}@account-deleted.local`;
     const freedPhone = `DEL-${idStr.slice(-8)}-${stamp}`.slice(0, 32);
+    // Free display name + public slug so the original name can be re-registered.
+    const freedName = `Deleted manufacturer ${idStr} ${stamp}`.slice(0, 200);
+    const freedSlug = `deleted-${idStr}-${stamp}`.toLowerCase();
 
     const updated = await this.manufacturerModel
       .findByIdAndUpdate(
@@ -2556,6 +2724,9 @@ export class ManufacturersService implements OnModuleInit {
           deletedVendorPhone: originalPhone || undefined,
           vendor_email: freedEmail,
           vendor_phone: freedPhone,
+          manufacturerName: freedName,
+          slug: freedSlug,
+          slugLocked: true,
           updatedAt: new Date(),
         },
         { new: true },
