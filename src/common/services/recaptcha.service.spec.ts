@@ -51,12 +51,29 @@ describe('RecaptchaService', () => {
     );
   });
 
+  it('verifyRecaptcha tries each secret until one succeeds', async () => {
+    const multiSecret = new RecaptchaService({
+      get: (key: string) =>
+        key === 'RECAPTCHA_SECRET_KEY' ? 'secret-a,secret-b' : undefined,
+    } as unknown as ConfigService);
+    mockedAxios.post
+      .mockResolvedValueOnce({
+        data: { success: false, 'error-codes': ['invalid-keys'] },
+      })
+      .mockResolvedValueOnce({ data: { success: true } });
+    await expect(multiSecret.verifyRecaptcha('token')).resolves.toBe(true);
+    expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+    expect(mockedAxios.post.mock.calls[0][1]).toContain('secret=secret-a');
+    expect(mockedAxios.post.mock.calls[1][1]).toContain('secret=secret-b');
+  });
+
   it('verifyRecaptcha returns false when Google success is false', async () => {
     mockedAxios.post.mockResolvedValueOnce({
       data: { success: false, 'error-codes': ['invalid-input-response'] },
     });
     await expect(service.verifyRecaptcha('bad')).resolves.toBe(false);
   });
+
 
   it('verifyRecaptcha throws when secret is missing', async () => {
     const missingSecret = new RecaptchaService({

@@ -56,7 +56,7 @@ import {
   GlobalPhoneUniquenessService,
   GLOBAL_PHONE_UNAVAILABLE_MESSAGE,
 } from '../common/services/global-phone-uniqueness.service';
-import { buildPhoneLookupVariants } from '../common/utils/phone-lookup.util';
+import { buildPhoneLookupVariants, normalizePhoneDigits } from '../common/utils/phone-lookup.util';
 import { AuthService } from '../auth/auth.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
@@ -319,16 +319,23 @@ export class ManufacturersService implements OnModuleInit {
     if (incoming === undefined) {
       return false;
     }
-    const normalizedIncoming = this.normalizeProfilePhone(incoming);
-    if (!normalizedIncoming) {
+    const incomingDigits = normalizePhoneDigits(incoming);
+    if (incomingDigits.length < 7) {
       return false;
     }
-    const currentSet = new Set(
+    const incomingKey =
+      incomingDigits.length >= 10
+        ? incomingDigits.slice(-10)
+        : incomingDigits;
+    const currentKeys = new Set(
       currentValues
-        .map((value) => this.normalizeProfilePhone(value))
-        .filter((value) => value.length > 0),
+        .map((value) => normalizePhoneDigits(value ?? ''))
+        .filter((digits) => digits.length >= 7)
+        .map((digits) =>
+          digits.length >= 10 ? digits.slice(-10) : digits,
+        ),
     );
-    return !currentSet.has(normalizedIncoming);
+    return !currentKeys.has(incomingKey);
   }
 
   private vendorEmailDuplicateMessage(): string {
@@ -484,8 +491,14 @@ export class ManufacturersService implements OnModuleInit {
     if (!trimmed) {
       throw new BadRequestException('vendor_phone is required');
     }
+    const linkedUserIds =
+      await this.loadLinkedVendorUserIdsForManufacturer(
+        manufacturerId,
+        session,
+      );
     await this.globalPhoneUniqueness.assertPhoneAvailable(trimmed, {
       excludeManufacturerId: manufacturerId,
+      excludeUserIds: linkedUserIds,
       session,
     });
   }
@@ -545,17 +558,25 @@ export class ManufacturersService implements OnModuleInit {
       const trimmed = String(fields.phone).trim();
       if (trimmed) {
         tasks.push(
-          this.globalPhoneUniqueness
-            .isPhoneAvailable(trimmed, {
-              excludeManufacturerId: manufacturerId,
-              excludeUserId: options?.excludeUserId,
-              session: options?.session,
-            })
-            .then((ok) => {
-              if (!ok) {
-                conflicts.push(GLOBAL_PHONE_UNAVAILABLE_MESSAGE);
-              }
-            }),
+          (async () => {
+            const linkedUserIds =
+              await this.loadLinkedVendorUserIdsForManufacturer(
+                manufacturerId,
+                options?.session,
+              );
+            const ok = await this.globalPhoneUniqueness.isPhoneAvailable(
+              trimmed,
+              {
+                excludeManufacturerId: manufacturerId,
+                excludeUserId: options?.excludeUserId,
+                excludeUserIds: linkedUserIds,
+                session: options?.session,
+              },
+            );
+            if (!ok) {
+              conflicts.push(GLOBAL_PHONE_UNAVAILABLE_MESSAGE);
+            }
+          })(),
         );
       }
     }
@@ -665,6 +686,69 @@ export class ManufacturersService implements OnModuleInit {
       session ? { session } : undefined,
     );
     return result.modifiedCount ?? 0;
+  }
+
+  /**
+   * Keeps vendor/partner users' `phone` in sync with manufacturer.vendor_phone.
+   * Without this, admin phone edits leave the old number on vendor_users and block re-registration.
+   */
+  private async syncVendorUserPhonesForManufacturer(
+    manufacturerId: Types.ObjectId,
+    newPhone: string,
+    session?: ClientSession,
+  ): Promise<number> {
+    const normalized =
+      this.normalizeProfilePhone(newPhone) || String(newPhone ?? '').trim();
+    if (!normalized) return 0;
+
+    // Any vendor/partner linked to this org — free old number for re-registration.
+    // Prefer type vendor/partner; also catch legacy rows missing type.
+    const result = await this.vendorUserModel.updateMany(
+      {
+        $or: [{ manufacturerId }, { vendorId: manufacturerId }],
+        $and: [
+          {
+            $or: [
+              { type: { $in: ['vendor', 'partner'] } },
+              { type: { $exists: false } },
+              { type: null },
+              { type: '' },
+            ],
+          },
+        ],
+      },
+      { $set: { phone: normalized, updatedAt: new Date() } },
+      session ? { session } : undefined,
+    );
+    return result.modifiedCount ?? 0;
+  }
+
+  /** Active (non-deleted) vendor/partner user ids linked to a manufacturer. */
+  private async loadLinkedVendorUserIdsForManufacturer(
+    manufacturerId: string | Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<Types.ObjectId[]> {
+    const oid =
+      manufacturerId instanceof Types.ObjectId
+        ? manufacturerId
+        : Types.ObjectId.isValid(String(manufacturerId))
+          ? new Types.ObjectId(String(manufacturerId))
+          : null;
+    if (!oid) return [];
+
+    const q = this.vendorUserModel
+      .find({
+        $or: [{ manufacturerId: oid }, { vendorId: oid }],
+        type: { $in: ['vendor', 'partner'] },
+        status: { $ne: 2 },
+      })
+      .select('_id')
+      .lean();
+    if (session) q.session(session);
+    const rows = await q.exec();
+    return rows
+      .map((r) => r._id as Types.ObjectId)
+      .filter((id): id is Types.ObjectId => Boolean(id));
   }
 
   /**
@@ -1927,6 +2011,22 @@ export class ManufacturersService implements OnModuleInit {
         );
       }
 
+      const profilePhoneChanged =
+        updateDto.mobile !== undefined &&
+        String(updateDto.mobile).trim() &&
+        this.isVendorPhoneChanging(
+          updateDto.mobile,
+          resolvedManufacturer.vendor_phone,
+          vendorUser?.phone,
+        );
+      if (profilePhoneChanged && updateDto.mobile) {
+        await this.syncVendorUserPhonesForManufacturer(
+          resolvedManufacturer._id,
+          String(updateDto.mobile).trim(),
+          session,
+        );
+      }
+
       const vendorUserSelfPatch: Partial<VendorUser> = {};
       if (updateDto.name !== undefined && String(updateDto.name).trim()) {
         vendorUserSelfPatch.name = String(updateDto.name).trim();
@@ -2366,6 +2466,26 @@ export class ManufacturersService implements OnModuleInit {
               vendorName: this.resolveVendorDisplayName(updated),
               password: newPassword,
             };
+          }
+
+          // Always resync user phones when vendor_phone is present (not only when "changing")
+          // so re-saves heal rows where manufacturer already moved but users still hold the old number.
+          const phoneToSync =
+            updateData.vendor_phone !== undefined
+              ? String(updateData.vendor_phone).trim()
+              : phoneChanging
+                ? String(dto.vendor_phone ?? '').trim()
+                : '';
+          if (phoneToSync || phoneChanging) {
+            const syncPhone =
+              phoneToSync || String(updated.vendor_phone ?? '').trim();
+            if (syncPhone) {
+              await this.syncVendorUserPhonesForManufacturer(
+                manufacturerId,
+                syncPhone,
+                session,
+              );
+            }
           }
 
           if (vendorNameChanged && updateData.vendor_name) {

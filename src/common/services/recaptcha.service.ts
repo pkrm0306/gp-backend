@@ -39,16 +39,53 @@ export class RecaptchaService {
 
   constructor(private readonly configService: ConfigService) {}
 
-  private getSecretKey(): string {
-    const secret = String(
-      this.configService.get<string>('RECAPTCHA_SECRET_KEY') ?? '',
-    ).trim();
-    if (!secret) {
+  /**
+   * Secrets used for Google siteverify.
+   * Supports a single key, or multiple comma/newline-separated keys so the same
+   * API can validate tokens from different frontends (e.g. vendor portal + website).
+   * Env: `RECAPTCHA_SECRET_KEY` and optional extra `RECAPTCHA_SECRET_KEYS`.
+   */
+  private getSecretKeys(): string[] {
+    const chunks = [
+      this.configService.get<string>('RECAPTCHA_SECRET_KEY'),
+      this.configService.get<string>('RECAPTCHA_SECRET_KEYS'),
+    ];
+    const secrets: string[] = [];
+    for (const chunk of chunks) {
+      for (const part of String(chunk ?? '').split(/[\n,]+/)) {
+        const secret = part.trim();
+        if (secret && !secrets.includes(secret)) {
+          secrets.push(secret);
+        }
+      }
+    }
+    if (!secrets.length) {
       throw new Error(
         'RECAPTCHA_SECRET_KEY is missing. Set it in the backend environment.',
       );
     }
-    return secret;
+    return secrets;
+  }
+
+  private async siteVerify(
+    secret: string,
+    token: string,
+  ): Promise<GoogleSiteVerifyResponse> {
+    const form = new URLSearchParams();
+    form.set('secret', secret);
+    form.set('response', token);
+
+    const response = await axios.post<GoogleSiteVerifyResponse>(
+      this.verifyUrl,
+      form.toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        timeout: 10000,
+      },
+    );
+    return response.data ?? {};
   }
 
   /**
@@ -58,38 +95,30 @@ export class RecaptchaService {
    * @throws {@link RecaptchaUnreachableError} if Google cannot be reached
    */
   async verifyRecaptcha(token: string): Promise<boolean> {
-    const secret = this.getSecretKey();
+    const secrets = this.getSecretKeys();
     const normalizedToken = String(token ?? '').trim();
     if (!normalizedToken) {
       return false;
     }
 
     try {
-      const form = new URLSearchParams();
-      form.set('secret', secret);
-      form.set('response', normalizedToken);
-
-      const response = await axios.post<GoogleSiteVerifyResponse>(
-        this.verifyUrl,
-        form.toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          timeout: 10000,
-        },
-      );
-
-      const success = response.data?.success === true;
-      if (!success) {
-        const errorCodes = Array.isArray(response.data?.['error-codes'])
-          ? response.data['error-codes'].join(', ')
-          : 'unknown';
-        this.logger.warn(
-          `reCAPTCHA siteverify failed (error-codes: ${errorCodes})`,
-        );
+      const seenErrorCodes = new Set<string>();
+      for (const secret of secrets) {
+        const data = await this.siteVerify(secret, normalizedToken);
+        if (data.success === true) {
+          return true;
+        }
+        const codes = Array.isArray(data['error-codes'])
+          ? data['error-codes']
+          : ['unknown'];
+        for (const code of codes) {
+          seenErrorCodes.add(String(code));
+        }
       }
-      return success;
+      this.logger.warn(
+        `reCAPTCHA siteverify failed (error-codes: ${[...seenErrorCodes].join(', ') || 'unknown'}${secrets.length > 1 ? `; tried ${secrets.length} secrets` : ''})`,
+      );
+      return false;
     } catch (error) {
       if (error instanceof Error && error.message.includes('RECAPTCHA_SECRET_KEY')) {
         throw error;
