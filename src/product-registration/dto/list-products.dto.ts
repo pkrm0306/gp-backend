@@ -130,13 +130,36 @@ export class ListProductsDto {
   categoryId?: string;
 
   @ApiPropertyOptional({
+    description: 'Snake_case alias of `categoryId`.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsMongoId()
+  category_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of category filter',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of category filter',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  category_name?: string;
+
+  @ApiPropertyOptional({
     description: 'Filter products created on or after this date (YYYY-MM-DD)',
     example: '2026-01-01',
   })
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
   dateFrom?: string;
 
   @ApiPropertyOptional({
@@ -146,8 +169,55 @@ export class ListProductsDto {
   @IsOptional()
   @Transform(({ value }) => normalizeOptionalString(value))
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
   dateTo?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of dateFrom',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  date_from?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake_case alias of dateTo',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  date_to?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of dateFrom',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  fromDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of dateTo',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  toDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of dateFrom',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  from?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of dateTo',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeOptionalString(value))
+  @IsString()
+  to?: string;
 
   @ApiPropertyOptional({
     description:

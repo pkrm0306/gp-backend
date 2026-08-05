@@ -589,9 +589,9 @@ export class ProductRegistrationService implements OnModuleInit {
         resolvedForKey === null
           ? 'default_0_1'
           : [...resolvedForKey].sort((a, b) => a - b),
-      categoryId: listProductsDto.categoryId ?? null,
-      dateFrom: listProductsDto.dateFrom ?? null,
-      dateTo: listProductsDto.dateTo ?? null,
+      categoryId: listProductsDto.categoryId ?? listProductsDto.category_id ?? listProductsDto.category ?? listProductsDto.category_name ?? null,
+      dateFrom: listProductsDto.dateFrom ?? listProductsDto.date_from ?? listProductsDto.fromDate ?? listProductsDto.from ?? null,
+      dateTo: listProductsDto.dateTo ?? listProductsDto.date_to ?? listProductsDto.toDate ?? listProductsDto.to ?? null,
       countryId: this.resolveVendorListCountryId(listProductsDto) ?? null,
       state: String(
         this.resolveVendorListPlantStateNameSearch(listProductsDto) || '',
@@ -6387,10 +6387,10 @@ export class ProductRegistrationService implements OnModuleInit {
         limit: requestedLimit = 20,
         search,
         sort = 'desc',
-        categoryId,
-        dateFrom,
-        dateTo,
       } = listProductsDto;
+      const categoryId = listProductsDto.categoryId ?? listProductsDto.category_id ?? listProductsDto.category ?? listProductsDto.category_name;
+      const dateFrom = listProductsDto.dateFrom ?? listProductsDto.date_from ?? listProductsDto.fromDate ?? listProductsDto.from;
+      const dateTo = listProductsDto.dateTo ?? listProductsDto.date_to ?? listProductsDto.toDate ?? listProductsDto.to;
 
       const limit = Math.min(100, Math.max(1, Number(requestedLimit) || 20));
 
