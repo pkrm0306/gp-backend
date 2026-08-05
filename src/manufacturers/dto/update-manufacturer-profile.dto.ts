@@ -115,6 +115,15 @@ export class UpdateProfileDto {
   facebookUrl?: string;
 
   @ApiPropertyOptional({
+    description: 'Snake-case alias of `facebook` (vendor panel).',
+    example: 'https://www.facebook.com/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  facebook_url?: string;
+
+  @ApiPropertyOptional({
     description: 'YouTube channel URL. Send an empty string to clear.',
     example: 'https://www.youtube.com/@yourcompany',
   })
@@ -131,6 +140,15 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(1024)
   youtubeUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake-case alias of `youtube` (vendor panel).',
+    example: 'https://www.youtube.com/@yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  youtube_url?: string;
 
   @ApiPropertyOptional({
     description: 'Twitter / X profile URL. Send an empty string to clear.',
@@ -151,6 +169,15 @@ export class UpdateProfileDto {
   twitterUrl?: string;
 
   @ApiPropertyOptional({
+    description: 'Snake-case alias of `twitter` (vendor panel).',
+    example: 'https://x.com/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  twitter_url?: string;
+
+  @ApiPropertyOptional({
     description: 'LinkedIn company page URL. Send an empty string to clear.',
     example: 'https://www.linkedin.com/company/yourcompany',
   })
@@ -167,6 +194,15 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(1024)
   linkedinUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Snake-case alias of `linkedin` (vendor panel).',
+    example: 'https://www.linkedin.com/company/yourcompany',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  linkedin_url?: string;
 
   @ApiPropertyOptional({
     description: 'WhatsApp profile or chat URL. Send an empty string to clear.',

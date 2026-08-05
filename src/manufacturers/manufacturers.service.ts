@@ -1199,7 +1199,7 @@ export class ManufacturersService implements OnModuleInit {
     };
   }
 
-  /** Vendor panel may send `facebookUrl` etc.; normalize to canonical keys for persistence. */
+  /** Vendor panel may send `facebookUrl` / `linkedin_url` etc.; normalize to canonical keys for persistence. */
   private normalizeVendorProfileSocialLinks(
     dto: UpdateProfileDto,
   ): UpdateProfileDto {
@@ -1212,18 +1212,22 @@ export class ManufacturersService implements OnModuleInit {
         keyof Pick<
           UpdateProfileDto,
           | 'facebookUrl'
+          | 'facebook_url'
           | 'youtubeUrl'
+          | 'youtube_url'
           | 'twitterUrl'
+          | 'twitter_url'
           | 'linkedinUrl'
+          | 'linkedin_url'
           | 'whatsappUrl'
           | 'whatsapp_url'
         >
       >;
     }> = [
-      { canonical: 'facebook', aliases: ['facebookUrl'] },
-      { canonical: 'youtube', aliases: ['youtubeUrl'] },
-      { canonical: 'twitter', aliases: ['twitterUrl'] },
-      { canonical: 'linkedin', aliases: ['linkedinUrl'] },
+      { canonical: 'facebook', aliases: ['facebookUrl', 'facebook_url'] },
+      { canonical: 'youtube', aliases: ['youtubeUrl', 'youtube_url'] },
+      { canonical: 'twitter', aliases: ['twitterUrl', 'twitter_url'] },
+      { canonical: 'linkedin', aliases: ['linkedinUrl', 'linkedin_url'] },
       { canonical: 'whatsapp', aliases: ['whatsappUrl', 'whatsapp_url'] },
     ];
 
@@ -1497,12 +1501,16 @@ export class ManufacturersService implements OnModuleInit {
         'mobile',
         'facebook',
         'facebookUrl',
+        'facebook_url',
         'youtube',
         'youtubeUrl',
+        'youtube_url',
         'twitter',
         'twitterUrl',
+        'twitter_url',
         'linkedin',
         'linkedinUrl',
+        'linkedin_url',
         'whatsapp',
         'whatsappUrl',
         'whatsapp_url',
@@ -1730,19 +1738,51 @@ export class ManufacturersService implements OnModuleInit {
           panNumber: panNumberToApply || '',
           email: updateDto.email ?? vendorUser?.email ?? '',
           mobile: updateDto.mobile ?? vendorUser?.phone ?? '',
-          facebook: updateDto.facebook ?? updateDto.facebookUrl ?? '',
-          youtube: updateDto.youtube ?? updateDto.youtubeUrl ?? '',
-          twitter: updateDto.twitter ?? updateDto.twitterUrl ?? '',
-          linkedin: updateDto.linkedin ?? updateDto.linkedinUrl ?? '',
+          facebook:
+            updateDto.facebook ??
+            updateDto.facebookUrl ??
+            updateDto.facebook_url ??
+            '',
+          youtube:
+            updateDto.youtube ??
+            updateDto.youtubeUrl ??
+            updateDto.youtube_url ??
+            '',
+          twitter:
+            updateDto.twitter ??
+            updateDto.twitterUrl ??
+            updateDto.twitter_url ??
+            '',
+          linkedin:
+            updateDto.linkedin ??
+            updateDto.linkedinUrl ??
+            updateDto.linkedin_url ??
+            '',
           whatsapp:
             updateDto.whatsapp ??
             updateDto.whatsappUrl ??
             updateDto.whatsapp_url ??
             '',
-          facebookUrl: updateDto.facebook ?? updateDto.facebookUrl ?? '',
-          youtubeUrl: updateDto.youtube ?? updateDto.youtubeUrl ?? '',
-          twitterUrl: updateDto.twitter ?? updateDto.twitterUrl ?? '',
-          linkedinUrl: updateDto.linkedin ?? updateDto.linkedinUrl ?? '',
+          facebookUrl:
+            updateDto.facebook ??
+            updateDto.facebookUrl ??
+            updateDto.facebook_url ??
+            '',
+          youtubeUrl:
+            updateDto.youtube ??
+            updateDto.youtubeUrl ??
+            updateDto.youtube_url ??
+            '',
+          twitterUrl:
+            updateDto.twitter ??
+            updateDto.twitterUrl ??
+            updateDto.twitter_url ??
+            '',
+          linkedinUrl:
+            updateDto.linkedin ??
+            updateDto.linkedinUrl ??
+            updateDto.linkedin_url ??
+            '',
           whatsappUrl:
             updateDto.whatsapp ??
             updateDto.whatsappUrl ??
@@ -1752,6 +1792,11 @@ export class ManufacturersService implements OnModuleInit {
             updateDto.whatsapp ??
             updateDto.whatsappUrl ??
             updateDto.whatsapp_url ??
+            '',
+          linkedin_url:
+            updateDto.linkedin ??
+            updateDto.linkedinUrl ??
+            updateDto.linkedin_url ??
             '',
         };
       }
