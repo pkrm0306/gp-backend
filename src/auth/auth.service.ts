@@ -496,11 +496,7 @@ export class AuthService {
         session,
       );
 
-      await this.manufacturersService.assignAutoGpIdentifiersForUnverifiedManufacturer(
-        manufacturer._id.toString(),
-        normalizedCompanyName,
-        session,
-      );
+      // GP manufacturer id + initial are allocated only when admin verifies the manufacturer.
 
       const otp = generateVendorRegistrationOtp(this.configService);
       const vendorUser = await this.vendorUsersService.create(

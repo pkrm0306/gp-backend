@@ -4008,21 +4008,7 @@ export class AdminService {
             updateData.manufacturerImage = imagePath;
           }
 
-          if (isUnverified) {
-            const auto =
-              await this.manufacturerIdGeneration.resolveAutoIdentifiersForUnverified(
-                updateDto.manufacturerName,
-                existing._id,
-                {
-                  manufacturerName: existing.manufacturerName,
-                  manufacturerInitial: existing.manufacturerInitial,
-                  gpInternalId: existing.gpInternalId,
-                },
-                session,
-              );
-            updateData.manufacturerInitial = auto.manufacturerInitial;
-            updateData.gpInternalId = auto.gpInternalId;
-          } else {
+          if (!isUnverified) {
             const rawGp =
               updateDto.gpInternalId !== undefined
                 ? String(updateDto.gpInternalId).trim()

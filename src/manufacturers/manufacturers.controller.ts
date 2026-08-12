@@ -167,7 +167,7 @@ export class ManufacturersController {
   @ApiOperation({
     summary: 'Update manufacturer',
     description:
-      'Updates manufacturer name (required). **gpInternalId** / **manufacturerInitial** are auto-generated while the manufacturer is **unverified**; optional for verified. Optional vendor fields and image.',
+      'Updates manufacturer name (required). **gpInternalId** / **manufacturerInitial** are assigned when the manufacturer is **verified** (not while unverified). Optional for verified updates. Optional vendor fields and image.',
   })
   @ApiParam({ name: 'id', description: 'Manufacturer MongoDB id' })
   @ApiBody({
@@ -178,12 +178,12 @@ export class ManufacturersController {
         manufacturerName: { type: 'string' },
         gpInternalId: {
           type: 'string',
-          description: 'Optional when verified; ignored when unverified (auto).',
+          description: 'Optional when verified; ignored while unverified (assigned on verify).',
           example: 'GPGP-001',
         },
         manufacturerInitial: {
           type: 'string',
-          description: 'Optional when verified; ignored when unverified (auto).',
+          description: 'Optional when verified; ignored while unverified (assigned on verify).',
         },
         vendor_name: { type: 'string' },
         vendor_email: { type: 'string' },

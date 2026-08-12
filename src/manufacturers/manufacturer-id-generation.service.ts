@@ -277,7 +277,7 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
   }
 
   /**
-   * Resolves initials + internal id for an **unverified** manufacturer save.
+   * Resolves initials + internal id when a manufacturer is **verified**.
    * Reuses existing `gpInternalId` when the display name is unchanged, stored initials
    * still match the newly resolved pair, and the id is already in `GP<INI>-###` or `GP<INI>-####` form.
    */

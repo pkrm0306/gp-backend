@@ -1002,11 +1002,10 @@ export class ManufacturersService implements OnModuleInit {
   }
 
   /**
-   * Persists **gpInternalId** + **manufacturerInitial** for a not-yet-verified manufacturer,
-   * using the same rules as {@link updateManufacturerDetails} for unverified rows.
-   * Used after self-service vendor registration so admin unverified listings show IDs immediately.
+   * Persists **gpInternalId** + **manufacturerInitial** when a manufacturer is verified.
+   * Unverified (pending) manufacturers must not receive IDs at registration or edit.
    */
-  async assignAutoGpIdentifiersForUnverifiedManufacturer(
+  async assignAutoGpIdentifiersOnVerification(
     manufacturerId: string,
     displayName: string,
     session: ClientSession,
@@ -1019,9 +1018,6 @@ export class ManufacturersService implements OnModuleInit {
     if (!existing) {
       throw new NotFoundException('Manufacturer not found');
     }
-    if ((existing.manufacturerStatus ?? 0) === 1) {
-      return;
-    }
     const nameForGen =
       String(displayName ?? '').trim() ||
       String(existing.manufacturerName ?? '').trim();
@@ -1029,6 +1025,13 @@ export class ManufacturersService implements OnModuleInit {
       throw new BadRequestException(
         'Manufacturer name is required for GP id allocation',
       );
+    }
+
+    // Already has a valid pair — keep it (e.g. legacy rows assigned before this rule).
+    const existingIni = String(existing.manufacturerInitial ?? '').trim();
+    const existingGp = String(existing.gpInternalId ?? '').trim();
+    if (existingIni && existingGp) {
+      return;
     }
 
     const auto =
@@ -2194,9 +2197,9 @@ export class ManufacturersService implements OnModuleInit {
   }
 
   /**
-   * Updates core manufacturer fields. Unverified rows: **manufacturerInitial** and **gpInternalId**
-   * are always server-generated from **manufacturerName** (client values ignored). Verified rows:
-   * optional manual **gpInternalId** / **manufacturerInitial** when provided.
+   * Updates core manufacturer fields. Unverified rows do not get **manufacturerInitial** /
+   * **gpInternalId** (allocated only on verify). Verified rows: optional manual
+   * **gpInternalId** / **manufacturerInitial** when provided.
    */
   async updateManufacturerDetails(
     id: string,
@@ -2368,21 +2371,7 @@ export class ManufacturersService implements OnModuleInit {
             }
           }
 
-          if (isUnverified) {
-            const auto =
-              await this.manufacturerIdGeneration.resolveAutoIdentifiersForUnverified(
-                dto.manufacturerName,
-                existing._id,
-                {
-                  manufacturerName: existing.manufacturerName,
-                  manufacturerInitial: existing.manufacturerInitial,
-                  gpInternalId: existing.gpInternalId,
-                },
-                session,
-              );
-            updateData.manufacturerInitial = auto.manufacturerInitial;
-            updateData.gpInternalId = auto.gpInternalId;
-          } else {
+          if (!isUnverified) {
             const rawGp =
               dto.gpInternalId !== undefined
                 ? String(dto.gpInternalId).trim()
@@ -2565,29 +2554,53 @@ export class ManufacturersService implements OnModuleInit {
       );
   }
 
-  /** Verifies an unverified manufacturer (confirm action). */
+  /** Verifies an unverified manufacturer (confirm action). Allocates GP id + initial. */
   async verifyManufacturer(id: string) {
     const manufacturerId = new Types.ObjectId(id);
-    const manufacturer = await this.manufacturerModel
-      .findById(manufacturerId)
-      .exec();
-    if (!manufacturer) {
-      throw new NotFoundException('Manufacturer not found');
-    }
-    this.assertManufacturerAccountNotDeleted(manufacturer);
-    const wasUnverified = (manufacturer.manufacturerStatus ?? 0) !== 1;
+    let wasUnverified = false;
 
-    const updated = await this.manufacturerModel
-      .findByIdAndUpdate(
-        manufacturerId,
-        {
-          manufacturerStatus: 1,
-          vendor_status: 1,
-          updatedAt: new Date(),
-        },
-        { new: true },
-      )
-      .exec();
+    const updated = await this.manufacturerIdGeneration.withTransaction(
+      async (session) => {
+        const manufacturer = await this.manufacturerModel
+          .findById(manufacturerId)
+          .session(session)
+          .exec();
+        if (!manufacturer) {
+          throw new NotFoundException('Manufacturer not found');
+        }
+        this.assertManufacturerAccountNotDeleted(manufacturer);
+        wasUnverified = (manufacturer.manufacturerStatus ?? 0) !== 1;
+
+        if (wasUnverified) {
+          await this.assignAutoGpIdentifiersOnVerification(
+            manufacturerId.toString(),
+            String(manufacturer.manufacturerName ?? ''),
+            session,
+          );
+        }
+
+        const withIds = await this.manufacturerModel
+          .findById(manufacturerId)
+          .session(session)
+          .exec();
+        if (!withIds) {
+          throw new NotFoundException('Manufacturer not found');
+        }
+        this.assertCoreFieldsPresentForActivation(withIds);
+
+        return this.manufacturerModel
+          .findByIdAndUpdate(
+            manufacturerId,
+            {
+              manufacturerStatus: 1,
+              vendor_status: 1,
+              updatedAt: new Date(),
+            },
+            { new: true, session },
+          )
+          .exec();
+      },
+    );
 
     const loginEmail = this.normalizeVendorEmail(updated?.vendor_email);
     if (updated && loginEmail) {
@@ -2688,7 +2701,23 @@ export class ManufacturersService implements OnModuleInit {
       const wasUnverified = (manufacturer.manufacturerStatus ?? 0) !== 1;
       const currentVendor = manufacturer.vendor_status ?? 0;
       const newVendor = currentVendor === 1 ? 0 : 1;
-      if (newVendor === 1) {
+
+      if (newVendor === 1 && wasUnverified) {
+        await this.manufacturerIdGeneration.withTransaction(async (session) => {
+          await this.assignAutoGpIdentifiersOnVerification(
+            manufacturerId.toString(),
+            String(manufacturer.manufacturerName ?? ''),
+            session,
+          );
+        });
+        const withIds = await this.manufacturerModel
+          .findById(manufacturerId)
+          .exec();
+        if (!withIds) {
+          throw new NotFoundException('Manufacturer not found');
+        }
+        this.assertCoreFieldsPresentForActivation(withIds);
+      } else if (newVendor === 1) {
         this.assertCoreFieldsPresentForActivation(manufacturer);
       }
 

@@ -3869,7 +3869,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Update manufacturer details',
     description:
-      'Updates manufacturer display name (required). For **unverified** manufacturers, **gpInternalId** and **manufacturerInitial** are generated server-side from the name (multipart fields ignored if sent). For verified manufacturers, optional **gpInternalId** / **manufacturerInitial** may be supplied. Supports optional image upload.',
+      'Updates manufacturer display name (required). **gpInternalId** and **manufacturerInitial** are allocated only when the manufacturer is **verified** (not while pending in the unverified queue). For verified manufacturers, optional **gpInternalId** / **manufacturerInitial** may be supplied. Supports optional image upload.',
   })
   @ApiParam({ name: 'id', description: 'Manufacturer ID' })
   @ApiConsumes('multipart/form-data')
@@ -3884,13 +3884,13 @@ export class AdminController {
         gpInternalId: {
           type: 'string',
           description:
-            'Optional for verified manufacturers (e.g. GPGP-001 or legacy GPSC-312). Ignored when unverified (auto-generated).',
+            'Optional for verified manufacturers (e.g. GPGP-001 or legacy GPSC-312). Ignored while unverified (assigned on verify).',
           example: 'GPGP-001',
         },
         manufacturerInitial: {
           type: 'string',
           description:
-            'Optional for verified (two letters). Ignored when unverified (auto-generated).',
+            'Optional for verified (two letters). Ignored while unverified (assigned on verify).',
           example: 'GP',
         },
         manufacturer_image: {

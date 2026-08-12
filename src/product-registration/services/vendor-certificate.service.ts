@@ -34,7 +34,7 @@ import {
   ProductPlantDocument,
 } from '../schemas/product-plant.schema';
 import { readUploadedFileBuffer } from '../../utils/upload-file-read.util';
-import { formatCertificatePlantLocation } from '../utils/certificate-plant-location.util';
+import { formatCertificatePlantLocation, resolveCertificateRegionName } from '../utils/certificate-plant-location.util';
 import { countCertifiedPlantCertificatesByManufacturerIds as countCertifiedPlantCertificatesByManufacturerIdsUtil } from '../helpers/certified-plant-certificate-count.util';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -1460,18 +1460,25 @@ export class VendorCertificateService {
   private deriveLocation(product: ProductWithRelations): string {
     const city = (product as unknown as { city?: string })?.city;
     const state = (product as unknown as { stateName?: string })?.stateName;
+    const country =
+      (product as unknown as { countryName?: string })?.countryName ??
+      (product as unknown as { country_name?: string })?.country_name ??
+      (product as unknown as { country?: string })?.country;
     const c = String(city ?? '').trim();
     const s = String(state ?? '').trim();
-    if (c && s) return `${c}, ${s}`;
-    return c || s || '';
+    const region = resolveCertificateRegionName(country, s);
+    if (c && region) return `${c}, ${region}`;
+    return c || region || '';
   }
 
   private derivePlantLocation(plant: PlantWithGeo): string {
+    const p = plant as unknown as Record<string, unknown>;
     return formatCertificatePlantLocation({
-      additionalPlantInfo: plant.additionalPlantInfo,
+      additionalPlantInfo: plant.additionalPlantInfo ?? (p.additional_plant_info as string),
       city: plant.city,
-      stateName: plant.stateName,
-      plantLocation: plant.plantLocation,
+      stateName: plant.stateName ?? (p.state_name as string) ?? (p.state as string),
+      plantLocation: plant.plantLocation ?? (p.plant_location as string),
+      countryName: (p.countryName as string) ?? (p.country_name as string) ?? (p.country as string),
     });
   }
 
