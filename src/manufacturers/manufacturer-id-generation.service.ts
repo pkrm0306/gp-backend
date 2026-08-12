@@ -18,9 +18,8 @@ import {
 import {
   generateInitial as initialCandidatesFromName,
   generateInternalId as internalIdFromParts,
-  internalIdMatchesInitial,
   normalizeManufacturerName,
-  parseGpInternalNumericSuffix,
+  parseGpscNumericSuffix,
 } from './manufacturer-identifier.util';
 
 export type ManufacturerAutoIds = {
@@ -45,19 +44,14 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
   }
 
   /**
-   * All numeric suffixes **1–9999** in use on any `gpInternalId` (three-digit **001–999**
-   * or four-digit **1000–9999** after the hyphen).
+   * Numeric suffixes already used on **GPSC-** ids only (so the sequence is
+   * GPSC-000, GPSC-001, … and is not mixed with legacy GPXX-### ids).
    */
   private async collectUsedNumericSuffixes(
     session?: ClientSession,
   ): Promise<Set<number>> {
     const q = this.manufacturerModel
-      .find(
-        {
-          gpInternalId: { $exists: true, $nin: [null, ''] },
-        },
-        { gpInternalId: 1 },
-      )
+      .find({ gpInternalId: { $regex: /^GPSC-/i } }, { gpInternalId: 1 })
       .lean();
     if (session) {
       q.session(session);
@@ -65,8 +59,8 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
     const rows = await q.exec();
     const used = new Set<number>();
     for (const row of rows) {
-      const n = parseGpInternalNumericSuffix(String(row.gpInternalId ?? ''));
-      if (n != null && n >= 1 && n <= 9999) {
+      const n = parseGpscNumericSuffix(String(row.gpInternalId ?? ''));
+      if (n != null && n >= 0 && n <= 9999) {
         used.add(n);
       }
     }
@@ -74,13 +68,16 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
   }
 
   /**
-   * Highest trailing suffix from any `gpInternalId` (values **1–9999**).
+   * Highest GPSC suffix in use, or **-1** when none exist (so the next id is **000**).
    */
   async computeMaxSuffixFromManufacturers(
     session?: ClientSession,
   ): Promise<number> {
     const used = await this.collectUsedNumericSuffixes(session);
-    let max = 0;
+    if (used.size === 0) {
+      return -1;
+    }
+    let max = -1;
     for (const n of used) {
       max = Math.max(max, n);
     }
@@ -88,50 +85,29 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
   }
 
   private parseNumericSuffix(gpInternalId?: string): number | null {
-    return parseGpInternalNumericSuffix(String(gpInternalId ?? ''));
-  }
-
-  /** True when every value **1…999** appears in `used` (required before issuing **1000+**). */
-  private allThreeDigitSuffixSlotsFilled(used: Set<number>): boolean {
-    for (let i = 1; i <= 999; i++) {
-      if (!used.has(i)) {
-        return false;
-      }
-    }
-    return true;
+    return parseGpscNumericSuffix(String(gpInternalId ?? ''));
   }
 
   private async ensureCounterDocument(session?: ClientSession): Promise<void> {
     await this.counterModel.updateOne(
       { _id: MANUFACTURER_INTERNAL_ID_COUNTER_KEY },
-      { $setOnInsert: { seq: 0, reclaimedSuffixFifo: [] } },
+      { $setOnInsert: { seq: -1, reclaimedSuffixFifo: [] } },
       { upsert: true, session },
     );
   }
 
   /**
-   * Rebuilds **seq** (max used suffix) and **reclaimedSuffixFifo** (ascending gaps 1..max)
-   * from live manufacturer rows. Run on startup; also used to repair counter drift.
-   * Supports suffixes **1–999** (three-digit form) and **1000–9999** (four-digit form).
+   * Rebuilds **seq** as the highest existing GPSC suffix (**-1** if none).
+   * Existing ids (including legacy `GPXX-###`) are never rewritten.
    */
   async reconcileSequentialStateFromManufacturers(
     session?: ClientSession,
   ): Promise<void> {
-    const used = await this.collectUsedNumericSuffixes(session);
-    let max = 0;
-    for (const u of used) {
-      max = Math.max(max, u);
-    }
-    const holes: number[] = [];
-    for (let i = 1; i <= max; i++) {
-      if (!used.has(i)) {
-        holes.push(i);
-      }
-    }
+    const max = await this.computeMaxSuffixFromManufacturers(session);
     await this.ensureCounterDocument(session);
     await this.counterModel.updateOne(
       { _id: MANUFACTURER_INTERNAL_ID_COUNTER_KEY },
-      { $set: { seq: max, reclaimedSuffixFifo: holes } },
+      { $set: { seq: max, reclaimedSuffixFifo: [] } },
       { upsert: true, session },
     );
   }
@@ -164,14 +140,18 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
   }
 
   /**
-   * Next global suffix: **FIFO** from {@link reclaimedSuffixFifo} (freed by deletes),
-   * otherwise **seq + 1** (001, 002, … 999, then 1000, 1001, … 9999). Values **1000+**
-   * are issued only after **every** integer **1…999** is already in use. Never issues beyond **9999**.
+   * Next GPSC suffix for a **newly verified** manufacturer: lowest unused
+   * GPSC number from **0** (`GPSC-000`, `GPSC-001`, …). Legacy `GPXX-###`
+   * ids are ignored and never rewritten.
    */
   async allocateNextGlobalSuffix(session: ClientSession): Promise<number> {
     for (let attempt = 0; attempt < 40; attempt++) {
       await this.ensureCounterDocument(session);
       const used = await this.collectUsedNumericSuffixes(session);
+      let n = 0;
+      while (n <= 9999 && used.has(n)) {
+        n += 1;
+      }
       const doc = await this.counterModel
         .findOne({ _id: MANUFACTURER_INTERNAL_ID_COUNTER_KEY })
         .session(session)
@@ -179,45 +159,12 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
       if (!doc) {
         continue;
       }
-      const fifo = [...(doc.reclaimedSuffixFifo ?? [])];
-      const seq = doc.seq ?? 0;
-      const v = doc.__v ?? 0;
-      let n: number;
-      let update: Record<string, unknown>;
-
-      if (fifo.length > 0) {
-        n = fifo[0];
-        if (used.has(n)) {
-          await this.reconcileSequentialStateFromManufacturers(session);
-          continue;
-        }
-        update = {
-          $set: {
-            reclaimedSuffixFifo: fifo.slice(1),
-          },
-          $inc: { __v: 1 },
-        };
-      } else {
-        n = seq + 1;
-        if (n > 9999) {
-          throw new ConflictException(
-            'Manufacturer internal id pool exhausted (max suffix 9999)',
-          );
-        }
-        if (n >= 1000 && !this.allThreeDigitSuffixSlotsFilled(used)) {
-          await this.reconcileSequentialStateFromManufacturers(session);
-          continue;
-        }
-        if (used.has(n)) {
-          await this.reconcileSequentialStateFromManufacturers(session);
-          continue;
-        }
-        update = {
-          $set: { seq: n },
-          $inc: { __v: 1 },
-        };
+      if (n > 9999) {
+        throw new ConflictException(
+          'Manufacturer internal id pool exhausted (max suffix 9999)',
+        );
       }
-
+      const v = doc.__v ?? 0;
       const versionFilter =
         v === 0
           ? { $or: [{ __v: 0 }, { __v: { $exists: false } }] }
@@ -228,7 +175,10 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
           _id: MANUFACTURER_INTERNAL_ID_COUNTER_KEY,
           ...versionFilter,
         },
-        update,
+        {
+          $set: { seq: n, reclaimedSuffixFifo: [] },
+          $inc: { __v: 1 },
+        },
         { session },
       );
       if (r.matchedCount === 1) {
@@ -277,9 +227,9 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
   }
 
   /**
-   * Resolves initials + internal id when a manufacturer is **verified**.
-   * Reuses existing `gpInternalId` when the display name is unchanged, stored initials
-   * still match the newly resolved pair, and the id is already in `GP<INI>-###` or `GP<INI>-####` form.
+   * Resolves name-based initials + GPSC internal id when a manufacturer is **newly verified**.
+   * Initials use the original 2-letter-from-name sequence. The id is `GPSC-000`, `GPSC-001`, …
+   * Existing stored ids/initials are left unchanged by the caller.
    */
   async resolveAutoIdentifiersForUnverified(
     manufacturerName: string,
@@ -292,30 +242,27 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
     session: ClientSession,
   ): Promise<ManufacturerAutoIds> {
     const newName = normalizeManufacturerName(manufacturerName);
-    const oldName = normalizeManufacturerName(
-      String(existing.manufacturerName ?? ''),
-    );
-    const nameChanged = newName !== oldName;
-    const hadInitial = !!String(existing.manufacturerInitial ?? '').trim();
-    const hadId = !!String(existing.gpInternalId ?? '').trim();
-
-    const initial = await this.pickUniqueInitial(
-      newName,
-      excludeManufacturerId,
-      session,
-    );
-
-    const canReuseStored =
-      !nameChanged &&
-      hadInitial &&
-      hadId &&
-      String(existing.manufacturerInitial).trim().toUpperCase() === initial &&
-      internalIdMatchesInitial(existing.gpInternalId, initial);
-
-    if (canReuseStored) {
+    if (!newName) {
+      throw new BadRequestException(
+        'Manufacturer name must contain at least one letter to derive initials',
+      );
+    }
+    const existingIni = String(existing.manufacturerInitial ?? '')
+      .trim()
+      .toUpperCase();
+    const candidates = initialCandidatesFromName(manufacturerName);
+    if (!existingIni && candidates.length === 0) {
+      throw new BadRequestException(
+        'Manufacturer name must contain at least one letter to derive initials',
+      );
+    }
+    const initial = existingIni || candidates[0];
+    const existingGp = String(existing.gpInternalId ?? '').trim();
+    const alreadyGpsc = /^GPSC-(?:\d{3}|[1-9]\d{3})$/i.test(existingGp);
+    if (alreadyGpsc) {
       return {
         manufacturerInitial: initial,
-        gpInternalId: String(existing.gpInternalId).trim().toUpperCase(),
+        gpInternalId: existingGp.toUpperCase(),
       };
     }
 
@@ -349,14 +296,12 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
     );
   }
 
-  /**
-   * Ordered 2-letter uppercase candidates from the display name (pure helper, no DB).
-   */
+  /** Name-based 2-letter initial candidates (same logic as before). */
   generateInitial(manufacturerName: string): readonly string[] {
     return initialCandidatesFromName(manufacturerName);
   }
 
-  /** Builds `GP<INITIAL>-###` or `GP<INITIAL>-####` (pure helper, no DB). */
+  /** Builds `GPSC-###` or `GPSC-####` (pure helper, no DB). */
   generateInternalId(
     manufacturerInitial: string,
     suffixNumber: number,

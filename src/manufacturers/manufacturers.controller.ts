@@ -179,7 +179,7 @@ export class ManufacturersController {
         gpInternalId: {
           type: 'string',
           description: 'Optional when verified; ignored while unverified (assigned on verify).',
-          example: 'GPGP-001',
+          example: 'GPSC-000',
         },
         manufacturerInitial: {
           type: 'string',

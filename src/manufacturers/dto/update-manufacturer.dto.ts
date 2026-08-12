@@ -13,9 +13,9 @@ import {
   SEO_META_TITLE_MAX,
 } from '../../common/constants/seo-meta.constants';
 
-/** GP + 2-letter initial: `###` (001–999) or `####` (1000–9999). Legacy non-GP ids: three digits only. */
+/** GPSC format: `GPSC-###` (000–999) or `GPSC-####` (1000–9999). Legacy non-GP ids: three digits only. */
 const GP_INTERNAL_ID_PATTERN =
-  /^(GP[A-Z]{2}-(?:[1-9]\d{3}|\d{3})|[A-Z]{3,5}-\d{3})$/i;
+  /^(GPSC-(?:[1-9]\d{3}|\d{3})|[A-Z]{3,5}-\d{3})$/i;
 
 export class UpdateManufacturerDto {
   @ApiProperty({ description: 'Manufacturer name' })
@@ -27,7 +27,7 @@ export class UpdateManufacturerDto {
   @ApiPropertyOptional({
     description:
       'Ignored when manufacturer is **unverified** (auto-generated). Optional when verified.',
-    example: 'GPGP-001',
+    example: 'GPSC-000',
   })
   @Transform(({ value, obj }) => {
     const raw = value ?? obj?.gp_internal_id;
@@ -38,7 +38,7 @@ export class UpdateManufacturerDto {
   @IsString()
   @Matches(GP_INTERNAL_ID_PATTERN, {
     message:
-      'gp_internal_id must match GP<INITIAL>-### (001–999) or GP<INITIAL>-#### (1000–9999), or legacy ABC-###',
+      'gp_internal_id must match GPSC-### (000–999) or GPSC-#### (1000–9999), or legacy ABC-###',
   })
   gpInternalId?: string;
 

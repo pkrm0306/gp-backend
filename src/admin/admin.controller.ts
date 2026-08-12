@@ -3884,8 +3884,8 @@ export class AdminController {
         gpInternalId: {
           type: 'string',
           description:
-            'Optional for verified manufacturers (e.g. GPGP-001 or legacy GPSC-312). Ignored while unverified (assigned on verify).',
-          example: 'GPGP-001',
+            'Optional for verified manufacturers (e.g. GPSC-000). Ignored while unverified (assigned on verify).',
+          example: 'GPSC-000',
         },
         manufacturerInitial: {
           type: 'string',

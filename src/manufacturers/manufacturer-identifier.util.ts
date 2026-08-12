@@ -1,8 +1,8 @@
 /**
  * Manufacturer initials + internal ID (gpInternalId) helpers.
- * Internal ID format: `GP<INITIAL>-<suffix>` where suffix is:
- * - **001–999** (always three digits, zero-padded), then
- * - **1000–9999** (four digits, no leading zeros) after every value 1–999 is in use.
+ * Initials: 2-letter candidates from the manufacturer name (unchanged).
+ * New internal IDs: `GPSC-<suffix>` (000–999 zero-padded, then 1000–9999).
+ * Legacy stored ids remain `GP<INI>-###` and are never rewritten.
  */
 
 const LETTER = /[A-Za-z]/;
@@ -80,12 +80,36 @@ export function generateInitial(manufacturerName: string): readonly string[] {
 }
 
 /**
+ * Numeric suffix from a **GPSC-** manufacturer id only (`GPSC-000` … `GPSC-9999`).
+ * Legacy `GPXX-###` ids are ignored so the GPSC sequence stays consecutive.
+ */
+export function parseGpscNumericSuffix(
+  gpInternalId: string | undefined,
+): number | null {
+  const id = String(gpInternalId ?? '').trim().toUpperCase();
+  const m = /^GPSC-(\d{1,4})$/.exec(id);
+  if (!m) {
+    return null;
+  }
+  const v = Number.parseInt(m[1], 10);
+  if (!Number.isFinite(v) || v < 0 || v > 9999) {
+    return null;
+  }
+  return v;
+}
+
+/**
  * Numeric suffix after the last `-` in a `GP..` internal id: **1–999** (three-digit form)
  * or **1000–9999** (four-digit form). Returns `null` if not parseable.
+ * Prefer {@link parseGpscNumericSuffix} when allocating new GPSC ids.
  */
 export function parseGpInternalNumericSuffix(
   gpInternalId: string | undefined,
 ): number | null {
+  const gpsc = parseGpscNumericSuffix(gpInternalId);
+  if (gpsc != null) {
+    return gpsc;
+  }
   const id = String(gpInternalId ?? '').trim().toUpperCase();
   const m = /-(\d{3,4})$/.exec(id);
   if (!m) {
@@ -115,53 +139,43 @@ export function parseGpInternalNumericSuffix(
 }
 
 /**
- * Builds `GP<INITIAL>-<suffix>`: **001–999** zero-padded; **1000–9999** as plain digits.
+ * Builds `GPSC-<suffix>` for newly verified manufacturers.
+ * Initials are stored separately and are not part of this id.
  */
 export function generateInternalId(
-  manufacturerInitial: string,
+  _manufacturerInitial: string,
   suffixNumber: number,
 ): string {
-  const ini = String(manufacturerInitial ?? '').trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(ini)) {
-    throw new Error(
-      'generateInternalId: manufacturerInitial must be exactly 2 letters',
-    );
-  }
   if (!Number.isInteger(suffixNumber)) {
     throw new Error(
-      'generateInternalId: suffixNumber must be an integer from 1 to 9999',
+      'generateInternalId: suffixNumber must be an integer from 0 to 9999',
     );
   }
-  if (suffixNumber >= 1 && suffixNumber <= 999) {
+  if (suffixNumber >= 0 && suffixNumber <= 999) {
     const n = String(suffixNumber).padStart(3, '0');
-    return `GP${ini}-${n}`;
+    return `GPSC-${n}`;
   }
   if (suffixNumber >= 1000 && suffixNumber <= 9999) {
-    return `GP${ini}-${suffixNumber}`;
+    return `GPSC-${suffixNumber}`;
   }
   throw new Error(
-    'generateInternalId: suffixNumber must be between 1 and 9999 (use 001–999 then 1000–9999)',
+    'generateInternalId: suffixNumber must be between 0 and 9999 (use 000–999 then 1000–9999)',
   );
 }
 
-/** True if existing stored id already matches GP<initial>-(###|####) for the resolved initial. */
+/** True if existing stored id is already a canonical GPSC id. */
 export function internalIdMatchesInitial(
   gpInternalId: string | undefined,
-  manufacturerInitial: string,
+  _manufacturerInitial: string,
 ): boolean {
   const id = String(gpInternalId ?? '').trim().toUpperCase();
-  const ini = String(manufacturerInitial ?? '').trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(ini)) {
-    return false;
-  }
-  const escaped = ini.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`^GP${escaped}-(?:\\d{3}|[1-9]\\d{3})$`);
+  const re = /^GPSC-(?:\d{3}|[1-9]\d{3})$/;
   if (!re.test(id)) {
     return false;
   }
-  const n = parseGpInternalNumericSuffix(id);
+  const n = parseGpscNumericSuffix(id);
   if (n == null) {
     return false;
   }
-  return id === generateInternalId(ini, n);
+  return id === generateInternalId('SC', n);
 }

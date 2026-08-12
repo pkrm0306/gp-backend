@@ -1027,11 +1027,16 @@ export class ManufacturersService implements OnModuleInit {
       );
     }
 
-    // Already has a valid pair — keep it (e.g. legacy rows assigned before this rule).
-    const existingIni = String(existing.manufacturerInitial ?? '').trim();
+    // Never rewrite an id that is already GPSC-###. Leftover legacy GPXX-###
+    // from registration is replaced with the next GPSC id (starting at 000).
+    // Initials stay name-based and are not changed when already set.
     const existingGp = String(existing.gpInternalId ?? '').trim();
-    if (existingIni && existingGp) {
-      return;
+    const alreadyGpsc = /^GPSC-(?:\d{3}|[1-9]\d{3})$/i.test(existingGp);
+    if (alreadyGpsc) {
+      const existingIni = String(existing.manufacturerInitial ?? '').trim();
+      if (existingIni) {
+        return;
+      }
     }
 
     const auto =
@@ -1047,20 +1052,6 @@ export class ManufacturersService implements OnModuleInit {
       );
 
     try {
-      const dupInitial = await this.manufacturerModel
-        .findOne({
-          manufacturerInitial: auto.manufacturerInitial,
-          _id: { $ne: existing._id },
-        })
-        .session(session)
-        .select('_id')
-        .lean()
-        .exec();
-      if (dupInitial) {
-        throw new ConflictException(
-          'manufacturerInitial already exists on another manufacturer',
-        );
-      }
       const dupGp = await this.manufacturerModel
         .findOne({
           gpInternalId: auto.gpInternalId,
