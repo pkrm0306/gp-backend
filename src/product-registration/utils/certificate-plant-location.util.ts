@@ -1,3 +1,6 @@
+/** Known MongoDB _id for the India country document (production). */
+export const INDIA_COUNTRY_MONGO_ID = '6998547b14999ba875c7d70c';
+
 export const KNOWN_NON_INDIA_STATE_TO_COUNTRY: Record<string, string> = {
   'new south wales': 'Australia',
   queensland: 'Australia',
@@ -18,7 +21,18 @@ export const KNOWN_NON_INDIA_STATE_TO_COUNTRY: Record<string, string> = {
   'abu dhabi': 'United Arab Emirates',
 };
 
-export function isIndiaCountry(country?: string | null): boolean {
+/**
+ * Returns true when the plant/product belongs to India.
+ * If `countryId` (MongoDB ObjectId string) is supplied it is compared directly
+ * with the known India Mongo ID — no string guessing needed.
+ * Falls back to the country name string when `countryId` is absent.
+ */
+export function isIndiaCountry(country?: string | null, countryId?: string | null): boolean {
+  // ID-first: most reliable
+  if (countryId) {
+    return String(countryId).trim() === INDIA_COUNTRY_MONGO_ID;
+  }
+  // Name-based fallback
   if (!country) return true;
   const trimmed = country.trim().toLowerCase();
   if (!trimmed) return true;
@@ -27,21 +41,34 @@ export function isIndiaCountry(country?: string | null): boolean {
   return false;
 }
 
+/**
+ * Resolves the location region text for certificates.
+ * - India   → state name
+ * - Non-India → country name
+ * Pass `countryId` (MongoDB ObjectId string) for accurate ID-based detection.
+ */
 export function resolveCertificateRegionName(
   country?: string | null,
   state?: string | null,
+  countryId?: string | null,
 ): string {
   const countryStr = String(country ?? '').trim();
   const stateStr = String(state ?? '').trim();
 
-  if (countryStr && !isIndiaCountry(countryStr)) {
+  if (!isIndiaCountry(countryStr || null, countryId)) {
+    // Non-India: prefer explicit country name, then look up via state
+    if (countryStr) return countryStr;
+    if (stateStr && KNOWN_NON_INDIA_STATE_TO_COUNTRY[stateStr.toLowerCase()]) {
+      return KNOWN_NON_INDIA_STATE_TO_COUNTRY[stateStr.toLowerCase()];
+    }
     return countryStr;
   }
 
+  // India: show state; fall back to country if state missing
   if (stateStr && KNOWN_NON_INDIA_STATE_TO_COUNTRY[stateStr.toLowerCase()]) {
+    // State name actually belongs to a non-Indian country (data inconsistency guard)
     return KNOWN_NON_INDIA_STATE_TO_COUNTRY[stateStr.toLowerCase()];
   }
-
   return stateStr || countryStr;
 }
 
@@ -49,6 +76,7 @@ export function resolveCertificateRegionName(
  * Certificate plant location line used in "Manufactured by X at {location} ...".
  * Prefer structured fields; legacy plantLocation only when structured fields are empty.
  * Non-Indian addresses display Country Name instead of State Name.
+ * Pass `countryId` (MongoDB ObjectId string) for accurate ID-based detection.
  */
 export function formatCertificatePlantLocation(input: {
   additionalPlantInfo?: string | null;
@@ -56,22 +84,26 @@ export function formatCertificatePlantLocation(input: {
   stateName?: string | null;
   plantLocation?: string | null;
   countryName?: string | null;
+  /** MongoDB ObjectId string of the plant's country — preferred over countryName for India detection. */
+  countryId?: string | null;
 }): string {
   const additional = String(input.additionalPlantInfo ?? '').trim();
   const city = String(input.city ?? '').trim();
   const state = String(input.stateName ?? '').trim();
   const country = String(input.countryName ?? '').trim();
   const legacy = String(input.plantLocation ?? '').trim();
+  const countryId = String(input.countryId ?? '').trim() || null;
 
-  const region = resolveCertificateRegionName(country, state);
+  const region = resolveCertificateRegionName(country, state, countryId);
 
   const structured = [additional, city, region].filter(Boolean);
   let parts = structured.length > 0 ? structured : legacy ? [legacy] : [];
 
   if (structured.length === 0 && legacy) {
+    const isIndia = isIndiaCountry(country || null, countryId);
     const effectiveCountry =
       country || (state && KNOWN_NON_INDIA_STATE_TO_COUNTRY[state.toLowerCase()]);
-    if (effectiveCountry && !isIndiaCountry(effectiveCountry)) {
+    if (!isIndia && effectiveCountry) {
       if (state && legacy.toLowerCase().includes(state.toLowerCase())) {
         const escapedState = state.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b${escapedState}\\b`, 'gi');
@@ -100,20 +132,24 @@ export function formatCertificatePlantLocation(input: {
   }
 
   // Ensure any part containing a known non-Indian state name replaces it with Country Name
-  parts = parts.map((part) => {
-    let s = part;
-    for (const [nonIndiaState, countryForState] of Object.entries(
-      KNOWN_NON_INDIA_STATE_TO_COUNTRY,
-    )) {
-      if (s.toLowerCase().includes(nonIndiaState)) {
-        const escaped = nonIndiaState.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
-        s = s.replace(regex, countryForState);
-        break;
+  // (only applies when this is not an India plant)
+  const isIndia = isIndiaCountry(country || null, countryId);
+  if (!isIndia) {
+    parts = parts.map((part) => {
+      let s = part;
+      for (const [nonIndiaState, countryForState] of Object.entries(
+        KNOWN_NON_INDIA_STATE_TO_COUNTRY,
+      )) {
+        if (s.toLowerCase().includes(nonIndiaState)) {
+          const escaped = nonIndiaState.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+          s = s.replace(regex, countryForState);
+          break;
+        }
       }
-    }
-    return s;
-  });
+      return s;
+    });
+  }
 
   const unique: string[] = [];
   for (const part of parts) {
