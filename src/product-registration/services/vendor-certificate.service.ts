@@ -99,9 +99,8 @@ type PlantWithGeo = {
   city?: string;
   stateName?: string | null;
   countryName?: string | null;
+  countryId?: string | null;
   additionalPlantInfo?: string;
-  /** MongoDB ObjectId string of the plant's country — used for ID-based India detection. */
-  countryId?: string;
 };
 
 export type EoiPlantCertificateItem = {
@@ -142,7 +141,7 @@ export class VendorCertificateService {
     private readonly allProductDocumentModel: Model<AllProductDocumentDocument>,
     @InjectModel(ProductPlant.name)
     private readonly productPlantModel: Model<ProductPlantDocument>,
-  ) {}
+  ) { }
 
   async downloadEoiCertificate(
     vendorId: string,
@@ -222,8 +221,7 @@ export class VendorCertificateService {
         addedPages += pages.length;
       } catch (err) {
         this.logger.warn(
-          `Failed regenerating plant cert for EOI ${product.eoiNo}: ${
-            (err as Error)?.message ?? err
+          `Failed regenerating plant cert for EOI ${product.eoiNo}: ${(err as Error)?.message ?? err
           }`,
         );
       }
@@ -663,22 +661,7 @@ export class VendorCertificateService {
             ],
           },
         },
-        {
-          $lookup: {
-            from: 'states',
-            localField: 'stateId',
-            foreignField: '_id',
-            as: 'state',
-          },
-        },
-        {
-          $lookup: {
-            from: 'countries',
-            localField: 'countryId',
-            foreignField: '_id',
-            as: 'country',
-          },
-        },
+        ...this.plantGeoLookupStages(),
         { $sort: { createdDate: 1, productPlantId: 1 } },
       ])
       .exec();
@@ -686,32 +669,7 @@ export class VendorCertificateService {
     for (const row of rows) {
       const productId = String(row.productId ?? '');
       if (!productId) continue;
-      const stateDoc = Array.isArray(row.state)
-        ? (row.state[0] as Record<string, unknown> | undefined)
-        : undefined;
-      const countryDoc = Array.isArray(row.country)
-        ? (row.country[0] as Record<string, unknown> | undefined)
-        : undefined;
-      const plant: PlantWithGeo = {
-        id: String(row._id),
-        productPlantId: Number(row.productPlantId ?? 0),
-        plantName: row.plantName,
-        plantLocation: row.plantLocation,
-        city: row.city,
-        additionalPlantInfo: String(
-          row.additionalPlantInfo ?? row.additional_plant_info ?? '',
-        ).trim() || undefined,
-        stateName:
-          (stateDoc?.stateName as string | undefined) ??
-          (stateDoc?.name as string | undefined) ??
-          null,
-        countryName:
-          (countryDoc?.countryName as string | undefined) ??
-          (countryDoc?.country_name as string | undefined) ??
-          (countryDoc?.name as string | undefined) ??
-          null,
-        countryId: row.countryId ? String(row.countryId) : undefined,
-      };
+      const plant = this.mapPlantRowToPlantWithGeo(row as Record<string, unknown>);
       const list = grouped.get(productId) ?? [];
       list.push(plant);
       grouped.set(productId, list);
@@ -858,15 +816,15 @@ export class VendorCertificateService {
     const [category, manufacturer] = await Promise.all([
       product.categoryId
         ? this.categoryModel
-            .findById(product.categoryId)
-            .select('categoryName category_name')
-            .exec()
+          .findById(product.categoryId)
+          .select('categoryName category_name')
+          .exec()
         : null,
       product.manufacturerId
         ? this.manufacturerModel
-            .findById(product.manufacturerId)
-            .select('manufacturerName')
-            .exec()
+          .findById(product.manufacturerId)
+          .select('manufacturerName')
+          .exec()
         : null,
     ]);
 
@@ -890,54 +848,14 @@ export class VendorCertificateService {
             ],
           },
         },
-        {
-          $lookup: {
-            from: 'states',
-            localField: 'stateId',
-            foreignField: '_id',
-            as: 'state',
-          },
-        },
-        {
-          $lookup: {
-            from: 'countries',
-            localField: 'countryId',
-            foreignField: '_id',
-            as: 'country',
-          },
-        },
+        ...this.plantGeoLookupStages(),
         { $sort: { createdDate: 1, productPlantId: 1 } },
       ])
       .exec();
 
-    return rows.map((row) => {
-      const stateDoc = Array.isArray(row.state)
-        ? (row.state[0] as Record<string, unknown> | undefined)
-        : undefined;
-      const countryDoc = Array.isArray(row.country)
-        ? (row.country[0] as Record<string, unknown> | undefined)
-        : undefined;
-      return {
-        id: String(row._id),
-        productPlantId: Number(row.productPlantId ?? 0),
-        plantName: row.plantName,
-        plantLocation: row.plantLocation,
-        city: row.city,
-        additionalPlantInfo: String(
-          row.additionalPlantInfo ?? row.additional_plant_info ?? '',
-        ).trim() || undefined,
-        stateName:
-          (stateDoc?.stateName as string | undefined) ??
-          (stateDoc?.name as string | undefined) ??
-          null,
-        countryName:
-          (countryDoc?.countryName as string | undefined) ??
-          (countryDoc?.country_name as string | undefined) ??
-          (countryDoc?.name as string | undefined) ??
-          null,
-        countryId: row.countryId ? String(row.countryId) : undefined,
-      };
-    });
+    return rows.map((row) =>
+      this.mapPlantRowToPlantWithGeo(row as Record<string, unknown>),
+    );
   }
 
   private async loadPlantForProduct(
@@ -960,22 +878,7 @@ export class VendorCertificateService {
             ],
           },
         },
-        {
-          $lookup: {
-            from: 'states',
-            localField: 'stateId',
-            foreignField: '_id',
-            as: 'state',
-          },
-        },
-        {
-          $lookup: {
-            from: 'countries',
-            localField: 'countryId',
-            foreignField: '_id',
-            as: 'country',
-          },
-        },
+        ...this.plantGeoLookupStages(),
         { $limit: 1 },
       ])
       .exec();
@@ -985,33 +888,7 @@ export class VendorCertificateService {
       throw new NotFoundException('Plant not found for this certified EOI');
     }
 
-    const stateDoc = Array.isArray(row.state)
-      ? (row.state[0] as Record<string, unknown> | undefined)
-      : undefined;
-    const countryDoc = Array.isArray(row.country)
-      ? (row.country[0] as Record<string, unknown> | undefined)
-      : undefined;
-
-    return {
-      id: String(row._id),
-      productPlantId: Number(row.productPlantId ?? 0),
-      plantName: row.plantName,
-      plantLocation: row.plantLocation,
-      city: row.city,
-      additionalPlantInfo: String(
-        row.additionalPlantInfo ?? row.additional_plant_info ?? '',
-      ).trim() || undefined,
-      stateName:
-        (stateDoc?.stateName as string | undefined) ??
-        (stateDoc?.name as string | undefined) ??
-        null,
-      countryName:
-        (countryDoc?.countryName as string | undefined) ??
-        (countryDoc?.country_name as string | undefined) ??
-        (countryDoc?.name as string | undefined) ??
-        null,
-      countryId: row.countryId ? String(row.countryId) : undefined,
-    };
+    return this.mapPlantRowToPlantWithGeo(row as Record<string, unknown>);
   }
 
   private async downloadEoiCertificateZip(
@@ -1297,7 +1174,7 @@ export class VendorCertificateService {
 
     const base = String(
       process.env.CERTIFICATE_ASSET_BASE_URL ??
-        'https://greenpro-portals.vercel.app/vendor/certificate',
+      'https://greenpro-portals.vercel.app/vendor/certificate',
     )
       .trim()
       .replace(/\/+$/, '');
@@ -1390,9 +1267,9 @@ export class VendorCertificateService {
         },
         ...(hasLocation
           ? [
-              { text: ' at ', font: italic, size: P_SZ },
-              { text: `${location} `, font: boldItalic, size: P_SZ },
-            ]
+            { text: ' at ', font: italic, size: P_SZ },
+            { text: `${location} `, font: boldItalic, size: P_SZ },
+          ]
           : []),
         { text: 'meets the requirements of', font: italic, size: P_SZ },
       ],
@@ -1512,19 +1389,76 @@ export class VendorCertificateService {
   }
 
   private deriveLocation(product: ProductWithRelations): string {
-    const row = product as unknown as Record<string, unknown>;
-    const city = (row.city as string | undefined);
-    const state = (row.stateName as string | undefined);
+    const city = (product as unknown as { city?: string })?.city;
+    const state = (product as unknown as { stateName?: string })?.stateName;
     const country =
-      (row.countryName as string | undefined) ??
-      (row.country_name as string | undefined) ??
-      (row.country as string | undefined);
-    const countryId = (row.countryId as string | undefined);
+      (product as unknown as { countryName?: string })?.countryName ??
+      (product as unknown as { country_name?: string })?.country_name ??
+      (product as unknown as { country?: string })?.country;
     const c = String(city ?? '').trim();
     const s = String(state ?? '').trim();
-    const region = resolveCertificateRegionName(country, s, countryId);
+    const region = resolveCertificateRegionName(country, s);
     if (c && region) return `${c}, ${region}`;
     return c || region || '';
+  }
+
+  private plantGeoLookupStages(): any[] {
+    return [
+      {
+        $lookup: {
+          from: 'states',
+          localField: 'stateId',
+          foreignField: '_id',
+          as: 'state',
+        },
+      },
+      {
+        $lookup: {
+          from: 'countries',
+          localField: 'countryId',
+          foreignField: '_id',
+          as: 'country',
+        },
+      },
+    ];
+  }
+
+  private mapPlantRowToPlantWithGeo(row: Record<string, unknown>): PlantWithGeo {
+    const stateDoc = Array.isArray(row.state)
+      ? (row.state[0] as Record<string, unknown> | undefined)
+      : undefined;
+    const countryDoc = Array.isArray(row.country)
+      ? (row.country[0] as Record<string, unknown> | undefined)
+      : undefined;
+    const countryIdRaw = row.countryId ?? row.country_id;
+    const countryId =
+      countryIdRaw != null && String(countryIdRaw).trim()
+        ? String(countryIdRaw).trim()
+        : undefined;
+
+    return {
+      id: String(row._id ?? ''),
+      productPlantId: Number(row.productPlantId ?? 0),
+      plantName: row.plantName as string | undefined,
+      plantLocation: row.plantLocation as string | undefined,
+      city: row.city as string | undefined,
+      additionalPlantInfo:
+        String(row.additionalPlantInfo ?? row.additional_plant_info ?? '').trim() ||
+        undefined,
+      stateName:
+        (stateDoc?.stateName as string | undefined) ??
+        (stateDoc?.state_name as string | undefined) ??
+        (stateDoc?.name as string | undefined) ??
+        null,
+      countryName:
+        (countryDoc?.countryName as string | undefined) ??
+        (countryDoc?.country_name as string | undefined) ??
+        (countryDoc?.name as string | undefined) ??
+        (row.countryName as string | undefined) ??
+        (row.country_name as string | undefined) ??
+        null,
+      countryId,
+    };
   }
 
   private derivePlantLocation(plant: PlantWithGeo): string {
@@ -1534,8 +1468,12 @@ export class VendorCertificateService {
       city: plant.city,
       stateName: plant.stateName ?? (p.state_name as string) ?? (p.state as string),
       plantLocation: plant.plantLocation ?? (p.plant_location as string),
-      countryName: (p.countryName as string) ?? (p.country_name as string) ?? (p.country as string),
-      countryId: plant.countryId,
+      countryName:
+        plant.countryName ??
+        (p.countryName as string) ??
+        (p.country_name as string) ??
+        (p.country as string),
+      countryId: plant.countryId ?? (p.countryId as string) ?? (p.country_id as string),
     });
   }
 

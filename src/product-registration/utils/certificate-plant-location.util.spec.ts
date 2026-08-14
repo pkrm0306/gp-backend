@@ -1,4 +1,9 @@
-import { formatCertificatePlantLocation } from './certificate-plant-location.util';
+import {
+  finalizeCertificatePreviewLocation,
+  formatCertificatePlantLocation,
+  INDIA_COUNTRY_MONGO_ID,
+  isIndiaCountry,
+} from './certificate-plant-location.util';
 
 describe('formatCertificatePlantLocation', () => {
   it('puts additional plant info before city and state', () => {
@@ -64,5 +69,56 @@ describe('formatCertificatePlantLocation', () => {
         stateName: 'Maharashtra',
       }),
     ).toBe('Unit A, Pune, Maharashtra');
+  });
+
+  it('shows city and country for international plants, not street address', () => {
+    expect(
+      formatCertificatePlantLocation({
+        plantLocation: 'test address',
+        city: 'Carlow',
+        stateName: 'Carlow',
+        countryName: 'Ireland',
+        countryId: '6998547b14999ba875c7d71a',
+      }),
+    ).toBe('Carlow, Ireland');
+  });
+
+  it('uses state as locality when city missing on non-India plants', () => {
+    expect(
+      formatCertificatePlantLocation({
+        plantLocation: 'test address',
+        stateName: 'Carlow',
+        countryName: 'Ireland',
+        countryId: '6998547b14999ba875c7d71a',
+      }),
+    ).toBe('Carlow, Ireland');
+  });
+});
+
+describe('finalizeCertificatePreviewLocation', () => {
+  it('does not replace city when location already includes country', () => {
+    expect(
+      finalizeCertificatePreviewLocation('carlow, Ireland', {
+        countryName: 'Ireland',
+        stateName: 'Carlow',
+        countryId: '6998547b14999ba875c7d71a',
+      }),
+    ).toBe('carlow, Ireland');
+  });
+
+  it('still replaces state in legacy location strings without country', () => {
+    expect(
+      finalizeCertificatePreviewLocation('Munich, Bavaria', {
+        countryName: 'Germany',
+        stateName: 'Bavaria',
+      }),
+    ).toBe('Munich, Germany');
+  });
+});
+
+describe('isIndiaCountry', () => {
+  it('detects India by Mongo country id', () => {
+    expect(isIndiaCountry(undefined, INDIA_COUNTRY_MONGO_ID)).toBe(true);
+    expect(isIndiaCountry('Ireland', '6998547b14999ba875c7d71a')).toBe(false);
   });
 });
