@@ -189,8 +189,44 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
     throw new ConflictException('Failed to allocate manufacturer internal id');
   }
 
+  private notDeletedFilter() {
+    return {
+      $or: [
+        { accountDeletedAt: { $exists: false } },
+        { accountDeletedAt: null },
+      ],
+    };
+  }
+
   /**
-   * First free initials from the ordered candidate list for this name, excluding `excludeManufacturerId`.
+   * True if another **verified** manufacturer already uses this initial.
+   */
+  async isInitialTakenByVerified(
+    manufacturerInitial: string,
+    excludeManufacturerId: Types.ObjectId,
+    session: ClientSession,
+  ): Promise<boolean> {
+    const ini = String(manufacturerInitial ?? '').trim().toUpperCase();
+    if (!ini) {
+      return false;
+    }
+    const taken = await this.manufacturerModel
+      .findOne({
+        manufacturerInitial: ini,
+        manufacturerStatus: 1,
+        _id: { $ne: excludeManufacturerId },
+        ...this.notDeletedFilter(),
+      })
+      .select('_id')
+      .session(session)
+      .lean()
+      .exec();
+    return !!taken;
+  }
+
+  /**
+   * First free initials from the ordered candidate list for this name.
+   * Uniqueness is among **verified** manufacturers only (same rule as before).
    */
   async pickUniqueInitial(
     manufacturerName: string,
@@ -204,19 +240,11 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
       );
     }
     for (const candidate of candidates) {
-      const taken = await this.manufacturerModel
-        .findOne({
-          manufacturerInitial: candidate,
-          _id: { $ne: excludeManufacturerId },
-          $or: [
-            { accountDeletedAt: { $exists: false } },
-            { accountDeletedAt: null },
-          ],
-        })
-        .select('_id')
-        .session(session)
-        .lean()
-        .exec();
+      const taken = await this.isInitialTakenByVerified(
+        candidate,
+        excludeManufacturerId,
+        session,
+      );
       if (!taken) {
         return candidate;
       }
@@ -227,9 +255,9 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
   }
 
   /**
-   * Resolves name-based initials + GPSC internal id when a manufacturer is **newly verified**.
-   * Initials use the original 2-letter-from-name sequence. The id is `GPSC-000`, `GPSC-001`, …
-   * Existing stored ids/initials are left unchanged by the caller.
+   * Resolves unique name-based initials + GPSC internal id when a manufacturer
+   * is **newly verified**. Initials never collide with another verified row.
+   * Manufacturer id is `GPSC-000`, `GPSC-001`, … (independent of initials).
    */
   async resolveAutoIdentifiersForUnverified(
     manufacturerName: string,
@@ -247,18 +275,32 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
         'Manufacturer name must contain at least one letter to derive initials',
       );
     }
+
     const existingIni = String(existing.manufacturerInitial ?? '')
       .trim()
       .toUpperCase();
-    const candidates = initialCandidatesFromName(manufacturerName);
-    if (!existingIni && candidates.length === 0) {
-      throw new BadRequestException(
-        'Manufacturer name must contain at least one letter to derive initials',
-      );
-    }
-    const initial = existingIni || candidates[0];
     const existingGp = String(existing.gpInternalId ?? '').trim();
     const alreadyGpsc = /^GPSC-(?:\d{3}|[1-9]\d{3})$/i.test(existingGp);
+
+    // Keep an existing initial only when it is still free among verified rows.
+    let initial: string;
+    if (
+      existingIni &&
+      !(await this.isInitialTakenByVerified(
+        existingIni,
+        excludeManufacturerId,
+        session,
+      ))
+    ) {
+      initial = existingIni;
+    } else {
+      initial = await this.pickUniqueInitial(
+        manufacturerName,
+        excludeManufacturerId,
+        session,
+      );
+    }
+
     if (alreadyGpsc) {
       return {
         manufacturerInitial: initial,
@@ -276,10 +318,7 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
         .findOne({
           gpInternalId,
           _id: { $ne: excludeManufacturerId },
-          $or: [
-            { accountDeletedAt: { $exists: false } },
-            { accountDeletedAt: null },
-          ],
+          ...this.notDeletedFilter(),
         })
         .session(session)
         .select('_id')

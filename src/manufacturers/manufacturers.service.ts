@@ -1027,17 +1027,9 @@ export class ManufacturersService implements OnModuleInit {
       );
     }
 
-    // Never rewrite an id that is already GPSC-###. Leftover legacy GPXX-###
-    // from registration is replaced with the next GPSC id (starting at 000).
-    // Initials stay name-based and are not changed when already set.
+    // Keep an existing GPSC id. Initials are still made unique among verified rows.
     const existingGp = String(existing.gpInternalId ?? '').trim();
     const alreadyGpsc = /^GPSC-(?:\d{3}|[1-9]\d{3})$/i.test(existingGp);
-    if (alreadyGpsc) {
-      const existingIni = String(existing.manufacturerInitial ?? '').trim();
-      if (existingIni) {
-        return;
-      }
-    }
 
     const auto =
       await this.manufacturerIdGeneration.resolveAutoIdentifiersForUnverified(
@@ -1050,6 +1042,17 @@ export class ManufacturersService implements OnModuleInit {
         },
         session,
       );
+
+    // Already verified with GPSC + unchanged unique initial — nothing to write.
+    if (
+      alreadyGpsc &&
+      String(existing.manufacturerInitial ?? '').trim().toUpperCase() ===
+        auto.manufacturerInitial &&
+      String(existing.gpInternalId ?? '').trim().toUpperCase() ===
+        auto.gpInternalId
+    ) {
+      return;
+    }
 
     try {
       const dupGp = await this.manufacturerModel
@@ -2383,6 +2386,7 @@ export class ManufacturersService implements OnModuleInit {
             const dupInitial = await this.manufacturerModel
               .findOne({
                 manufacturerInitial: updateData.manufacturerInitial,
+                manufacturerStatus: 1,
                 _id: { $ne: existing._id },
                 $or: [
                   { accountDeletedAt: { $exists: false } },

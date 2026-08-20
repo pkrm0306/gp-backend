@@ -4029,7 +4029,12 @@ export class AdminService {
             const dupInitial = await this.manufacturerModel
               .findOne({
                 manufacturerInitial: updateData.manufacturerInitial,
+                manufacturerStatus: 1,
                 _id: { $ne: existing._id },
+                $or: [
+                  { accountDeletedAt: { $exists: false } },
+                  { accountDeletedAt: null },
+                ],
               })
               .session(session)
               .select('_id')
