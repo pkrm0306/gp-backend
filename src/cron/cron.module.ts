@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   Product,
@@ -23,9 +24,11 @@ import { CertificationExpiryTemplateService } from './certification-expiry/certi
 import { CertificationExpiryService } from './certification-expiry/certification-expiry.service';
 import { InquiryReminderService } from './inquiry-reminder/inquiry-reminder.service';
 import { InquiryReminderCronController } from './inquiry-reminder/inquiry-reminder.controller';
+import { CronScheduler } from './cron.scheduler';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     MongooseModule.forFeature([
       { name: Product.name, schema: ProductSchema },
       { name: RenewalCycle.name, schema: RenewalCycleSchema },
@@ -40,6 +43,7 @@ import { InquiryReminderCronController } from './inquiry-reminder/inquiry-remind
     CertificationExpiryTemplateService,
     CertificationExpiryService,
     InquiryReminderService,
+    CronScheduler,
   ],
   exports: [CertificationExpiryService, InquiryReminderService],
 })
