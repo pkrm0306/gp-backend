@@ -46,28 +46,43 @@ export function normalizePlantNameKey(value: string | undefined): string {
   return normalizeTrimmedValue(String(value ?? '')).toLowerCase();
 }
 
-export function buildPlantDuplicateKey(plant: {
-  eoiNo?: string;
-  plantName?: string;
-  plantLocation?: string;
-  city?: string;
-}): string {
-  return [
-    normalizeTrimmedValue(String(plant.eoiNo ?? '')).toLowerCase(),
-    normalizePlantNameKey(plant.plantName),
-    normalizeTrimmedValue(String(plant.plantLocation ?? plant.city ?? '')).toLowerCase(),
-  ].join('|');
+function emptyAsMissing(value: string | undefined | null): string {
+  return normalizeTrimmedValue(String(value ?? '')).toLowerCase();
 }
 
-/** Plant identity on a single product (name + location), used when copying plants to a target EOI. */
-export function buildPlantIdentityKey(plant: {
+function plantStateKey(plant: {
+  stateId?: Types.ObjectId | string;
+  stateName?: string | null;
+}): string {
+  const stateId = objectIdKey(plant.stateId);
+  if (stateId) {
+    return `id:${stateId}`;
+  }
+  return `name:${emptyAsMissing(plant.stateName)}`;
+}
+
+export type PlantIdentityFields = {
   plantName?: string;
   plantLocation?: string;
   city?: string;
-}): string {
+  stateId?: Types.ObjectId | string;
+  stateName?: string | null;
+};
+
+export function buildPlantDuplicateKey(plant: PlantIdentityFields & { eoiNo?: string }): string {
+  return [emptyAsMissing(plant.eoiNo), buildPlantIdentityKey(plant)].join('|');
+}
+
+/**
+ * Plant identity on a single product when copying plants to a target EOI.
+ * Same plant only when name, city, and state all match (address is a 4th part).
+ */
+export function buildPlantIdentityKey(plant: PlantIdentityFields): string {
   return [
     normalizePlantNameKey(plant.plantName),
-    normalizeTrimmedValue(String(plant.plantLocation ?? plant.city ?? '')).toLowerCase(),
+    emptyAsMissing(plant.city),
+    plantStateKey(plant),
+    emptyAsMissing(plant.plantLocation),
   ].join('|');
 }
 

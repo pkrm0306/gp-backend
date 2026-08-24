@@ -26,10 +26,26 @@ export type CopyProductPlantsResult = {
   manufacturingUnitsSkipped: string[];
 };
 
+function identityFieldsFromPlant(plant: {
+  plantName?: string;
+  plantLocation?: string;
+  city?: string;
+  stateId?: Types.ObjectId;
+  stateName?: string | null;
+}) {
+  return {
+    plantName: plant.plantName,
+    plantLocation: plant.plantLocation,
+    city: plant.city,
+    stateId: plant.stateId,
+    stateName: plant.stateName,
+  };
+}
+
 /**
  * Copies active manufacturing plants from a source product onto a target product.
- * Plants already present on the target (same name + location) are skipped.
- * Source plants are left unchanged.
+ * Plants already present on the target (same name + city + state, and address)
+ * are skipped. Source plants are left unchanged.
  */
 export async function copyActivePlantsToTargetProduct(
   productPlantModel: Model<ProductPlantDocument>,
@@ -53,13 +69,7 @@ export async function copyActivePlantsToTargetProduct(
     .exec();
 
   const targetIdentityKeys = new Set(
-    targetPlants.map((plant) =>
-      buildPlantIdentityKey({
-        plantName: plant.plantName,
-        plantLocation: plant.plantLocation,
-        city: plant.city,
-      }),
-    ),
+    targetPlants.map((plant) => buildPlantIdentityKey(identityFieldsFromPlant(plant))),
   );
 
   const sourcePlantIds: Types.ObjectId[] = [];
@@ -73,11 +83,7 @@ export async function copyActivePlantsToTargetProduct(
   const plantsToCopy: (ProductPlant & { _id: Types.ObjectId })[] = [];
 
   for (const sourcePlant of sourcePlants as (ProductPlant & { _id: Types.ObjectId })[]) {
-    const identityKey = buildPlantIdentityKey({
-      plantName: sourcePlant.plantName,
-      plantLocation: sourcePlant.plantLocation,
-      city: sourcePlant.city,
-    });
+    const identityKey = buildPlantIdentityKey(identityFieldsFromPlant(sourcePlant));
 
     if (targetIdentityKeys.has(identityKey)) {
       skippedSourcePlantIds.push(sourcePlant._id);

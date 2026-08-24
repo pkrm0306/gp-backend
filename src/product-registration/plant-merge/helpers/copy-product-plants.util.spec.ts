@@ -205,4 +205,148 @@ describe('copyActivePlantsToTargetProduct', () => {
     expect(result.skippedSourcePlantIds).toEqual([sourcePlant]);
     expect(result.manufacturingUnitsSkipped).toEqual(['Chennai']);
   });
+
+  it('copies plants in the same state when city and plant name differ', async () => {
+    const keralaId = new Types.ObjectId();
+    const sourcePlant = new Types.ObjectId();
+
+    const productPlantModel = buildProductPlantModel({
+      sourcePlants: [
+        {
+          _id: sourcePlant,
+          productPlantId: 30,
+          plantName: 'Kerala 2',
+          plantLocation: 'Main Road',
+          city: 'Kochi',
+          stateId: keralaId,
+        },
+      ],
+      targetPlants: [
+        {
+          _id: new Types.ObjectId(),
+          plantName: 'R R KABEL LIMITED 6',
+          plantLocation: 'Plot no K8 1 SIPCOT',
+          city: 'thiruvananthapurar',
+          stateId: keralaId,
+        },
+      ],
+    });
+
+    const result = await copyActivePlantsToTargetProduct(
+      productPlantModel as never,
+      sequenceHelper as never,
+      sourceProductId,
+      targetProduct,
+      now,
+    );
+
+    expect(productPlantModel.create).toHaveBeenCalledTimes(1);
+    expect(result.copiedPlantIds).toHaveLength(1);
+    expect(result.skippedSourcePlantIds).toEqual([]);
+    expect(productPlantModel.create).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          productId: targetProductId,
+          urnNo: 'URN-TARGET',
+          eoiNo: 'GP001',
+          plantName: 'Kerala 2',
+          city: 'Kochi',
+          stateId: keralaId,
+        }),
+      ],
+      {},
+    );
+  });
+
+  it('copies Pune-A and Pune-B onto a Mumbai target (Example 2)', async () => {
+    const maharashtraId = new Types.ObjectId();
+    const plantA = new Types.ObjectId();
+    const plantB = new Types.ObjectId();
+
+    const productPlantModel = buildProductPlantModel({
+      sourcePlants: [
+        {
+          _id: plantA,
+          productPlantId: 40,
+          plantName: 'Pune-A',
+          plantLocation: 'Hinjewadi',
+          city: 'Pune',
+          stateId: maharashtraId,
+        },
+        {
+          _id: plantB,
+          productPlantId: 41,
+          plantName: 'Pune-B',
+          plantLocation: 'Chakan',
+          city: 'Pune',
+          stateId: maharashtraId,
+        },
+      ],
+      targetPlants: [
+        {
+          _id: new Types.ObjectId(),
+          plantName: 'Mumbai',
+          plantLocation: 'Andheri',
+          city: 'Mumbai',
+          stateId: maharashtraId,
+        },
+      ],
+    });
+
+    const result = await copyActivePlantsToTargetProduct(
+      productPlantModel as never,
+      sequenceHelper as never,
+      sourceProductId,
+      targetProduct,
+      now,
+    );
+
+    expect(sequenceHelper.reserveSequenceValues).toHaveBeenCalledWith(
+      'product_plant_id',
+      2,
+    );
+    expect(productPlantModel.create).toHaveBeenCalledTimes(2);
+    expect(result.copiedPlantIds).toHaveLength(2);
+    expect(result.skippedSourcePlantIds).toEqual([]);
+    expect(result.sourcePlantIds).toEqual([plantA, plantB]);
+  });
+
+  it('skips when name, city, and state all match', async () => {
+    const stateId = new Types.ObjectId();
+    const sourcePlant = new Types.ObjectId();
+
+    const productPlantModel = buildProductPlantModel({
+      sourcePlants: [
+        {
+          _id: sourcePlant,
+          productPlantId: 50,
+          plantName: 'Mumbai',
+          plantLocation: 'Andheri',
+          city: 'Mumbai',
+          stateId,
+        },
+      ],
+      targetPlants: [
+        {
+          _id: new Types.ObjectId(),
+          plantName: 'Mumbai',
+          plantLocation: 'Andheri',
+          city: 'Mumbai',
+          stateId,
+        },
+      ],
+    });
+
+    const result = await copyActivePlantsToTargetProduct(
+      productPlantModel as never,
+      sequenceHelper as never,
+      sourceProductId,
+      targetProduct,
+      now,
+    );
+
+    expect(productPlantModel.create).not.toHaveBeenCalled();
+    expect(result.copiedPlantIds).toEqual([]);
+    expect(result.skippedSourcePlantIds).toEqual([sourcePlant]);
+  });
 });

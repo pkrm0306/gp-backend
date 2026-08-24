@@ -359,10 +359,17 @@ describe('PlantMergeUrnExecuteService', () => {
         exec: jest.fn().mockResolvedValue(targetProduct),
       });
 
+    productPlantModel.countDocuments
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(3);
+
     const result = await service.execute({ sourceUrnNo: 'URN-SOURCE' }, adminUserId);
 
     expect(result.pairsExecuted).toBe(1);
     expect(copyActivePlantsToTargetProduct).toHaveBeenCalledTimes(1);
+    expect(result.results[0]?.plantCountAfter).toBeGreaterThan(
+      Number(result.results[0]?.plantCountBefore),
+    );
   });
 
   it('records skipped duplicate plants in audit and result', async () => {
