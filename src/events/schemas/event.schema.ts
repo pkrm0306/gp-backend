@@ -23,7 +23,8 @@ export const EventBrochureItemSchema =
 
 @Schema({ collection: 'events', timestamps: false })
 export class Event {
-  @Prop({ required: true, unique: true })
+  /** Unique among non–soft-deleted rows (see partial index below). */
+  @Prop({ required: true })
   eventId: number;
 
   @Prop({ required: true })
@@ -94,6 +95,12 @@ export class Event {
   @Prop({ required: true, type: Number, default: 1 })
   eventStatus: number; // 0=Inactive, 1=Active
 
+  @Prop({ type: Boolean, default: false, index: true })
+  isDeleted?: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
+
   @Prop({ required: true })
   createdDate: Date;
 
@@ -102,3 +109,8 @@ export class Event {
 }
 
 export const EventSchema = SchemaFactory.createForClass(Event);
+EventSchema.index(
+  { eventId: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
+);
+EventSchema.index({ deletedAt: 1 });

@@ -1797,7 +1797,15 @@ export class ProductRegistrationService implements OnModuleInit {
             }
             return false;
           });
-          plants = filtered.length > 0 ? filtered : urnPlants;
+          // Do not fall back to the full URN plant list on every row — that retags
+          // sibling EOIs with the first product's plants and breaks multi-EOI grouping.
+          // Empty filtered lists are filled on the portal via shared URN plant pooling.
+          plants =
+            filtered.length > 0
+              ? filtered
+              : Array.isArray(existingPlants) && existingPlants.length > 0
+                ? existingPlants
+                : [];
         }
       } else if (Array.isArray(existingPlants) && existingPlants.length > 0) {
         plants = existingPlants;
@@ -7529,7 +7537,10 @@ export class ProductRegistrationService implements OnModuleInit {
             {
               $match: {
                 $expr: {
-                  $eq: ['$urnNo', '$$urnNo'],
+                  $eq: [
+                    { $trim: { input: { $ifNull: ['$urnNo', ''] } } },
+                    { $trim: { input: { $toString: { $ifNull: ['$$urnNo', ''] } } } },
+                  ],
                 },
               },
             },
@@ -7589,7 +7600,10 @@ export class ProductRegistrationService implements OnModuleInit {
             {
               $match: {
                 $expr: {
-                  $eq: ['$urnNo', '$$urnNo'],
+                  $eq: [
+                    { $trim: { input: { $ifNull: ['$urnNo', ''] } } },
+                    { $trim: { input: { $toString: { $ifNull: ['$$urnNo', ''] } } } },
+                  ],
                 },
               },
             },

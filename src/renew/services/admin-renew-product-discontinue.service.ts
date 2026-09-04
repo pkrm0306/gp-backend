@@ -127,6 +127,17 @@ export class AdminRenewProductDiscontinueService {
       throw new NotFoundException('Product not found');
     }
 
+    const eligibleCount = await this.productModel.countDocuments({
+      urnNo: trimmedUrn,
+      productStatus: PRODUCT_STATUS_CERTIFIED,
+      ...matchActiveProducts(),
+    });
+    if (eligibleCount <= 1) {
+      throw new ConflictException(
+        'Cannot discontinue the only product on this URN.',
+      );
+    }
+
     const manufacturerId = String(product.manufacturerId ?? '').trim();
     if (!manufacturerId) {
       throw new BadRequestException('Product manufacturer is missing');

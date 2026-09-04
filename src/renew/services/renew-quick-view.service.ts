@@ -150,6 +150,16 @@ export class RenewQuickViewService {
         .lean()
         .exec();
     }
+    if (!activeCycle) {
+      activeCycle = await this.renewalCycleModel
+        .findOne({
+          urnNo: trimmedUrn,
+          status: RenewalCycleStatus.COMPLETED,
+        })
+        .sort({ cycleNo: -1, completedAt: -1 })
+        .lean()
+        .exec();
+    }
 
     const cycleDoc = activeCycle
       ? await this.renewalCycleModel.findById(activeCycle._id).exec()

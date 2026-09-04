@@ -51,8 +51,15 @@ export class Banner {
   @Prop({ default: 1 })
   status: number;
 
+  @Prop({ type: Boolean, default: false, index: true })
+  isDeleted?: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export const BannerSchema = SchemaFactory.createForClass(Banner);
+BannerSchema.index({ deletedAt: 1 });

@@ -147,6 +147,10 @@ import { isPlatformAdminUser } from '../common/utils/platform-admin.util';
 import { AuthService } from '../auth/auth.service';
 import { buildPhoneLookupVariants } from '../common/utils/phone-lookup.util';
 import {
+  NOT_SOFT_DELETED,
+  SoftDeleteUtil,
+} from '../common/utils/soft-delete.util';
+import {
   GlobalPhoneUniquenessService,
   ADMIN_MOBILE_UNAVAILABLE_MESSAGE,
 } from '../common/services/global-phone-uniqueness.service';
@@ -1185,6 +1189,8 @@ export class AdminService {
         payload.eventStatus === 0 || payload.eventStatus === 1
           ? payload.eventStatus
           : 1,
+      isDeleted: false,
+      deletedAt: null,
       createdDate: now,
       updatedDate: now,
     });
@@ -1325,6 +1331,7 @@ export class AdminService {
         {
           ...where,
           ...this.eventKindMatch(kind),
+          ...NOT_SOFT_DELETED,
         },
         { $set },
         { new: true },
@@ -1341,7 +1348,7 @@ export class AdminService {
 
   async listEvents(kind: 'event' | 'gallery' = 'event') {
     const rows = await this.eventModel
-      .find(this.eventKindMatch(kind))
+      .find({ ...this.eventKindMatch(kind), ...NOT_SOFT_DELETED })
       .sort({ createdDate: -1, _id: -1 })
       .select(
         'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink brochures',
@@ -1364,6 +1371,7 @@ export class AdminService {
       Number.isFinite(perPage) && perPage > 0 ? Math.floor(perPage) : 10;
     const where: Record<string, unknown> = {
       ...this.eventKindMatch('event'),
+      ...NOT_SOFT_DELETED,
     };
     if (options?.activeOnly) {
       Object.assign(where, buildWebsiteVisibleEventsMatch());
@@ -1449,6 +1457,7 @@ export class AdminService {
       Number.isFinite(perPage) && perPage > 0 ? Math.floor(perPage) : 50;
     const where: Record<string, unknown> = {
       ...this.eventKindMatch('gallery'),
+      ...NOT_SOFT_DELETED,
     };
     if (options?.activeOnly) {
       Object.assign(where, buildWebsiteVisibleEventsMatch());
@@ -1490,6 +1499,7 @@ export class AdminService {
       .findOne({
         ...where,
         ...this.eventKindMatch(kind),
+        ...NOT_SOFT_DELETED,
       })
       .lean()
       .exec();
@@ -1504,13 +1514,17 @@ export class AdminService {
   async deleteEvent(identifier: string, kind: 'event' | 'gallery' = 'event') {
     const { where } = this.parseEventIdentifier(identifier);
     const res = await this.eventModel
-      .deleteOne({
-        ...where,
-        ...this.eventKindMatch(kind),
-      })
+      .updateOne(
+        {
+          ...where,
+          ...this.eventKindMatch(kind),
+          ...NOT_SOFT_DELETED,
+        },
+        { $set: SoftDeleteUtil.softDeleteSet() },
+      )
       .exec();
 
-    if (!res || res.deletedCount === 0) {
+    if (!res || res.matchedCount === 0) {
       throw new NotFoundException('Event not found');
     }
 
@@ -1526,6 +1540,7 @@ export class AdminService {
     const scopedWhere = {
       ...where,
       ...this.eventKindMatch(kind),
+      ...NOT_SOFT_DELETED,
     };
 
     let nextStatus: number;
@@ -1605,6 +1620,8 @@ export class AdminService {
       pdf: payload.pdf,
       article_pdf: this.resolveArticlePdfPath(payload.pdf),
       status: payload.status === 0 || payload.status === 1 ? payload.status : 1,
+      isDeleted: false,
+      deletedAt: null,
     });
     const saved = await doc.save();
     await this.createNotification({
@@ -1662,7 +1679,10 @@ export class AdminService {
       throw new BadRequestException('No fields to update');
     }
 
-    const current = await this.articleModel.findById(objectId).lean().exec();
+    const current = await this.articleModel
+      .findOne({ _id: objectId, ...NOT_SOFT_DELETED })
+      .lean()
+      .exec();
     if (!current) throw new NotFoundException('Article not found');
 
     const nextExternalUrl =
@@ -1715,7 +1735,11 @@ export class AdminService {
     }
 
     const updated = await this.articleModel
-      .findByIdAndUpdate(objectId, { $set }, { new: true })
+      .findOneAndUpdate(
+        { _id: objectId, ...NOT_SOFT_DELETED },
+        { $set },
+        { new: true },
+      )
       .lean()
       .exec();
     if (!updated) throw new NotFoundException('Article not found');
@@ -1771,7 +1795,7 @@ export class AdminService {
 
   async listArticles() {
     const rows = await this.articleModel
-      .find({})
+      .find({ ...NOT_SOFT_DELETED })
       .sort({ createdAt: -1, _id: -1 })
       .select(
         'title description shortDescription date image article_image url externalUrl pdf article_pdf status',
@@ -1790,7 +1814,7 @@ export class AdminService {
     const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
     const safePerPage =
       Number.isFinite(perPage) && perPage > 0 ? Math.floor(perPage) : 12;
-    const where: Record<string, unknown> = {};
+    const where: Record<string, unknown> = { ...NOT_SOFT_DELETED };
     if (options?.activeOnly) {
       where.status = 1;
     }
@@ -1833,7 +1857,10 @@ export class AdminService {
     } catch {
       throw new BadRequestException('Invalid article id');
     }
-    const article = await this.articleModel.findById(objectId).lean().exec();
+    const article = await this.articleModel
+      .findOne({ _id: objectId, ...NOT_SOFT_DELETED })
+      .lean()
+      .exec();
     if (!article) throw new NotFoundException('Article not found');
 
     return {
@@ -1879,7 +1906,7 @@ export class AdminService {
       nextStatus = status;
     } else {
       const current = await this.articleModel
-        .findById(objectId)
+        .findOne({ _id: objectId, ...NOT_SOFT_DELETED })
         .select('status')
         .lean()
         .exec();
@@ -1888,8 +1915,8 @@ export class AdminService {
     }
 
     const updated = await this.articleModel
-      .findByIdAndUpdate(
-        objectId,
+      .findOneAndUpdate(
+        { _id: objectId, ...NOT_SOFT_DELETED },
         { $set: { status: nextStatus } },
         { new: true },
       )
@@ -1913,7 +1940,7 @@ export class AdminService {
     }
 
     const existing = await this.articleModel
-      .findById(objectId)
+      .findOne({ _id: objectId, ...NOT_SOFT_DELETED })
       .select('title')
       .lean()
       .exec();
@@ -1921,8 +1948,13 @@ export class AdminService {
       throw new NotFoundException('Article not found');
     }
 
-    const res = await this.articleModel.deleteOne({ _id: objectId }).exec();
-    if (!res || res.deletedCount === 0) {
+    const res = await this.articleModel
+      .updateOne(
+        { _id: objectId, ...NOT_SOFT_DELETED },
+        { $set: SoftDeleteUtil.softDeleteSet() },
+      )
+      .exec();
+    if (!res || res.matchedCount === 0) {
       throw new NotFoundException('Article not found');
     }
 
@@ -2629,7 +2661,7 @@ export class AdminService {
     let sequenceNumber = dto.sequenceNumber;
     if (sequenceNumber === undefined) {
       const latestBanner = await this.bannerModel
-        .findOne(scopeFilter)
+        .findOne({ ...scopeFilter, ...NOT_SOFT_DELETED })
         .sort({ sequenceNumber: -1, createdAt: -1 })
         .select('sequenceNumber')
         .lean()
@@ -2641,6 +2673,7 @@ export class AdminService {
         .exists({
           sequenceNumber,
           ...scopeFilter,
+          ...NOT_SOFT_DELETED,
         })
         .lean()
         .exec();
@@ -2668,6 +2701,8 @@ export class AdminService {
         String(dto.status ?? '').trim() === '0'
           ? 0
           : 1,
+      isDeleted: false,
+      deletedAt: null,
     });
     const saved = await created.save();
     const o = saved.toObject();
@@ -2699,7 +2734,7 @@ export class AdminService {
     const scopeFilter = buildBannerVendorScopeFilter(vendorScope);
 
     const rows = await this.bannerModel
-      .find(scopeFilter)
+      .find({ ...scopeFilter, ...NOT_SOFT_DELETED })
       .sort({ sequenceNumber: 1, createdAt: -1, _id: -1 })
       .select(
         'banner_image imageUrl imageSource banner_video videoUrl videoSource heading sequenceNumber description status',
@@ -2714,6 +2749,7 @@ export class AdminService {
   async listPublicBanners() {
     const rows = await this.bannerModel
       .find({
+        ...NOT_SOFT_DELETED,
         $or: [
           { status: 1 },
           { status: { $exists: false } },
@@ -2743,6 +2779,7 @@ export class AdminService {
       .findOne({
         _id: bannerObjectId,
         ...buildBannerVendorScopeFilter(vendorScope),
+        ...NOT_SOFT_DELETED,
       })
       .select(
         'banner_image imageUrl imageSource banner_video videoUrl videoSource heading sequenceNumber description status',
@@ -2788,6 +2825,7 @@ export class AdminService {
       .findOne({
         _id: bannerObjectId,
         ...scopeFilter,
+        ...NOT_SOFT_DELETED,
       })
       .select('_id')
       .lean()
@@ -2803,6 +2841,7 @@ export class AdminService {
           _id: { $ne: bannerObjectId },
           sequenceNumber: payload.sequenceNumber,
           ...scopeFilter,
+          ...NOT_SOFT_DELETED,
         })
         .lean()
         .exec();
@@ -2855,7 +2894,15 @@ export class AdminService {
     }
 
     const updated = await this.bannerModel
-      .findByIdAndUpdate(bannerObjectId, { $set }, { new: true })
+      .findOneAndUpdate(
+        {
+          _id: bannerObjectId,
+          ...scopeFilter,
+          ...NOT_SOFT_DELETED,
+        },
+        { $set },
+        { new: true },
+      )
       .lean()
       .exec();
 
@@ -2887,7 +2934,7 @@ export class AdminService {
     };
   }
 
-  /** Permanently removes a banner that belongs to the vendor. */
+  /** Soft-deletes a banner that belongs to the vendor. */
   async deleteBanner(vendorScope: string | null, bannerId: string) {
     let bannerObjectId: Types.ObjectId;
     try {
@@ -2897,13 +2944,17 @@ export class AdminService {
     }
 
     const res = await this.bannerModel
-      .deleteOne({
-        _id: bannerObjectId,
-        ...buildBannerVendorScopeFilter(vendorScope),
-      })
+      .updateOne(
+        {
+          _id: bannerObjectId,
+          ...buildBannerVendorScopeFilter(vendorScope),
+          ...NOT_SOFT_DELETED,
+        },
+        { $set: SoftDeleteUtil.softDeleteSet() },
+      )
       .exec();
 
-    if (res.deletedCount === 0) {
+    if (res.matchedCount === 0) {
       throw new NotFoundException('Banner not found');
     }
 
@@ -2932,6 +2983,7 @@ export class AdminService {
       .findOne({
         _id: bannerObjectId,
         ...buildBannerVendorScopeFilter(vendorScope),
+        ...NOT_SOFT_DELETED,
       })
       .select('status')
       .lean()
@@ -2959,8 +3011,12 @@ export class AdminService {
     }
 
     const updated = await this.bannerModel
-      .findByIdAndUpdate(
-        bannerObjectId,
+      .findOneAndUpdate(
+        {
+          _id: bannerObjectId,
+          ...buildBannerVendorScopeFilter(vendorScope),
+          ...NOT_SOFT_DELETED,
+        },
         { $set: { status: newStatus, updatedAt: new Date() } },
         { new: true },
       )
@@ -3210,7 +3266,7 @@ export class AdminService {
     return obj;
   }
 
-  /** Permanently deletes a newsletter subscriber by document id. */
+  /** Soft-deletes a newsletter subscriber by document id. */
   private async invalidateNewsletterSubscribersCache(): Promise<void> {
     const key = this.redisService.buildKey('website', 'newsletter', 'subscribers');
     await this.redisService.del(key).catch(() => undefined);
@@ -3268,7 +3324,7 @@ export class AdminService {
     const byEmail = new Map<string, Record<string, unknown>>();
 
     const primary = await this.newsletterSubscriberModel
-      .find({}, projection)
+      .find({ ...NOT_SOFT_DELETED }, projection)
       .lean()
       .exec();
     absorbNewsletterSubscriberRows(byEmail, primary ?? []);
@@ -3279,7 +3335,10 @@ export class AdminService {
       try {
         const altRows = await this.newsletterSubscriberModel.db
           .collection(name)
-          .find({}, { projection })
+          .find(
+            { isDeleted: { $ne: true } },
+            { projection },
+          )
           .toArray();
         absorbNewsletterSubscriberRows(byEmail, altRows ?? []);
       } catch {
@@ -3333,10 +3392,11 @@ export class AdminService {
 
   private async deleteNewsletterByObjectId(id: string): Promise<boolean> {
     const objectId = new Types.ObjectId(id);
+    const softSet = SoftDeleteUtil.softDeleteSet();
     const primary = await this.newsletterSubscriberModel
-      .deleteOne({ _id: objectId })
+      .updateOne({ _id: objectId, ...NOT_SOFT_DELETED }, { $set: softSet })
       .exec();
-    if (primary.deletedCount > 0) return true;
+    if (primary.matchedCount > 0) return true;
 
     try {
       const primaryName = this.newsletterSubscriberModel.collection.name;
@@ -3347,8 +3407,11 @@ export class AdminService {
         if (altName === primaryName) continue;
         const alt = await this.newsletterSubscriberModel.db
           .collection(altName)
-          .deleteOne({ _id: objectId });
-        if ((alt.deletedCount ?? 0) > 0) return true;
+          .updateOne(
+            { _id: objectId, isDeleted: { $ne: true } },
+            { $set: softSet },
+          );
+        if ((alt.matchedCount ?? 0) > 0) return true;
       }
       return false;
     } catch {
@@ -3397,7 +3460,7 @@ export class AdminService {
 
     const current =
       (await this.newsletterSubscriberModel
-        .findById(objectId)
+        .findOne({ _id: objectId, ...NOT_SOFT_DELETED })
         .select('status')
         .lean()
         .exec()) ||
@@ -3420,8 +3483,8 @@ export class AdminService {
 
     let updated: Record<string, unknown> | null =
       ((await this.newsletterSubscriberModel
-        .findByIdAndUpdate(
-          objectId,
+        .findOneAndUpdate(
+          { _id: objectId, ...NOT_SOFT_DELETED },
           { $set: { status: newStatus, updatedAt: new Date() } },
           { new: true },
         )
@@ -3456,7 +3519,10 @@ export class AdminService {
         if (altName === primaryName) continue;
         const row = await this.newsletterSubscriberModel.db
           .collection(altName)
-          .findOne({ _id: objectId }, { projection: { status: 1 } });
+          .findOne(
+            { _id: objectId, isDeleted: { $ne: true } },
+            { projection: { status: 1 } },
+          );
         if (row) return row as { status?: number };
       }
       return null;
@@ -3479,7 +3545,7 @@ export class AdminService {
         const res = await this.newsletterSubscriberModel.db
           .collection(altName)
           .findOneAndUpdate(
-            { _id: objectId },
+            { _id: objectId, isDeleted: { $ne: true } },
             { $set: { status: newStatus, updatedAt: new Date() } },
             { returnDocument: 'after' },
           );
@@ -3518,6 +3584,7 @@ export class AdminService {
   async listContactMessages() {
     const rows = await this.contactMessageModel
       .find({
+        ...NOT_SOFT_DELETED,
         $or: [
           { inquiryType: 'contact' },
           { inquiryType: { $exists: false } },
@@ -3705,7 +3772,7 @@ export class AdminService {
 
   async listProductInquiries() {
     const rows = await this.contactMessageModel
-      .find({ inquiryType: 'product' })
+      .find({ inquiryType: 'product', ...NOT_SOFT_DELETED })
       .select(
         'name email phoneNumber message designation organisation manufacturerId productId categoryId urnNumber createdAt isAcknowledged acknowledgedAt acknowledgedBy isReminded remindedAt',
       )
@@ -3732,7 +3799,7 @@ export class AdminService {
     }
 
     const msg = await this.contactMessageModel
-      .findOne({ _id: objectId, inquiryType: 'product' })
+      .findOne({ _id: objectId, inquiryType: 'product', ...NOT_SOFT_DELETED })
       .select(
         'name email phoneNumber message designation organisation manufacturerId productId categoryId urnNumber createdAt isAcknowledged acknowledgedAt acknowledgedBy isReminded remindedAt',
       )
@@ -3767,7 +3834,7 @@ export class AdminService {
     }
 
     const msg = await this.contactMessageModel
-      .findById(objectId)
+      .findOne({ _id: objectId, ...NOT_SOFT_DELETED })
       .select(
         'name email phoneNumber message subject createdAt inquiryType isAcknowledged acknowledgedAt acknowledgedBy isReminded remindedAt',
       )
@@ -3812,9 +3879,10 @@ export class AdminService {
 
     const filter: Record<string, unknown> =
       inquiryType === 'product'
-        ? { _id: objectId, inquiryType: 'product' }
+        ? { _id: objectId, inquiryType: 'product', ...NOT_SOFT_DELETED }
         : {
             _id: objectId,
+            ...NOT_SOFT_DELETED,
             $or: [
               { inquiryType: 'contact' },
               { inquiryType: { $exists: false } },
@@ -3870,7 +3938,7 @@ export class AdminService {
     };
   }
 
-  /** Permanently deletes a contact message by MongoDB id. */
+  /** Soft-deletes a contact message by MongoDB id. */
   async deleteContactMessage(id: string) {
     let objectId: Types.ObjectId;
     try {
@@ -3880,9 +3948,12 @@ export class AdminService {
     }
 
     const res = await this.contactMessageModel
-      .deleteOne({ _id: objectId })
+      .updateOne(
+        { _id: objectId, ...NOT_SOFT_DELETED },
+        { $set: SoftDeleteUtil.softDeleteSet() },
+      )
       .exec();
-    if (res.deletedCount === 0) {
+    if (res.matchedCount === 0) {
       throw new NotFoundException('Contact message not found');
     }
     return { id };

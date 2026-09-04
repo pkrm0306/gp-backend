@@ -28,6 +28,7 @@ import {
 } from '../activity-log/schemas/activity-log.schema';
 import { buildVendorProgressTracking } from './vendor-progress.util';
 import { buildVendorApplicationRow } from './vendor-applications.util';
+import { NOT_SOFT_DELETED } from '../common/utils/soft-delete.util';
 import { ListVendorApplicationsQueryDto } from './dto/list-vendor-applications-query.dto';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
@@ -444,6 +445,7 @@ export class DashboardService {
       .countDocuments({
         eventDate: { $gte: today },
         eventStatus: 1,
+        ...NOT_SOFT_DELETED,
       })
       .exec();
     return count || 0;

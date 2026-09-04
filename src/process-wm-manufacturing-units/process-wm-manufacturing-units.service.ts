@@ -166,6 +166,27 @@ export class ProcessWmManufacturingUnitsService {
     }
   }
 
+  /** Platform admin: all WM manufacturing units for a URN (any vendor on that URN). */
+  async listByUrnForAdmin(urnNo: string) {
+    try {
+      const trimmed = urnNo.trim();
+      if (!trimmed) {
+        throw new BadRequestException('URN number is required');
+      }
+      return (await this.model
+        .find({ urnNo: trimmed })
+        .sort({ processWmManufacturingUnitId: 1 })
+        .exec()).map((row) => this.enrichUnitRow(row));
+    } catch (error: any) {
+      if (error instanceof BadRequestException) throw error;
+      console.error('[Process WM Manufacturing Units] Admin list error:', error);
+      throw new InternalServerErrorException(
+        error.message ||
+          'Failed to list waste management manufacturing unit records.',
+      );
+    }
+  }
+
   async deleteById(
     processWmManufacturingUnitId: number,
     urnNo: string,

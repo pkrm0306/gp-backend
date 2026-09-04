@@ -27,6 +27,7 @@ import type {
   VisitorAnalyticsChartPoint,
 } from './admin-dashboard-visitor-analytics.types';
 import { WebsiteAnalyticsService } from '../../website/website-analytics.service';
+import { NOT_SOFT_DELETED } from '../../common/utils/soft-delete.util';
 
 type BucketId = {
   year?: number;
@@ -95,6 +96,7 @@ export class AdminDashboardVisitorAnalyticsService {
       this.contactMessageModel
         .find({
           createdAt: { $gte: dateRange.from, $lte: dateRange.to },
+          ...NOT_SOFT_DELETED,
         })
         .select('email createdAt')
         .lean()
@@ -102,6 +104,7 @@ export class AdminDashboardVisitorAnalyticsService {
       this.newsletterModel
         .find({
           createdAt: { $gte: dateRange.from, $lte: dateRange.to },
+          ...NOT_SOFT_DELETED,
         })
         .select('email createdAt')
         .lean()

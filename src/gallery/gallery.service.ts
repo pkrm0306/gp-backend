@@ -15,6 +15,10 @@ import {
   GalleryIdCounterDocument,
   GALLERY_ID_COUNTER_KEY,
 } from './schemas/gallery-id-counter.schema';
+import {
+  NOT_SOFT_DELETED,
+  SoftDeleteUtil,
+} from '../common/utils/soft-delete.util';
 
 function toDateOnlyIso(value: Date): string {
   return value.toISOString().slice(0, 10);
@@ -166,6 +170,8 @@ export class GalleryService {
       date: payload.date,
       status:
         payload.status === 0 || payload.status === 1 ? payload.status : 1,
+      isDeleted: false,
+      deletedAt: null,
       createdDate: now,
       updatedDate: now,
     });
@@ -221,7 +227,11 @@ export class GalleryService {
     }
 
     const updated = await this.galleryModel
-      .findOneAndUpdate({ ...where }, { $set }, { new: true })
+      .findOneAndUpdate(
+        { ...where, ...NOT_SOFT_DELETED },
+        { $set },
+        { new: true },
+      )
       .lean()
       .exec();
 
@@ -240,7 +250,7 @@ export class GalleryService {
     const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
     const safePerPage =
       Number.isFinite(perPage) && perPage > 0 ? Math.floor(perPage) : 50;
-    const where: Record<string, unknown> = {};
+    const where: Record<string, unknown> = { ...NOT_SOFT_DELETED };
     if (options?.activeOnly) {
       where.status = 1;
     }
@@ -274,7 +284,10 @@ export class GalleryService {
 
   async getGalleryById(identifier: string) {
     const { where } = this.parseGalleryIdentifier(identifier);
-    const item = await this.galleryModel.findOne(where).lean().exec();
+    const item = await this.galleryModel
+      .findOne({ ...where, ...NOT_SOFT_DELETED })
+      .lean()
+      .exec();
     if (!item) {
       throw new NotFoundException('Gallery item not found');
     }
@@ -283,8 +296,13 @@ export class GalleryService {
 
   async deleteGallery(identifier: string) {
     const { where } = this.parseGalleryIdentifier(identifier);
-    const res = await this.galleryModel.deleteOne(where).exec();
-    if (!res || res.deletedCount === 0) {
+    const res = await this.galleryModel
+      .updateOne(
+        { ...where, ...NOT_SOFT_DELETED },
+        { $set: SoftDeleteUtil.softDeleteSet() },
+      )
+      .exec();
+    if (!res || res.matchedCount === 0) {
       throw new NotFoundException('Gallery item not found');
     }
     return { id: String(identifier ?? '').trim() };
@@ -292,13 +310,14 @@ export class GalleryService {
 
   async setOrToggleGalleryStatus(identifier: string, status?: number) {
     const { where } = this.parseGalleryIdentifier(identifier);
+    const scopedWhere = { ...where, ...NOT_SOFT_DELETED };
 
     let nextStatus: number;
     if (status === 0 || status === 1) {
       nextStatus = status;
     } else {
       const current = await this.galleryModel
-        .findOne(where)
+        .findOne(scopedWhere)
         .select('status')
         .lean()
         .exec();
@@ -310,7 +329,7 @@ export class GalleryService {
 
     const updated = await this.galleryModel
       .findOneAndUpdate(
-        where,
+        scopedWhere,
         { $set: { status: nextStatus, updatedDate: new Date() } },
         { new: true },
       )

@@ -28,6 +28,7 @@ import {
 } from '../../renew/constants/product-status.constants';
 import { manufacturerStatusKey } from '../admin-dashboard-metrics.util';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
+import { NOT_SOFT_DELETED } from '../../common/utils/soft-delete.util';
 import {
   buildManufacturerSnapshotMatch,
   buildManufacturerTrendMatch,
@@ -352,6 +353,7 @@ export class AdminDashboardKpiService {
       this.aggregateCompletedRevenue(paymentVendorScope),
       this.contactMessageModel
         .countDocuments({
+          ...NOT_SOFT_DELETED,
           $or: [
             { inquiryType: 'contact' },
             { inquiryType: { $exists: false } },
@@ -362,6 +364,7 @@ export class AdminDashboardKpiService {
         .exec(),
       this.contactMessageModel
         .countDocuments({
+          ...NOT_SOFT_DELETED,
           createdAt: { $gte: monthStart },
           $or: [
             { inquiryType: 'contact' },
@@ -371,11 +374,14 @@ export class AdminDashboardKpiService {
           ],
         })
         .exec(),
-      this.contactMessageModel.countDocuments({ inquiryType: 'product' }).exec(),
+      this.contactMessageModel
+        .countDocuments({ inquiryType: 'product', ...NOT_SOFT_DELETED })
+        .exec(),
       this.contactMessageModel
         .countDocuments({
           inquiryType: 'product',
           createdAt: { $gte: monthStart },
+          ...NOT_SOFT_DELETED,
         })
         .exec(),
     ]);
@@ -905,6 +911,7 @@ export class AdminDashboardKpiService {
     remindedEnquiries: number;
   }> {
     const contactMatch = {
+      ...NOT_SOFT_DELETED,
       $or: [
         { inquiryType: 'contact' },
         { inquiryType: { $exists: false } },
@@ -921,12 +928,18 @@ export class AdminDashboardKpiService {
       remindedEnquiries,
     ] = await Promise.all([
       this.contactMessageModel.countDocuments(contactMatch).exec(),
-      this.contactMessageModel.countDocuments({ inquiryType: 'product' }).exec(),
-      this.contactMessageModel.countDocuments({ isAcknowledged: true }).exec(),
       this.contactMessageModel
-        .countDocuments({ isAcknowledged: { $ne: true } })
+        .countDocuments({ inquiryType: 'product', ...NOT_SOFT_DELETED })
         .exec(),
-      this.contactMessageModel.countDocuments({ isReminded: true }).exec(),
+      this.contactMessageModel
+        .countDocuments({ isAcknowledged: true, ...NOT_SOFT_DELETED })
+        .exec(),
+      this.contactMessageModel
+        .countDocuments({ isAcknowledged: { $ne: true }, ...NOT_SOFT_DELETED })
+        .exec(),
+      this.contactMessageModel
+        .countDocuments({ isReminded: true, ...NOT_SOFT_DELETED })
+        .exec(),
     ]);
 
     return {

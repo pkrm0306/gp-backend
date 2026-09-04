@@ -9,9 +9,9 @@ export type NewsletterSubscriberDocument = NewsletterSubscriber & Document;
  */
 @Schema({ timestamps: true, collection: 'newslettersubscribers' })
 export class NewsletterSubscriber {
+  /** Unique among non–soft-deleted rows (see partial index below). */
   @Prop({
     required: true,
-    unique: true,
     index: true,
     lowercase: true,
     trim: true,
@@ -29,9 +29,20 @@ export class NewsletterSubscriber {
   @Prop({ default: 1 })
   status: number;
 
+  @Prop({ type: Boolean, default: false, index: true })
+  isDeleted?: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export const NewsletterSubscriberSchema =
   SchemaFactory.createForClass(NewsletterSubscriber);
+NewsletterSubscriberSchema.index(
+  { email: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
+);
+NewsletterSubscriberSchema.index({ deletedAt: 1 });

@@ -148,12 +148,18 @@ export async function resolveRenewCycleForQuery(
   const active = await cycleModel
     .findOne({ urnNo: trimmed, status: RenewalCycleStatus.IN_PROGRESS })
     .exec();
-  if (!active) {
-    throw new BadRequestException(
-      'renewalCycleId is required to load renewal data for this URN',
-    );
-  }
-  return active;
+  if (active) return active;
+
+  // Completed renewals (certified browse): allow unit GETs without an explicit cycle id.
+  const completed = await cycleModel
+    .findOne({ urnNo: trimmed, status: RenewalCycleStatus.COMPLETED })
+    .sort({ cycleNo: -1, completedAt: -1 })
+    .exec();
+  if (completed) return completed;
+
+  throw new BadRequestException(
+    'renewalCycleId is required to load renewal data for this URN',
+  );
 }
 
 export function buildRenewPaymentFindFilter(

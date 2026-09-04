@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Model } from 'mongoose';
-import { isPlatformAdminUser } from '../../common/utils/platform-admin.util';
+import { isPlatformPortalJwtUser } from '../../common/utils/platform-rbac-scope.util';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
 import {
   assertRenewActorCanEditUrn,
@@ -31,7 +31,8 @@ export async function assertRenewProcessActorCanReadUrn(
   if (!urnNo?.trim()) {
     throw new BadRequestException('urnNo is required');
   }
-  if (isPlatformAdminUser(user)) {
+  // Admin + staff portal users (same surface as /renew/admin/details PermissionsGuard).
+  if (isPlatformPortalJwtUser(user)) {
     return resolveUrnRenewContext(productModel, urnNo);
   }
   const actorId = user?.vendorId ?? user?.manufacturerId ?? null;

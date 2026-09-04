@@ -2486,7 +2486,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete article',
     description:
-      'Deletes an article by id. This is an alias route for frontend convenience.',
+      'Soft-deletes an article by id (`isDeleted` / `deletedAt`). This is an alias route for frontend convenience.',
   })
   @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
   @ApiResponse({ status: 200, description: 'Article deleted successfully' })
@@ -2503,7 +2503,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete article',
     description:
-      'Deletes an article by id. Same behavior as DELETE /admin/articles/:id/delete.',
+      'Soft-deletes an article by id. Same behavior as DELETE /admin/articles/:id/delete.',
   })
   @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
   @ApiResponse({ status: 200, description: 'Article deleted successfully' })
@@ -2537,7 +2537,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete event',
     description:
-      'Permanently deletes an event. `id` can be MongoDB _id or numeric eventId.',
+      'Soft-deletes an event (`isDeleted` / `deletedAt`). `id` can be MongoDB _id or numeric eventId.',
   })
   @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
   @ApiResponse({ status: 200, description: 'Event deleted successfully' })
@@ -2554,7 +2554,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete gallery item',
     description:
-      'Permanently deletes a gallery item. `id` can be MongoDB _id or numeric eventId.',
+      'Soft-deletes a gallery item (`isDeleted` / `deletedAt`). `id` can be MongoDB _id or numeric galleryId.',
   })
   @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
   @ApiResponse({ status: 200, description: 'Gallery item deleted successfully' })
@@ -2719,7 +2719,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete banner',
     description:
-      'Permanently deletes a banner by id. The banner must belong to the logged-in vendor. Same pattern as **team-member/delete** (JSON body).',
+      'Soft-deletes a banner by id (`isDeleted` / `deletedAt`). The banner must belong to the logged-in vendor. Same pattern as **team-member/delete** (JSON body).',
   })
   @ApiBody({ type: DeleteBannerDto })
   @ApiResponse({ status: 200, description: 'Banner deleted successfully' })
@@ -3128,7 +3128,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete newsletter subscriber',
     description:
-      'Permanently deletes a newsletter subscriber by id (MongoDB _id). JSON body: `{ "id": "..." }`.',
+      'Soft-deletes a newsletter subscriber by id (MongoDB _id). JSON body: `{ "id": "..." }`.',
   })
   @ApiBody({ type: DeleteNewsletterSubscriberDto })
   @ApiResponse({ status: 200, description: 'Subscriber deleted successfully' })
@@ -3510,7 +3510,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Delete contact message',
     description:
-      'Permanently deletes a contact message by id. JSON body: `{ "id": "..." }`.',
+      'Soft-deletes a contact message by id. JSON body: `{ "id": "..." }`.',
   })
   @ApiBody({ type: DeleteContactMessageDto })
   @ApiResponse({

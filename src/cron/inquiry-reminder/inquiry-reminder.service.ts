@@ -12,6 +12,7 @@ import {
   resolveAlwaysAdminCc,
 } from '../../notifications/utils/notification-recipient-groups.util';
 import { CRON_TIMEZONE, toIsoDateInTimeZone } from '../utils/cron-date.util';
+import { NOT_SOFT_DELETED } from '../../common/utils/soft-delete.util';
 
 /** Enquiries older than this many days are eligible for reminder. */
 export const INQUIRY_REMINDER_AGE_DAYS = 3;
@@ -61,6 +62,7 @@ export class InquiryReminderService {
     };
 
     const eligibleFilter = {
+      ...NOT_SOFT_DELETED,
       createdAt: { $lte: cutoffCreatedAt },
       $and: [
         {

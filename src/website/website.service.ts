@@ -82,6 +82,10 @@ import {
   newsletterSubscriberActivityDate,
   sortNewsletterSubscribersByActivity,
 } from './utils/newsletter-subscribers-query.util';
+import {
+  NOT_SOFT_DELETED,
+  SoftDeleteUtil,
+} from '../common/utils/soft-delete.util';
 
 function buildSubscribedFor(dto: NewsletterSubscribeDto): string[] {
   const prefs: string[] = [];
@@ -1449,6 +1453,8 @@ export class WebsiteService {
             email,
             subscribedFor,
             status: 1,
+            isDeleted: false,
+            deletedAt: null,
             updatedAt: new Date(),
           },
           $setOnInsert: {
@@ -1460,11 +1466,14 @@ export class WebsiteService {
       .lean()
       .exec();
 
-    // Remove split-brain rows left in the old collection name.
+    // Soft-delete split-brain rows left in the old collection name.
     try {
       await this.subscriberModel.db
         .collection('newsletter_subscribers')
-        .deleteMany({ email });
+        .updateMany(
+          { email, isDeleted: { $ne: true } },
+          { $set: SoftDeleteUtil.softDeleteSet() },
+        );
     } catch {
       // ignore
     }
@@ -1574,7 +1583,7 @@ export class WebsiteService {
     const byEmail = new Map<string, Record<string, unknown>>();
 
     const primary = await this.subscriberModel
-      .find({}, projection)
+      .find({ ...NOT_SOFT_DELETED }, projection)
       .lean()
       .exec();
     absorbNewsletterSubscriberRows(byEmail, primary ?? []);
@@ -1585,7 +1594,7 @@ export class WebsiteService {
       try {
         const altRows = await this.subscriberModel.db
           .collection(name)
-          .find({}, { projection })
+          .find({ isDeleted: { $ne: true } }, { projection })
           .toArray();
         absorbNewsletterSubscriberRows(byEmail, altRows ?? []);
       } catch {
@@ -1683,7 +1692,7 @@ export class WebsiteService {
     }
 
     const current = await this.eventModel
-      .findOne(findQuery)
+      .findOne({ ...findQuery, ...NOT_SOFT_DELETED })
       .select('eventStatus')
       .lean()
       .exec();
@@ -1698,7 +1707,7 @@ export class WebsiteService {
 
     const updated = await this.eventModel
       .findOneAndUpdate(
-        findQuery,
+        { ...findQuery, ...NOT_SOFT_DELETED },
         { $set: { eventStatus: next, updatedDate: new Date() } },
         { new: true },
       )

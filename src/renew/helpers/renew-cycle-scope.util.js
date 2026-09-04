@@ -156,7 +156,7 @@ function buildRenewProcessHeaderFilter(urnNo, cycle) {
 /** Resolve renewal cycle for read APIs (list units, quick-view) without payment-edit guards. */
 function resolveRenewCycleForQuery(cycleModel, urnNo, renewalCycleId) {
     return __awaiter(this, void 0, void 0, function () {
-        var trimmed, cycleIdHint, cycle, active;
+        var trimmed, cycleIdHint, cycle, active, completed;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -175,10 +175,19 @@ function resolveRenewCycleForQuery(cycleModel, urnNo, renewalCycleId) {
                         .exec()];
                 case 3:
                     active = _a.sent();
-                    if (!active) {
-                        throw new common_1.BadRequestException('renewalCycleId is required to load renewal data for this URN');
+                    if (active) {
+                        return [2 /*return*/, active];
                     }
-                    return [2 /*return*/, active];
+                    return [4 /*yield*/, cycleModel
+                            .findOne({ urnNo: trimmed, status: renewal_cycle_schema_1.RenewalCycleStatus.COMPLETED })
+                            .sort({ cycleNo: -1, completedAt: -1 })
+                            .exec()];
+                case 4:
+                    completed = _a.sent();
+                    if (completed) {
+                        return [2 /*return*/, completed];
+                    }
+                    throw new common_1.BadRequestException('renewalCycleId is required to load renewal data for this URN');
             }
         });
     });

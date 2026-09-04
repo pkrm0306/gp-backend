@@ -65,9 +65,16 @@ export class ContactMessage {
   @Prop({ required: false, default: null })
   remindedAt?: Date | null;
 
+  @Prop({ type: Boolean, default: false, index: true })
+  isDeleted?: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export const ContactMessageSchema =
   SchemaFactory.createForClass(ContactMessage);
+ContactMessageSchema.index({ deletedAt: 1 });

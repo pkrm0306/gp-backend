@@ -18,6 +18,7 @@ describe('AdminRenewProductDiscontinueService', () => {
   let findChain: { lean: jest.Mock; exec: jest.Mock };
   let findOneExec: jest.Mock;
   let findOneLeanExec: jest.Mock;
+  let countDocuments: jest.Mock;
   let updateOne: jest.Mock;
   let auditCreate: jest.Mock;
   let auditRecord: jest.Mock;
@@ -31,6 +32,7 @@ describe('AdminRenewProductDiscontinueService', () => {
     };
     findOneExec = jest.fn();
     findOneLeanExec = jest.fn();
+    countDocuments = jest.fn().mockResolvedValue(2);
     updateOne = jest.fn().mockResolvedValue({ acknowledged: true });
     auditCreate = jest.fn().mockResolvedValue({});
     auditRecord = jest.fn().mockResolvedValue(undefined);
@@ -58,6 +60,7 @@ describe('AdminRenewProductDiscontinueService', () => {
           lean: jest.fn().mockReturnValue({ exec: findOneLeanExec }),
         }),
       })),
+      countDocuments,
       updateOne,
     };
 
@@ -191,6 +194,22 @@ describe('AdminRenewProductDiscontinueService', () => {
     await expect(
       service.discontinueProduct(urnNo, String(productId), adminUserId),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns 409 when discontinuing the only certified product', async () => {
+    findOneExec.mockResolvedValue({
+      _id: productId,
+      urnNo,
+      eoiNo: 'GPPMI003004',
+      productStatus: PRODUCT_STATUS_CERTIFIED,
+      manufacturerId: new Types.ObjectId(),
+    });
+    countDocuments.mockResolvedValue(1);
+
+    await expect(
+      service.discontinueProduct(urnNo, String(productId), adminUserId),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(updateOne).not.toHaveBeenCalled();
   });
 
   it('rejects bulk reactivate', async () => {

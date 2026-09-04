@@ -27,7 +27,12 @@ import {
   buildRenewProcessHeaderFilter,
   resolveRenewCycleForQuery,
 } from '../helpers/renew-cycle-scope.util';
+import { findRenewMpUnitsForRead } from '../helpers/renew-mp-units-read.util';
 import { formatRenewMpManufacturingUnitForDetails } from '../utils/renew-details-format.util';
+import {
+  ProcessMpManufacturingUnit,
+  ProcessMpManufacturingUnitDocument,
+} from '../../process-mp-manufacturing-units/schemas/process-mp-manufacturing-unit.schema';
 
 function readRenewalCycleId(dto: CreateProcessMpManufacturingUnitDto): string | undefined {
   const raw = (dto as { renewalCycleId?: string; renewal_cycle_id?: string })
@@ -41,6 +46,8 @@ export class ProcessRenewMpManufacturingUnitsService {
   constructor(
     @InjectModel(ProcessRenewMpManufacturingUnit.name)
     private readonly model: Model<ProcessRenewMpManufacturingUnitDocument>,
+    @InjectModel(ProcessMpManufacturingUnit.name)
+    private readonly certMpUnitModel: Model<ProcessMpManufacturingUnitDocument>,
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
     @InjectModel(RenewalCycle.name)
@@ -255,14 +262,11 @@ export class ProcessRenewMpManufacturingUnitsService {
       trimmedUrn,
       renewalCycleId,
     );
-    const filter = buildRenewProcessHeaderFilter(trimmedUrn, cycle);
-    const rows = await this.model
-      .find(filter)
-      .sort({ processRenewMpManufacturingUnitId: 1 })
-      .lean()
-      .exec();
-    return rows.map((row) =>
-      formatRenewMpManufacturingUnitForDetails(row as Record<string, unknown>),
+    return findRenewMpUnitsForRead(
+      this.model,
+      this.certMpUnitModel,
+      trimmedUrn,
+      cycle,
     );
   }
 

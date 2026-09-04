@@ -37,6 +37,7 @@ describe('AdminService Event Functionality', () => {
   eventModel.findByIdAndUpdate = jest.fn();
   eventModel.findOne = jest.fn();
   eventModel.findOneAndUpdate = jest.fn();
+  eventModel.updateOne = jest.fn();
   eventModel.deleteOne = jest.fn();
 
   const eventCounterModel = {
@@ -154,7 +155,7 @@ describe('AdminService Event Functionality', () => {
   });
 
   it('gets event by object id', async () => {
-    eventModel.findById.mockReturnValue(
+    eventModel.findOne.mockReturnValue(
       queryMock({
         _id: new Types.ObjectId(),
         eventName: 'Event A',
@@ -167,19 +168,21 @@ describe('AdminService Event Functionality', () => {
   });
 
   it('throws not found when get event missing', async () => {
-    eventModel.findById.mockReturnValue(queryMock(null));
+    eventModel.findOne.mockReturnValue(queryMock(null));
     const id = new Types.ObjectId().toString();
     await expect(service.getEventById(id)).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('deletes event successfully', async () => {
-    eventModel.deleteOne.mockReturnValue(
+  it('soft-deletes event successfully', async () => {
+    eventModel.updateOne.mockReturnValue(
       queryMock({
-        deletedCount: 1,
+        matchedCount: 1,
+        modifiedCount: 1,
       }),
     );
     const id = new Types.ObjectId().toString();
     await expect(service.deleteEvent(id)).resolves.toEqual({ id });
+    expect(eventModel.updateOne).toHaveBeenCalled();
     expect(notificationModel.create).not.toHaveBeenCalled();
   });
 

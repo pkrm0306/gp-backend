@@ -64,7 +64,7 @@ function assertRenewProcessActorCanReadUrn(productModel, user, urnNo) {
             if (!(urnNo === null || urnNo === void 0 ? void 0 : urnNo.trim())) {
                 throw new common_1.BadRequestException('urnNo is required');
             }
-            if ((0, platform_admin_util_1.isPlatformAdminUser)(user)) {
+            if ((0, platform_rbac_scope_util_1.isPlatformPortalJwtUser)(user)) {
                 return [2 /*return*/, (0, renew_common_util_1.resolveUrnRenewContext)(productModel, urnNo)];
             }
             actorId = (_b = (_a = user === null || user === void 0 ? void 0 : user.vendorId) !== null && _a !== void 0 ? _a : user === null || user === void 0 ? void 0 : user.manufacturerId) !== null && _b !== void 0 ? _b : null;

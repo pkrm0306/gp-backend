@@ -46,6 +46,10 @@ import {
   ProcessWmManufacturingUnitDocument,
 } from '../../process-wm-manufacturing-units/schemas/process-wm-manufacturing-unit.schema';
 import {
+  ProcessMpManufacturingUnit,
+  ProcessMpManufacturingUnitDocument,
+} from '../../process-mp-manufacturing-units/schemas/process-mp-manufacturing-unit.schema';
+import {
   AllRenewProductDocument,
   AllRenewProductDocumentDocument,
 } from '../schemas/all-renew-product-document.schema';
@@ -64,8 +68,6 @@ import {
   buildWasteSection,
   formatRenewComments,
   mergeRenewDocumentSources,
-  formatRenewMpManufacturingUnitForDetails,
-  formatRenewWmManufacturingUnitForDetails,
   spreadProductPerformanceToDetailRows,
 } from '../utils/renew-details-format.util';
 import {
@@ -85,6 +87,7 @@ import {
   resolveCycleScopedUrnStatus,
 } from '../helpers/renew-cycle-scope.util';
 import { findRenewWmUnitsForRead } from '../helpers/renew-wm-units-read.util';
+import { findRenewMpUnitsForRead, isSubstantiveMpUnitProp } from '../helpers/renew-mp-units-read.util';
 import {
   Product,
   ProductDocument,
@@ -183,6 +186,8 @@ export class RenewDetailsService {
     private readonly renewWmUnitModel: Model<ProcessRenewWmManufacturingUnitDocument>,
     @InjectModel(ProcessWmManufacturingUnit.name)
     private readonly certWmUnitModel: Model<ProcessWmManufacturingUnitDocument>,
+    @InjectModel(ProcessMpManufacturingUnit.name)
+    private readonly certMpUnitModel: Model<ProcessMpManufacturingUnitDocument>,
     @InjectModel(AllRenewProductDocument.name)
     private readonly renewDocumentModel: Model<AllRenewProductDocumentDocument>,
     @InjectModel(RenewalCycle.name)
@@ -265,12 +270,20 @@ export class RenewDetailsService {
           return cycle;
         }
       } catch {
-        /* invalid ObjectId or lookup failure — fall through to active cycle */
+        /* invalid ObjectId or lookup failure — fall through to active/latest cycle */
       }
     }
-    return this.renewalCycleModel
+    const inProgress = await this.renewalCycleModel
       .findOne({ urnNo, status: RenewalCycleStatus.IN_PROGRESS })
       .sort({ cycleNo: -1 })
+      .exec();
+    if (inProgress) return inProgress;
+
+    // Certified browse after renew completes: fall back to latest completed cycle
+    // so process docs/fields remain readable (not wiped by empty renew merge).
+    return this.renewalCycleModel
+      .findOne({ urnNo, status: RenewalCycleStatus.COMPLETED })
+      .sort({ cycleNo: -1, completedAt: -1 })
       .exec();
   }
 
@@ -357,8 +370,12 @@ export class RenewDetailsService {
         .exec(),
     ]);
 
-    const unitFilter = buildRenewProcessHeaderFilter(urnNo, cycle);
-    const mpUnits = await this.renewMpUnitModel.find(unitFilter).lean().exec();
+    const mpUnits = await findRenewMpUnitsForRead(
+      this.renewMpUnitModel,
+      this.certMpUnitModel,
+      urnNo,
+      cycle,
+    );
     const wmUnits = await findRenewWmUnitsForRead(
       this.renewWmUnitModel,
       this.certWmUnitModel,
@@ -429,9 +446,7 @@ export class RenewDetailsService {
         process_comments: formatRenewComments(
           comments as Record<string, unknown> | null,
         ),
-        process_mp_manufacturing_units: (
-          mpUnits as Array<Record<string, unknown>>
-        ).map(formatRenewMpManufacturingUnitForDetails),
+        process_mp_manufacturing_units: mpUnits,
         process_wm_manufacturing_units: wmUnits,
         all_renew_product_documents: renewDocumentsOnly,
         all_urn_product_documents: renewDocumentsOnly,
@@ -480,8 +495,47 @@ export class RenewDetailsService {
     const siteVisits =
       (baseRows[0] as { siteVisits?: unknown[] } | undefined)?.siteVisits ?? [];
 
-    const renewMpUnits = bundle.processSections.process_mp_manufacturing_units;
-    const renewWmUnits = bundle.processSections.process_wm_manufacturing_units;
+    const renewMpUnits = Array.isArray(
+      bundle.processSections.process_mp_manufacturing_units,
+    )
+      ? (bundle.processSections.process_mp_manufacturing_units as Array<
+          Record<string, unknown>
+        >)
+      : [];
+    const renewWmUnits = Array.isArray(
+      bundle.processSections.process_wm_manufacturing_units,
+    )
+      ? (bundle.processSections.process_wm_manufacturing_units as Array<
+          Record<string, unknown>
+        >)
+      : [];
+    const isInProgressCycle =
+      bundle.cycle?.status === RenewalCycleStatus.IN_PROGRESS;
+
+    const certMpFromBase = baseRows.flatMap((row) => {
+      const units = (row as Record<string, unknown>).process_mp_manufacturing_units;
+      return Array.isArray(units) ? (units as Array<Record<string, unknown>>) : [];
+    });
+    const certWmFromBase = baseRows.flatMap((row) => {
+      const units = (row as Record<string, unknown>).process_wm_manufacturing_units;
+      return Array.isArray(units) ? (units as Array<Record<string, unknown>>) : [];
+    });
+
+    const renewMpSubstantive = renewMpUnits.filter((u) => isSubstantiveMpUnitProp(u));
+    const certMpSubstantive = certMpFromBase.filter((u) => isSubstantiveMpUnitProp(u));
+
+    const effectiveMpUnits =
+      renewMpSubstantive.length > 0
+        ? renewMpSubstantive
+        : !isInProgressCycle && certMpSubstantive.length > 0
+          ? certMpSubstantive
+          : renewMpSubstantive;
+    const effectiveWmUnits =
+      renewWmUnits.length > 0
+        ? renewWmUnits
+        : !isInProgressCycle && certWmFromBase.length > 0
+          ? certWmFromBase
+          : renewWmUnits;
 
     const baseRowsWithoutCertUnits = baseRows.map((row) => {
       const {
@@ -493,15 +547,15 @@ export class RenewDetailsService {
     });
 
     const renewManufacturingWeightedTotals = buildManufacturingWeightedTotals(
-      renewMpUnits as Array<Record<string, unknown>>,
+      effectiveMpUnits as Array<Record<string, unknown>>,
     );
 
     const mergedRows = baseRowsWithoutCertUnits.map((row) => ({
       ...row,
       ...RENEW_CLEARED_CERT_SECTIONS,
       ...bundle.processSections,
-      process_mp_manufacturing_units: renewMpUnits,
-      process_wm_manufacturing_units: renewWmUnits,
+      process_mp_manufacturing_units: effectiveMpUnits,
+      process_wm_manufacturing_units: effectiveWmUnits,
       manufacturing_weighted_totals: renewManufacturingWeightedTotals,
       manufacturingWeightedTotals: renewManufacturingWeightedTotals,
     }));
@@ -516,8 +570,8 @@ export class RenewDetailsService {
     const data = enriched.map((row) => {
       const next = {
         ...row,
-        process_mp_manufacturing_units: renewMpUnits,
-        process_wm_manufacturing_units: renewWmUnits,
+        process_mp_manufacturing_units: effectiveMpUnits,
+        process_wm_manufacturing_units: effectiveWmUnits,
       };
       if (!next.product_performance) {
         spreadProductPerformanceToDetailRows(

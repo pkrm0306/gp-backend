@@ -35,6 +35,7 @@ describe('AdminService Banner Functionality', () => {
   bannerModel.findOne = jest.fn();
   bannerModel.findByIdAndUpdate = jest.fn();
   bannerModel.findOneAndUpdate = jest.fn();
+  bannerModel.updateOne = jest.fn();
   bannerModel.deleteOne = jest.fn();
 
   const vendorId = new Types.ObjectId().toString();
@@ -174,7 +175,7 @@ describe('AdminService Banner Functionality', () => {
   it('updates banner with unique sequence number', async () => {
     bannerModel.findOne.mockReturnValueOnce(queryMock({ _id: new Types.ObjectId() }));
     bannerModel.exists.mockReturnValueOnce(queryMock(null));
-    bannerModel.findByIdAndUpdate.mockReturnValue(
+    bannerModel.findOneAndUpdate.mockReturnValue(
       queryMock({
         _id: new Types.ObjectId(),
         imageUrl: '/uploads/banners/updated.jpg',
@@ -216,7 +217,7 @@ describe('AdminService Banner Functionality', () => {
 
   it('sets explicit banner status', async () => {
     bannerModel.findOne.mockReturnValue(queryMock({ _id: new Types.ObjectId(), status: 1 }));
-    bannerModel.findByIdAndUpdate.mockReturnValue(
+    bannerModel.findOneAndUpdate.mockReturnValue(
       queryMock({ _id: new Types.ObjectId(), status: 0 }),
     );
 
@@ -227,7 +228,7 @@ describe('AdminService Banner Functionality', () => {
 
   it('toggles banner status when status is omitted', async () => {
     bannerModel.findOne.mockReturnValue(queryMock({ _id: new Types.ObjectId(), status: 0 }));
-    bannerModel.findByIdAndUpdate.mockReturnValue(
+    bannerModel.findOneAndUpdate.mockReturnValue(
       queryMock({ _id: new Types.ObjectId(), status: 1 }),
     );
 
@@ -236,14 +237,15 @@ describe('AdminService Banner Functionality', () => {
     expect(data.is_active).toBe(true);
   });
 
-  it('deletes banner by id', async () => {
-    bannerModel.deleteOne.mockReturnValue({
-      exec: jest.fn().mockResolvedValue({ deletedCount: 1 }),
+  it('soft-deletes banner by id', async () => {
+    bannerModel.updateOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
     });
 
     await expect(service.deleteBanner(vendorId, bannerId)).resolves.toEqual({
       id: bannerId,
     });
+    expect(bannerModel.updateOne).toHaveBeenCalled();
   });
 
   it('throws invalid vendor id on create', async () => {

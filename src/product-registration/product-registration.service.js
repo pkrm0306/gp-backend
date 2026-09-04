@@ -1215,7 +1215,12 @@ var ProductRegistrationService = function () {
                                             }
                                             return false;
                                         });
-                                        plants = filtered.length > 0 ? filtered : urnPlants;
+                                        // Do not fall back to the full URN plant list on every row.
+                                        plants = filtered.length > 0
+                                            ? filtered
+                                            : Array.isArray(existingPlants) && existingPlants.length > 0
+                                                ? existingPlants
+                                                : [];
                                     }
                                 }
                                 else if (Array.isArray(existingPlants) && existingPlants.length > 0) {

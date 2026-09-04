@@ -35,7 +35,8 @@ export type GalleryDocument = Gallery & Document;
 
 @Schema({ collection: 'galleries', timestamps: false })
 export class Gallery {
-  @Prop({ required: true, unique: true })
+  /** Unique among non–soft-deleted rows (see partial index below). */
+  @Prop({ required: true })
   galleryId: number;
 
   @Prop({ required: true })
@@ -64,6 +65,12 @@ export class Gallery {
   @Prop({ required: true, type: Number, default: 1 })
   status: number;
 
+  @Prop({ type: Boolean, default: false, index: true })
+  isDeleted?: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
+
   @Prop({ required: true })
   createdDate: Date;
 
@@ -72,3 +79,8 @@ export class Gallery {
 }
 
 export const GallerySchema = SchemaFactory.createForClass(Gallery);
+GallerySchema.index(
+  { galleryId: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
+);
+GallerySchema.index({ deletedAt: 1 });

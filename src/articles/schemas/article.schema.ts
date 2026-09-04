@@ -40,8 +40,15 @@ export class Article {
   @Prop({ required: true, type: Number, default: 1 })
   status: number;
 
+  @Prop({ type: Boolean, default: false, index: true })
+  isDeleted?: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export const ArticleSchema = SchemaFactory.createForClass(Article);
+ArticleSchema.index({ deletedAt: 1 });
