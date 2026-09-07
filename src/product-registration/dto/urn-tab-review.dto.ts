@@ -12,7 +12,7 @@ import {
 } from 'class-validator';
 import { PROCESS_TAB_REVIEW_KEYS } from '../constants/urn-tab-review.constants';
 
-/** One process tab or raw-material step in vendor resubmit guidance. */
+/** One process tab or raw-material step in vendor tab-review guidance. */
 export interface VendorUrnTabReviewSlotDto {
   tabKey: string;
   stepId: number | null;
@@ -20,6 +20,8 @@ export interface VendorUrnTabReviewSlotDto {
   reviewStatus: number;
   rejectionRemarks: string | null;
   canSaveAndNext: boolean;
+  /** Admin process comments for this tab (shown for approved and rejected). */
+  sectionReview?: Record<string, unknown> | null;
 }
 
 export class PatchUrnTabReviewDto {

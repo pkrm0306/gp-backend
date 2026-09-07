@@ -190,9 +190,10 @@ export class ProductsController {
 
   @Get('urn-tab-review/:urn_no')
   @ApiOperation({
-    summary: 'Get vendor Save & Next guidance after admin resend',
+    summary: 'Get vendor tab review status and admin comments',
     description:
-      'When urnStatus is 5 (admin sent back for corrections), returns which process tabs and raw material steps may be saved. ' +
+      'Returns process-tab review status, rejection remarks, and admin `sectionReview` comments for **approved and rejected** tabs (certification and renewal). ' +
+      '`restrictSaveAndNext` / `canSaveAndNext` are true only when the URN is in vendor resubmit (cert `urnStatus` 5 / renew 16) and the tab was rejected. ' +
       'Includes `tabAccess` — when urnStatus is 6–10 (after admin final submit, before certification fee approval), all process tabs are disabled except Quick View and Payment.',
   })
   @ApiParam({

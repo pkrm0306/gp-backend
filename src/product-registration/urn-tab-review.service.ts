@@ -232,26 +232,13 @@ export class UrnTabReviewService {
 
     const restrictSaveAndNext = urnStatus === VENDOR_RESUBMIT_URN_STATUS;
 
-    if (!restrictSaveAndNext) {
-      return {
-        urnNo: trimmedUrn,
-        urnStatus,
-        restrictSaveAndNext: false,
-        reviews: [] as Array<Record<string, unknown>>,
-        processTabs: {} as Record<string, VendorUrnTabReviewSlotDto>,
-        rawMaterialSteps: {} as Record<string, VendorUrnTabReviewSlotDto>,
-        rejectedDocumentSlotKeys: [] as string[],
-        summary: null,
-        tabAccess,
-      };
-    }
-
     const adminState = await this.getUrnTabReviews(trimmedUrn);
     const processTabs: Record<string, VendorUrnTabReviewSlotDto> = {};
     const rawMaterialSteps: Record<string, VendorUrnTabReviewSlotDto> = {};
 
     const reviews = adminState.reviews.map((row) => {
       const canSaveAndNext =
+        restrictSaveAndNext &&
         row.reviewStatus === URN_TAB_REVIEW_STATUS.REJECTED;
       const slot: VendorUrnTabReviewSlotDto = {
         tabKey: row.tabKey,
@@ -264,6 +251,9 @@ export class UrnTabReviewService {
         rejectionRemarks:
           row.rejectionRemarks != null ? String(row.rejectionRemarks) : null,
         canSaveAndNext,
+        sectionReview:
+          (row as { sectionReview?: Record<string, unknown> | null })
+            .sectionReview ?? null,
       };
 
       if (row.tabKey === RAW_MATERIALS_TAB_KEY && row.stepId != null) {
@@ -278,7 +268,7 @@ export class UrnTabReviewService {
     return {
       urnNo: trimmedUrn,
       urnStatus,
-      restrictSaveAndNext: true,
+      restrictSaveAndNext,
       visibleRawMaterialSteps:
         'visibleRawMaterialSteps' in adminState
           ? adminState.visibleRawMaterialSteps

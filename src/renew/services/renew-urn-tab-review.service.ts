@@ -37,6 +37,21 @@ import {
 } from '../constants/renewal-urn-status.constants';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { renewOwnershipFields, resolveUrnRenewContext } from '../helpers/renew-common.util';
+import {
+  ProcessRenewComments,
+  ProcessRenewCommentsDocument,
+} from '../schemas/process-renew-comments.schema';
+import {
+  parseSectionCommentPayload,
+  type ParsedSectionCommentPayload,
+} from '../../process-comments/helpers/process-comments-payload.util';
+
+const RENEW_TAB_KEY_TO_PROCESS_COMMENT_FIELD: Record<string, string> = {
+  'product-performance': 'productPerformance',
+  'manufacturing-process': 'manfacturingProcess',
+  'waste-management': 'wasteManagement',
+  innovation: 'productInnovation',
+};
 
 @Injectable()
 export class RenewUrnTabReviewService {
@@ -47,6 +62,8 @@ export class RenewUrnTabReviewService {
     private readonly renewalCycleModel: Model<RenewalCycleDocument>,
     @InjectModel(UrnRenewTabReview.name)
     private readonly reviewModel: Model<UrnRenewTabReviewDocument>,
+    @InjectModel(ProcessRenewComments.name)
+    private readonly renewCommentsModel: Model<ProcessRenewCommentsDocument>,
     private readonly activityLogService: ActivityLogService,
   ) {}
 
@@ -208,6 +225,11 @@ export class RenewUrnTabReviewService {
       .lean()
       .exec();
 
+    const sectionReviewByTabKey = await this.loadSectionReviewsByTabKey(
+      trimmedUrn,
+      cycleId,
+    );
+
     const requiredSlots = buildRenewRequiredReviewSlots();
     const reviews = requiredSlots.map((slot) => {
       const row = stored.find(
@@ -215,7 +237,10 @@ export class RenewUrnTabReviewService {
           r.tabKey === slot.tabKey &&
           r.stepId === RENEW_PROCESS_TAB_STEP_ID,
       );
-      return this.formatReviewRow(slot.tabKey, row);
+      return {
+        ...this.formatReviewRow(slot.tabKey, row),
+        sectionReview: sectionReviewByTabKey[slot.tabKey] ?? null,
+      };
     });
 
     const summary = this.buildSummary(reviews, requiredSlots.length);
@@ -226,6 +251,7 @@ export class RenewUrnTabReviewService {
       urnStatus,
       requiredTabs: requiredSlots,
       reviews,
+      sectionReviews: sectionReviewByTabKey,
       summary,
       canReview: urnStatus === RENEW_ADMIN_REVIEW_URN_STATUS,
       quickActions: this.buildQuickActions(summary),
@@ -397,24 +423,12 @@ export class RenewUrnTabReviewService {
     const urnStatus = Number(product.urnStatus ?? 0);
     const restrictSaveAndNext = urnStatus === RENEW_VENDOR_RESUBMIT_URN_STATUS;
 
-    if (!restrictSaveAndNext) {
-      return {
-        urnNo: trimmedUrn,
-        urnStatus,
-        restrictSaveAndNext: false,
-        reviews: [] as Array<Record<string, unknown>>,
-        processTabs: {} as Record<string, unknown>,
-        rawMaterialSteps: {} as Record<string, unknown>,
-        rejectedDocumentSlotKeys: [] as string[],
-        summary: null,
-      };
-    }
-
     const adminState = await this.getUrnTabReviews(trimmedUrn, renewalCycleId);
     const processTabs: Record<string, unknown> = {};
 
     const reviews = adminState.reviews.map((row) => {
       const canSaveAndNext =
+        restrictSaveAndNext &&
         row.reviewStatus === RENEW_TAB_REVIEW_STATUS.REJECTED;
       const slot = {
         tabKey: row.tabKey,
@@ -425,6 +439,9 @@ export class RenewUrnTabReviewService {
         reviewStatus: row.reviewStatus,
         rejectionRemarks: row.rejectionRemarks,
         canSaveAndNext,
+        sectionReview:
+          (row as { sectionReview?: Record<string, unknown> | null })
+            .sectionReview ?? null,
       };
       if (row.stepId == null) {
         processTabs[row.tabKey] = slot;
@@ -436,13 +453,39 @@ export class RenewUrnTabReviewService {
       urnNo: trimmedUrn,
       urnStatus,
       renewalCycleId: adminState.renewalCycleId,
-      restrictSaveAndNext: true,
+      restrictSaveAndNext,
       reviews,
       processTabs,
       rawMaterialSteps: {} as Record<string, unknown>,
       rejectedDocumentSlotKeys: [] as string[],
       summary: adminState.summary,
     };
+  }
+
+  private async loadSectionReviewsByTabKey(
+    urnNo: string,
+    renewalCycleId: Types.ObjectId,
+  ): Promise<Record<string, ParsedSectionCommentPayload>> {
+    const comments = await this.renewCommentsModel
+      .findOne({ urnNo, renewalCycleId })
+      .lean()
+      .exec();
+
+    if (!comments) {
+      return {};
+    }
+
+    const row = comments as Record<string, unknown>;
+    const out: Record<string, ParsedSectionCommentPayload> = {};
+    for (const [tabKey, field] of Object.entries(
+      RENEW_TAB_KEY_TO_PROCESS_COMMENT_FIELD,
+    )) {
+      const packed = row[field];
+      if (typeof packed === 'string' && packed.trim() !== '') {
+        out[tabKey] = parseSectionCommentPayload(packed);
+      }
+    }
+    return out;
   }
 
   private formatReviewRow(
