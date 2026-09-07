@@ -282,10 +282,10 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
     const existingGp = String(existing.gpInternalId ?? '').trim();
     const alreadyGpsc = /^GPSC-(?:\d{3}|[1-9]\d{3})$/i.test(existingGp);
 
-    // Keep an existing initial only when it is still free among verified rows.
+    // Keep an existing **3-letter** initial only when it is still free among verified rows.
     let initial: string;
     if (
-      existingIni &&
+      existingIni.length === 3 &&
       !(await this.isInitialTakenByVerified(
         existingIni,
         excludeManufacturerId,
@@ -335,7 +335,7 @@ export class ManufacturerIdGenerationService implements OnModuleInit {
     );
   }
 
-  /** Name-based 2-letter initial candidates (same logic as before). */
+  /** Name-based 3-letter initial candidates. */
   generateInitial(manufacturerName: string): readonly string[] {
     return initialCandidatesFromName(manufacturerName);
   }

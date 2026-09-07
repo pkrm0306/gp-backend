@@ -42,7 +42,11 @@ export class UpdateManufacturerDto {
   })
   gpInternalId?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Ignored when manufacturer is **unverified** (auto-generated 3-letter code from the company name). Optional when verified. New values should be 3 letters; 2 letters still accepted for legacy rows.',
+    example: 'MTL',
+  })
   @Transform(({ value, obj }) => {
     const raw = value ?? obj?.manufacturer_initial;
     if (raw === '' || raw === null || raw === undefined) return undefined;
@@ -50,8 +54,9 @@ export class UpdateManufacturerDto {
   })
   @IsOptional()
   @IsString()
-  @Matches(/^[A-Za-z]{2}$/, {
-    message: 'manufacturer_initial must be exactly 2 letters when provided',
+  @Matches(/^[A-Za-z]{2,3}$/, {
+    message:
+      'manufacturer_initial must be 2 or 3 letters when provided (3 preferred for new manufacturers)',
   })
   manufacturerInitial?: string;
 

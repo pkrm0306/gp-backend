@@ -76,14 +76,14 @@ var UpdateManufacturerDto = function () {
                 })];
             _manufacturerInitial_decorators = [(0, swagger_1.ApiPropertyOptional)({
                     description: 'Ignored for **unverified** manufacturers (server-generated). Optional for verified updates.',
-                    example: 'GP',
+                    example: 'MTL',
                 }), (0, class_transformer_1.Transform)(function (_b) {
                     var value = _b.value;
                     return value === '' || value === null || value === undefined
                         ? undefined
                         : String(value).trim();
-                }), (0, class_validator_1.IsOptional)(), (0, class_validator_1.IsString)(), (0, class_validator_1.Matches)(/^[A-Za-z]{2}$/, {
-                    message: 'manufacturerInitial must be exactly 2 letters when provided',
+                }), (0, class_validator_1.IsOptional)(), (0, class_validator_1.IsString)(), (0, class_validator_1.Matches)(/^[A-Za-z]{2,3}$/, {
+                    message: 'manufacturerInitial must be 2 or 3 letters when provided (3 preferred for new manufacturers)',
                 })];
             __esDecorate(null, null, _manufacturerName_decorators, { kind: "field", name: "manufacturerName", static: false, private: false, access: { has: function (obj) { return "manufacturerName" in obj; }, get: function (obj) { return obj.manufacturerName; }, set: function (obj, value) { obj.manufacturerName = value; } }, metadata: _metadata }, _manufacturerName_initializers, _manufacturerName_extraInitializers);
             __esDecorate(null, null, _gpInternalId_decorators, { kind: "field", name: "gpInternalId", static: false, private: false, access: { has: function (obj) { return "gpInternalId" in obj; }, get: function (obj) { return obj.gpInternalId; }, set: function (obj, value) { obj.gpInternalId = value; } }, metadata: _metadata }, _gpInternalId_initializers, _gpInternalId_extraInitializers);

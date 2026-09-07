@@ -1,6 +1,6 @@
 /**
  * Manufacturer initials + internal ID (gpInternalId) helpers.
- * Initials: 2-letter candidates from the manufacturer name (unchanged).
+ * Initials: **3-letter** uppercase candidates from the manufacturer name.
  * New internal IDs: `GPSC-<suffix>` (000–999 zero-padded, then 1000–9999).
  * Legacy stored ids remain `GP<INI>-###` and are never rewritten.
  */
@@ -10,6 +10,16 @@ const LETTER = /[A-Za-z]/;
 function letterChar(ch: string | undefined): string | null {
   if (!ch || !LETTER.test(ch)) return null;
   return ch.toUpperCase();
+}
+
+/** Letters only from a token (digits/punctuation stripped). */
+function lettersOnly(token: string): string {
+  let out = '';
+  for (const ch of String(token ?? '')) {
+    const L = letterChar(ch);
+    if (L) out += L;
+  }
+  return out;
 }
 
 /** Collapse whitespace; trim. */
@@ -28,52 +38,133 @@ export function tokenizeManufacturerName(normalizedName: string): string[] {
   return s.match(/[A-Za-z0-9]+/g) ?? [];
 }
 
+function pushTriple(out: string[], a: string | null, b: string | null, c: string | null) {
+  if (!a || !b || !c) return;
+  const triple = `${a}${b}${c}`;
+  if (triple.length === 3 && !out.includes(triple)) {
+    out.push(triple);
+  }
+}
+
 /**
- * Ordered 2-letter uppercase candidates: first letter of word1 fixed;
- * second letter cycles through word2, then rest of word1, then further words' first letters, then A–Z.
+ * Ordered **3-letter** uppercase candidates from the manufacturer name.
+ *
+ * Primary rules:
+ * - 3+ words → first letter of each of the first three words
+ *   (e.g. "Miraki Tech Limited" → **MTL**)
+ * - 2 words → first letter of word1 + first two letters of word2
+ *   (e.g. "Amazon Tech" → **ATE**)
+ * - 1 word → first three letters of that word
+ *   (e.g. "Greenpro" → **GRE**)
+ *
+ * Further candidates vary later letters so uniqueness can be allocated.
  */
 export function generateInitial(manufacturerName: string): readonly string[] {
   const name = normalizeManufacturerName(manufacturerName);
-  const words = tokenizeManufacturerName(name);
+  const words = tokenizeManufacturerName(name)
+    .map(lettersOnly)
+    .filter((w) => w.length > 0);
   const out: string[] = [];
 
   if (words.length === 0) {
     return out;
   }
 
-  const w1 = words[0];
-  const c1 = letterChar(w1[0]);
-  if (!c1) {
-    return out;
-  }
-
-  const push = (second: string | null) => {
-    if (!second) return;
-    const pair = `${c1}${second}`;
-    if (pair.length === 2 && !out.includes(pair)) {
-      out.push(pair);
-    }
-  };
-
-  if (words.length >= 2) {
+  if (words.length >= 3) {
+    const w1 = words[0];
     const w2 = words[1];
-    for (let i = 0; i < w2.length; i++) {
-      push(letterChar(w2[i]));
+    const w3 = words[2];
+    // Primary: Miraki Tech Limited → MTL
+    pushTriple(out, w1[0], w2[0], w3[0]);
+
+    // Vary 3rd letter through remaining words' first letters
+    for (let wi = 3; wi < words.length; wi++) {
+      pushTriple(out, w1[0], w2[0], words[wi][0]);
+    }
+    // Then through letters of word3, word2, word1
+    for (let i = 1; i < w3.length; i++) {
+      pushTriple(out, w1[0], w2[0], w3[i]);
+    }
+    for (let i = 1; i < w2.length; i++) {
+      pushTriple(out, w1[0], w2[i], w3[0]);
+    }
+    for (let i = 1; i < w1.length; i++) {
+      pushTriple(out, w1[i], w2[0], w3[0]);
+    }
+  } else if (words.length === 2) {
+    const w1 = words[0];
+    const w2 = words[1];
+    // Primary: Amazon Tech → ATE (A + Te)
+    if (w2.length >= 2) {
+      pushTriple(out, w1[0], w2[0], w2[1]);
+    }
+    // Alt: first two of word1 + first of word2
+    if (w1.length >= 2) {
+      pushTriple(out, w1[0], w1[1], w2[0]);
+    }
+    // More from word2 letters
+    for (let i = 2; i < w2.length; i++) {
+      pushTriple(out, w1[0], w2[0], w2[i]);
+    }
+    for (let i = 1; i < w2.length; i++) {
+      for (let j = i + 1; j < w2.length; j++) {
+        pushTriple(out, w1[0], w2[i], w2[j]);
+      }
+    }
+    for (let i = 1; i < w1.length; i++) {
+      for (let j = i + 1; j < w1.length; j++) {
+        pushTriple(out, w1[0], w1[i], w1[j]);
+      }
+      if (w2.length >= 1) {
+        pushTriple(out, w1[0], w1[i], w2[0]);
+      }
+    }
+  } else {
+    const w = words[0];
+    // Primary: first three letters
+    if (w.length >= 3) {
+      pushTriple(out, w[0], w[1], w[2]);
+    }
+    // Other triples from the word
+    for (let i = 0; i < w.length; i++) {
+      for (let j = i + 1; j < w.length; j++) {
+        for (let k = j + 1; k < w.length; k++) {
+          pushTriple(out, w[i], w[j], w[k]);
+        }
+      }
+    }
+    // Short words: pad with later alphabet letters after using available letters
+    if (w.length === 1) {
+      for (let code = 'A'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code++) {
+        const b = String.fromCharCode(code);
+        for (let code2 = 'A'.charCodeAt(0); code2 <= 'Z'.charCodeAt(0); code2++) {
+          pushTriple(out, w[0], b, String.fromCharCode(code2));
+        }
+      }
+    } else if (w.length === 2) {
+      for (let code = 'A'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code++) {
+        pushTriple(out, w[0], w[1], String.fromCharCode(code));
+      }
     }
   }
 
-  for (let j = 1; j < w1.length; j++) {
-    push(letterChar(w1[j]));
-  }
-
-  for (let wi = 2; wi < words.length; wi++) {
-    const wx = words[wi];
-    const fc = letterChar(wx[0]);
-    push(fc);
-  }
-
-  for (let code = 'A'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code++) {
-    push(String.fromCharCode(code));
+  // Final uniqueness pool: fix first two of primary (or first available) and cycle 3rd A–Z,
+  // then fix first + cycle 2nd/3rd — enough candidates for pickUniqueInitial.
+  const base = out[0];
+  if (base) {
+    for (let code = 'A'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code++) {
+      pushTriple(out, base[0], base[1], String.fromCharCode(code));
+    }
+    for (let code = 'A'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code++) {
+      pushTriple(out, base[0], String.fromCharCode(code), base[2]);
+    }
+  } else {
+    const c1 = words[0][0];
+    for (let code2 = 'A'.charCodeAt(0); code2 <= 'Z'.charCodeAt(0); code2++) {
+      for (let code3 = 'A'.charCodeAt(0); code3 <= 'Z'.charCodeAt(0); code3++) {
+        pushTriple(out, c1, String.fromCharCode(code2), String.fromCharCode(code3));
+      }
+    }
   }
 
   return out;

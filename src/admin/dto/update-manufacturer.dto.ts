@@ -32,8 +32,8 @@ export class UpdateManufacturerDto {
 
   @ApiPropertyOptional({
     description:
-      'Ignored for **unverified** manufacturers (server-generated). Optional for verified updates.',
-    example: 'GP',
+      'Ignored for **unverified** manufacturers (server-generated 3-letter code from the company name). Optional for verified updates. New values should be 3 letters; 2 letters still accepted for legacy rows.',
+    example: 'MTL',
   })
   @Transform(({ value }) =>
     value === '' || value === null || value === undefined
@@ -42,8 +42,9 @@ export class UpdateManufacturerDto {
   )
   @IsOptional()
   @IsString()
-  @Matches(/^[A-Za-z]{2}$/, {
-    message: 'manufacturerInitial must be exactly 2 letters when provided',
+  @Matches(/^[A-Za-z]{2,3}$/, {
+    message:
+      'manufacturerInitial must be 2 or 3 letters when provided (3 preferred for new manufacturers)',
   })
   manufacturerInitial?: string;
 }

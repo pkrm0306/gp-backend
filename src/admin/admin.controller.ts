@@ -3890,8 +3890,8 @@ export class AdminController {
         manufacturerInitial: {
           type: 'string',
           description:
-            'Optional for verified (two letters). Ignored while unverified (assigned on verify).',
-          example: 'GP',
+            'Optional for verified (exactly 3 letters from company name, e.g. MTL). Ignored while unverified (assigned on verify).',
+          example: 'MTL',
         },
         manufacturer_image: {
           type: 'string',

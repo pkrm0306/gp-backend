@@ -183,7 +183,9 @@ export class ManufacturersController {
         },
         manufacturerInitial: {
           type: 'string',
-          description: 'Optional when verified; ignored while unverified (assigned on verify).',
+          description:
+            'Optional when verified (exactly 3 letters from company name, e.g. MTL). Ignored while unverified (assigned on verify).',
+          example: 'MTL',
         },
         vendor_name: { type: 'string' },
         vendor_email: { type: 'string' },

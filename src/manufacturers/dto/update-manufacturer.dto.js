@@ -96,8 +96,8 @@ var UpdateManufacturerDto = function () {
                     if (raw === '' || raw === null || raw === undefined)
                         return undefined;
                     return typeof raw === 'string' ? raw.trim() : raw;
-                }), (0, class_validator_1.IsOptional)(), (0, class_validator_1.IsString)(), (0, class_validator_1.Matches)(/^[A-Za-z]{2}$/, {
-                    message: 'manufacturer_initial must be exactly 2 letters when provided',
+                }), (0, class_validator_1.IsOptional)(), (0, class_validator_1.IsString)(), (0, class_validator_1.Matches)(/^[A-Za-z]{2,3}$/, {
+                    message: 'manufacturer_initial must be 2 or 3 letters when provided (3 preferred for new manufacturers)',
                 })];
             _vendor_name_decorators = [(0, swagger_1.ApiProperty)({
                     required: false,
