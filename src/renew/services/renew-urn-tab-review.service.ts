@@ -67,31 +67,46 @@ export class RenewUrnTabReviewService {
     private readonly activityLogService: ActivityLogService,
   ) {}
 
+  /**
+   * Resolve cycle for tab-review reads/writes.
+   * Same fallback order as renew-details / resolveRenewCycleForQuery:
+   * explicit id → IN_PROGRESS → latest COMPLETED → throw.
+   */
   async resolveRenewalCycleId(
     urnNo: string,
     renewalCycleId?: string,
   ): Promise<Types.ObjectId> {
+    const trimmedUrn = urnNo.trim();
     if (renewalCycleId?.trim()) {
       const cycle = await this.renewalCycleModel
         .findById(renewalCycleId.trim())
         .exec();
-      if (!cycle || cycle.urnNo !== urnNo.trim()) {
+      if (!cycle || cycle.urnNo !== trimmedUrn) {
         throw new BadRequestException('renewalCycleId does not match this URN');
       }
       return cycle._id as Types.ObjectId;
     }
 
-    const cycle = await this.renewalCycleModel
-      .findOne({ urnNo: urnNo.trim(), status: RenewalCycleStatus.IN_PROGRESS })
+    const inProgress = await this.renewalCycleModel
+      .findOne({ urnNo: trimmedUrn, status: RenewalCycleStatus.IN_PROGRESS })
       .sort({ cycleNo: -1 })
       .exec();
-
-    if (!cycle) {
-      throw new BadRequestException(
-        'renewalCycleId is required when no active renewal cycle exists for this URN',
-      );
+    if (inProgress) {
+      return inProgress._id as Types.ObjectId;
     }
-    return cycle._id as Types.ObjectId;
+
+    // Certified browse / post-multi-renew: no active cycle — use latest completed.
+    const completed = await this.renewalCycleModel
+      .findOne({ urnNo: trimmedUrn, status: RenewalCycleStatus.COMPLETED })
+      .sort({ cycleNo: -1, completedAt: -1 })
+      .exec();
+    if (completed) {
+      return completed._id as Types.ObjectId;
+    }
+
+    throw new BadRequestException(
+      'renewalCycleId is required when no active renewal cycle exists for this URN',
+    );
   }
 
   /**

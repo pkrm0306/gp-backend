@@ -108,30 +108,40 @@ var RenewUrnTabReviewService = function () {
         }
         RenewUrnTabReviewService_1.prototype.resolveRenewalCycleId = function (urnNo, renewalCycleId) {
             return __awaiter(this, void 0, void 0, function () {
-                var cycle_1, cycle;
+                var trimmedUrn, cycle_1, inProgress, completed;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
                         case 0:
+                            trimmedUrn = urnNo.trim();
                             if (!(renewalCycleId === null || renewalCycleId === void 0 ? void 0 : renewalCycleId.trim())) return [3 /*break*/, 2];
                             return [4 /*yield*/, this.renewalCycleModel
                                     .findById(renewalCycleId.trim())
                                     .exec()];
                         case 1:
                             cycle_1 = _a.sent();
-                            if (!cycle_1 || cycle_1.urnNo !== urnNo.trim()) {
+                            if (!cycle_1 || cycle_1.urnNo !== trimmedUrn) {
                                 throw new common_1.BadRequestException('renewalCycleId does not match this URN');
                             }
                             return [2 /*return*/, cycle_1._id];
                         case 2: return [4 /*yield*/, this.renewalCycleModel
-                                .findOne({ urnNo: urnNo.trim(), status: renewal_cycle_schema_1.RenewalCycleStatus.IN_PROGRESS })
+                                .findOne({ urnNo: trimmedUrn, status: renewal_cycle_schema_1.RenewalCycleStatus.IN_PROGRESS })
                                 .sort({ cycleNo: -1 })
                                 .exec()];
                         case 3:
-                            cycle = _a.sent();
-                            if (!cycle) {
-                                throw new common_1.BadRequestException('renewalCycleId is required when no active renewal cycle exists for this URN');
+                            inProgress = _a.sent();
+                            if (inProgress) {
+                                return [2 /*return*/, inProgress._id];
                             }
-                            return [2 /*return*/, cycle._id];
+                            return [4 /*yield*/, this.renewalCycleModel
+                                    .findOne({ urnNo: trimmedUrn, status: renewal_cycle_schema_1.RenewalCycleStatus.COMPLETED })
+                                    .sort({ cycleNo: -1, completedAt: -1 })
+                                    .exec()];
+                        case 4:
+                            completed = _a.sent();
+                            if (completed) {
+                                return [2 /*return*/, completed._id];
+                            }
+                            throw new common_1.BadRequestException('renewalCycleId is required when no active renewal cycle exists for this URN');
                     }
                 });
             });

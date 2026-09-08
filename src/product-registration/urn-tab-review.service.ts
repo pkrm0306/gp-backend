@@ -186,7 +186,11 @@ export class UrnTabReviewService {
    * Vendor panel: after admin resend (`urnStatus === 5`), which tabs/steps may use Save & Next.
    * Only sections with `reviewStatus === rejected` are editable; approved tabs are read-only.
    */
-  async getVendorUrnTabReviewGuidance(urnNo: string, vendorId: string) {
+  async getVendorUrnTabReviewGuidance(
+    urnNo: string,
+    vendorId: string,
+    renewalCycleId?: string,
+  ) {
     const vendorObjectId = this.toVendorObjectId(vendorId);
     const trimmedUrn = urnNo?.trim();
     if (!trimmedUrn) {
@@ -223,6 +227,7 @@ export class UrnTabReviewService {
         await this.renewUrnTabReviewService.getVendorRenewTabReviewGuidance(
           trimmedUrn,
           vendorId,
+          renewalCycleId,
         );
       return {
         ...renewGuidance,

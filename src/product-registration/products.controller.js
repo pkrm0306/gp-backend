@@ -155,7 +155,7 @@ var ProductsController = function () {
                 });
             });
         };
-        ProductsController_1.prototype.getVendorUrnTabReviewGuidance = function (user, urnNo) {
+        ProductsController_1.prototype.getVendorUrnTabReviewGuidance = function (user, urnNo, renewalCycleId) {
             return __awaiter(this, void 0, void 0, function () {
                 var data;
                 return __generator(this, function (_a) {
@@ -164,7 +164,7 @@ var ProductsController = function () {
                             if (!(user === null || user === void 0 ? void 0 : user.manufacturerId)) {
                                 throw new common_1.BadRequestException('Manufacturer ID not found in token');
                             }
-                            return [4 /*yield*/, this.urnTabReviewService.getVendorUrnTabReviewGuidance(urnNo, user.manufacturerId)];
+                            return [4 /*yield*/, this.urnTabReviewService.getVendorUrnTabReviewGuidance(urnNo, user.manufacturerId, renewalCycleId)];
                         case 1:
                             data = _a.sent();
                             return [2 /*return*/, {

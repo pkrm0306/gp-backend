@@ -21,6 +21,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
   ApiBody,
   ApiConsumes,
 } from '@nestjs/swagger';
@@ -201,11 +202,19 @@ export class ProductsController {
     description: 'URN number',
     example: 'URN-20240302120000',
   })
+  @ApiQuery({
+    name: 'renewalCycleId',
+    required: false,
+    type: String,
+    description:
+      'Renewal cycle ObjectId. Optional; when omitted, uses IN_PROGRESS then latest COMPLETED cycle.',
+  })
   @ApiResponse({ status: 200, description: 'Vendor tab review guidance' })
   @ApiResponse({ status: 404, description: 'URN not found for this vendor' })
   async getVendorUrnTabReviewGuidance(
     @CurrentUser() user: { manufacturerId?: string },
     @Param('urn_no') urnNo: string,
+    @Query('renewalCycleId') renewalCycleId?: string,
   ) {
     if (!user?.manufacturerId) {
       throw new BadRequestException('Manufacturer ID not found in token');
@@ -213,6 +222,7 @@ export class ProductsController {
     const data = await this.urnTabReviewService.getVendorUrnTabReviewGuidance(
       urnNo,
       user.manufacturerId,
+      renewalCycleId,
     );
     return {
       success: true,

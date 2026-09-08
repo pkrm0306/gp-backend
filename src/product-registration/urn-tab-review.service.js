@@ -255,7 +255,7 @@ var UrnTabReviewService = function () {
          * Vendor panel: after admin resend (`urnStatus === 5`), which tabs/steps may use Save & Next.
          * Only sections with `reviewStatus === rejected` are editable; approved tabs are read-only.
          */
-        UrnTabReviewService_1.prototype.getVendorUrnTabReviewGuidance = function (urnNo, vendorId) {
+        UrnTabReviewService_1.prototype.getVendorUrnTabReviewGuidance = function (urnNo, vendorId, renewalCycleId) {
             return __awaiter(this, void 0, void 0, function () {
                 var vendorObjectId, trimmedUrn, product, urnStatus, productRenewStatus, tabAccess, renewGuidance, restrictSaveAndNext, adminState, processTabs, rawMaterialSteps, reviews;
                 var _a, _b;
@@ -288,7 +288,7 @@ var UrnTabReviewService = function () {
                                 productRenewStatus: productRenewStatus,
                             });
                             if (!(0, renewal_urn_status_constants_1.shouldUseRenewWorkflowForUrn)({ urnStatus: urnStatus, productRenewStatus: productRenewStatus })) return [3 /*break*/, 3];
-                            return [4 /*yield*/, this.renewUrnTabReviewService.getVendorRenewTabReviewGuidance(trimmedUrn, vendorId)];
+                            return [4 /*yield*/, this.renewUrnTabReviewService.getVendorRenewTabReviewGuidance(trimmedUrn, vendorId, renewalCycleId)];
                         case 2:
                             renewGuidance = _c.sent();
                             return [2 /*return*/, __assign(__assign({}, renewGuidance), { tabAccess: tabAccess })];
