@@ -8,6 +8,10 @@ import {
   AllRenewProductDocument,
   AllRenewProductDocumentSchema,
 } from '../renew/schemas/all-renew-product-document.schema';
+import {
+  RenewalCycle,
+  RenewalCycleSchema,
+} from '../renew/schemas/renewal-cycle.schema';
 import { PassportModule } from '@nestjs/passport';
 import { AuthModule } from '../auth/auth.module';
 import { DocumentsController } from './documents.controller';
@@ -23,6 +27,7 @@ import { RenewalModule } from '../renew/renewal.module';
     MongooseModule.forFeature([
       { name: AllProductDocument.name, schema: AllProductDocumentSchema },
       { name: AllRenewProductDocument.name, schema: AllRenewProductDocumentSchema },
+      { name: RenewalCycle.name, schema: RenewalCycleSchema },
       { name: DocStream.name, schema: DocStreamSchema },
       { name: DocVersion.name, schema: DocVersionSchema },
     ]),

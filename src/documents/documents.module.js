@@ -43,6 +43,7 @@ var common_1 = require("@nestjs/common");
 var mongoose_1 = require("@nestjs/mongoose");
 var all_product_document_schema_1 = require("../product-design/schemas/all-product-document.schema");
 var all_renew_product_document_schema_1 = require("../renew/schemas/all-renew-product-document.schema");
+var renewal_cycle_schema_1 = require("../renew/schemas/renewal-cycle.schema");
 var passport_1 = require("@nestjs/passport");
 var auth_module_1 = require("../auth/auth.module");
 var documents_controller_1 = require("./documents.controller");
@@ -57,6 +58,7 @@ var DocumentsModule = function () {
                 mongoose_1.MongooseModule.forFeature([
                     { name: all_product_document_schema_1.AllProductDocument.name, schema: all_product_document_schema_1.AllProductDocumentSchema },
                     { name: all_renew_product_document_schema_1.AllRenewProductDocument.name, schema: all_renew_product_document_schema_1.AllRenewProductDocumentSchema },
+                    { name: renewal_cycle_schema_1.RenewalCycle.name, schema: renewal_cycle_schema_1.RenewalCycleSchema },
                     { name: doc_stream_schema_1.DocStream.name, schema: doc_stream_schema_1.DocStreamSchema },
                     { name: doc_version_schema_1.DocVersion.name, schema: doc_version_schema_1.DocVersionSchema },
                 ]),

@@ -8,6 +8,10 @@ import {
   AllRenewProductDocumentDocument,
 } from '../renew/schemas/all-renew-product-document.schema';
 import {
+  RenewalCycle,
+  RenewalCycleDocument,
+} from '../renew/schemas/renewal-cycle.schema';
+import {
   buildAllProductDocumentTrackInput,
   buildPaymentDocumentTrackInput,
   buildStreamIdentityFilter,
@@ -27,6 +31,20 @@ import {
   TrackPaymentDocumentInput,
 } from './types/document-version.types';
 
+function normalizeHistoryPath(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\\/g, '/')
+    .toLowerCase();
+}
+
+function normalizeHistoryFileName(value: unknown): string {
+  const raw = normalizeHistoryPath(value);
+  if (!raw) return '';
+  const parts = raw.split('/');
+  return parts[parts.length - 1] || raw;
+}
+
 @Injectable()
 export class DocumentVersioningService {
   private readonly logger = new Logger(DocumentVersioningService.name);
@@ -39,6 +57,8 @@ export class DocumentVersioningService {
     private readonly docVersionModel: Model<DocVersionDocument>,
     @InjectModel(AllRenewProductDocument.name)
     private readonly renewDocumentModel: Model<AllRenewProductDocumentDocument>,
+    @InjectModel(RenewalCycle.name)
+    private readonly renewalCycleModel: Model<RenewalCycleDocument>,
   ) {}
 
   async trackDocumentVersionChange(
@@ -219,6 +239,10 @@ export class DocumentVersioningService {
   async getDocumentHistory(query: DocumentStreamQueryInput) {
     const stream = await this.resolveHistoryStream(query);
 
+    if (!stream) {
+      throw new NotFoundException('Document stream not found');
+    }
+
     if (stream.isDeleted) {
       return {
         stream: this.mapStream(stream),
@@ -237,9 +261,15 @@ export class DocumentVersioningService {
       versions as Array<Record<string, unknown>>,
     );
 
+    const mapped = filtered.map((version) => this.mapVersion(version));
+    const enriched = await this.enrichInitialHistoryVersionsWithRenewSources(
+      query,
+      mapped,
+    );
+
     return {
       stream: this.mapStream(stream),
-      versions: filtered.map((version) => this.mapVersion(version)),
+      versions: enriched,
     };
   }
 
@@ -419,12 +449,20 @@ export class DocumentVersioningService {
   }
 
   private mapVersion(version: Record<string, unknown>) {
+    const renewalCycleId =
+      version.renewalCycleId != null && String(version.renewalCycleId).trim() !== ''
+        ? String(version.renewalCycleId)
+        : null;
     return {
       _id: version._id,
       streamId: version.streamId,
       urnNo: version.urnNo,
       processType: version.processType,
-      renewalCycleId: version.renewalCycleId ?? null,
+      renewalCycleId,
+      renewalCycleNo:
+        version.renewalCycleNo != null && Number.isFinite(Number(version.renewalCycleNo))
+          ? Number(version.renewalCycleNo)
+          : null,
       roundNo: version.roundNo ?? null,
       versionNo: version.versionNo,
       action: version.action,
@@ -438,5 +476,116 @@ export class DocumentVersioningService {
       createdAt: version.createdAt,
       createdBy: version.createdBy,
     };
+  }
+
+  /**
+   * After renew completion, uploads are promoted onto the Initial stream with
+   * processType=initial. Re-label History rows that match renew product documents
+   * so admin Source shows Cycle N instead of Initial.
+   */
+  private async enrichInitialHistoryVersionsWithRenewSources(
+    query: DocumentStreamQueryInput,
+    versions: Array<Record<string, unknown>>,
+  ): Promise<Array<Record<string, unknown>>> {
+    if (normalizeProcessType(query.processType) !== 'initial' || versions.length === 0) {
+      return versions;
+    }
+
+    const urnNo = String(query.urnNo ?? '').trim();
+    const sectionKey = String(query.sectionKey ?? '').trim();
+    if (!urnNo || !sectionKey) return versions;
+
+    const renewDocs = await this.renewDocumentModel
+      .find({
+        urnNo,
+      })
+      .select('documentLink documentOriginalName documentName renewalCycleId documentForm')
+      .lean()
+      .exec();
+
+    if (!renewDocs.length) return versions;
+
+    const cycleIds = Array.from(
+      new Set(
+        renewDocs
+          .map((doc) =>
+            doc.renewalCycleId != null ? String(doc.renewalCycleId).trim() : '',
+          )
+          .filter(Boolean),
+      ),
+    );
+
+    const cycleNoById = new Map<string, number>();
+    if (cycleIds.length > 0) {
+      const cycles = await this.renewalCycleModel
+        .find({
+          _id: {
+            $in: cycleIds
+              .filter((id) => Types.ObjectId.isValid(id))
+              .map((id) => new Types.ObjectId(id)),
+          },
+        })
+        .select('cycleNo')
+        .lean()
+        .exec();
+      for (const cycle of cycles) {
+        const id = String(cycle._id);
+        const no = Number(cycle.cycleNo);
+        if (Number.isFinite(no) && no > 0) cycleNoById.set(id, no);
+      }
+    }
+
+    type RenewMatch = { renewalCycleId: string; renewalCycleNo: number | null };
+    const byPath = new Map<string, RenewMatch>();
+    const byName = new Map<string, RenewMatch>();
+
+    for (const doc of renewDocs) {
+      const cycleId =
+        doc.renewalCycleId != null ? String(doc.renewalCycleId).trim() : '';
+      if (!cycleId) continue;
+      const match: RenewMatch = {
+        renewalCycleId: cycleId,
+        renewalCycleNo: cycleNoById.get(cycleId) ?? null,
+      };
+      const path = normalizeHistoryPath(doc.documentLink);
+      if (path) byPath.set(path, match);
+      const original = normalizeHistoryFileName(doc.documentOriginalName);
+      if (original) byName.set(original, match);
+      const stored = normalizeHistoryFileName(doc.documentName);
+      if (stored) byName.set(stored, match);
+      if (path) {
+        const pathName = normalizeHistoryFileName(path);
+        if (pathName) byName.set(pathName, match);
+      }
+    }
+
+    if (byPath.size === 0 && byName.size === 0) return versions;
+
+    return versions.map((version) => {
+      const existingProcess = String(version.processType ?? '')
+        .trim()
+        .toLowerCase();
+      if (existingProcess === 'renewal' && version.renewalCycleId) {
+        return version;
+      }
+
+      const path = normalizeHistoryPath(version.filePath);
+      const original = normalizeHistoryFileName(version.originalName);
+      const stored = normalizeHistoryFileName(version.storedName);
+      const match =
+        (path ? byPath.get(path) : undefined) ||
+        (path ? byName.get(normalizeHistoryFileName(path)) : undefined) ||
+        (original ? byName.get(original) : undefined) ||
+        (stored ? byName.get(stored) : undefined);
+
+      if (!match) return version;
+
+      return {
+        ...version,
+        processType: 'renewal',
+        renewalCycleId: match.renewalCycleId,
+        renewalCycleNo: match.renewalCycleNo,
+      };
+    });
   }
 }

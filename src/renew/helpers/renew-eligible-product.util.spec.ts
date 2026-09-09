@@ -60,4 +60,14 @@ describe('renew-eligible-product.util', () => {
     ];
     expect(filterRenewRowsByCertifiedEoi(rows, certified)).toHaveLength(2);
   });
+
+  it('filterRenewRowsByCertifiedEoi keeps URN-level rows when certified set is empty', () => {
+    const rows = [
+      { documentForm: 'product_performance', productDocumentId: 1 },
+      { documentForm: 'product_performance', eoiNo: 'EOI-X', productDocumentId: 2 },
+    ];
+    expect(filterRenewRowsByCertifiedEoi(rows, new Set())).toEqual([
+      { documentForm: 'product_performance', productDocumentId: 1 },
+    ]);
+  });
 });

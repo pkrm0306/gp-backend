@@ -41,4 +41,13 @@ describe('renew-eligible-product.util', function () {
         ];
         expect((0, renew_eligible_product_util_1.filterRenewRowsByCertifiedEoi)(rows, certified)).toHaveLength(2);
     });
+    it('filterRenewRowsByCertifiedEoi keeps URN-level rows when certified set is empty', function () {
+        var rows = [
+            { documentForm: 'product_performance', productDocumentId: 1 },
+            { documentForm: 'product_performance', eoiNo: 'EOI-X', productDocumentId: 2 },
+        ];
+        expect((0, renew_eligible_product_util_1.filterRenewRowsByCertifiedEoi)(rows, new Set())).toEqual([
+            { documentForm: 'product_performance', productDocumentId: 1 },
+        ]);
+    });
 });

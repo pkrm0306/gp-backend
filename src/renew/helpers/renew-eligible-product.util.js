@@ -150,8 +150,13 @@ productModel, urnNo) {
  * Keep URN-level rows (no eoiNo) and rows whose eoiNo is certified on this URN.
  */
 function filterRenewRowsByCertifiedEoi(rows, certifiedEoiNos) {
+    // No certified EOIs found: still keep URN-level rows (no eoiNo). Do not wipe
+    // the entire document list — that blanked completed-renew current slots.
     if (certifiedEoiNos.size === 0) {
-        return [];
+        return rows.filter(function (row) {
+            var eoiNo = row.eoiNo != null ? String(row.eoiNo).trim() : '';
+            return !eoiNo;
+        });
     }
     return rows.filter(function (row) {
         var eoiNo = row.eoiNo != null ? String(row.eoiNo).trim() : '';

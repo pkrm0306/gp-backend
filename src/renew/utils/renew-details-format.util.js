@@ -91,6 +91,11 @@ function mergeRenewDocumentSources() {
     return dedupeRenewDocuments(flat);
 }
 function mapRenewDocument(doc) {
+    var _a;
+    var cycleRaw = doc.renewalCycleId;
+    var renewalCycleId = cycleRaw != null && String(cycleRaw).trim() !== ''
+        ? String(cycleRaw)
+        : cycleRaw;
     return {
         _id: doc._id,
         productDocumentId: doc.productDocumentId,
@@ -98,7 +103,9 @@ function mapRenewDocument(doc) {
         manufacturerId: doc.manufacturerId,
         urnNo: doc.urnNo,
         eoiNo: doc.eoiNo,
-        renewalCycleId: doc.renewalCycleId,
+        // Required for admin certified-browse cycle filters (must not strip stamps).
+        processType: (_a = doc.processType) !== null && _a !== void 0 ? _a : 'renewal',
+        renewalCycleId: renewalCycleId,
         documentForm: doc.documentForm,
         documentFormSubsection: doc.documentFormSubsection,
         formPrimaryId: doc.formPrimaryId,

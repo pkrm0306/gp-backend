@@ -121,8 +121,13 @@ export function filterRenewRowsByCertifiedEoi<T extends Record<string, unknown>>
   rows: T[],
   certifiedEoiNos: Set<string>,
 ): T[] {
+  // No certified EOIs found: still keep URN-level rows (no eoiNo). Do not wipe
+  // the entire document list — that blanked completed-renew current slots.
   if (certifiedEoiNos.size === 0) {
-    return [];
+    return rows.filter((row) => {
+      const eoiNo = row.eoiNo != null ? String(row.eoiNo).trim() : '';
+      return !eoiNo;
+    });
   }
   return rows.filter((row) => {
     const eoiNo = row.eoiNo != null ? String(row.eoiNo).trim() : '';

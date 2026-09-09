@@ -63,6 +63,11 @@ export function mergeRenewDocumentSources(
 }
 
 export function mapRenewDocument(doc: DocRow): DocRow {
+  const cycleRaw = doc.renewalCycleId;
+  const renewalCycleId =
+    cycleRaw != null && String(cycleRaw).trim() !== ''
+      ? String(cycleRaw)
+      : cycleRaw;
   return {
     _id: doc._id,
     productDocumentId: doc.productDocumentId,
@@ -70,7 +75,9 @@ export function mapRenewDocument(doc: DocRow): DocRow {
     manufacturerId: doc.manufacturerId,
     urnNo: doc.urnNo,
     eoiNo: doc.eoiNo,
-    renewalCycleId: doc.renewalCycleId,
+    // Required for admin certified-browse cycle filters (must not strip stamps).
+    processType: doc.processType ?? 'renewal',
+    renewalCycleId,
     documentForm: doc.documentForm,
     documentFormSubsection: doc.documentFormSubsection,
     formPrimaryId: doc.formPrimaryId,

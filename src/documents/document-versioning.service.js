@@ -325,6 +325,9 @@ var DocumentVersioningService = function () {
                         case 0: return [4 /*yield*/, this.resolveHistoryStream(query)];
                         case 1:
                             stream = _a.sent();
+                            if (!stream) {
+                                throw new common_1.NotFoundException('Document stream not found');
+                            }
                             if (stream.isDeleted) {
                                 return [2 /*return*/, {
                                         stream: this.mapStream(stream),
