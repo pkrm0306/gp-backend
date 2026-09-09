@@ -1,9 +1,35 @@
 import {
   groupTestReportsByEoi,
+  mapRenewProductDocument,
   normalizeIncomingRenewTestReportsForReplace,
   parseIncomingRenewTestReports,
   resolveRowTestReports,
 } from './renew-product-performance-payload.util';
+
+describe('mapRenewProductDocument', () => {
+  it('preserves processType and renewalCycleId for current-cycle filters', () => {
+    const mapped = mapRenewProductDocument({
+      _id: 'd1',
+      productDocumentId: 42,
+      processType: 'renewal',
+      renewalCycleId: 'cycle-abc',
+      documentForm: 'process_product_performance',
+      documentName: 'report.pdf',
+      documentLink: '/files/report.pdf',
+    });
+    expect(mapped.processType).toBe('renewal');
+    expect(mapped.renewalCycleId).toBe('cycle-abc');
+    expect(mapped.productDocumentId).toBe(42);
+  });
+
+  it('defaults processType to renewal when omitted', () => {
+    const mapped = mapRenewProductDocument({
+      productDocumentId: 7,
+      documentLink: '/f.pdf',
+    });
+    expect(mapped.processType).toBe('renewal');
+  });
+});
 
 describe('renew-product-performance-payload.util', () => {
   it('applies default eoiNo from form when row omits it', () => {

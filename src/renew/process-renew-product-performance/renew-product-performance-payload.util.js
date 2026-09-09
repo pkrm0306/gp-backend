@@ -27,14 +27,21 @@ function mapRenewProductDocument(doc) {
         _id: doc._id,
         productDocumentId: doc.productDocumentId,
         vendorId: doc.vendorId,
+        manufacturerId: doc.manufacturerId,
         urnNo: doc.urnNo,
         eoiNo: doc.eoiNo,
+        // Required for vendor/admin current-cycle filters (must not strip stamps).
+        processType: doc.processType !== null && doc.processType !== void 0 ? doc.processType : 'renewal',
+        renewalCycleId: doc.renewalCycleId != null && String(doc.renewalCycleId).trim() !== ''
+            ? String(doc.renewalCycleId)
+            : doc.renewalCycleId,
         documentForm: doc.documentForm,
         documentFormSubsection: doc.documentFormSubsection,
         formPrimaryId: doc.formPrimaryId,
         documentName: doc.documentName,
         documentOriginalName: doc.documentOriginalName,
         documentLink: doc.documentLink,
+        documentTag: doc.documentTag,
         createdDate: doc.createdDate,
         updatedDate: doc.updatedDate,
     };
