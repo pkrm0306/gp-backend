@@ -357,14 +357,15 @@ var ProductRegistrationWorkflowService = function () {
                             pendingId = _a.sent();
                             return [3 /*break*/, 6];
                         case 9:
-                            if (!this.shouldRejectToReach(pendingId, targetPending)) return [3 /*break*/, 11];
-                            return [4 /*yield*/, this.rejectActivity(ctx, pendingId)];
+                            // Prefer forward complete over reject to avoid 1↔0 oscillation on approve.
+                            if (!this.shouldCompleteToReach(pendingId, targetPending)) return [3 /*break*/, 11];
+                            return [4 /*yield*/, this.completeActivity(ctx, pendingId)];
                         case 10:
                             _a.sent();
                             return [3 /*break*/, 14];
                         case 11:
-                            if (!this.shouldCompleteToReach(pendingId, targetPending)) return [3 /*break*/, 13];
-                            return [4 /*yield*/, this.completeActivity(ctx, pendingId)];
+                            if (!this.shouldRejectToReach(pendingId, targetPending)) return [3 /*break*/, 13];
+                            return [4 /*yield*/, this.rejectActivity(ctx, pendingId)];
                         case 12:
                             _a.sent();
                             return [3 /*break*/, 14];
@@ -401,6 +402,8 @@ var ProductRegistrationWorkflowService = function () {
                 return false;
             var rejectTarget = activity_workflow_constants_1.WORKFLOW_REJECT_TARGET[currentPending];
             if (rejectTarget == null)
+                return false;
+            if (this.shouldCompleteToReach(currentPending, targetPending))
                 return false;
             return this.shouldCompleteToReach(rejectTarget, targetPending);
         };

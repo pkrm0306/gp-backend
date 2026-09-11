@@ -268,10 +268,13 @@ export class ProductRegistrationWorkflowService {
         continue;
       }
 
-      if (this.shouldRejectToReach(pendingId, targetPending)) {
-        await this.rejectActivity(ctx, pendingId);
-      } else if (this.shouldCompleteToReach(pendingId, targetPending)) {
+      // Prefer forward complete over reject. Reject-first incorrectly treated
+      // approve 1→2 as a reject (rollback to 0 then complete forward), which
+      // oscillates forever and never opens Assign Registration Fee.
+      if (this.shouldCompleteToReach(pendingId, targetPending)) {
         await this.completeActivity(ctx, pendingId);
+      } else if (this.shouldRejectToReach(pendingId, targetPending)) {
+        await this.rejectActivity(ctx, pendingId);
       } else {
         throw new BadRequestException(
           `Invalid workflow transition from activity ${pendingId} to target ${targetPending} (urnStatus ${previousUrnStatus}→${nextUrnStatus})`,
@@ -311,6 +314,8 @@ export class ProductRegistrationWorkflowService {
     if (!(currentPending in WORKFLOW_REJECT_TARGET)) return false;
     const rejectTarget = WORKFLOW_REJECT_TARGET[currentPending];
     if (rejectTarget == null) return false;
+    // Never reject when the target is already ahead on the complete path.
+    if (this.shouldCompleteToReach(currentPending, targetPending)) return false;
     return this.shouldCompleteToReach(rejectTarget, targetPending);
   }
 }

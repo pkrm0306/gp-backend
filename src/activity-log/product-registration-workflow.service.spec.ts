@@ -127,6 +127,67 @@ describe('ProductRegistrationWorkflowService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('syncs urn status 0→1 by completing Product Approve/Reject (not reject oscillation)', async () => {
+    const { service, saveSpy, rows } = createService([
+      {
+        urn_no: urnNo,
+        activities_id: PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
+        status: ActivityWorkflowItemStatus.Pending,
+        created_at: new Date(),
+      },
+    ]);
+
+    await service.syncToUrnStatus(ctx, 0, 1);
+
+    expect(saveSpy).toHaveBeenCalledWith(
+      ctx,
+      PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
+      ActivityWorkflowItemStatus.Done,
+    );
+    expect(saveSpy).toHaveBeenCalledWith(
+      ctx,
+      PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+      ActivityWorkflowItemStatus.Pending,
+    );
+    expect(
+      rows.filter(
+        (r) =>
+          r.activities_id ===
+            PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_REGISTRATION &&
+          r.status === ActivityWorkflowItemStatus.Pending,
+      ),
+    ).toHaveLength(0);
+    expect(
+      rows.filter(
+        (r) =>
+          r.activities_id ===
+            PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE &&
+          r.status === ActivityWorkflowItemStatus.Pending,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('syncs reject-style urn status rollback via reject when complete cannot reach target', async () => {
+    const { service, saveSpy } = createService([
+      {
+        urn_no: urnNo,
+        activities_id:
+          PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW,
+        status: ActivityWorkflowItemStatus.Pending,
+        created_at: new Date(),
+      },
+    ]);
+
+    // urnStatus 4 → 5 maps pending 7 (Review) → 5 (Process forms)
+    await service.syncToUrnStatus(ctx, 4, 5);
+
+    expect(saveSpy).toHaveBeenCalledWith(
+      ctx,
+      PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS,
+      ActivityWorkflowItemStatus.Pending,
+    );
+  });
+
   it('syncs urn status 4 to review pending without using legacy step 6', async () => {
     const { service, saveSpy } = createService([
       {
