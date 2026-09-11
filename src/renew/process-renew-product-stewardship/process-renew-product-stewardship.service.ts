@@ -306,6 +306,8 @@ export class ProcessRenewProductStewardshipService {
 
         renewalCycleObjectId,
 
+        cycleNo: Number(cycle.cycleNo ?? 1),
+
         sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
 
         formPrimaryId: processRenewProductStewardshipId,

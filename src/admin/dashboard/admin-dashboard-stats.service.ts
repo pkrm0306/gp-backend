@@ -40,6 +40,7 @@ export class AdminDashboardStatsService {
   }
 
   private certifiedActiveExpr(now: Date): Record<string, unknown> {
+    // Parity with Certified Products list: keep ongoing renewals visible.
     return {
       $and: [
         { $eq: ['$productStatus', 2] },
@@ -47,6 +48,13 @@ export class AdminDashboardStatsService {
           $or: [
             { $eq: [{ $ifNull: ['$validtillDate', null] }, null] },
             { $gte: ['$validtillDate', now] },
+            {
+              $and: [
+                { $gte: ['$urnStatus', 12] },
+                { $lte: ['$urnStatus', 17] },
+              ],
+            },
+            { $eq: ['$productRenewStatus', 1] },
           ],
         },
       ],
@@ -62,6 +70,17 @@ export class AdminDashboardStatsService {
             { $eq: ['$productStatus', 2] },
             { $ne: [{ $ifNull: ['$validtillDate', null] }, null] },
             { $lt: ['$validtillDate', now] },
+            {
+              $not: [
+                {
+                  $and: [
+                    { $gte: ['$urnStatus', 12] },
+                    { $lte: ['$urnStatus', 17] },
+                  ],
+                },
+              ],
+            },
+            { $ne: ['$productRenewStatus', 1] },
           ],
         },
       ],

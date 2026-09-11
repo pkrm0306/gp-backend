@@ -1,5 +1,6 @@
 import { Model, Types } from 'mongoose';
 import { matchActiveProducts } from '../constants/active-product.filter';
+import { matchCertifiedProductsList } from '../constants/certified-product.filter';
 import { ProductDocument } from '../schemas/product.schema';
 import {
   ProductPlant,
@@ -18,7 +19,7 @@ type CertifiedProductCountRow = {
 export function matchCertifiedProductsForManufacturerBatch(
   manufacturerIds: Types.ObjectId[],
 ): Record<string, unknown> {
-  const now = new Date();
+  const certifiedMatch = matchCertifiedProductsList();
   return matchActiveProducts({
     productStatus: CERTIFIED_PRODUCT_STATUS,
     $and: [
@@ -28,13 +29,7 @@ export function matchCertifiedProductsForManufacturerBatch(
           { vendorId: { $in: manufacturerIds } },
         ],
       },
-      {
-        $or: [
-          { validtillDate: null },
-          { validtillDate: { $exists: false } },
-          { validtillDate: { $gte: now } },
-        ],
-      },
+      { $or: (certifiedMatch.$or as Record<string, unknown>[]) ?? [] },
     ],
   });
 }

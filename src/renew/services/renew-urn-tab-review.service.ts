@@ -37,6 +37,11 @@ import {
 } from '../constants/renewal-urn-status.constants';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { renewOwnershipFields, resolveUrnRenewContext } from '../helpers/renew-common.util';
+import { DocumentVersioningService } from '../../documents/document-versioning.service';
+import {
+  renewProcessSectionKeys,
+  sectionKeysForTabReviewSlot,
+} from '../../documents/helpers/tab-review-section-keys.util';
 import {
   ProcessRenewComments,
   ProcessRenewCommentsDocument,
@@ -65,6 +70,7 @@ export class RenewUrnTabReviewService {
     @InjectModel(ProcessRenewComments.name)
     private readonly renewCommentsModel: Model<ProcessRenewCommentsDocument>,
     private readonly activityLogService: ActivityLogService,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   /**
@@ -359,6 +365,13 @@ export class RenewUrnTabReviewService {
       throw new NotFoundException('Failed to save renewal tab review');
     }
 
+    if (dto.decision === 'rejected') {
+      await this.documentVersioningService.markStreamsAwaitingRevision({
+        urnNo,
+        sectionKeys: sectionKeysForTabReviewSlot(dto.tabKey, null),
+      });
+    }
+
     const requiredCount = buildRenewRequiredReviewSlots().length;
     const summary = await this.buildSummaryForCycle(urnNo, cycleId, requiredCount);
 
@@ -408,6 +421,50 @@ export class RenewUrnTabReviewService {
         );
       }
     }
+  }
+
+  /**
+   * Mark streams for currently rejected renew tabs as awaitingRevision.
+   */
+  async markRejectedStreamsAwaitingRevision(
+    urnNo: string,
+    renewalCycleId?: string,
+  ): Promise<void> {
+    const trimmed = urnNo.trim();
+    const cycleId = await this.resolveRenewalCycleId(trimmed, renewalCycleId);
+    const rejected = await this.reviewModel
+      .find({
+        urnNo: trimmed,
+        renewalCycleId: cycleId,
+        reviewStatus: RENEW_TAB_REVIEW_STATUS.REJECTED,
+      })
+      .select('tabKey')
+      .lean()
+      .exec();
+
+    const sectionKeys = Array.from(
+      new Set(
+        rejected.flatMap((row) =>
+          sectionKeysForTabReviewSlot(String(row.tabKey), null),
+        ),
+      ),
+    );
+
+    await this.documentVersioningService.markStreamsAwaitingRevision({
+      urnNo: trimmed,
+      sectionKeys,
+    });
+  }
+
+  /**
+   * When renew document workflow becomes active, mark renew process streams awaiting
+   * so the first upload per stream allocates the next version (untouched streams stay put).
+   */
+  async markRenewWorkflowStreamsAwaitingRevision(urnNo: string): Promise<void> {
+    await this.documentVersioningService.markStreamsAwaitingRevision({
+      urnNo: urnNo.trim(),
+      sectionKeys: renewProcessSectionKeys(),
+    });
   }
 
   async getVendorRenewTabReviewGuidance(

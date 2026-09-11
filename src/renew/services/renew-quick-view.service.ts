@@ -33,6 +33,7 @@ import {
   DocStream,
   DocStreamDocument,
 } from '../../documents/schemas/doc-stream.schema';
+import { DocumentVersioningService } from '../../documents/document-versioning.service';
 import { getRenewalUrnStatusLabel } from '../constants/renewal-urn-status.constants';
 import { toRenewObjectId } from '../helpers/renew-common.util';
 import {
@@ -65,6 +66,7 @@ export class RenewQuickViewService {
   constructor(
     private readonly productRegistrationService: ProductRegistrationService,
     private readonly processRenewProductPerformanceService: ProcessRenewProductPerformanceService,
+    private readonly documentVersioningService: DocumentVersioningService,
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
     @InjectModel(PaymentDetails.name)
@@ -213,7 +215,7 @@ export class RenewQuickViewService {
     const certifiedEoiNos = new Set(
       products.map((p) => String(p.eoiNo ?? '').trim()).filter(Boolean),
     );
-    const documents = filterRenewRowsByCertifiedEoi(
+    let documents = filterRenewRowsByCertifiedEoi(
       mergeRenewDocumentSources(
         documentRows as Array<Record<string, unknown>>,
         performanceRead.product_performance_documents as Array<
@@ -230,6 +232,20 @@ export class RenewQuickViewService {
       : activeCycle?._id
         ? [activeCycle._id, null]
         : [null];
+
+    const currentVersionAllowlist =
+      await this.documentVersioningService.getCurrentVersionDocumentAllowlist(
+        trimmedUrn,
+        {
+          processType: 'renewal',
+          renewalCycleIds: streamCycleCandidates,
+        },
+      );
+    documents = this.documentVersioningService.filterDocumentsToCurrentVersion(
+      documents,
+      currentVersionAllowlist,
+    );
+
     const renewalStreams = await this.docStreamModel
       .find({
         urnNo: trimmedUrn,

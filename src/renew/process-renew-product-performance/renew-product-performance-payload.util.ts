@@ -31,6 +31,11 @@ export function mapRenewProductDocument(
     documentTag: doc.documentTag,
     createdDate: doc.createdDate,
     updatedDate: doc.updatedDate,
+    ...(doc.versionNo != null ? { versionNo: doc.versionNo } : {}),
+    ...(doc.version_no != null ? { version_no: doc.version_no } : {}),
+    ...(doc.isLatest != null ? { isLatest: doc.isLatest } : {}),
+    ...(doc.is_latest != null ? { is_latest: doc.is_latest } : {}),
+    ...(doc.renewalCycleNo != null ? { renewalCycleNo: doc.renewalCycleNo } : {}),
   };
 }
 

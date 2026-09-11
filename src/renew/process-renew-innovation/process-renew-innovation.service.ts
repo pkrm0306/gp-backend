@@ -162,6 +162,7 @@ export class ProcessRenewInnovationService {
         vendorObjectId: ownership.vendorId,
         manufacturerObjectId: ownership.manufacturerId,
         renewalCycleObjectId,
+        cycleNo: Number(cycle.cycleNo ?? 1),
         sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
         formPrimaryId: saved!.processRenewInnovationId,
         urnStatus,

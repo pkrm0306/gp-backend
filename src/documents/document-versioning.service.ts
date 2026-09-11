@@ -1,16 +1,25 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { DocStream, DocStreamDocument } from './schemas/doc-stream.schema';
 import { DocVersion, DocVersionDocument } from './schemas/doc-version.schema';
 import {
-  AllRenewProductDocument,
-  AllRenewProductDocumentDocument,
-} from '../renew/schemas/all-renew-product-document.schema';
-import {
   RenewalCycle,
   RenewalCycleDocument,
 } from '../renew/schemas/renewal-cycle.schema';
+import {
+  AllProductDocument,
+  AllProductDocumentDocument,
+} from '../product-design/schemas/all-product-document.schema';
+import {
+  AllRenewProductDocument,
+  AllRenewProductDocumentDocument,
+} from '../renew/schemas/all-renew-product-document.schema';
 import {
   buildAllProductDocumentTrackInput,
   buildPaymentDocumentTrackInput,
@@ -21,32 +30,22 @@ import {
   toObjectId,
 } from './helpers/document-version.helper';
 import {
-  certificationSlotKey,
-  usesRenewPerDocumentVersionSlot,
-} from './helpers/certification-document-version.util';
-import {
   DocumentStreamQueryInput,
   TrackAllProductDocumentInput,
   TrackDocumentVersionChangeInput,
   TrackPaymentDocumentInput,
 } from './types/document-version.types';
 
-function normalizeHistoryPath(value: unknown): string {
-  return String(value ?? '')
-    .trim()
-    .replace(/\\/g, '/')
-    .toLowerCase();
-}
-
-function normalizeHistoryFileName(value: unknown): string {
-  const raw = normalizeHistoryPath(value);
-  if (!raw) return '';
-  const parts = raw.split('/');
-  return parts[parts.length - 1] || raw;
-}
+type DocumentIdentitySets = {
+  activeProductDocumentIds: Set<number>;
+  activeFilePaths: Set<string>;
+  /** Vendor-removed files only — superseded soft-deletes are NOT included. */
+  historyHiddenProductDocumentIds: Set<number>;
+  historyHiddenFilePaths: Set<string>;
+};
 
 @Injectable()
-export class DocumentVersioningService {
+export class DocumentVersioningService implements OnModuleInit {
   private readonly logger = new Logger(DocumentVersioningService.name);
 
   constructor(
@@ -55,30 +54,755 @@ export class DocumentVersioningService {
     private readonly docStreamModel: Model<DocStreamDocument>,
     @InjectModel(DocVersion.name)
     private readonly docVersionModel: Model<DocVersionDocument>,
-    @InjectModel(AllRenewProductDocument.name)
-    private readonly renewDocumentModel: Model<AllRenewProductDocumentDocument>,
     @InjectModel(RenewalCycle.name)
     private readonly renewalCycleModel: Model<RenewalCycleDocument>,
+    @InjectModel(AllProductDocument.name)
+    private readonly allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(AllRenewProductDocument.name)
+    private readonly allRenewProductDocumentModel: Model<AllRenewProductDocumentDocument>,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.ensureDocVersionIndexes();
+    } catch (error) {
+      this.logger.warn(
+        `doc_versions index migration skipped: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Drop legacy unique (streamId, versionNo) so multiple files can share a lifecycle version.
+   */
+  private async ensureDocVersionIndexes(): Promise<void> {
+    const collection = this.connection.collection('doc_versions');
+    const indexes = await collection.indexes();
+    const legacy = indexes.find((idx) => idx.name === 'streamId_1_versionNo_1');
+    if (legacy?.unique) {
+      await collection.dropIndex('streamId_1_versionNo_1');
+      this.logger.log(
+        'Dropped legacy unique index streamId_1_versionNo_1 on doc_versions',
+      );
+    }
+    await this.docVersionModel.createIndexes();
+  }
+
+  /**
+   * Mark existing streams for the given section keys as awaiting vendor revision.
+   * Does not change latestVersionNo / badge.
+   */
+  async markStreamsAwaitingRevision(input: {
+    urnNo: string;
+    sectionKeys: string[];
+    session?: ClientSession;
+  }): Promise<number> {
+    const urnNo = input.urnNo.trim();
+    const sectionKeys = Array.from(
+      new Set(
+        (input.sectionKeys ?? [])
+          .map((k) => String(k ?? '').trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!urnNo || sectionKeys.length === 0) {
+      return 0;
+    }
+
+    const now = new Date();
+    const result = await this.docStreamModel
+      .updateMany(
+        {
+          urnNo,
+          processType: 'initial',
+          renewalCycleId: null,
+          sectionKey: { $in: sectionKeys },
+        },
+        {
+          $set: {
+            awaitingRevision: true,
+            updatedAt: now,
+          },
+        },
+        input.session ? { session: input.session } : {},
+      )
+      .exec();
+
+    return Number(result.modifiedCount ?? result.matchedCount ?? 0);
+  }
+
+  /**
+   * Identities for CURRENT DOCUMENT lists vs full History timelines.
+   * CURRENT uses the highest versionNo per stream that still has ≥1 active
+   * (non-deleted) file — not blindly stream.latestVersionNo (which stays at the
+   * allocation watermark even after vendor deletes every file in that version).
+   * History rows remain in doc_versions; vendor-deleted files are excluded from
+   * the CURRENT allowlist and from History API responses separately.
+   */
+  /**
+   * CURRENT document allowlist: per stream, highest versionNo that still has ≥1
+   * displayable file.
+   * Defaults to initial-certification streams (processType=initial).
+   * Pass processType:'renewal' (+ optional renewalCycleIds) for renew Quick View.
+   *
+   * excludeOpenRenewalCycles: Certified Products must resolve the last COMPLETED
+   * certification — open renew versions (V5/V6 mid-cycle) are excluded. Soft-deleted
+   * superseded files from the completed version remain eligible (not historyHidden).
+   */
+  async getCurrentVersionDocumentAllowlist(
+    urnNo: string,
+    options?: {
+      processType?: 'initial' | 'renewal';
+      renewalCycleIds?: Array<string | Types.ObjectId | null | undefined>;
+      excludeOpenRenewalCycles?: boolean;
+    },
+  ): Promise<{
+    productDocumentIds: Set<number>;
+    filePaths: Set<string>;
+    historicalProductDocumentIds: Set<number>;
+    historicalFilePaths: Set<string>;
+    hasVersionedStreams: boolean;
+  }> {
+    const trimmed = urnNo.trim();
+    const productDocumentIds = new Set<number>();
+    const filePaths = new Set<string>();
+    const historicalProductDocumentIds = new Set<number>();
+    const historicalFilePaths = new Set<string>();
+
+    const processType = options?.processType ?? 'initial';
+    const streamFilter: Record<string, unknown> = {
+      urnNo: trimmed,
+      processType,
+      latestVersionNo: { $gt: 0 },
+    };
+
+    if (processType === 'initial') {
+      streamFilter.renewalCycleId = null;
+    } else if (options?.renewalCycleIds && options.renewalCycleIds.length > 0) {
+      const cycleValues = options.renewalCycleIds.map((id) => {
+        if (id == null || id === '') return null;
+        if (id instanceof Types.ObjectId) return id;
+        return normalizeRenewalCycleId(String(id));
+      });
+      streamFilter.renewalCycleId = { $in: cycleValues };
+    }
+
+    const streams = await this.docStreamModel
+      .find(streamFilter)
+      .select('_id latestVersionNo')
+      .lean()
+      .exec();
+
+    if (!streams.length) {
+      return {
+        productDocumentIds,
+        filePaths,
+        historicalProductDocumentIds,
+        historicalFilePaths,
+        hasVersionedStreams: false,
+      };
+    }
+
+    const streamIds = streams.map((stream) => stream._id);
+    const [trackedVersions, identities] = await Promise.all([
+      this.docVersionModel
+        .find({
+          streamId: { $in: streamIds },
+          action: { $ne: 'deleted' },
+        })
+        .select('streamId versionNo productDocumentId filePath renewalCycleId processType')
+        .lean()
+        .exec(),
+      this.loadProductDocumentIdentitiesForUrn(trimmed),
+    ]);
+
+    const allTrackedVersions = trackedVersions as Array<Record<string, unknown>>;
+
+    // Historical identities must include open-cycle rows so live renew files are not
+    // treated as "untracked" and kept in Certified CURRENT by fail-open.
+    for (const version of allTrackedVersions) {
+      const pid = Number(version.productDocumentId);
+      if (Number.isFinite(pid) && pid > 0) {
+        historicalProductDocumentIds.add(pid);
+      }
+      const path = String(version.filePath ?? '').trim().toLowerCase();
+      if (path) {
+        historicalFilePaths.add(path);
+      }
+    }
+
+    let versionsForCurrentTip = allTrackedVersions;
+    if (options?.excludeOpenRenewalCycles) {
+      versionsForCurrentTip = await this.applyOpenCycleFilter(
+        { urnNo: trimmed, includeOpenCycleVersions: false },
+        allTrackedVersions,
+      );
+    }
+
+    const displayableVersionByStream = options?.excludeOpenRenewalCycles
+      ? this.resolveDisplayableVersionNoByStreamForCompletedCertification(
+          versionsForCurrentTip,
+          identities,
+        )
+      : this.resolveDisplayableVersionNoByStream(versionsForCurrentTip, identities);
+
+    for (const version of versionsForCurrentTip) {
+      const streamKey = String(version.streamId);
+      const displayableVersion = displayableVersionByStream.get(streamKey);
+      if (
+        displayableVersion == null ||
+        Number(version.versionNo) !== displayableVersion
+      ) {
+        continue;
+      }
+      const rowActive = options?.excludeOpenRenewalCycles
+        ? !this.isVersionRowHiddenFromHistory(version, identities)
+        : this.isVersionRowActive(version, identities);
+      if (!rowActive) {
+        continue;
+      }
+      const pid = Number(version.productDocumentId);
+      if (Number.isFinite(pid) && pid > 0) {
+        productDocumentIds.add(pid);
+      }
+      const path = String(version.filePath ?? '').trim().toLowerCase();
+      if (path) {
+        filePaths.add(path);
+      }
+    }
+
+    return {
+      productDocumentIds,
+      filePaths,
+      historicalProductDocumentIds,
+      historicalFilePaths,
+      hasVersionedStreams: true,
+    };
+  }
+
+  /**
+   * Soft-deleted-but-not-historyHidden files that belong to the completed-cert
+   * CURRENT allowlist (needed when renew supersede soft-deleted the prior tip).
+   */
+  async loadCompletedCertificationDocumentsByAllowlist(
+    urnNo: string,
+    allowlist: {
+      productDocumentIds: Set<number>;
+      filePaths: Set<string>;
+    },
+  ): Promise<Array<Record<string, unknown>>> {
+    const trimmed = urnNo.trim();
+    const pids = [...allowlist.productDocumentIds].filter(
+      (n) => Number.isFinite(n) && n > 0,
+    );
+    if (!pids.length) return [];
+
+    const rows = await this.allProductDocumentModel
+      .find({
+        urnNo: trimmed,
+        productDocumentId: { $in: pids },
+        historyHidden: { $ne: true },
+      })
+      .lean()
+      .exec();
+
+    return (rows as Array<Record<string, unknown>>).filter((doc) => {
+      const pid = Number(doc.productDocumentId ?? 0);
+      if (Number.isFinite(pid) && pid > 0 && allowlist.productDocumentIds.has(pid)) {
+        return true;
+      }
+      const path = String(doc.documentLink ?? '')
+        .trim()
+        .toLowerCase();
+      return Boolean(path && allowlist.filePaths.has(path));
+    });
+  }
+
+  /**
+   * Stamp `versionNo` (and related fields) onto live document rows from doc_versions.
+   * Used so CURRENT UI can keep only the latest active version group without
+   * mutating History rows.
+   */
+  async stampProductDocumentVersionNos<T extends Record<string, unknown>>(
+    urnNo: string,
+    docs: T[],
+  ): Promise<T[]> {
+    if (!Array.isArray(docs) || docs.length === 0) {
+      return docs;
+    }
+    const pids = [
+      ...new Set(
+        docs
+          .map((doc) =>
+            Number(doc.productDocumentId ?? doc.product_document_id ?? 0),
+          )
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    ];
+    if (!pids.length) {
+      return docs;
+    }
+
+    const versions = await this.docVersionModel
+      .find({
+        urnNo: urnNo.trim(),
+        productDocumentId: { $in: pids },
+        action: { $ne: 'deleted' },
+      })
+      .select(
+        'productDocumentId versionNo processType renewalCycleId renewalCycleNo isLatest',
+      )
+      .lean()
+      .exec();
+
+    type VersionMeta = {
+      versionNo: number;
+      processType?: string;
+      renewalCycleId?: unknown;
+      renewalCycleNo?: number | null;
+      isLatest?: boolean;
+    };
+    const byPid = new Map<number, VersionMeta>();
+    for (const version of versions) {
+      const pid = Number(version.productDocumentId);
+      if (!Number.isFinite(pid) || pid <= 0) continue;
+      const versionNo = Number(version.versionNo);
+      if (!Number.isFinite(versionNo) || versionNo <= 0) continue;
+      const prev = byPid.get(pid);
+      if (!prev || versionNo > prev.versionNo) {
+        byPid.set(pid, {
+          versionNo,
+          processType:
+            typeof version.processType === 'string'
+              ? version.processType
+              : undefined,
+          renewalCycleId: version.renewalCycleId,
+          renewalCycleNo:
+            version.renewalCycleNo != null &&
+            Number.isFinite(Number(version.renewalCycleNo))
+              ? Number(version.renewalCycleNo)
+              : null,
+          isLatest: version.isLatest === true,
+        });
+      }
+    }
+
+    if (!byPid.size) {
+      return docs;
+    }
+
+    return docs.map((doc) => {
+      const pid = Number(doc.productDocumentId ?? doc.product_document_id ?? 0);
+      const meta = byPid.get(pid);
+      if (!meta) return doc;
+      return {
+        ...doc,
+        versionNo: meta.versionNo,
+        version_no: meta.versionNo,
+        isLatest: meta.isLatest === true,
+        is_latest: meta.isLatest === true,
+        ...(meta.processType
+          ? { processType: meta.processType, process_type: meta.processType }
+          : {}),
+        ...(meta.renewalCycleId != null
+          ? {
+              renewalCycleId: meta.renewalCycleId,
+              renewal_cycle_id: meta.renewalCycleId,
+            }
+          : {}),
+        ...(meta.renewalCycleNo != null
+          ? { renewalCycleNo: meta.renewalCycleNo, renewal_cycle_no: meta.renewalCycleNo }
+          : {}),
+      };
+    });
+  }
+
+  /**
+   * Keep only documents that belong to the displayable current version of their stream
+   * (highest versionNo with ≥1 active file). Does not mutate History (doc_versions).
+   */
+  filterDocumentsToCurrentVersion<T extends Record<string, unknown>>(
+    docs: T[],
+    allowlist: {
+      productDocumentIds: Set<number>;
+      filePaths: Set<string>;
+      historicalProductDocumentIds?: Set<number>;
+      historicalFilePaths?: Set<string>;
+      hasVersionedStreams: boolean;
+    },
+    options?: {
+      /** Certified CURRENT: only allowlist tip identities — never fail-open untracked rows. */
+      strictAllowlist?: boolean;
+    },
+  ): T[] {
+    if (!Array.isArray(docs) || docs.length === 0) {
+      return docs;
+    }
+    if (!allowlist.hasVersionedStreams) {
+      return docs;
+    }
+
+    const historicalIds = allowlist.historicalProductDocumentIds ?? new Set<number>();
+    const historicalPaths = allowlist.historicalFilePaths ?? new Set<string>();
+    const hasCurrent =
+      allowlist.productDocumentIds.size > 0 || allowlist.filePaths.size > 0;
+    const hasHistorical = historicalIds.size > 0 || historicalPaths.size > 0;
+
+    // No active files on any displayable version: hide known History identities
+    // (do not resurrect older-cycle rows as "current" via empty allowlist).
+    if (!hasCurrent && !hasHistorical) {
+      return docs;
+    }
+
+    return docs.filter((doc) => {
+      const pid = Number(
+        doc.productDocumentId ?? doc.product_document_id ?? 0,
+      );
+      const path = String(
+        doc.documentLink ?? doc.document_link ?? doc.filePath ?? doc.file_path ?? '',
+      )
+        .trim()
+        .toLowerCase();
+
+      if (Number.isFinite(pid) && pid > 0 && allowlist.productDocumentIds.has(pid)) {
+        return true;
+      }
+      if (path && allowlist.filePaths.has(path)) {
+        return true;
+      }
+
+      if (options?.strictAllowlist) {
+        return false;
+      }
+
+      // Known History identities that are not on the displayable version stay out of CURRENT.
+      if (Number.isFinite(pid) && pid > 0 && historicalIds.has(pid)) {
+        return false;
+      }
+      if (path && historicalPaths.has(path)) {
+        return false;
+      }
+
+      // Not present in History — keep (legacy / untracked live docs).
+      return true;
+    });
+  }
+
+  /**
+   * Product document IDs that do not yet have any doc_versions row.
+   * Used to backfill renew uploads that skipped version tracking.
+   */
+  async filterUntrackedProductDocumentIds(
+    productDocumentIds: number[],
+    session?: ClientSession,
+  ): Promise<number[]> {
+    const ids = [
+      ...new Set(
+        productDocumentIds.filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    ];
+    if (!ids.length) return [];
+
+    let query = this.docVersionModel
+      .find({ productDocumentId: { $in: ids } })
+      .select('productDocumentId')
+      .lean();
+    if (session) {
+      query = query.session(session);
+    }
+    const rows = await query.exec();
+    const tracked = new Set(
+      rows
+        .map((row) => Number(row.productDocumentId))
+        .filter((n) => Number.isFinite(n) && n > 0),
+    );
+    return ids.filter((id) => !tracked.has(id));
+  }
+
+  private async loadProductDocumentIdentitiesForUrn(
+    urnNo: string,
+  ): Promise<DocumentIdentitySets> {
+    const [certRows, renewRows] = await Promise.all([
+      this.allProductDocumentModel
+        .find({ urnNo })
+        .select('productDocumentId documentLink isDeleted historyHidden')
+        .lean()
+        .exec(),
+      this.allRenewProductDocumentModel
+        .find({ urnNo })
+        .select('productDocumentId documentLink isDeleted historyHidden')
+        .lean()
+        .exec(),
+    ]);
+
+    const activeProductDocumentIds = new Set<number>();
+    const activeFilePaths = new Set<string>();
+    const historyHiddenProductDocumentIds = new Set<number>();
+    const historyHiddenFilePaths = new Set<string>();
+
+    const ingest = (
+      rows: Array<{
+        productDocumentId?: number;
+        documentLink?: string;
+        isDeleted?: boolean;
+        historyHidden?: boolean;
+      }>,
+    ) => {
+      for (const row of rows) {
+        const pid = Number(row.productDocumentId);
+        const path = String(row.documentLink ?? '').trim().toLowerCase();
+        if (row.historyHidden === true) {
+          if (Number.isFinite(pid) && pid > 0) {
+            historyHiddenProductDocumentIds.add(pid);
+          }
+          if (path) {
+            historyHiddenFilePaths.add(path);
+          }
+        }
+        if (row.isDeleted === true) {
+          continue;
+        }
+        if (Number.isFinite(pid) && pid > 0) {
+          activeProductDocumentIds.add(pid);
+        }
+        if (path) {
+          activeFilePaths.add(path);
+        }
+      }
+    };
+
+    ingest(certRows);
+    ingest(renewRows);
+
+    return {
+      activeProductDocumentIds,
+      activeFilePaths,
+      historyHiddenProductDocumentIds,
+      historyHiddenFilePaths,
+    };
+  }
+
+  /** Vendor-removed files only (not upload supersede soft-deletes). */
+  private isVersionRowHiddenFromHistory(
+    version: Record<string, unknown>,
+    identities: DocumentIdentitySets,
+  ): boolean {
+    const pid = Number(version.productDocumentId ?? 0);
+    const path = String(version.filePath ?? '').trim().toLowerCase();
+    if (
+      Number.isFinite(pid) &&
+      pid > 0 &&
+      identities.historyHiddenProductDocumentIds.has(pid)
+    ) {
+      return true;
+    }
+    if (path && identities.historyHiddenFilePaths.has(path)) {
+      return true;
+    }
+    return false;
+  }
+
+  private isVersionRowActive(
+    version: Record<string, unknown>,
+    identities: DocumentIdentitySets,
+  ): boolean {
+    if (this.isVersionRowHiddenFromHistory(version, identities)) {
+      return false;
+    }
+
+    const pid = Number(version.productDocumentId ?? 0);
+    const path = String(version.filePath ?? '').trim().toLowerCase();
+
+    if (Number.isFinite(pid) && pid > 0) {
+      return identities.activeProductDocumentIds.has(pid);
+    }
+
+    // Payment / path-only rows: active when path is live.
+    if (path) {
+      return identities.activeFilePaths.has(path);
+    }
+
+    return false;
+  }
+
+  /**
+   * Per stream: highest versionNo that still has ≥1 active (non-deleted) file.
+   * Does not mutate stream.latestVersionNo (allocation watermark).
+   */
+  private resolveDisplayableVersionNoByStream(
+    versions: Array<Record<string, unknown>>,
+    identities: DocumentIdentitySets,
+  ): Map<string, number> {
+    const displayable = new Map<string, number>();
+    for (const version of versions) {
+      if (!this.isVersionRowActive(version, identities)) {
+        continue;
+      }
+      const streamKey = String(version.streamId ?? '');
+      if (!streamKey) continue;
+      const versionNo = Number(version.versionNo);
+      if (!Number.isFinite(versionNo) || versionNo <= 0) continue;
+      const prev = displayable.get(streamKey) ?? 0;
+      if (versionNo > prev) {
+        displayable.set(streamKey, versionNo);
+      }
+    }
+    return displayable;
+  }
+
+  /**
+   * Certified Products: highest version among completed-cert versions whose files
+   * are not vendor-deleted (historyHidden). Soft-deleted superseded uploads still count
+   * so an open renew cannot blank the previous completed certification.
+   */
+  private resolveDisplayableVersionNoByStreamForCompletedCertification(
+    versions: Array<Record<string, unknown>>,
+    identities: DocumentIdentitySets,
+  ): Map<string, number> {
+    const displayable = new Map<string, number>();
+    for (const version of versions) {
+      if (this.isVersionRowHiddenFromHistory(version, identities)) {
+        continue;
+      }
+      const streamKey = String(version.streamId ?? '');
+      if (!streamKey) continue;
+      const versionNo = Number(version.versionNo);
+      if (!Number.isFinite(versionNo) || versionNo <= 0) continue;
+      const prev = displayable.get(streamKey) ?? 0;
+      if (versionNo > prev) {
+        displayable.set(streamKey, versionNo);
+      }
+    }
+    return displayable;
+  }
+
+  /**
+   * Resolve the version number for an upload on this stream.
+   * - awaitingRevision → atomically allocate next version (first post-resend upload)
+   * - latestVersionNo <= 0 → allocate V1 (first ever upload)
+   * - otherwise → reuse current latestVersionNo (same review cycle)
+   */
+  private async resolveStreamVersionNoForUpload(
+    stream: DocStreamDocument,
+    activeSession: ClientSession,
+    now: Date,
+    userObjectId: Types.ObjectId,
+  ): Promise<number> {
+    if (stream.awaitingRevision) {
+      const claimed = await this.docStreamModel
+        .findOneAndUpdate(
+          { _id: stream._id, awaitingRevision: true },
+          {
+            $inc: { latestVersionNo: 1 },
+            $set: {
+              awaitingRevision: false,
+              updatedAt: now,
+              updatedBy: userObjectId,
+            },
+          },
+          { new: true, session: activeSession },
+        )
+        .exec();
+
+      if (claimed) {
+        return Number(claimed.latestVersionNo);
+      }
+
+      const refreshed = await this.docStreamModel
+        .findById(stream._id)
+        .session(activeSession)
+        .exec();
+      const n = Number(refreshed?.latestVersionNo ?? stream.latestVersionNo ?? 1);
+      return n > 0 ? n : 1;
+    }
+
+    const current = Number(stream.latestVersionNo ?? 0);
+    if (current > 0) {
+      return current;
+    }
+
+    const claimedFirst = await this.docStreamModel
+      .findOneAndUpdate(
+        { _id: stream._id, latestVersionNo: { $lte: 0 } },
+        {
+          $set: {
+            latestVersionNo: 1,
+            awaitingRevision: false,
+            updatedAt: now,
+            updatedBy: userObjectId,
+          },
+        },
+        { new: true, session: activeSession },
+      )
+      .exec();
+
+    if (claimedFirst) {
+      return 1;
+    }
+
+    const refreshed = await this.docStreamModel
+      .findById(stream._id)
+      .session(activeSession)
+      .exec();
+    const n = Number(refreshed?.latestVersionNo ?? 1);
+    return n > 0 ? n : 1;
+  }
 
   async trackDocumentVersionChange(
     input: TrackDocumentVersionChangeInput,
   ): Promise<{ streamId: Types.ObjectId; versionId: Types.ObjectId; versionNo: number }> {
+    // Vendor-initiated deletes must not create History rows.
+    if (input.action === 'deleted') {
+      return {
+        streamId: new Types.ObjectId(),
+        versionId: new Types.ObjectId(),
+        versionNo: 0,
+      };
+    }
+
     const ownsSession = !input.session;
     const session = input.session ?? (await this.connection.startSession());
 
     const run = async (activeSession: ClientSession) => {
       const now = new Date();
       const userObjectId = toObjectId(input.userId, 'userId');
-      const processType = normalizeProcessType(input.processType);
-      const renewalCycleId = normalizeRenewalCycleId(input.renewalCycleId);
+      const versionProcessType = normalizeProcessType(input.processType);
+      const versionRenewalCycleId = normalizeRenewalCycleId(input.renewalCycleId);
       const urnNo = input.urnNo.trim();
       const subsectionKey = input.subsectionKey ?? null;
       const slotKey = input.slotKey;
+      const filePath =
+        input.filePath != null && String(input.filePath).trim() !== ''
+          ? String(input.filePath).trim()
+          : null;
+      const productDocumentId =
+        input.productDocumentId != null &&
+        Number.isFinite(Number(input.productDocumentId))
+          ? Number(input.productDocumentId)
+          : null;
+
+      let renewalCycleNo = input.renewalCycleNo ?? null;
+      if (
+        renewalCycleNo == null &&
+        versionProcessType === 'renewal' &&
+        versionRenewalCycleId != null
+      ) {
+        const cycle = await this.renewalCycleModel
+          .findById(versionRenewalCycleId)
+          .select('cycleNo')
+          .lean()
+          .session(activeSession)
+          .exec();
+        const no = Number(cycle?.cycleNo);
+        if (Number.isFinite(no) && no > 0) {
+          renewalCycleNo = no;
+        }
+      }
+
       const streamKey = buildStreamKey({
         urnNo,
-        processType,
-        renewalCycleId,
         sectionKey: input.sectionKey,
         subsectionKey,
         slotKey,
@@ -87,8 +811,8 @@ export class DocumentVersioningService {
       let stream = await this.docStreamModel
         .findOne({
           urnNo,
-          processType,
-          renewalCycleId,
+          processType: 'initial',
+          renewalCycleId: null,
           sectionKey: input.sectionKey,
           subsectionKey,
           slotKey,
@@ -96,23 +820,13 @@ export class DocumentVersioningService {
         .session(activeSession)
         .exec();
 
-      const nextVersionNo = (stream?.latestVersionNo ?? 0) + 1;
-
-      if (stream?.latestVersionId) {
-        await this.docVersionModel.updateOne(
-          { _id: stream.latestVersionId },
-          { $set: { isLatest: false } },
-          { session: activeSession },
-        );
-      }
-
       if (!stream) {
         const createdStreams = await this.docStreamModel.create(
           [
             {
               urnNo,
-              processType,
-              renewalCycleId,
+              processType: 'initial',
+              renewalCycleId: null,
               sectionKey: input.sectionKey,
               subsectionKey,
               slotKey,
@@ -125,6 +839,7 @@ export class DocumentVersioningService {
               },
               latestVersionNo: 0,
               latestVersionId: null,
+              awaitingRevision: false,
               isDeleted: false,
               createdAt: now,
               createdBy: userObjectId,
@@ -137,31 +852,84 @@ export class DocumentVersioningService {
         stream = createdStreams[0];
       }
 
-      const versionDocs = await this.docVersionModel.create(
-        [
-          {
-            streamId: stream._id,
-            urnNo,
-            processType,
-            renewalCycleId,
-            roundNo: input.roundNo ?? null,
-            versionNo: nextVersionNo,
-            action: input.action,
-            filePath: input.filePath ?? null,
-            originalName: input.originalName ?? null,
-            storedName: input.storedName ?? null,
-            mimeType: input.mimeType ?? null,
-            sizeBytes: input.sizeBytes ?? null,
-            checksum: input.checksum ?? null,
-            isLatest: true,
-            createdAt: now,
-            createdBy: userObjectId,
-          },
-        ],
+      const forced = Number(input.lifecycleVersionNo);
+      const versionNo =
+        Number.isFinite(forced) && forced > 0
+          ? forced
+          : await this.resolveStreamVersionNoForUpload(
+              stream,
+              activeSession,
+              now,
+              userObjectId,
+            );
+
+      // Older lifecycle versions are no longer "latest".
+      await this.docVersionModel.updateMany(
+        { streamId: stream._id, versionNo: { $lt: versionNo } },
+        { $set: { isLatest: false } },
         { session: activeSession },
       );
-      const version = versionDocs[0];
 
+      const identityFilter: Record<string, unknown> = {
+        streamId: stream._id,
+        versionNo,
+      };
+      if (productDocumentId != null) {
+        identityFilter.productDocumentId = productDocumentId;
+      } else if (filePath) {
+        identityFilter.filePath = filePath;
+      }
+
+      let version = await this.docVersionModel
+        .findOne(identityFilter)
+        .session(activeSession)
+        .exec();
+
+      if (version) {
+        version.action = input.action;
+        version.processType = versionProcessType;
+        version.renewalCycleId = versionRenewalCycleId;
+        version.renewalCycleNo = renewalCycleNo;
+        version.roundNo = input.roundNo ?? null;
+        version.filePath = filePath;
+        version.originalName = input.originalName ?? null;
+        version.storedName = input.storedName ?? null;
+        version.mimeType = input.mimeType ?? null;
+        version.sizeBytes = input.sizeBytes ?? null;
+        version.checksum = input.checksum ?? null;
+        version.productDocumentId = productDocumentId;
+        version.isLatest = true;
+        await version.save({ session: activeSession });
+      } else {
+        const versionDocs = await this.docVersionModel.create(
+          [
+            {
+              streamId: stream._id,
+              urnNo,
+              processType: versionProcessType,
+              renewalCycleId: versionRenewalCycleId,
+              renewalCycleNo,
+              roundNo: input.roundNo ?? null,
+              versionNo,
+              action: input.action,
+              productDocumentId,
+              filePath,
+              originalName: input.originalName ?? null,
+              storedName: input.storedName ?? null,
+              mimeType: input.mimeType ?? null,
+              sizeBytes: input.sizeBytes ?? null,
+              checksum: input.checksum ?? null,
+              isLatest: true,
+              createdAt: now,
+              createdBy: userObjectId,
+            },
+          ],
+          { session: activeSession },
+        );
+        version = versionDocs[0];
+      }
+
+      const nextLatest = Math.max(Number(stream.latestVersionNo ?? 0), versionNo);
       await this.docStreamModel.updateOne(
         { _id: stream._id },
         {
@@ -172,9 +940,9 @@ export class DocumentVersioningService {
               id: toObjectId(input.liveRef.id, 'liveRef.id'),
               field: input.liveRef.field,
             },
-            latestVersionNo: nextVersionNo,
+            latestVersionNo: nextLatest,
             latestVersionId: version._id,
-            isDeleted: input.action === 'deleted',
+            isDeleted: false,
             streamKey,
             updatedAt: now,
             updatedBy: userObjectId,
@@ -186,7 +954,7 @@ export class DocumentVersioningService {
       return {
         streamId: stream._id as Types.ObjectId,
         versionId: version._id as Types.ObjectId,
-        versionNo: nextVersionNo,
+        versionNo,
       };
     };
 
@@ -214,6 +982,9 @@ export class DocumentVersioningService {
   async trackDocumentVersionChangeSafe(
     input: TrackDocumentVersionChangeInput,
   ): Promise<void> {
+    if (input.action === 'deleted') {
+      return;
+    }
     try {
       await this.trackDocumentVersionChange(input);
     } catch (error) {
@@ -237,187 +1008,267 @@ export class DocumentVersioningService {
   }
 
   async getDocumentHistory(query: DocumentStreamQueryInput) {
-    const stream = await this.resolveHistoryStream(query);
+    const { canonicalStream, legacyVersions } = await this.resolveHistoryStreams(query);
 
-    if (!stream) {
+    if (!canonicalStream) {
       throw new NotFoundException('Document stream not found');
     }
 
-    if (stream.isDeleted) {
-      return {
-        stream: this.mapStream(stream),
-        versions: [],
-      };
-    }
-
-    const versions = await this.docVersionModel
-      .find({ streamId: stream._id, action: { $ne: 'deleted' } })
-      .sort({ versionNo: -1 })
+    const canonicalVersions = await this.docVersionModel
+      .find({ streamId: canonicalStream._id })
+      .sort({ versionNo: 1, createdAt: 1 })
       .lean()
       .exec();
 
-    const filtered = await this.filterRenewHistoryVersions(
-      query,
-      versions as Array<Record<string, unknown>>,
+    const allVersions = this.mergeVersionTimelines(
+      canonicalVersions as Array<Record<string, unknown>>,
+      legacyVersions,
     );
 
-    const mapped = filtered.map((version) => this.mapVersion(version));
-    const enriched = await this.enrichInitialHistoryVersionsWithRenewSources(
-      query,
-      mapped,
+    const withoutDeletedAction = allVersions.filter(
+      (v) => String(v.action ?? '') !== 'deleted',
     );
+
+    // Vendor soft-deletes must not appear in History (DB rows stay intact).
+    const identities = await this.loadProductDocumentIdentitiesForUrn(
+      String(canonicalStream.urnNo ?? query.urnNo ?? '').trim(),
+    );
+    const withoutVendorDeletedFiles = withoutDeletedAction.filter(
+      (v) => !this.isVersionRowHiddenFromHistory(v, identities),
+    );
+
+    const filtered = await this.applyOpenCycleFilter(
+      query,
+      withoutVendorDeletedFiles,
+    );
+
+    const stream = this.mapStream(canonicalStream);
+    let displayableVersionNo = 0;
+    for (const version of filtered) {
+      const n = Number(version.versionNo);
+      if (Number.isFinite(n) && n > displayableVersionNo) {
+        displayableVersionNo = n;
+      }
+    }
+    if (displayableVersionNo > 0) {
+      // CURRENT badge / History "(current)" helpers must not use allocation watermark
+      // when vendor-deleted files removed the tip of the timeline from view.
+      stream.latestVersionNo = displayableVersionNo;
+    }
 
     return {
-      stream: this.mapStream(stream),
-      versions: enriched,
+      stream,
+      versions: filtered.map((v) => this.mapVersion(v)),
     };
   }
 
   async getLatestDocumentMetadata(query: DocumentStreamQueryInput) {
-    const stream = await this.findStreamOrThrow(query);
+    const { canonicalStream } = await this.resolveHistoryStreams(query);
 
-    if (stream.isDeleted) {
-      throw new NotFoundException('Document stream has been deleted');
-    }
-    const latestVersion = await this.docVersionModel
-      .findOne({ streamId: stream._id, isLatest: true })
-      .lean()
-      .exec();
-
-    if (!latestVersion) {
-      throw new NotFoundException('Latest document version not found for stream');
-    }
-
-    return {
-      stream: this.mapStream(stream),
-      latestVersion: this.mapVersion(latestVersion),
-    };
-  }
-
-  private async findStreamOrThrow(
-    query: DocumentStreamQueryInput,
-  ): Promise<DocStreamDocument> {
-    const stream = await this.resolveHistoryStream(query);
-
-    if (!stream) {
+    if (!canonicalStream) {
       throw new NotFoundException('Document stream not found');
     }
 
-    return stream;
-  }
-
-  private async resolveHistoryStream(
-    query: DocumentStreamQueryInput,
-  ): Promise<DocStreamDocument | null> {
-    const filter = buildStreamIdentityFilter(query);
-    let stream = await this.docStreamModel.findOne(filter).exec();
-
-    if (
-      !stream &&
-      query.anchorProductDocumentId &&
-      normalizeProcessType(query.processType) === 'renewal' &&
-      usesRenewPerDocumentVersionSlot(query.sectionKey)
-    ) {
-      const legacySlot = certificationSlotKey(
-        query.sectionKey,
-        query.subsectionKey ?? null,
-      );
-      stream = await this.docStreamModel
-        .findOne({
-          ...filter,
-          slotKey: legacySlot,
-        })
-        .exec();
+    if (canonicalStream.isDeleted) {
+      throw new NotFoundException('Document stream has been deleted');
     }
 
-    return stream;
+    const versions = await this.docVersionModel
+      .find({
+        streamId: canonicalStream._id,
+        action: { $ne: 'deleted' },
+      })
+      .sort({ versionNo: -1, createdAt: -1 })
+      .lean()
+      .exec();
+
+    const identities = await this.loadProductDocumentIdentitiesForUrn(
+      String(canonicalStream.urnNo ?? query.urnNo ?? '').trim(),
+    );
+
+    // Certified Products: open renew versions must not become the badge/CURRENT tip.
+    const visibleVersions = await this.applyOpenCycleFilter(
+      query,
+      versions as Array<Record<string, unknown>>,
+    );
+
+    const excludeOpen = query.includeOpenCycleVersions === false;
+    const displayableByStream = excludeOpen
+      ? this.resolveDisplayableVersionNoByStreamForCompletedCertification(
+          visibleVersions,
+          identities,
+        )
+      : this.resolveDisplayableVersionNoByStream(visibleVersions, identities);
+    const displayableVersionNo = displayableByStream.get(
+      String(canonicalStream._id),
+    );
+
+    if (displayableVersionNo != null && displayableVersionNo > 0) {
+      const displayableVersion = visibleVersions.find((v) => {
+        if (Number(v.versionNo) !== displayableVersionNo) return false;
+        return excludeOpen
+          ? !this.isVersionRowHiddenFromHistory(
+              v as Record<string, unknown>,
+              identities,
+            )
+          : this.isVersionRowActive(v as Record<string, unknown>, identities);
+      });
+      if (displayableVersion) {
+        const stream = this.mapStream(canonicalStream);
+        // Badge / CURRENT UI must use displayable version, not allocation watermark.
+        stream.latestVersionNo = displayableVersionNo;
+        return {
+          stream,
+          latestVersion: this.mapVersion(
+            displayableVersion as Record<string, unknown>,
+          ),
+        };
+      }
+    }
+
+    // No active CURRENT files — still expose History badge from highest
+    // non-hidden history row (e.g. renew empty slot with prior certification files).
+    let historyBadgeVersionNo = 0;
+    let historyBadgeVersion: (typeof visibleVersions)[number] | null = null;
+    for (const version of visibleVersions) {
+      if (
+        this.isVersionRowHiddenFromHistory(
+          version as Record<string, unknown>,
+          identities,
+        )
+      ) {
+        continue;
+      }
+      const n = Number(version.versionNo);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      if (n >= historyBadgeVersionNo) {
+        historyBadgeVersionNo = n;
+        historyBadgeVersion = version;
+      }
+    }
+    if (historyBadgeVersion && historyBadgeVersionNo > 0) {
+      const stream = this.mapStream(canonicalStream);
+      stream.latestVersionNo = historyBadgeVersionNo;
+      return {
+        stream,
+        latestVersion: this.mapVersion(
+          historyBadgeVersion as Record<string, unknown>,
+        ),
+      };
+    }
+
+    // No history-visible versions remain for this stream.
+    throw new NotFoundException('Latest document version not found for stream');
   }
 
-  private normalizeDocPath(value: string): string {
-    return value.trim().replace(/\\/g, '/').toLowerCase();
+  private async resolveHistoryStreams(query: DocumentStreamQueryInput): Promise<{
+    canonicalStream: DocStreamDocument | null;
+    legacyVersions: Array<Record<string, unknown>>;
+  }> {
+    const filter = buildStreamIdentityFilter(query);
+    const canonicalStream = await this.docStreamModel.findOne(filter).exec();
+
+    const legacyVersions: Array<Record<string, unknown>> = [];
+
+    if (query.renewalCycleId && Types.ObjectId.isValid(query.renewalCycleId)) {
+      const legacyCycleId = new Types.ObjectId(query.renewalCycleId);
+      const legacyStreams = await this.docStreamModel
+        .find({
+          urnNo: query.urnNo.trim(),
+          processType: 'renewal',
+          renewalCycleId: legacyCycleId,
+          sectionKey: query.sectionKey,
+          subsectionKey: query.subsectionKey ?? null,
+          slotKey: query.slotKey,
+        })
+        .exec();
+
+      for (const legacyStream of legacyStreams) {
+        const versions = await this.docVersionModel
+          .find({ streamId: legacyStream._id })
+          .lean()
+          .exec();
+        legacyVersions.push(...(versions as Array<Record<string, unknown>>));
+      }
+    }
+
+    if (!canonicalStream && legacyVersions.length === 0) {
+      return { canonicalStream: null, legacyVersions: [] };
+    }
+
+    const effectiveStream = canonicalStream ?? null;
+    return { canonicalStream: effectiveStream, legacyVersions };
   }
 
-  private async filterRenewHistoryVersions(
-    query: DocumentStreamQueryInput,
+  private mergeVersionTimelines(
+    canonical: Array<Record<string, unknown>>,
+    legacy: Array<Record<string, unknown>>,
+  ): Array<Record<string, unknown>> {
+    if (!legacy.length) return canonical;
+    const all = [...canonical, ...legacy];
+    all.sort((a, b) => {
+      const va = Number(a.versionNo ?? 0);
+      const vb = Number(b.versionNo ?? 0);
+      if (va !== vb) return va - vb;
+      const ta = new Date(String(a.createdAt ?? 0)).getTime();
+      const tb = new Date(String(b.createdAt ?? 0)).getTime();
+      return ta - tb;
+    });
+    return all;
+  }
+
+  private async applyOpenCycleFilter(
+    query: Pick<DocumentStreamQueryInput, 'includeOpenCycleVersions'> & {
+      urnNo?: string;
+    },
     versions: Array<Record<string, unknown>>,
   ): Promise<Array<Record<string, unknown>>> {
-    if (normalizeProcessType(query.processType) !== 'renewal') {
+    if (query.includeOpenCycleVersions !== false) {
       return versions;
     }
 
-    const urnNo = query.urnNo.trim();
-    const sectionKey = query.sectionKey;
-    const cycleId =
-      query.renewalCycleId && Types.ObjectId.isValid(query.renewalCycleId)
-        ? new Types.ObjectId(query.renewalCycleId)
-        : null;
+    const cycleIds = Array.from(
+      new Set(
+        versions
+          .map((v) => (v.renewalCycleId != null ? String(v.renewalCycleId).trim() : ''))
+          .filter(Boolean),
+      ),
+    );
+    if (!cycleIds.length) return versions;
 
-    const deletedFilter: Record<string, unknown> = {
-      urnNo,
-      documentForm: sectionKey,
-      isDeleted: true,
-    };
-    if (cycleId) {
-      deletedFilter.$or = [
-        { renewalCycleId: cycleId },
-        { renewalCycleId: null },
-        { renewalCycleId: { $exists: false } },
-      ];
-    }
-
-    const deletedDocs = await this.renewDocumentModel
-      .find(deletedFilter)
-      .select('documentLink productDocumentId')
+    const openCycleIds = new Set<string>();
+    const cycles = await this.renewalCycleModel
+      .find({
+        _id: {
+          $in: cycleIds
+            .filter((id) => Types.ObjectId.isValid(id))
+            .map((id) => new Types.ObjectId(id)),
+        },
+      })
+      .select('status')
       .lean()
       .exec();
-    const deletedPaths = new Set(
-      deletedDocs
-        .map((doc) => this.normalizeDocPath(String(doc.documentLink ?? '')))
-        .filter(Boolean),
-    );
 
-    let filtered = versions.filter((version) => {
-      const path = this.normalizeDocPath(String(version.filePath ?? ''));
-      return !path || !deletedPaths.has(path);
-    });
-
-    const anchorId = query.anchorProductDocumentId;
-    if (!anchorId || !usesRenewPerDocumentVersionSlot(sectionKey)) {
-      return filtered;
+    const OPEN_STATUSES = new Set([
+      'in_progress',
+      'in-progress',
+      'open',
+      'active',
+      'pending',
+      'started',
+    ]);
+    for (const cycle of cycles) {
+      const status = String(cycle.status ?? '').trim().toLowerCase();
+      if (OPEN_STATUSES.has(status)) {
+        openCycleIds.add(String(cycle._id));
+      }
     }
 
-    const docFilter: Record<string, unknown> = {
-      urnNo,
-      documentForm: sectionKey,
-      productDocumentId: anchorId,
-    };
-    if (cycleId) {
-      docFilter.renewalCycleId = cycleId;
-    }
+    if (!openCycleIds.size) return versions;
 
-    const docRows = await this.renewDocumentModel
-      .find(docFilter)
-      .select('documentLink isDeleted')
-      .lean()
-      .exec();
-    const active = docRows.find((doc) => doc.isDeleted !== true);
-    if (!active) {
-      return [];
-    }
-
-    const activePath = this.normalizeDocPath(String(active.documentLink ?? ''));
-    const deletedPathsForAnchor = new Set(
-      docRows
-        .filter((doc) => doc.isDeleted === true)
-        .map((doc) => this.normalizeDocPath(String(doc.documentLink ?? '')))
-        .filter(Boolean),
-    );
-
-    return filtered.filter((version) => {
-      const path = this.normalizeDocPath(String(version.filePath ?? ''));
-      if (!path) return false;
-      if (deletedPathsForAnchor.has(path)) return false;
-      return !activePath || path === activePath;
+    return versions.filter((v) => {
+      const cid = v.renewalCycleId != null ? String(v.renewalCycleId).trim() : '';
+      return !cid || !openCycleIds.has(cid);
     });
   }
 
@@ -466,6 +1317,11 @@ export class DocumentVersioningService {
       roundNo: version.roundNo ?? null,
       versionNo: version.versionNo,
       action: version.action,
+      productDocumentId:
+        version.productDocumentId != null &&
+        Number.isFinite(Number(version.productDocumentId))
+          ? Number(version.productDocumentId)
+          : null,
       filePath: version.filePath ?? null,
       originalName: version.originalName ?? null,
       storedName: version.storedName ?? null,
@@ -478,114 +1334,89 @@ export class DocumentVersioningService {
     };
   }
 
-  /**
-   * After renew completion, uploads are promoted onto the Initial stream with
-   * processType=initial. Re-label History rows that match renew product documents
-   * so admin Source shows Cycle N instead of Initial.
-   */
-  private async enrichInitialHistoryVersionsWithRenewSources(
-    query: DocumentStreamQueryInput,
-    versions: Array<Record<string, unknown>>,
-  ): Promise<Array<Record<string, unknown>>> {
-    if (normalizeProcessType(query.processType) !== 'initial' || versions.length === 0) {
-      return versions;
-    }
-
-    const urnNo = String(query.urnNo ?? '').trim();
-    const sectionKey = String(query.sectionKey ?? '').trim();
-    if (!urnNo || !sectionKey) return versions;
-
-    const renewDocs = await this.renewDocumentModel
-      .find({
-        urnNo,
+  async findVersionByFilePath(
+    urnNo: string,
+    sectionKey: string,
+    subsectionKey: string | null,
+    slotKey: string,
+    normalizedFilePath: string,
+    session?: ClientSession,
+  ): Promise<DocVersionDocument | null> {
+    const stream = await this.docStreamModel
+      .findOne({
+        urnNo: urnNo.trim(),
+        processType: 'initial',
+        renewalCycleId: null,
+        sectionKey,
+        subsectionKey: subsectionKey ?? null,
+        slotKey,
       })
-      .select('documentLink documentOriginalName documentName renewalCycleId documentForm')
-      .lean()
       .exec();
 
-    if (!renewDocs.length) return versions;
+    if (!stream) return null;
 
-    const cycleIds = Array.from(
-      new Set(
-        renewDocs
-          .map((doc) =>
-            doc.renewalCycleId != null ? String(doc.renewalCycleId).trim() : '',
-          )
-          .filter(Boolean),
-      ),
-    );
-
-    const cycleNoById = new Map<string, number>();
-    if (cycleIds.length > 0) {
-      const cycles = await this.renewalCycleModel
-        .find({
-          _id: {
-            $in: cycleIds
-              .filter((id) => Types.ObjectId.isValid(id))
-              .map((id) => new Types.ObjectId(id)),
-          },
-        })
-        .select('cycleNo')
-        .lean()
-        .exec();
-      for (const cycle of cycles) {
-        const id = String(cycle._id);
-        const no = Number(cycle.cycleNo);
-        if (Number.isFinite(no) && no > 0) cycleNoById.set(id, no);
-      }
-    }
-
-    type RenewMatch = { renewalCycleId: string; renewalCycleNo: number | null };
-    const byPath = new Map<string, RenewMatch>();
-    const byName = new Map<string, RenewMatch>();
-
-    for (const doc of renewDocs) {
-      const cycleId =
-        doc.renewalCycleId != null ? String(doc.renewalCycleId).trim() : '';
-      if (!cycleId) continue;
-      const match: RenewMatch = {
-        renewalCycleId: cycleId,
-        renewalCycleNo: cycleNoById.get(cycleId) ?? null,
-      };
-      const path = normalizeHistoryPath(doc.documentLink);
-      if (path) byPath.set(path, match);
-      const original = normalizeHistoryFileName(doc.documentOriginalName);
-      if (original) byName.set(original, match);
-      const stored = normalizeHistoryFileName(doc.documentName);
-      if (stored) byName.set(stored, match);
-      if (path) {
-        const pathName = normalizeHistoryFileName(path);
-        if (pathName) byName.set(pathName, match);
-      }
-    }
-
-    if (byPath.size === 0 && byName.size === 0) return versions;
-
-    return versions.map((version) => {
-      const existingProcess = String(version.processType ?? '')
-        .trim()
-        .toLowerCase();
-      if (existingProcess === 'renewal' && version.renewalCycleId) {
-        return version;
-      }
-
-      const path = normalizeHistoryPath(version.filePath);
-      const original = normalizeHistoryFileName(version.originalName);
-      const stored = normalizeHistoryFileName(version.storedName);
-      const match =
-        (path ? byPath.get(path) : undefined) ||
-        (path ? byName.get(normalizeHistoryFileName(path)) : undefined) ||
-        (original ? byName.get(original) : undefined) ||
-        (stored ? byName.get(stored) : undefined);
-
-      if (!match) return version;
-
-      return {
-        ...version,
-        processType: 'renewal',
-        renewalCycleId: match.renewalCycleId,
-        renewalCycleNo: match.renewalCycleNo,
-      };
+    const query = this.docVersionModel.findOne({
+      streamId: stream._id,
+      filePath: {
+        $regex: new RegExp(
+          normalizedFilePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i',
+        ),
+      },
     });
+    if (session) query.session(session);
+    return query.exec();
+  }
+
+  async markVersionAsCurrent(
+    versionId: Types.ObjectId,
+    urnNo: string,
+    sectionKey: string,
+    subsectionKey: string | null,
+    slotKey: string,
+    session?: ClientSession,
+  ): Promise<void> {
+    const stream = await this.docStreamModel
+      .findOne({
+        urnNo: urnNo.trim(),
+        processType: 'initial',
+        renewalCycleId: null,
+        sectionKey,
+        subsectionKey: subsectionKey ?? null,
+        slotKey,
+      })
+      .exec();
+
+    if (!stream) return;
+
+    if (stream.latestVersionId) {
+      const updatePrev = this.docVersionModel.updateOne(
+        { _id: stream.latestVersionId },
+        { $set: { isLatest: false } },
+      );
+      if (session) updatePrev.session(session);
+      await updatePrev.exec();
+    }
+
+    const updateCurrent = this.docVersionModel.updateOne(
+      { _id: versionId },
+      { $set: { isLatest: true } },
+    );
+    if (session) updateCurrent.session(session);
+    await updateCurrent.exec();
+
+    const version = await this.docVersionModel.findById(versionId).lean().exec();
+    const updateStream = this.docStreamModel.updateOne(
+      { _id: stream._id },
+      {
+        $set: {
+          latestVersionId: versionId,
+          latestVersionNo: version?.versionNo ?? stream.latestVersionNo,
+          updatedAt: new Date(),
+        },
+      },
+    );
+    if (session) updateStream.session(session);
+    await updateStream.exec();
   }
 }

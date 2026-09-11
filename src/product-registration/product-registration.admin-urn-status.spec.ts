@@ -54,6 +54,8 @@ describe('ProductRegistrationService.adminUpdateUrnStatus', () => {
       .mockResolvedValue(undefined);
     serviceAny.urnTabReviewService = {
       ensurePendingReviewsForUrn: jest.fn().mockResolvedValue(undefined),
+      assertAdminQuickViewTransitionAllowed: jest.fn().mockResolvedValue(undefined),
+      markRejectedStreamsAwaitingRevision: jest.fn().mockResolvedValue(undefined),
     };
     serviceAny.manufacturerModel = {
       findById: jest.fn().mockReturnValue({
@@ -84,8 +86,53 @@ describe('ProductRegistrationService.adminUpdateUrnStatus', () => {
       updateMany,
       updateExec,
       session,
+      markRejectedStreamsAwaitingRevision:
+        serviceAny.urnTabReviewService.markRejectedStreamsAwaitingRevision as jest.Mock,
     };
   }
+
+  it('marks rejected streams awaiting revision on Admin Resend (urn_status 5)', async () => {
+    const { service, markRejectedStreamsAwaitingRevision } =
+      createServiceHarness();
+
+    await expect(
+      service.adminUpdateUrnStatus({
+        urnNo: 'URN-202604010001',
+        updateStatusType: 'urn_status',
+        updateStatusTo: 5,
+      }),
+    ).resolves.toEqual({ urnNo: 'URN-202604010001', urnStatus: 5 });
+
+    expect(markRejectedStreamsAwaitingRevision).toHaveBeenCalledWith(
+      'URN-202604010001',
+    );
+  });
+
+  it('does not mark streams awaiting on Submit for Review', async () => {
+    const { service, markRejectedStreamsAwaitingRevision, find } =
+      createServiceHarness();
+    find.mockReturnValue({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue([
+          {
+            urnNo: 'URN-202604010001',
+            urnStatus: 5,
+            vendorId,
+            manufacturerId,
+            productName: 'Test Product',
+          },
+        ]),
+      }),
+    } as LeanExec<typeof baseProducts>);
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'urn_status',
+      updateStatusTo: 6,
+    });
+
+    expect(markRejectedStreamsAwaitingRevision).not.toHaveBeenCalled();
+  });
 
   it('rejects urn_status 12 when URN is already in renewal workflow', async () => {
     const { service, find } = createServiceHarness();

@@ -38,6 +38,8 @@ import {
 import { shouldUseRenewWorkflowForUrn } from '../renew/constants/renewal-urn-status.constants';
 import { buildVendorUrnTabAccess } from '../common/vendor/vendor-urn-tab-access.util';
 import { RenewUrnTabReviewService } from '../renew/services/renew-urn-tab-review.service';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
+import { sectionKeysForTabReviewSlot } from '../documents/helpers/tab-review-section-keys.util';
 import {
   ProcessComments,
   ProcessCommentsDocument,
@@ -73,6 +75,7 @@ export class UrnTabReviewService {
     private readonly processCommentsModel: Model<ProcessCommentsDocument>,
     @Inject(forwardRef(() => RenewUrnTabReviewService))
     private readonly renewUrnTabReviewService: RenewUrnTabReviewService,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) {}
 
   async ensurePendingReviewsForUrn(urnNo: string): Promise<void> {
@@ -321,6 +324,51 @@ export class UrnTabReviewService {
     }
   }
 
+  /**
+   * Mark document streams for currently rejected tabs as awaitingRevision.
+   * Does not change any version numbers.
+   */
+  async markRejectedStreamsAwaitingRevision(urnNo: string): Promise<void> {
+    const trimmed = urnNo.trim();
+    const context = await this.loadUrnReviewContext(trimmed);
+    if (
+      shouldUseRenewWorkflowForUrn({
+        urnStatus: context.urnStatus,
+        productRenewStatus: context.productRenewStatus,
+      })
+    ) {
+      await this.renewUrnTabReviewService.markRejectedStreamsAwaitingRevision(
+        trimmed,
+      );
+      return;
+    }
+
+    const rejected = await this.reviewModel
+      .find({
+        urnNo: trimmed,
+        reviewStatus: URN_TAB_REVIEW_STATUS.REJECTED,
+      })
+      .select('tabKey stepId')
+      .lean()
+      .exec();
+
+    const sectionKeys = Array.from(
+      new Set(
+        rejected.flatMap((row) =>
+          sectionKeysForTabReviewSlot(
+            String(row.tabKey),
+            row.stepId as number | null,
+          ),
+        ),
+      ),
+    );
+
+    await this.documentVersioningService.markStreamsAwaitingRevision({
+      urnNo: trimmed,
+      sectionKeys,
+    });
+  }
+
   async getUrnTabReviews(urnNo: string, renewalCycleId?: string) {
     const context = await this.loadUrnReviewContext(urnNo);
     if (
@@ -474,6 +522,17 @@ export class UrnTabReviewService {
 
     if (!updated) {
       throw new NotFoundException('Failed to save tab review');
+    }
+
+    if (dto.decision === 'rejected') {
+      const sectionKeys = sectionKeysForTabReviewSlot(
+        dto.tabKey,
+        stepIdStored,
+      );
+      await this.documentVersioningService.markStreamsAwaitingRevision({
+        urnNo,
+        sectionKeys,
+      });
     }
 
     const requiredSlots = buildRequiredReviewSlots(

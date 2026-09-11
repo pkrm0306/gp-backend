@@ -18,6 +18,10 @@ import {
   AllRenewProductDocument,
   AllRenewProductDocumentDocument,
 } from '../schemas/all-renew-product-document.schema';
+import {
+  RenewalCycle,
+  RenewalCycleDocument,
+} from '../schemas/renewal-cycle.schema';
 import { toRenewObjectId } from '../helpers/renew-common.util';
 import {
   fetchRenewCertifiedEoiSet,
@@ -42,9 +46,14 @@ function renewDocSlotKey(doc: {
   });
 }
 
+function normalizeFilePath(value: string | null | undefined): string {
+  return String(value ?? '').trim().replace(/\\/g, '/').toLowerCase();
+}
+
 /**
  * On renewal completion, copy renew uploads into all_product_documents and
- * point initial-process version streams at the latest file per subsection slot.
+ * point canonical (initial) version streams at each promoted file.
+ * Promotes ALL non-deleted renew docs. Stamps versions as processType "renewal".
  */
 @Injectable()
 export class RenewDocumentPromotionService {
@@ -55,6 +64,8 @@ export class RenewDocumentPromotionService {
     private readonly renewDocumentModel: Model<AllRenewProductDocumentDocument>,
     @InjectModel(AllProductDocument.name)
     private readonly allProductDocumentModel: Model<AllProductDocumentDocument>,
+    @InjectModel(RenewalCycle.name)
+    private readonly renewalCycleModel: Model<RenewalCycleDocument>,
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
     private readonly documentVersioningService: DocumentVersioningService,
@@ -68,11 +79,11 @@ export class RenewDocumentPromotionService {
       documentTag?: string | null;
       productDocumentId: number;
     },
+    renewalCycleObjectId: Types.ObjectId,
     userObjectId: Types.ObjectId,
     now: Date,
     session?: ClientSession,
   ): Promise<void> {
-    const sectionKey = String(doc.documentForm);
     const targetSlot = renewDocSlotKey(doc);
 
     const query = this.allProductDocumentModel.find({
@@ -85,6 +96,20 @@ export class RenewDocumentPromotionService {
     }
     const legacyDocs = await query.lean().exec();
 
+    const vendorDeletedLinks = await this.renewDocumentModel
+      .find({
+        urnNo: trimmedUrn,
+        documentForm: doc.documentForm,
+        renewalCycleId: renewalCycleObjectId,
+        isDeleted: true,
+      })
+      .select('documentLink')
+      .lean()
+      .exec();
+    const vendorDeletedPaths = new Set(
+      vendorDeletedLinks.map((d) => normalizeFilePath(d.documentLink)).filter(Boolean),
+    );
+
     const idsToDelete = legacyDocs
       .filter((existing) => {
         if (Number(existing.productDocumentId) === Number(doc.productDocumentId)) {
@@ -96,7 +121,9 @@ export class RenewDocumentPromotionService {
           documentTag: existing.documentTag ?? null,
           productDocumentId: Number(existing.productDocumentId),
         });
-        return existingSlot === targetSlot;
+        if (existingSlot !== targetSlot) return false;
+        const existingPath = normalizeFilePath(existing.documentLink as string | undefined);
+        return existingPath ? vendorDeletedPaths.has(existingPath) : false;
       })
       .map((row) => row._id);
 
@@ -130,6 +157,13 @@ export class RenewDocumentPromotionService {
       userId instanceof Types.ObjectId ? userId : new Types.ObjectId(String(userId));
     const now = new Date();
 
+    const cycle = await this.renewalCycleModel
+      .findById(cycleObjectId)
+      .select('cycleNo')
+      .lean()
+      .exec();
+    const cycleNo = Number(cycle?.cycleNo ?? 1);
+
     const query = this.renewDocumentModel.find({
       urnNo: trimmedUrn,
       renewalCycleId: cycleObjectId,
@@ -142,27 +176,15 @@ export class RenewDocumentPromotionService {
     const certifiedEoiNos = await fetchRenewCertifiedEoiSet(this.productModel, trimmedUrn);
     const eligibleDocs = filterRenewRowsByCertifiedEoi(docs, certifiedEoiNos);
 
-    const latestBySlot = new Map<string, (typeof eligibleDocs)[number]>();
-    for (const doc of eligibleDocs) {
-      const key = renewDocSlotKey(doc);
-      const existing = latestBySlot.get(key);
-      const docUpdated = new Date(doc.updatedDate ?? doc.createdDate ?? 0).getTime();
-      const existingUpdated = existing
-        ? new Date(existing.updatedDate ?? existing.createdDate ?? 0).getTime()
-        : -1;
-      if (!existing || docUpdated >= existingUpdated) {
-        latestBySlot.set(key, doc);
-      }
-    }
-
     let promoted = 0;
-    for (const doc of latestBySlot.values()) {
+    for (const doc of eligibleDocs) {
       try {
         const sectionKey = String(doc.documentForm);
 
         await this.softDeleteLegacyCertificationDocsInSlot(
           trimmedUrn,
           doc,
+          cycleObjectId,
           userObjectId,
           now,
           session,
@@ -181,8 +203,6 @@ export class RenewDocumentPromotionService {
             String(doc.documentForm),
             doc.documentFormSubsection ?? null,
           ) ?? doc.documentFormSubsection;
-
-        const slotSubsection = promotedSubsection;
 
         const productDocPayload = {
           productDocumentId: doc.productDocumentId,
@@ -221,28 +241,52 @@ export class RenewDocumentPromotionService {
 
         const slotKey = certificationSlotKey(
           sectionKey,
-          slotSubsection ?? null,
+          promotedSubsection ?? null,
           doc.documentTag ?? null,
         );
 
-        await this.documentVersioningService.trackDocumentVersionChange(
-          buildAllProductDocumentTrackInput({
-            urnNo: trimmedUrn,
+        const normalizedPath = normalizeFilePath(doc.documentLink);
+        const existingVersion = normalizedPath
+          ? await this.documentVersioningService.findVersionByFilePath(
+              trimmedUrn,
+              sectionKey,
+              promotedSubsection ?? null,
+              slotKey,
+              normalizedPath,
+              session,
+            )
+          : null;
+
+        if (!existingVersion) {
+          await this.documentVersioningService.trackDocumentVersionChange(
+            buildAllProductDocumentTrackInput({
+              urnNo: trimmedUrn,
+              sectionKey,
+              subsectionKey: promotedSubsection ?? null,
+              slotKey,
+              action: 'replaced',
+              documentId: promotedDocId,
+              productDocumentId: doc.productDocumentId,
+              filePath: doc.documentLink ?? null,
+              originalName: doc.documentOriginalName ?? null,
+              storedName: doc.documentName ?? null,
+              userId: userObjectId,
+              processType: 'renewal',
+              renewalCycleId: cycleObjectId,
+              renewalCycleNo: cycleNo,
+              session,
+            }),
+          );
+        } else {
+          await this.documentVersioningService.markVersionAsCurrent(
+            existingVersion._id as Types.ObjectId,
+            trimmedUrn,
             sectionKey,
-            subsectionKey: slotSubsection ?? null,
+            promotedSubsection ?? null,
             slotKey,
-            action: 'replaced',
-            documentId: promotedDocId,
-            productDocumentId: doc.productDocumentId,
-            filePath: doc.documentLink ?? null,
-            originalName: doc.documentOriginalName ?? null,
-            storedName: doc.documentName ?? null,
-            userId: userObjectId,
-            processType: 'initial',
-            renewalCycleId: null,
             session,
-          }),
-        );
+          );
+        }
         promoted += 1;
       } catch (error) {
         this.logger.warn(

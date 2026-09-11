@@ -4,8 +4,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { ProductRegistrationService } from '../../product-registration/product-registration.service';
+import { DocumentVersioningService } from '../../documents/document-versioning.service';
 import { buildManufacturingWeightedTotals } from '../../process-mp-manufacturing-units/utils/mp-manufacturing-weighted-totals.util';
 import { enrichUrnDetailRowsWithSharedProcessData } from '../../product-registration/utils/consolidate-urn-detail-items.util';
 import {
@@ -168,6 +169,7 @@ export class RenewDetailsService {
   constructor(
     private readonly productRegistrationService: ProductRegistrationService,
     private readonly processRenewProductPerformanceService: ProcessRenewProductPerformanceService,
+    private readonly documentVersioningService: DocumentVersioningService,
     @InjectModel(ProcessRenewManufacturing.name)
     private readonly renewManufacturingModel: Model<ProcessRenewManufacturingDocument>,
     @InjectModel(ProcessRenewInnovation.name)
@@ -383,7 +385,10 @@ export class RenewDetailsService {
       cycle,
     );
 
-    const documentRows = allDocuments as Array<Record<string, unknown>>;
+    const documentRows = await this.documentVersioningService.stampProductDocumentVersionNos(
+      urnNo,
+      allDocuments as Array<Record<string, unknown>>,
+    );
     const manufacturingSection = buildManufacturingSection(
       manufacturing as Record<string, unknown> | null,
       documentRows,
@@ -430,6 +435,27 @@ export class RenewDetailsService {
       certifiedEoiNos,
     );
 
+    // Quick View CURRENT lists: highest active version per renew stream.
+    // Section document arrays stay complete so tab keep-lists retain older-cycle files.
+    const renewCycleIdsForAllowlist: Array<Types.ObjectId | null> = cycle?._id
+      ? Number(cycle.cycleNo ?? 1) > 1
+        ? [cycle._id as Types.ObjectId]
+        : [cycle._id as Types.ObjectId, null]
+      : [null];
+    const currentVersionAllowlist =
+      await this.documentVersioningService.getCurrentVersionDocumentAllowlist(
+        urnNo,
+        {
+          processType: 'renewal',
+          renewalCycleIds: renewCycleIdsForAllowlist,
+        },
+      );
+    const renewDocumentsForQuickView =
+      this.documentVersioningService.filterDocumentsToCurrentVersion(
+        renewDocumentsOnly,
+        currentVersionAllowlist,
+      );
+
     return {
       cycle,
       performanceCycleId: performanceRead.renewalCycleId,
@@ -448,9 +474,9 @@ export class RenewDetailsService {
         ),
         process_mp_manufacturing_units: mpUnits,
         process_wm_manufacturing_units: wmUnits,
-        all_renew_product_documents: renewDocumentsOnly,
-        all_urn_product_documents: renewDocumentsOnly,
-        documents: renewDocumentsOnly,
+        all_renew_product_documents: renewDocumentsForQuickView,
+        all_urn_product_documents: renewDocumentsForQuickView,
+        documents: renewDocumentsForQuickView,
       },
     };
   }
@@ -811,15 +837,18 @@ export class RenewDetailsService {
     }
 
     const strictDocs = Number(cycle.cycleNo ?? 1) > 1;
-    const documentRows = (await this.renewDocumentModel
-      .find(
-        buildRenewDocumentsQueryFilter(trimmedUrn, cycle._id, {
-          strictCycleOnly: strictDocs,
-        }),
-      )
-      .sort({ productDocumentId: -1 })
-      .lean()
-      .exec()) as Array<Record<string, unknown>>;
+    const documentRows = await this.documentVersioningService.stampProductDocumentVersionNos(
+      trimmedUrn,
+      (await this.renewDocumentModel
+        .find(
+          buildRenewDocumentsQueryFilter(trimmedUrn, cycle._id, {
+            strictCycleOnly: strictDocs,
+          }),
+        )
+        .sort({ productDocumentId: -1 })
+        .lean()
+        .exec()) as Array<Record<string, unknown>>,
+    );
 
     const manufacturingSection = buildManufacturingSection(null, documentRows);
     const wasteSection = buildWasteSection(null, documentRows);
@@ -833,6 +862,21 @@ export class RenewDetailsService {
       documentRows,
       certifiedEoiNos,
     );
+    const renewCycleIdsForAllowlist: Array<Types.ObjectId | null> =
+      Number(cycle.cycleNo ?? 1) > 1 ? [cycle._id as Types.ObjectId] : [cycle._id as Types.ObjectId, null];
+    const currentVersionAllowlist =
+      await this.documentVersioningService.getCurrentVersionDocumentAllowlist(
+        trimmedUrn,
+        {
+          processType: 'renewal',
+          renewalCycleIds: renewCycleIdsForAllowlist,
+        },
+      );
+    const renewDocumentsForQuickView =
+      this.documentVersioningService.filterDocumentsToCurrentVersion(
+        scopedRenewDocuments,
+        currentVersionAllowlist,
+      );
 
     return {
       process_manufacturing_documents:
@@ -847,7 +891,7 @@ export class RenewDetailsService {
         (innovationSection.process_innovation_documents as Array<
           Record<string, unknown>
         >) ?? [],
-      all_renew_product_documents: scopedRenewDocuments,
+      all_renew_product_documents: renewDocumentsForQuickView,
     };
   }
 

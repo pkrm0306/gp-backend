@@ -97,6 +97,8 @@ import { RenewalCycleService } from './renewal-cycle.service';
 import { RenewalCycleDocument, RenewalCycleStatus } from '../schemas/renewal-cycle.schema';
 import { buildRenewProcessHeaderFilter } from '../helpers/renew-cycle-scope.util';
 import { RenewDocumentPromotionService } from './renew-document-promotion.service';
+import { DocumentVersioningService } from '../../documents/document-versioning.service';
+import { renewProcessSectionKeys } from '../../documents/helpers/tab-review-section-keys.util';
 import { runInTransactionIfSupported } from '../helpers/mongo-session.util';
 
 import {
@@ -206,6 +208,8 @@ export class RenewalOrchestrationService {
     private readonly activityLogService: ActivityLogService,
 
     private readonly renewDocumentPromotionService: RenewDocumentPromotionService,
+
+    private readonly documentVersioningService: DocumentVersioningService,
 
   ) {}
 
@@ -545,6 +549,14 @@ export class RenewalOrchestrationService {
       { session: input.session },
 
     );
+
+    // Renew document workflow active: mark renew section streams awaiting revision.
+    // Version numbers advance only when each stream is first uploaded after this mark.
+    await this.documentVersioningService.markStreamsAwaitingRevision({
+      urnNo: trimmedUrn,
+      sectionKeys: renewProcessSectionKeys(),
+      session: input.session,
+    });
 
   }
 

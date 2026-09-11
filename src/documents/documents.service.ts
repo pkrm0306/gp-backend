@@ -13,8 +13,6 @@ import {
 import { DeleteDocumentQueryDto } from './dto/delete-document-query.dto';
 import { deleteUploadedFileByDocumentLink } from '../utils/upload-file.util';
 import { DocumentVersioningService } from './document-versioning.service';
-import { buildAllProductDocumentTrackInput } from './helpers/document-version.helper';
-import { certificationStreamSlotKeyForDocument } from './helpers/certification-document-version.util';
 import { findAllProductDocumentByIdParam } from './helpers/resolve-all-product-document.util';
 import { syncProcessSectionDocumentFlags } from './helpers/sync-process-section-document-flags.util';
 
@@ -134,6 +132,7 @@ export class DocumentsService {
       {
         $set: {
           isDeleted: true,
+          historyHidden: true,
           deletedAt: now,
           deletedBy: vendorObjectId,
           updatedDate: now,
@@ -141,23 +140,7 @@ export class DocumentsService {
       },
     );
 
-    await this.documentVersioningService.trackDocumentVersionChangeSafe(
-      buildAllProductDocumentTrackInput({
-        urnNo: document.urnNo,
-        sectionKey: document.documentForm,
-        subsectionKey: document.documentFormSubsection ?? null,
-        slotKey: certificationStreamSlotKeyForDocument({
-          documentForm: document.documentForm,
-          documentFormSubsection: document.documentFormSubsection,
-          documentTag: document.documentTag,
-          productDocumentId: document.productDocumentId,
-        }),
-        action: 'deleted',
-        documentId: document._id,
-        productDocumentId: document.productDocumentId,
-        userId: vendorObjectId,
-      }),
-    );
+    // Vendor-initiated deletes must not create History version rows.
 
     await this.syncSectionFlagsForDocument(document);
 

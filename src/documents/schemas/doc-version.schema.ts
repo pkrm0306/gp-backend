@@ -24,6 +24,9 @@ export class DocVersion {
   renewalCycleId?: Types.ObjectId | null;
 
   @Prop({ type: Number, default: null })
+  renewalCycleNo?: number | null;
+
+  @Prop({ type: Number, default: null })
   roundNo?: number | null;
 
   @Prop({ required: true })
@@ -31,6 +34,10 @@ export class DocVersion {
 
   @Prop({ required: true, enum: DOCUMENT_VERSION_ACTION_VALUES })
   action: DocumentVersionAction;
+
+  /** Live all_product_documents / renew document id when applicable. */
+  @Prop({ type: Number, default: null })
+  productDocumentId?: number | null;
 
   @Prop({ type: String, default: null })
   filePath?: string | null;
@@ -62,6 +69,31 @@ export class DocVersion {
 
 export const DocVersionSchema = SchemaFactory.createForClass(DocVersion);
 
-DocVersionSchema.index({ streamId: 1, versionNo: 1 }, { unique: true });
+/**
+ * Multiple files may share the same lifecycle versionNo on one stream.
+ * Uniqueness is per file path within that version (prevents duplicate track of the same file).
+ */
+DocVersionSchema.index(
+  { streamId: 1, versionNo: 1, filePath: 1 },
+  {
+    unique: true,
+    name: 'streamId_1_versionNo_1_filePath_1',
+    partialFilterExpression: {
+      filePath: { $type: 'string', $gt: '' },
+    },
+  },
+);
+DocVersionSchema.index(
+  { streamId: 1, versionNo: 1, productDocumentId: 1 },
+  {
+    unique: true,
+    name: 'streamId_1_versionNo_1_productDocumentId_1',
+    partialFilterExpression: {
+      productDocumentId: { $type: 'number' },
+    },
+  },
+);
+DocVersionSchema.index({ streamId: 1, versionNo: 1 });
 DocVersionSchema.index({ streamId: 1, isLatest: 1 });
 DocVersionSchema.index({ urnNo: 1, processType: 1, renewalCycleId: 1 });
+DocVersionSchema.index({ urnNo: 1, renewalCycleId: 1, renewalCycleNo: 1 });

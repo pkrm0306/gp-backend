@@ -57,6 +57,10 @@ export class AllRenewProductDocument {
   @Prop({ default: false })
   isDeleted: boolean;
 
+  /** Vendor-initiated delete — hide from History. Supersede soft-deletes leave this false. */
+  @Prop({ default: false })
+  historyHidden: boolean;
+
   @Prop()
   deletedAt?: Date;
 

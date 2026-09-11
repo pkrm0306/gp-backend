@@ -249,6 +249,7 @@ export class ProcessRenewManufacturingService {
         vendorObjectId: ownership.vendorId,
         manufacturerObjectId: ownership.manufacturerId,
         renewalCycleObjectId,
+        cycleNo: Number(cycle.cycleNo ?? 1),
         sectionKey: DocumentSectionKey.PROCESS_MANUFACTURING,
         formPrimaryId: processRenewManufacturingId,
         urnStatus,

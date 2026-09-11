@@ -69,6 +69,7 @@ import {
   matchActiveProductPlants,
   matchActiveProducts,
 } from './constants/active-product.filter';
+import { matchCertifiedProductsList, isOngoingRenewalProduct } from './constants/certified-product.filter';
 import { matchExpiredProducts } from './constants/expired-product.filter';
 import { matchWebsitePublicActiveCertifiedProducts } from './constants/website-public-product.filter';
 import { matchPublicWebsiteManufacturerVisibility } from '../manufacturers/constants/public-website-manufacturer-visibility.filter';
@@ -154,6 +155,7 @@ import {
   isRenewalUrnStatus,
 } from '../renew/constants/renewal-urn-status.constants';
 import { ADMIN_REVIEW_URN_STATUS, VENDOR_RESUBMIT_URN_STATUS } from './constants/urn-tab-review.constants';
+import { DocumentVersioningService } from '../documents/document-versioning.service';
 import {
   ADMIN_FINAL_SUBMIT_URN_STATUS,
   CATEGORY_CHANGE_CERTIFIED_MESSAGE,
@@ -254,6 +256,7 @@ export class ProductRegistrationService implements OnModuleInit {
     private readonly zohoDealsService: ZohoDealsService,
     private readonly emailService: EmailService,
     private readonly spocAllocationRepository: SpocAllocationRepository,
+    private readonly documentVersioningService: DocumentVersioningService,
   ) { }
 
   async onModuleInit(): Promise<void> {
@@ -1830,6 +1833,78 @@ export class ProductRegistrationService implements OnModuleInit {
     });
   }
 
+  /**
+   * While renew is open, live lookups omit soft-deleted completed-cert files.
+   * Re-attach allowlisted completed-version rows (not historyHidden) into doc buckets.
+   */
+  private mergeCompletedCertificationDocumentsIntoProduct(
+    product: Record<string, unknown>,
+    completedDocs: Array<Record<string, unknown>>,
+    allowlist: {
+      productDocumentIds: Set<number>;
+      filePaths: Set<string>;
+    },
+  ): void {
+    const filtered = this.documentVersioningService.filterDocumentsToCurrentVersion(
+      completedDocs,
+      {
+        ...allowlist,
+        hasVersionedStreams: true,
+      },
+      { strictAllowlist: true },
+    );
+    if (!filtered.length) return;
+
+    const mergeInto = (key: string, formPredicate?: (form: string) => boolean) => {
+      const existing = Array.isArray(product[key])
+        ? (product[key] as Array<Record<string, unknown>>)
+        : [];
+      const seen = new Set(
+        existing
+          .map((d) => Number(d.productDocumentId ?? d.product_document_id ?? 0))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      );
+      const merged = [...existing];
+      for (const doc of filtered) {
+        const form = String(doc.documentForm ?? doc.document_form ?? '')
+          .trim()
+          .toLowerCase();
+        if (formPredicate && !formPredicate(form)) continue;
+        const pid = Number(doc.productDocumentId ?? 0);
+        if (!Number.isFinite(pid) || pid <= 0 || seen.has(pid)) continue;
+        seen.add(pid);
+        merged.push({ ...doc, isDeleted: false });
+      }
+      product[key] = merged;
+    };
+
+    mergeInto('all_urn_product_documents');
+    mergeInto(
+      'product_performance_documents',
+      (form) => !form || form === 'product_performance',
+    );
+    mergeInto(
+      'process_manufacturing_documents',
+      (form) => !form || form === 'process_manufacturing',
+    );
+    mergeInto(
+      'process_waste_management_documents',
+      (form) => !form || form === 'process_waste_management',
+    );
+    mergeInto(
+      'process_innovation_documents',
+      (form) => !form || form === 'process_innovation',
+    );
+    mergeInto(
+      'process_product_stewardship_documents',
+      (form) => !form || form === 'process_product_stewardship',
+    );
+    mergeInto(
+      'product_design_documents',
+      (form) => !form || form === 'product_design',
+    );
+  }
+
   private formatProductDetailsManufacturer(
     manufacturer: Record<string, unknown> | null | undefined,
   ) {
@@ -2293,7 +2368,8 @@ export class ProductRegistrationService implements OnModuleInit {
    * Vendor uncertified EOI list — filters on **`products.productStatus`** (EOI list status), not manufacturer/vendor status.
    * When `statuses` is omitted or empty, defaults to **Pending (0) + Submitted (1)** only.
    * Code **4** = expired (`productStatus` 4 discontinued, or `productStatus` 2 with `validtillDate` in the past).
-   * Explicit **2** alone (no 4) = active certified only (`validtillDate` null or not yet passed).
+   * Explicit **2** alone (no 4) = Certified Products list:
+   * still-valid certificates, plus ongoing renewals (keep previous completed cert visible).
    */
   private buildVendorListProductStatusMatch(
     statuses: number[] | null | undefined,
@@ -2305,21 +2381,19 @@ export class ProductRegistrationService implements OnModuleInit {
     const includeExpired = effective.includes(4);
     const regularStatuses = effective.filter((s) => s !== 4);
 
-    /** Certified (2) without expired (4): active certificates only. */
+    /**
+     * Certified (2) without expired (4):
+     * - validity still active, OR
+     * - renewal in progress (urnStatus 12–17 / productRenewStatus in progress).
+     * Ongoing renewal must not remove the URN from Certified Products.
+     */
     if (
       explicit &&
       regularStatuses.length === 1 &&
       regularStatuses[0] === 2 &&
       !includeExpired
     ) {
-      return {
-        productStatus: 2,
-        $or: [
-          { validtillDate: null },
-          { validtillDate: { $exists: false } },
-          { validtillDate: { $gte: now } },
-        ],
-      };
+      return matchCertifiedProductsList(now);
     }
 
     if (includeExpired && regularStatuses.length > 0) {
@@ -6143,6 +6217,14 @@ export class ProductRegistrationService implements OnModuleInit {
       session.endSession();
     }
 
+    if (
+      dto.updateStatusType === 'urn_status' &&
+      dto.updateStatusTo === VENDOR_RESUBMIT_URN_STATUS
+    ) {
+      // Mark only rejected tab streams as awaiting revision — do not bump versions.
+      await this.urnTabReviewService.markRejectedStreamsAwaitingRevision(urnNo);
+    }
+
     if (dto.updateStatusType === 'urn_status') {
       await this.tryLogUrnLifecycleStep(
         vendorId,
@@ -8134,6 +8216,97 @@ export class ProductRegistrationService implements OnModuleInit {
         throw new NotFoundException(`No products found with URN: ${urnNo}`);
       }
 
+      // CURRENT DOCUMENT lists: highest version per stream with ≥1 displayable file.
+      // While renewal is open, exclude open-cycle versions so Certified Products keeps
+      // the last COMPLETED certification (not ongoing renew V5/V6).
+      const excludeOpenRenewalCycles = results.some((row) =>
+        isOngoingRenewalProduct({
+          urnStatus: Number(row.urnStatus ?? 0),
+          productRenewStatus: Number(row.productRenewStatus ?? 0),
+        }),
+      );
+      const currentVersionAllowlist =
+        await this.documentVersioningService.getCurrentVersionDocumentAllowlist(
+          urnNo,
+          excludeOpenRenewalCycles ? { excludeOpenRenewalCycles: true } : undefined,
+        );
+      for (const product of results) {
+        for (const [key, value] of Object.entries(product)) {
+          if (
+            !Array.isArray(value) ||
+            (!key.endsWith('_documents') &&
+              key !== 'all_urn_product_documents' &&
+              key !== 'raw_materials_documents_bucket')
+          ) {
+            continue;
+          }
+          product[key] =
+            this.documentVersioningService.filterDocumentsToCurrentVersion(
+              value as Array<Record<string, unknown>>,
+              currentVersionAllowlist,
+              excludeOpenRenewalCycles ? { strictAllowlist: true } : undefined,
+            );
+        }
+      }
+
+      if (excludeOpenRenewalCycles && currentVersionAllowlist.productDocumentIds.size > 0) {
+        const completedDocs =
+          await this.documentVersioningService.loadCompletedCertificationDocumentsByAllowlist(
+            urnNo,
+            currentVersionAllowlist,
+          );
+        if (completedDocs.length > 0) {
+          for (const product of results) {
+            this.mergeCompletedCertificationDocumentsIntoProduct(
+              product as Record<string, unknown>,
+              completedDocs,
+              currentVersionAllowlist,
+            );
+          }
+        }
+      }
+
+      // Stamp versionNo onto CURRENT docs so clients filter by tip version, not MAX of unlabeled rows.
+      for (const product of results) {
+        for (const [key, value] of Object.entries(product)) {
+          if (
+            !Array.isArray(value) ||
+            (!key.endsWith('_documents') &&
+              key !== 'all_urn_product_documents' &&
+              key !== 'raw_materials_documents_bucket')
+          ) {
+            continue;
+          }
+          product[key] =
+            await this.documentVersioningService.stampProductDocumentVersionNos(
+              urnNo,
+              value as Array<Record<string, unknown>>,
+            );
+        }
+      }
+
+      // After restore+stamp, re-apply tip allowlist so older/renew identities cannot remain in CURRENT.
+      if (excludeOpenRenewalCycles && currentVersionAllowlist.hasVersionedStreams) {
+        for (const product of results) {
+          for (const [key, value] of Object.entries(product)) {
+            if (
+              !Array.isArray(value) ||
+              (!key.endsWith('_documents') &&
+                key !== 'all_urn_product_documents' &&
+                key !== 'raw_materials_documents_bucket')
+            ) {
+              continue;
+            }
+            product[key] =
+              this.documentVersioningService.filterDocumentsToCurrentVersion(
+                value as Array<Record<string, unknown>>,
+                currentVersionAllowlist,
+                { strictAllowlist: true },
+              );
+          }
+        }
+      }
+
       const urnStatuses = results.map((row) => Number(row.urnStatus ?? 0));
       const anyCertifiedOnUrn = results.some(
         (row) => Number(row.productStatus ?? 0) === PRODUCT_STATUS_CERTIFIED,
@@ -8294,6 +8467,11 @@ export class ProductRegistrationService implements OnModuleInit {
             documentName: d.documentName,
             documentOriginalName: d.documentOriginalName,
             documentLink: d.documentLink,
+            processType: d.processType ?? d.process_type ?? null,
+            renewalCycleId: d.renewalCycleId ?? d.renewal_cycle_id ?? null,
+            renewalCycleNo: d.renewalCycleNo ?? d.renewal_cycle_no ?? null,
+            versionNo: d.versionNo ?? d.version_no ?? null,
+            isLatest: d.isLatest ?? d.is_latest ?? null,
             createdDate: d.createdDate,
             updatedDate: d.updatedDate,
           })),
@@ -9003,6 +9181,11 @@ export class ProductRegistrationService implements OnModuleInit {
               documentOriginalName: d.documentOriginalName,
               documentLink: d.documentLink,
               documentTag: d.documentTag,
+              processType: d.processType ?? d.process_type ?? null,
+              renewalCycleId: d.renewalCycleId ?? d.renewal_cycle_id ?? null,
+              renewalCycleNo: d.renewalCycleNo ?? d.renewal_cycle_no ?? null,
+              versionNo: d.versionNo ?? d.version_no ?? null,
+              isLatest: d.isLatest ?? d.is_latest ?? null,
               createdDate: d.createdDate,
               updatedDate: d.updatedDate,
             }),

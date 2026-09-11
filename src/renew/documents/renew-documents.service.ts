@@ -22,16 +22,11 @@ import { normalizeDocumentSectionKey } from '../../common/constants/document-sec
 import { deleteUploadedFileByDocumentLink } from '../../utils/upload-file.util';
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
 import {
-  isRenewVendorResubmitCycle,
-  renewDocumentVersionSlotKey,
-} from '../../documents/helpers/certification-document-version.util';
-import {
   resolveUrnRenewContext,
   toRenewObjectId,
 } from '../helpers/renew-common.util';
 import { assertRenewDocumentMatchesCycle } from '../helpers/renew-section-documents.util';
 import { buildAllProductDocumentLookupFilter } from '../../documents/helpers/resolve-all-product-document.util';
-import { matchRenewEligibleProducts } from '../helpers/renew-eligible-product.util';
 
 export interface DeleteRenewDocumentQuery {
   urnNo: string;
@@ -164,6 +159,7 @@ export class RenewDocumentsService {
       {
         $set: {
           isDeleted: true,
+          historyHidden: true,
           deletedAt: now,
           deletedBy,
           updatedDate: now,
@@ -171,35 +167,7 @@ export class RenewDocumentsService {
       },
     );
 
-    const product = await this.productModel
-      .findOne({ urnNo: context.urnNo, ...matchRenewEligibleProducts() })
-      .select('urnStatus')
-      .lean()
-      .exec();
-    const urnStatus = Number(product?.urnStatus ?? 0);
-
-    if (isRenewVendorResubmitCycle(urnStatus)) {
-      await this.documentVersioningService.trackAllProductDocument({
-        urnNo: document.urnNo,
-        sectionKey: document.documentForm,
-        subsectionKey: document.documentFormSubsection ?? null,
-        slotKey: renewDocumentVersionSlotKey({
-          documentForm: String(document.documentForm),
-          documentFormSubsection: document.documentFormSubsection ?? null,
-          documentTag: document.documentTag ?? null,
-          productDocumentId: document.productDocumentId,
-        }),
-        action: 'deleted',
-        documentId: document._id as Types.ObjectId,
-        productDocumentId: document.productDocumentId,
-        filePath: document.documentLink ?? null,
-        originalName: document.documentOriginalName ?? null,
-        storedName: document.documentName ?? null,
-        userId: deletedBy,
-        processType: 'renewal',
-        renewalCycleId: cycleObjectId,
-      });
-    }
+    // Vendor-initiated deletes must not create History version rows.
 
     return {
       documentId: document.productDocumentId,

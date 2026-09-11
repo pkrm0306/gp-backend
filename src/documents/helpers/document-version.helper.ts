@@ -14,15 +14,12 @@ import {
 
 export function buildStreamKey(input: {
   urnNo: string;
-  processType: DocumentProcessType;
-  renewalCycleId?: Types.ObjectId | null;
   sectionKey: string;
   subsectionKey?: string | null;
   slotKey: string;
 }): string {
-  const renewal = input.renewalCycleId?.toString() ?? '';
   const subsection = input.subsectionKey ?? '';
-  return `${input.urnNo}|${input.processType}|${renewal}|${input.sectionKey}|${subsection}|${input.slotKey}`;
+  return `${input.urnNo}|initial||${input.sectionKey}|${subsection}|${input.slotKey}`;
 }
 
 export function normalizeProcessType(
@@ -97,12 +94,14 @@ export function buildAllProductDocumentTrackInput(
     urnNo: input.urnNo.trim(),
     processType: normalizeProcessType(input.processType),
     renewalCycleId: normalizeRenewalCycleId(input.renewalCycleId),
+    renewalCycleNo: input.renewalCycleNo ?? null,
     sectionKey: input.sectionKey,
     subsectionKey: input.subsectionKey ?? null,
     slotKey: input.slotKey,
     liveSource: ALL_PRODUCT_DOCUMENTS_LIVE_SOURCE,
     liveRef: buildAllProductDocumentLiveRef(input.documentId),
     action: input.action,
+    productDocumentId: input.productDocumentId ?? null,
     filePath: input.filePath ?? null,
     originalName: input.originalName ?? null,
     storedName: input.storedName ?? null,
@@ -143,11 +142,8 @@ export function buildStreamIdentityFilter(
 ): Record<string, unknown> {
   return {
     urnNo: query.urnNo.trim(),
-    processType: normalizeProcessType(query.processType),
-    renewalCycleId:
-      query.renewalCycleId && Types.ObjectId.isValid(query.renewalCycleId)
-        ? new Types.ObjectId(query.renewalCycleId)
-        : null,
+    processType: 'initial',
+    renewalCycleId: null,
     sectionKey: query.sectionKey,
     subsectionKey: query.subsectionKey ?? null,
     slotKey: query.slotKey,

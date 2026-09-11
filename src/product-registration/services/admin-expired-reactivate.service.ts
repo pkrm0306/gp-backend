@@ -97,7 +97,12 @@ export class AdminExpiredReactivateService {
 
     const now = new Date();
     const fromStatus = Number(product.productStatus);
-    if (!isExpiredProduct(fromStatus, product.validtillDate, now)) {
+    if (
+      !isExpiredProduct(fromStatus, product.validtillDate, now, {
+        urnStatus: product.urnStatus,
+        productRenewStatus: product.productRenewStatus,
+      })
+    ) {
       throw new ConflictException('Product is not expired');
     }
 

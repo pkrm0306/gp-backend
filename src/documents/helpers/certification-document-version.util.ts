@@ -38,18 +38,15 @@ export async function isVendorResubmitCycle(
   return Number(product?.urnStatus) === VENDOR_RESUBMIT_URN_STATUS;
 }
 
-/** Version on first upload (v1) or admin resend re-upload (v2+). Skip otherwise. */
+/** Version on first upload (v1). Any later upload into a non-empty slot is v2+ (replaced). */
 export function resolveCertificationVersionAction(
   existingDocsInSlot: number,
-  isResubmitCycle: boolean,
+  _isResubmitCycle?: boolean,
 ): DocumentVersionAction | null {
   if (existingDocsInSlot === 0) {
     return 'added';
   }
-  if (isResubmitCycle) {
-    return 'replaced';
-  }
-  return null;
+  return 'replaced';
 }
 
 /** Admin sent renewal URN back to vendor for corrections (urnStatus 16). */
@@ -57,14 +54,10 @@ export function isRenewVendorResubmitCycle(urnStatus: number): boolean {
   return urnStatus === RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING;
 }
 
-/** Renewal: version only after admin resend; first resubmit upload is v1, replacements v2+. */
+/** Renewal: first upload of a slot -> 'added'; any later upload -> 'replaced'. */
 export function resolveRenewDocumentVersionAction(
   priorDocsInSlot: number,
-  urnStatus: number,
-): 'added' | 'replaced' | null {
-  if (!isRenewVendorResubmitCycle(urnStatus)) {
-    return null;
-  }
+): 'added' | 'replaced' {
   if (priorDocsInSlot === 0) {
     return 'added';
   }
@@ -132,28 +125,6 @@ export function certificationStreamSlotKeyForDocument(doc: {
   return slotKeyFromProductDocumentId(doc.productDocumentId);
 }
 
-/** Renew MP/WM/PP supporting uploads: one version stream per productDocumentId (not per subsection). */
-export function usesRenewPerDocumentVersionSlot(sectionKey: string): boolean {
-  return (
-    sectionKey === DocumentSectionKey.PROCESS_MANUFACTURING ||
-    sectionKey === DocumentSectionKey.PROCESS_WASTE_MANAGEMENT ||
-    sectionKey === DocumentSectionKey.PRODUCT_PERFORMANCE
-  );
-}
-
-export function renewDocumentVersionSlotKey(doc: {
-  documentForm: string;
-  documentFormSubsection?: string | null;
-  documentTag?: string | null;
-  productDocumentId: number;
-}): string {
-  const sectionKey = String(doc.documentForm ?? '').trim();
-  if (usesRenewPerDocumentVersionSlot(sectionKey)) {
-    return slotKeyFromProductDocumentId(doc.productDocumentId);
-  }
-  return certificationStreamSlotKeyForDocument(doc);
-}
-
 export async function countCertificationDocsInSlot(
   model: Model<AllProductDocumentDocument>,
   args: {
@@ -200,8 +171,8 @@ type TrackInsertedCertificationDocumentsParams = {
 };
 
 /**
- * Append-only uploads: track v1 on first file per slot; v2+ only during admin resend.
- * Multiple files in the same subsection on first submit share one v1 (first file only).
+ * Append-only uploads: every file in the batch attaches to the active lifecycle version.
+ * Version numbers are owned by Admin Resend / renew start — not by upload count.
  */
 export async function trackInsertedCertificationDocuments(
   params: TrackInsertedCertificationDocumentsParams,
@@ -228,6 +199,7 @@ export async function trackInsertedCertificationDocuments(
   const slotKeyMode = certificationSlotKeyModeForSection(sectionKey);
   const slotCounts = new Map<string, number>();
   const batchCountBySlot = new Map<string, number>();
+  const initialPriorBySlot = new Map<string, number>();
 
   for (const doc of insertedDocs) {
     const slot = certificationSlotKey(
@@ -259,7 +231,9 @@ export async function trackInsertedCertificationDocuments(
       },
       session,
     );
-    slotCounts.set(slot, Math.max(0, totalCount - batchCount));
+    const prior = Math.max(0, totalCount - batchCount);
+    slotCounts.set(slot, prior);
+    initialPriorBySlot.set(slot, prior);
   }
 
   for (let i = 0; i < insertedDocs.length; i++) {
@@ -270,7 +244,9 @@ export async function trackInsertedCertificationDocuments(
       doc.documentTag,
     );
     const priorInSlot = slotCounts.get(slot) ?? 0;
-    const action = resolveCertificationVersionAction(priorInSlot, isResubmitCycle);
+    const initialPrior = initialPriorBySlot.get(slot) ?? 0;
+    // Action is based on slot state before this batch; every file in the batch stamps.
+    const action = resolveCertificationVersionAction(initialPrior, isResubmitCycle);
     slotCounts.set(slot, priorInSlot + 1);
 
     if (!action) {

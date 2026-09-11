@@ -29,6 +29,7 @@ import {
   AllProductDocumentDocument,
 } from '../../product-design/schemas/all-product-document.schema';
 import { matchActiveProducts } from '../constants/active-product.filter';
+import { matchCertifiedProductsList } from '../constants/certified-product.filter';
 import {
   ProductPlant,
   ProductPlantDocument,
@@ -603,8 +604,8 @@ export class VendorCertificateService {
     vendorObjectId: Types.ObjectId,
     extra: Record<string, unknown> = {},
   ): Record<string, unknown> {
-    const now = new Date();
-    // Match vendor certified list (status 2, not expired) so Download all = UI total.
+    // Match vendor Certified Products list (incl. ongoing renewal) so Download all = UI total.
+    const certifiedMatch = matchCertifiedProductsList();
     return matchActiveProducts({
       ...extra,
       productStatus: CERTIFIED_PRODUCT_STATUS,
@@ -615,13 +616,7 @@ export class VendorCertificateService {
             { manufacturerId: vendorObjectId },
           ],
         },
-        {
-          $or: [
-            { validtillDate: null },
-            { validtillDate: { $exists: false } },
-            { validtillDate: { $gte: now } },
-          ],
-        },
+        { $or: (certifiedMatch.$or as Record<string, unknown>[]) ?? [] },
       ],
     });
   }

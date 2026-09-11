@@ -355,6 +355,15 @@ export class ProductDesignService implements OnModuleInit {
         ? this.resolveDocumentIdRefs(existingSupportingDocumentIds)
         : null;
 
+    const isResubmitCycle = await isVendorResubmitCycle(
+      this.productModel,
+      urnNo,
+      session,
+    );
+    // New uploads for a subsection replace the prior current set (History keeps old versions).
+    const ecoReplaceOnUpload = ecoVisionFiles.length > 0;
+    const supportingReplaceOnUpload = supportingDocumentFiles.length > 0;
+
     const existingDocs = await this.allProductDocumentModel
       .find({
         vendorId: vendorObjectId,
@@ -365,8 +374,9 @@ export class ProductDesignService implements OnModuleInit {
       .session(session);
 
     const retainIds: Types.ObjectId[] = [];
-    const deleteIds: Types.ObjectId[] = [];
-    const docsToDelete: typeof existingDocs = [];
+    const explicitDeleteIds: Types.ObjectId[] = [];
+    const supersedeDeleteIds: Types.ObjectId[] = [];
+    const docsToDeleteExplicit: typeof existingDocs = [];
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
     for (const doc of existingDocs) {
@@ -379,25 +389,38 @@ export class ProductDesignService implements OnModuleInit {
         continue;
       }
 
-      const retain = isEco
-        ? ecoKeepRefs === null || this.docMatchesIdRefs(doc, ecoKeepRefs)
-        : supportingKeepRefs === null ||
-          this.docMatchesIdRefs(doc, supportingKeepRefs);
+      const forceSupersede =
+        (isEco && ecoReplaceOnUpload) ||
+        (isSupporting && supportingReplaceOnUpload);
+
+      const retain = forceSupersede
+        ? false
+        : isEco
+          ? ecoKeepRefs === null || this.docMatchesIdRefs(doc, ecoKeepRefs)
+          : supportingKeepRefs === null ||
+            this.docMatchesIdRefs(doc, supportingKeepRefs);
 
       if (retain) {
         retainIds.push(doc._id as Types.ObjectId);
+      } else if (forceSupersede) {
+        // Soft-delete after version tracking so priorInSlot still counts for "replaced".
+        supersedeDeleteIds.push(doc._id as Types.ObjectId);
+        if (doc.documentLink) {
+          oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
+        }
       } else {
-        deleteIds.push(doc._id as Types.ObjectId);
-        docsToDelete.push(doc);
+        explicitDeleteIds.push(doc._id as Types.ObjectId);
+        docsToDeleteExplicit.push(doc);
         if (doc.documentLink) {
           oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
         }
       }
     }
 
-    if (deleteIds.length) {
+    const softDeleteProductDesignDocs = async (ids: Types.ObjectId[]) => {
+      if (!ids.length) return;
       await this.allProductDocumentModel.updateMany(
-        { _id: { $in: deleteIds } },
+        { _id: { $in: ids } },
         {
           $set: {
             isDeleted: true,
@@ -408,12 +431,16 @@ export class ProductDesignService implements OnModuleInit {
         },
         { session },
       );
+    };
+
+    if (explicitDeleteIds.length) {
+      await softDeleteProductDesignDocs(explicitDeleteIds);
       await trackProductDocumentDeleteBatch({
         versioning: this.documentVersioningService,
         urnNo,
         sectionKey: DocumentSectionKey.PRODUCT_DESIGN,
         userId: vendorObjectId,
-        docs: docsToDelete,
+        docs: docsToDeleteExplicit,
         slotKeyMode: 'subsection',
         session,
       });
@@ -457,11 +484,6 @@ export class ProductDesignService implements OnModuleInit {
     }
 
     if (docRows.length) {
-      const isResubmitCycle = await isVendorResubmitCycle(
-        this.productModel,
-        urnNo,
-        session,
-      );
       const docsToInsert = [];
       for (const row of docRows) {
         const productDocumentId =
@@ -498,6 +520,9 @@ export class ProductDesignService implements OnModuleInit {
         filesByIndex: [...ecoVisionFiles, ...supportingDocumentFiles],
       });
     }
+
+    // After "replaced" is stamped, drop superseded live rows from the current list.
+    await softDeleteProductDesignDocs(supersedeDeleteIds);
 
     const baseDocFilter = {
       vendorId: vendorObjectId,

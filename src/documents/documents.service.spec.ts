@@ -91,6 +91,7 @@ describe('DocumentsService', () => {
 
     expect(updateOneMock).toHaveBeenCalledTimes(1);
     expect(updateOneMock.mock.calls[0][1].$set.isDeleted).toBe(true);
+    expect(updateOneMock.mock.calls[0][1].$set.historyHidden).toBe(true);
     expect(result).toEqual({
       documentId: 123,
       urnNo: 'URN-1',

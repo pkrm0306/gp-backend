@@ -11,6 +11,7 @@ import { ProcessRenewProductPerformance } from '../schemas/process-renew-product
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { RenewalOrchestrationService } from './renewal-orchestration.service';
 import { RenewUrnTabReviewService } from './renew-urn-tab-review.service';
+import { LifecycleNotificationService } from '../../notifications/lifecycle-notification.service';
 import {
   PRODUCT_RENEW_STATUS,
   RENEWAL_URN_STATUS,
@@ -87,6 +88,15 @@ describe('RenewUrnStatusService — submit for final review (17)', () => {
           provide: RenewUrnTabReviewService,
           useValue: {
             assertAdminQuickViewTransitionAllowed: jest.fn().mockResolvedValue(undefined),
+            markRejectedStreamsAwaitingRevision: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: LifecycleNotificationService,
+          useValue: {
+            notifyRenewalSubmitted: jest.fn().mockResolvedValue(undefined),
+            notifyRenewalDecision: jest.fn().mockResolvedValue(undefined),
+            notifyRenewalCompleted: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

@@ -1,6 +1,5 @@
 import { Types } from 'mongoose';
 import { DocumentSectionKey } from '../../common/constants/document-section-key.constants';
-import { RENEWAL_URN_STATUS } from '../constants/renewal-urn-status.constants';
 import {
   resolveRenewDocumentVersionAction,
 } from '../../documents/helpers/certification-document-version.util';
@@ -14,19 +13,10 @@ import {
 describe('renew-section-documents.util', () => {
   const cycleId = new Types.ObjectId();
 
-  it('skips renew version tracking before admin resend', () => {
-    expect(
-      resolveRenewDocumentVersionAction(0, RENEWAL_URN_STATUS.PAYMENT_APPROVED),
-    ).toBeNull();
-    expect(
-      resolveRenewDocumentVersionAction(2, RENEWAL_URN_STATUS.CHECK_PROCESS_FORMS),
-    ).toBeNull();
-  });
-
-  it('tracks renew versions only after admin resend', () => {
-    const resubmit = RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING;
-    expect(resolveRenewDocumentVersionAction(0, resubmit)).toBe('added');
-    expect(resolveRenewDocumentVersionAction(1, resubmit)).toBe('replaced');
+  it('versions every renew upload regardless of urn status', () => {
+    expect(resolveRenewDocumentVersionAction(0)).toBe('added');
+    expect(resolveRenewDocumentVersionAction(1)).toBe('replaced');
+    expect(resolveRenewDocumentVersionAction(4)).toBe('replaced');
   });
 
   it('matches productDocumentId keep refs', () => {

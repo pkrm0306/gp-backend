@@ -52,6 +52,13 @@ export class AllProductDocument {
   @Prop({ default: false })
   isDeleted: boolean;
 
+  /**
+   * When true, this file must not appear in document History (vendor-initiated delete).
+   * Soft-deletes from upload supersede leave this false so prior versions remain in History.
+   */
+  @Prop({ default: false })
+  historyHidden: boolean;
+
   @Prop()
   deletedAt?: Date;
 

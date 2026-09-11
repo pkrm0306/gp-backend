@@ -99,6 +99,21 @@ export class Product {
   @Prop({ default: 0 })
   urnStatus: number;
 
+  /**
+   * URN-scoped document review/resend lifecycle version (V1, V2, …).
+   * Allocated on first cert cycle init, Admin Resend, renew workflow start, renew resend.
+   * Uploads attach to this value and must not increment it.
+   */
+  @Prop({ type: Number, default: 0 })
+  documentLifecycleVersionNo?: number;
+
+  /**
+   * Renewal cycle ObjectId for which the renew-workflow lifecycle version was already allocated.
+   * Prevents double-allocation if payment-approved / renew-start runs more than once.
+   */
+  @Prop({ type: Types.ObjectId, default: null })
+  documentLifecycleRenewalCycleId?: Types.ObjectId | null;
+
   @Prop()
   assessmentReportUrl?: string;
 

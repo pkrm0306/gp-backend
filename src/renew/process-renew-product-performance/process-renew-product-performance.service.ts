@@ -35,12 +35,9 @@ import {
 } from '../../utils/upload-file.util';
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
 import {
-  trackProductDocumentBatch,
-  trackProductDocumentDeleteBatch,
+  trackUploadedProductDocument,
 } from '../../documents/helpers/product-document-version.integration';
-import {
-  isRenewVendorResubmitCycle,
-} from '../../documents/helpers/certification-document-version.util';
+import { resolveRenewDocumentVersionAction } from '../../documents/helpers/certification-document-version.util';
 import {
   assertRenewProcessEditable,
   renewOwnershipFields,
@@ -375,7 +372,7 @@ export class ProcessRenewProductPerformanceService {
     vendorObjectId: Types.ObjectId;
     manufacturerObjectId: Types.ObjectId;
     renewalCycleObjectId: Types.ObjectId;
-    urnStatus: number;
+    cycleNo: number;
     eoiNo?: string;
     formPrimaryId: number;
     now: Date;
@@ -392,7 +389,7 @@ export class ProcessRenewProductPerformanceService {
       vendorObjectId,
       manufacturerObjectId,
       renewalCycleObjectId,
-      urnStatus,
+      cycleNo,
       eoiNo,
       formPrimaryId,
       now,
@@ -417,17 +414,17 @@ export class ProcessRenewProductPerformanceService {
       .session(session);
 
     const retainIds: Types.ObjectId[] = [];
+    const retainedDocs: typeof existingDocs = [];
     const deleteIds: Types.ObjectId[] = [];
-    const docsToDelete: typeof existingDocs = [];
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
     for (const doc of existingDocs) {
       const retain = keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
       if (retain) {
         retainIds.push(doc._id as Types.ObjectId);
+        retainedDocs.push(doc);
       } else {
         deleteIds.push(doc._id as Types.ObjectId);
-        docsToDelete.push(doc);
         if (doc.documentLink) {
           oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
         }
@@ -435,11 +432,13 @@ export class ProcessRenewProductPerformanceService {
     }
 
     if (deleteIds.length) {
+      // Vendor keep-list removal: hide from History (do not allocate a version).
       await this.renewDocumentModel.updateMany(
         { _id: { $in: deleteIds } },
         {
           $set: {
             isDeleted: true,
+            historyHidden: true,
             deletedAt: now,
             deletedBy: vendorObjectId,
             updatedDate: now,
@@ -447,19 +446,6 @@ export class ProcessRenewProductPerformanceService {
         },
         { session },
       );
-      if (isRenewVendorResubmitCycle(urnStatus)) {
-        await trackProductDocumentDeleteBatch({
-          versioning: this.documentVersioningService,
-          urnNo,
-          sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
-          userId: vendorObjectId,
-          docs: docsToDelete,
-          slotKeyMode: 'productDocumentId',
-          processType: 'renewal',
-          renewalCycleId: renewalCycleObjectId,
-          session,
-        });
-      }
     }
 
     if (retainIds.length) {
@@ -476,7 +462,44 @@ export class ProcessRenewProductPerformanceService {
       );
     }
 
+    const docsToTrack: Array<{
+      doc: AllRenewProductDocumentDocument;
+      action: 'added' | 'replaced';
+    }> = [];
+
+    // Backfill renew files that landed before version tracking was wired
+    // (first renew upload must still allocate next Vn, e.g. V4 → V5).
+    if (retainedDocs.length) {
+      const retainPids = retainedDocs
+        .map((d) => Number(d.productDocumentId))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      const untrackedPids =
+        await this.documentVersioningService.filterUntrackedProductDocumentIds(
+          retainPids,
+          session,
+        );
+      const untracked = new Set(untrackedPids);
+      const priorTrackedCount = retainPids.length - untrackedPids.length;
+      let pendingPrior = priorTrackedCount;
+      for (const doc of retainedDocs) {
+        const pid = Number(doc.productDocumentId);
+        if (!untracked.has(pid)) continue;
+        docsToTrack.push({
+          doc,
+          action: resolveRenewDocumentVersionAction(pendingPrior),
+        });
+        pendingPrior += 1;
+      }
+    }
+
     if (uploadedFiles.length) {
+      const priorInSlot = await this.renewDocumentModel
+        .countDocuments({
+          ...baseFilter,
+          isDeleted: { $ne: true },
+        })
+        .session(session);
+      let actionPrior = priorInSlot;
       const docsToInsert: Array<Record<string, unknown>> = [];
       for (let i = 0; i < uploadedFiles.length; i++) {
         const file = uploadedFiles[i];
@@ -502,19 +525,36 @@ export class ProcessRenewProductPerformanceService {
       const inserted = await this.renewDocumentModel.insertMany(docsToInsert, {
         session,
       });
-      if (isRenewVendorResubmitCycle(urnStatus)) {
-        await trackProductDocumentBatch({
-          versioning: this.documentVersioningService,
-          urnNo,
-          sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
-          userId: vendorObjectId,
-          docs: inserted,
-          slotKeyMode: 'productDocumentId',
-          processType: 'renewal',
-          renewalCycleId: renewalCycleObjectId,
-          session,
+      for (const doc of inserted) {
+        docsToTrack.push({
+          doc: doc as AllRenewProductDocumentDocument,
+          action: resolveRenewDocumentVersionAction(actionPrior),
         });
+        actionPrior += 1;
       }
+    }
+
+    for (const { doc, action } of docsToTrack) {
+      const subsection =
+        String(doc.documentFormSubsection ?? '').trim() ||
+        RENEW_PERFORMANCE_DOC_SUBSECTION;
+      await trackUploadedProductDocument(this.documentVersioningService, {
+        urnNo,
+        sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
+        subsectionKey: subsection,
+        userId: vendorObjectId,
+        documentId: doc._id as Types.ObjectId,
+        productDocumentId: Number(doc.productDocumentId),
+        filePath: String(doc.documentLink ?? ''),
+        originalName: String(doc.documentOriginalName ?? ''),
+        storedName: String(doc.documentName ?? ''),
+        action,
+        slotKeyMode: 'subsection',
+        processType: 'renewal',
+        renewalCycleId: renewalCycleObjectId,
+        renewalCycleNo: cycleNo,
+        session,
+      });
     }
 
     const totalDocumentCount = await this.renewDocumentModel
@@ -650,7 +690,12 @@ export class ProcessRenewProductPerformanceService {
     }
 
     const documentRows = filterRenewRowsByCertifiedEoi(
-      documents.map((d) => mapRenewProductDocument(d as Record<string, unknown>)),
+      await this.documentVersioningService.stampProductDocumentVersionNos(
+        trimmedUrn,
+        documents.map((d) =>
+          mapRenewProductDocument(d as Record<string, unknown>),
+        ),
+      ),
       certifiedEoiNos,
     );
     const section = buildPerformanceSection(
@@ -721,7 +766,7 @@ export class ProcessRenewProductPerformanceService {
     const ownership = renewOwnershipFields(
       await resolveUrnRenewContext(this.productModel, input.urnNo),
     );
-    const { cycle, urnStatus } = await assertRenewProcessEditable(
+    const { cycle } = await assertRenewProcessEditable(
       this.productModel,
       this.renewalCycleModel,
       input.urnNo.trim(),
@@ -806,7 +851,7 @@ export class ProcessRenewProductPerformanceService {
         vendorObjectId,
         manufacturerObjectId,
         renewalCycleObjectId,
-        urnStatus,
+        cycleNo: Number(cycle.cycleNo) || 1,
         eoiNo: input.eoiNo?.trim(),
         formPrimaryId: processRenewProductPerformanceId,
         now,

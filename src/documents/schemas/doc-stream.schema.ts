@@ -56,6 +56,14 @@ export class DocStream {
   @Prop({ type: Types.ObjectId, default: null })
   latestVersionId?: Types.ObjectId | null;
 
+  /**
+   * Set when Admin rejects/resends this stream's tab/section.
+   * Cleared when the first vendor upload after that resend allocates the next version.
+   * Does not change latestVersionNo by itself.
+   */
+  @Prop({ required: true, default: false })
+  awaitingRevision: boolean;
+
   @Prop({ required: true, default: false })
   isDeleted: boolean;
 

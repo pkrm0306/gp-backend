@@ -308,6 +308,13 @@ export class ProductPerformanceService implements OnModuleInit {
         ? this.resolveDocumentIdRefs(existingDocumentIds)
         : null;
 
+    const isResubmitCycle = await isVendorResubmitCycle(
+      this.productModel,
+      urnNo,
+      session,
+    );
+    const replaceOnUpload = uploadedFiles.length > 0;
+
     const existingDocs = await this.allProductDocumentModel
       .find({
         vendorId: vendorObjectId,
@@ -318,30 +325,42 @@ export class ProductPerformanceService implements OnModuleInit {
       .session(session);
 
     const retainIds: Types.ObjectId[] = [];
-    const deleteIds: Types.ObjectId[] = [];
-    const docsToDelete: typeof existingDocs = [];
+    const explicitDeleteIds: Types.ObjectId[] = [];
+    const supersedeDeleteIds: Types.ObjectId[] = [];
+    const docsToDeleteExplicit: typeof existingDocs = [];
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
     for (const doc of existingDocs) {
-      const retain =
-        keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
+      const retain = replaceOnUpload
+        ? false
+        : keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
       if (retain) {
         retainIds.push(doc._id as Types.ObjectId);
+      } else if (replaceOnUpload) {
+        supersedeDeleteIds.push(doc._id as Types.ObjectId);
+        if (doc.documentLink) {
+          oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
+        }
       } else {
-        deleteIds.push(doc._id as Types.ObjectId);
-        docsToDelete.push(doc);
+        explicitDeleteIds.push(doc._id as Types.ObjectId);
+        docsToDeleteExplicit.push(doc);
         if (doc.documentLink) {
           oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
         }
       }
     }
 
-    if (deleteIds.length) {
+    const softDeletePerformanceDocs = async (
+      ids: Types.ObjectId[],
+      options?: { historyHidden?: boolean },
+    ) => {
+      if (!ids.length) return;
       await this.allProductDocumentModel.updateMany(
-        { _id: { $in: deleteIds } },
+        { _id: { $in: ids } },
         {
           $set: {
             isDeleted: true,
+            ...(options?.historyHidden ? { historyHidden: true } : {}),
             deletedAt: now,
             deletedBy: vendorObjectId,
             updatedDate: now,
@@ -349,12 +368,16 @@ export class ProductPerformanceService implements OnModuleInit {
         },
         { session },
       );
+    };
+
+    if (explicitDeleteIds.length) {
+      await softDeletePerformanceDocs(explicitDeleteIds, { historyHidden: true });
       await trackProductDocumentDeleteBatch({
         versioning: this.documentVersioningService,
         urnNo,
         sectionKey: DocumentSectionKey.PRODUCT_PERFORMANCE,
         userId: vendorObjectId,
-        docs: docsToDelete,
+        docs: docsToDeleteExplicit,
         slotKeyMode: 'subsection',
         session,
       });
@@ -369,11 +392,6 @@ export class ProductPerformanceService implements OnModuleInit {
     }
 
     if (uploadedFiles.length) {
-      const isResubmitCycle = await isVendorResubmitCycle(
-        this.productModel,
-        urnNo,
-        session,
-      );
       const docsToInsert = [];
       for (let i = 0; i < uploadedFiles.length; i++) {
         const file = uploadedFiles[i];
@@ -414,6 +432,9 @@ export class ProductPerformanceService implements OnModuleInit {
         filesByIndex: uploadedFiles,
       });
     }
+
+    // Supersede soft-deletes keep prior versions visible in History (no historyHidden).
+    await softDeletePerformanceDocs(supersedeDeleteIds);
 
     const totalDocumentCount = await this.allProductDocumentModel
       .countDocuments({

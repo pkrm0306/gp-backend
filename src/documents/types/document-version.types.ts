@@ -14,12 +14,14 @@ export interface TrackDocumentVersionChangeInput {
   urnNo: string;
   processType?: DocumentProcessType;
   renewalCycleId?: string | Types.ObjectId | null;
+  renewalCycleNo?: number | null;
   sectionKey: string;
   subsectionKey?: string | null;
   slotKey: string;
   liveSource: string;
   liveRef: DocumentLiveRef;
   action: DocumentVersionAction;
+  productDocumentId?: number | null;
   filePath?: string | null;
   originalName?: string | null;
   storedName?: string | null;
@@ -28,6 +30,8 @@ export interface TrackDocumentVersionChangeInput {
   checksum?: string | null;
   userId: string | Types.ObjectId;
   roundNo?: number | null;
+  /** When set, attach to this version instead of reading the URN lifecycle counter. */
+  lifecycleVersionNo?: number | null;
   session?: ClientSession;
 }
 
@@ -38,8 +42,7 @@ export interface DocumentStreamQueryInput {
   sectionKey: string;
   subsectionKey?: string | null;
   slotKey: string;
-  /** Renew MP/WM: scope history to one file; enables legacy subsection-stream fallback. */
-  anchorProductDocumentId?: number;
+  includeOpenCycleVersions?: boolean;
 }
 
 export interface TrackAllProductDocumentInput {
@@ -58,6 +61,7 @@ export interface TrackAllProductDocumentInput {
   userId: string | Types.ObjectId;
   processType?: DocumentProcessType;
   renewalCycleId?: string | Types.ObjectId | null;
+  renewalCycleNo?: number | null;
   roundNo?: number | null;
   session?: ClientSession;
 }

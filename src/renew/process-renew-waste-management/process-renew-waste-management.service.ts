@@ -219,6 +219,7 @@ export class ProcessRenewWasteManagementService {
         vendorObjectId: ownership.vendorId,
         manufacturerObjectId: ownership.manufacturerId,
         renewalCycleObjectId,
+        cycleNo: Number(cycle.cycleNo ?? 1),
         sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
         formPrimaryId: saved!.processRenewWasteManagementId,
         urnStatus,

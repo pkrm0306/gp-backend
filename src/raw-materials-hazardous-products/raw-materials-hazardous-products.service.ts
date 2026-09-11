@@ -330,7 +330,11 @@ export class RawMaterialsHazardousProductsService {
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
     for (const doc of existingDocs) {
-      const retain = keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
+      // New uploads replace prior live files in this slot (History keeps old versions).
+      const retain =
+        uploadedFiles.length > 0
+          ? false
+          : keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
       if (retain) {
         retainIds.push(doc._id as Types.ObjectId);
       } else {

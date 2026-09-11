@@ -509,6 +509,8 @@ export function productStatusFilterToMatch(
           { validtillDate: { $exists: false } },
           { validtillDate: null },
           { validtillDate: { $gte: now } },
+          { urnStatus: { $in: [12, 13, 14, 15, 16, 17] } },
+          { productRenewStatus: 1 },
         ],
       };
     case 'overdue':

@@ -460,6 +460,9 @@ export class RenewUrnStatusService {
         })
         .catch(() => undefined);
     } else if (targetStatus === RENEWAL_URN_STATUS.VENDOR_RESPONSE_PENDING) {
+      await this.renewUrnTabReviewService.markRejectedStreamsAwaitingRevision(
+        trimmedUrn,
+      );
       await this.logRenewUrnStatusChange(
         trimmedUrn,
         ownership.vendorId,

@@ -31,6 +31,7 @@ export interface TrackProductDocumentBatchParams {
   slotKeyMode?: 'productDocumentId' | 'subsection' | 'subsectionTag';
   processType?: DocumentProcessType;
   renewalCycleId?: string | Types.ObjectId | null;
+  renewalCycleNo?: number | null;
   roundNo?: number | null;
   session?: ClientSession;
 }
@@ -48,6 +49,7 @@ export async function trackProductDocumentBatch(
     slotKeyMode = 'productDocumentId',
     processType,
     renewalCycleId,
+    renewalCycleNo,
     roundNo,
     session,
   } = params;
@@ -76,6 +78,7 @@ export async function trackProductDocumentBatch(
       userId,
       processType,
       renewalCycleId,
+      renewalCycleNo: renewalCycleNo ?? null,
       roundNo,
       session,
     });
@@ -85,7 +88,8 @@ export async function trackProductDocumentBatch(
 export async function trackProductDocumentDeleteBatch(
   params: Omit<TrackProductDocumentBatchParams, 'action'>,
 ): Promise<void> {
-  await trackProductDocumentBatch({ ...params, action: 'deleted' });
+  // Vendor-initiated deletes must not appear in document History.
+  void params;
 }
 
 export async function trackUploadedProductDocument(
@@ -106,6 +110,7 @@ export async function trackUploadedProductDocument(
     slotKeyMode?: 'productDocumentId' | 'subsection' | 'subsectionTag';
     processType?: DocumentProcessType;
     renewalCycleId?: string | Types.ObjectId | null;
+    renewalCycleNo?: number | null;
     roundNo?: number | null;
     session?: ClientSession;
   },
@@ -132,6 +137,7 @@ export async function trackUploadedProductDocument(
     userId: params.userId,
     processType: params.processType,
     renewalCycleId: params.renewalCycleId,
+    renewalCycleNo: params.renewalCycleNo ?? null,
     roundNo: params.roundNo,
     session: params.session,
   });

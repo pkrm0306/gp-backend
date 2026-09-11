@@ -1,5 +1,5 @@
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DOCUMENT_PROCESS_TYPE_VALUES } from '../constants/document-version.constants';
 
@@ -36,10 +36,13 @@ export class DocumentStreamQueryDto {
 
   @ApiPropertyOptional({
     description:
-      'Renew MP/WM: productDocumentId for per-file history scoping and legacy stream fallback',
+      'When false, versions belonging to an open (in-progress) renewal cycle are excluded from history',
   })
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  anchorProductDocumentId?: number;
+  @Transform(({ value }) => {
+    if (value === 'false' || value === false) return false;
+    if (value === 'true' || value === true) return true;
+    return undefined;
+  })
+  includeOpenCycleVersions?: boolean;
 }
