@@ -2708,8 +2708,8 @@ export class ProductRegistrationService implements OnModuleInit {
   }
 
   /**
-   * Persists one timeline row when `products.urnStatus` advances to `newUrnStatus`.
-   * Errors are swallowed so the primary DB operation still succeeds.
+   * Persists timeline rows when `products.urnStatus` advances to `newUrnStatus`.
+   * Retries once via reconcile if tip still mismatches; never leaves approve stuck.
    */
   private async tryLogUrnLifecycleStep(
     vendorId: string | Types.ObjectId,
@@ -2718,18 +2718,30 @@ export class ProductRegistrationService implements OnModuleInit {
     newUrnStatus: number,
     previousUrnStatus?: number,
   ): Promise<void> {
+    const ctx = { vendorId, manufacturerId, urnNo };
     try {
       await this.productRegistrationWorkflowService.syncToUrnStatus(
-        {
-          vendorId,
-          manufacturerId,
-          urnNo,
-        },
+        ctx,
         previousUrnStatus ?? Math.max(0, newUrnStatus - 1),
+        newUrnStatus,
+      );
+      await this.productRegistrationWorkflowService.reconcilePendingToUrnStatus(
+        ctx,
         newUrnStatus,
       );
     } catch (err) {
       console.error('[Activity Log] tryLogUrnLifecycleStep failed:', err);
+      try {
+        await this.productRegistrationWorkflowService.reconcilePendingToUrnStatus(
+          ctx,
+          newUrnStatus,
+        );
+      } catch (retryErr) {
+        console.error(
+          '[Activity Log] tryLogUrnLifecycleStep reconcile retry failed:',
+          retryErr,
+        );
+      }
     }
   }
 

@@ -9,6 +9,8 @@ import { ActivityWorkflowItemStatus } from './activity-workflow.constants';
 /** Marks timeline rows that must not become Quick View "current activity". */
 export const AUXILIARY_ACTIVITY_SUB_IDS = {
   URN_SITE_VISIT: 1,
+  /** Payment/narrative events — must not become Quick View tip. */
+  PAYMENT_NARRATIVE: 2,
 } as const;
 
 export type ActivityLogLike = {
@@ -33,7 +35,10 @@ const SITE_VISIT_ACTIVITY_PREFIXES = [
 
 export function isAuxiliaryActivityLog(row: ActivityLogLike): boolean {
   const subId = Number(row.sub_activities_id);
-  if (subId === AUXILIARY_ACTIVITY_SUB_IDS.URN_SITE_VISIT) {
+  if (
+    subId === AUXILIARY_ACTIVITY_SUB_IDS.URN_SITE_VISIT ||
+    subId === AUXILIARY_ACTIVITY_SUB_IDS.PAYMENT_NARRATIVE
+  ) {
     return true;
   }
   const activity = String(row.activity ?? '').trim();
@@ -53,33 +58,43 @@ function sortActivityLogsChronologically(
 }
 
 /**
- * Quick View current step — last lifecycle row, skipping auxiliary admin events
- * (e.g. site visit CRUD) that must not override workflow stage.
+ * Quick View current step — last lifecycle Pending that has not been superseded by a
+ * later Done for the same activities_id (append-only activity_log).
  */
 export function resolveCurrentWorkflowActivityLog(
   logs: ActivityLogLike[],
   urnStatus?: number,
 ): Record<string, unknown> | null {
   const sorted = sortActivityLogsChronologically(logs);
+  const newestFirst = [...sorted].reverse();
 
-  for (let i = sorted.length - 1; i >= 0; i -= 1) {
-    const row = sorted[i];
-    if (isAuxiliaryActivityLog(row)) {
-      continue;
-    }
-    if (Number(row.status) === ActivityWorkflowItemStatus.Pending) {
-      return {
-        ...formatActivityLogRow(row as ActivityLogDocument),
-        status: ActivityWorkflowItemStatus.Pending,
-      };
+  const doneActivityIds = new Set<number>();
+  for (const row of newestFirst) {
+    if (isAuxiliaryActivityLog(row)) continue;
+    const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
+    if (
+      Number.isFinite(activityId) &&
+      Number(row.status) === ActivityWorkflowItemStatus.Done
+    ) {
+      doneActivityIds.add(activityId);
     }
   }
 
-  for (let i = sorted.length - 1; i >= 0; i -= 1) {
-    const row = sorted[i];
-    if (isAuxiliaryActivityLog(row)) {
+  for (const row of newestFirst) {
+    if (isAuxiliaryActivityLog(row)) continue;
+    if (Number(row.status) !== ActivityWorkflowItemStatus.Pending) continue;
+    const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
+    if (Number.isFinite(activityId) && doneActivityIds.has(activityId)) {
       continue;
     }
+    return {
+      ...formatActivityLogRow(row as ActivityLogDocument),
+      status: ActivityWorkflowItemStatus.Pending,
+    };
+  }
+
+  for (const row of newestFirst) {
+    if (isAuxiliaryActivityLog(row)) continue;
     return {
       ...formatActivityLogRow(row as ActivityLogDocument),
       status: ActivityWorkflowItemStatus.Pending,

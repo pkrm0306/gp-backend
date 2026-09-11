@@ -116,6 +116,10 @@ export const WORKFLOW_REJECT_TARGET: Readonly<Partial<Record<number, number>>> =
 /**
  * Maps `products.urnStatus` to the activity that should be Pending.
  * Renewal statuses (12+) are managed by the renew module.
+ *
+ * Status 3 = registration payment approved → Process Forms (not still proposal/payment).
+ * Status 2 / 7–8 are further refined by paymentStatus via
+ * `resolveExpectedPendingActivityId` (submitted proof → admin approval tip).
  */
 export const URN_STATUS_PENDING_ACTIVITY: Readonly<
   Partial<Record<number, number | null>>
@@ -123,7 +127,7 @@ export const URN_STATUS_PENDING_ACTIVITY: Readonly<
   0: PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
   1: PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
   2: PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
-  3: PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
+  3: PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS,
   4: PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW,
   5: PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS,
   6: PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_CERTIFICATION_FEE,
@@ -133,6 +137,44 @@ export const URN_STATUS_PENDING_ACTIVITY: Readonly<
   10: PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE,
   11: null,
 };
+
+/** Optional payment hints — same urnStatus can mean manufacturer vs admin tip. */
+export type WorkflowPaymentHints = {
+  /** registration payment_details.paymentStatus (0 created, 1 submitted, 2 approved, 3 rejected) */
+  registrationPaymentStatus?: number | null;
+  certificationPaymentStatus?: number | null;
+};
+
+/**
+ * Single source of truth for which registration activity should be Pending.
+ * Prefer this over raw URN_STATUS_PENDING_ACTIVITY when payment state is known.
+ */
+export function resolveExpectedPendingActivityId(
+  urnStatus: number,
+  hints?: WorkflowPaymentHints,
+): number | null | undefined {
+  if (urnStatus >= 12) return undefined;
+  if (urnStatus === 11) return null;
+
+  if (urnStatus === 2) {
+    const ps = Number(hints?.registrationPaymentStatus ?? 0);
+    // Proof submitted (or approved while status still 2) → Admin Approve/Reject Registration Fee
+    if (Number.isFinite(ps) && ps >= 1) {
+      return PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REGISTRATION_FEE;
+    }
+    return PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT;
+  }
+
+  if (urnStatus === 7 || urnStatus === 8) {
+    const ps = Number(hints?.certificationPaymentStatus ?? 0);
+    if (Number.isFinite(ps) && ps >= 1) {
+      return PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE;
+    }
+    return PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT;
+  }
+
+  return URN_STATUS_PENDING_ACTIVITY[urnStatus];
+}
 
 export function workflowActivityName(activityId: number): string {
   return (

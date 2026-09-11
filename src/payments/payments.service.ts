@@ -623,7 +623,9 @@ export class PaymentsService {
         next_responsibility: entry.next_responsibility,
         next_activity: entry.next_activity,
         next_acitivities_id: this.getNextActivityIdForLog(activitiesId),
-        status: 0,
+        // Narrative only — never Pending tip (steals structured workflow Current).
+        status: 1,
+        sub_activities_id: 2, // AUXILIARY_ACTIVITY_SUB_IDS.PAYMENT_NARRATIVE
       });
     } catch (err) {
       console.error('[Payment] Timeline activity log failed:', err);
@@ -884,31 +886,169 @@ export class PaymentsService {
   }
 
   /**
-   * Timeline row when payment_details is created (does not by itself change products.urnStatus).
+   * After admin creates a registration/certification fee proposal payment,
+   * advance products.urnStatus and sync the structured activity tip.
+   * Registration: 1 → 2 (Assign Fee Done → Manufacturer proposal/payment Current)
+   * Certification: 6 → 7 (Assign Cert Fee Done → Manufacturer payment Current)
    */
-  /** Same lifecycle row shape as `ProductRegistrationService` when URN status advances via payment update. */
+  private async advanceUrnStatusAfterFeeAssigned(
+    paymentType: string,
+    vendorObjectId: Types.ObjectId,
+    urnNo: string,
+  ): Promise<void> {
+    const targetUrnStatus =
+      paymentType === 'registration'
+        ? 2
+        : paymentType === 'certification'
+          ? 7
+          : null;
+    if (targetUrnStatus == null) return;
+
+    const urnOptions = this.urnCandidates(urnNo);
+    let product = await this.productModel
+      .findOne({
+        urnNo: { $in: urnOptions },
+        vendorId: vendorObjectId,
+      })
+      .select('manufacturerId urnStatus urnNo vendorId')
+      .lean()
+      .exec();
+    // Admin create may resolve owner differently — fall back to URN-only lookup.
+    if (!product) {
+      product = await this.productModel
+        .findOne({ urnNo: { $in: urnOptions } })
+        .select('manufacturerId urnStatus urnNo vendorId')
+        .lean()
+        .exec();
+    }
+    if (!product?.manufacturerId) return;
+
+    const previousUrnStatus = Number(product.urnStatus ?? 0);
+    const ownerVendorId = product.vendorId ?? vendorObjectId;
+    const ctx = {
+      vendorId: ownerVendorId,
+      manufacturerId: product.manufacturerId,
+      urnNo: String(product.urnNo ?? urnNo),
+    };
+
+    if (previousUrnStatus >= targetUrnStatus) {
+      await this.productRegistrationWorkflowService.reconcilePendingToUrnStatus(
+        ctx,
+        previousUrnStatus,
+      );
+      return;
+    }
+
+    // Only step forward from the expected assign-fee stage (avoid jumping from 0).
+    const expectedFrom = targetUrnStatus - 1;
+    if (previousUrnStatus !== expectedFrom) {
+      this.logger.warn(
+        `[Payment] Skip urnStatus advance for ${urnNo}: have ${previousUrnStatus}, expected ${expectedFrom} before ${targetUrnStatus}`,
+      );
+      await this.productRegistrationWorkflowService.reconcilePendingToUrnStatus(
+        ctx,
+        previousUrnStatus,
+      );
+      return;
+    }
+
+    const now = new Date();
+    await this.productModel.updateMany(
+      { urnNo: { $in: urnOptions } },
+      { $set: { urnStatus: targetUrnStatus, updatedDate: now } },
+    );
+
+    await this.tryLogUrnLifecycleAfterPayment(
+      String(ownerVendorId),
+      product.manufacturerId.toString(),
+      String(product.urnNo ?? urnNo),
+      targetUrnStatus,
+      previousUrnStatus,
+    );
+  }
+
+  /** Same lifecycle sync as ProductRegistrationService when URN status advances via payment. */
   private async tryLogUrnLifecycleAfterPayment(
     vendorId: string,
     manufacturerIdStr: string,
     urnNo: string,
     newUrnStatus: number,
     previousUrnStatus: number,
+    hints?: {
+      registrationPaymentStatus?: number | null;
+      certificationPaymentStatus?: number | null;
+    },
   ): Promise<void> {
+    const ctx = {
+      vendorId,
+      manufacturerId: manufacturerIdStr,
+      urnNo,
+    };
     try {
       await this.productRegistrationWorkflowService.syncToUrnStatus(
-        {
-          vendorId,
-          manufacturerId: manufacturerIdStr,
-          urnNo,
-        },
+        ctx,
         previousUrnStatus,
         newUrnStatus,
+        hints,
+      );
+      await this.productRegistrationWorkflowService.reconcilePendingToUrnStatus(
+        ctx,
+        newUrnStatus,
+        hints,
       );
     } catch (err) {
       console.error(
         '[Payment] Activity log (URN status via payment) failed:',
         err,
       );
+      try {
+        await this.productRegistrationWorkflowService.reconcilePendingToUrnStatus(
+          ctx,
+          newUrnStatus,
+          hints,
+        );
+      } catch (retryErr) {
+        console.error(
+          '[Payment] Activity log reconcile retry failed:',
+          retryErr,
+        );
+      }
+    }
+  }
+
+  /**
+   * After payment create/submit/approve, align structured tip using urnStatus + paymentStatus.
+   */
+  private async reconcileTipForPaymentUrn(
+    vendorObjectId: Types.ObjectId,
+    urnNo: string,
+    hints: {
+      registrationPaymentStatus?: number | null;
+      certificationPaymentStatus?: number | null;
+    },
+  ): Promise<void> {
+    try {
+      const urnOptions = this.urnCandidates(urnNo);
+      const product = await this.productModel
+        .findOne({
+          urnNo: { $in: urnOptions },
+          vendorId: vendorObjectId,
+        })
+        .select('manufacturerId urnStatus urnNo')
+        .lean()
+        .exec();
+      if (!product?.manufacturerId) return;
+      await this.productRegistrationWorkflowService.reconcilePendingToUrnStatus(
+        {
+          vendorId: vendorObjectId,
+          manufacturerId: product.manufacturerId,
+          urnNo: String(product.urnNo ?? urnNo),
+        },
+        Number(product.urnStatus ?? 0),
+        hints,
+      );
+    } catch (err) {
+      console.error('[Payment] reconcileTipForPaymentUrn failed:', err);
     }
   }
 
@@ -917,9 +1057,19 @@ export class PaymentsService {
     vendorObjectId: Types.ObjectId,
     urnNo: string,
     paymentType: string,
-    hasProposalFile = false,
+    _hasProposalFile = false,
   ): Promise<void> {
     if (!urnNo) return;
+    // Registration/certification: advance urnStatus + structured tip. Do not insert
+    // a fake Pending row with activities_id = urnStatus (that stuck Assign Fee Pending).
+    if (paymentType === 'registration' || paymentType === 'certification') {
+      await this.advanceUrnStatusAfterFeeAssigned(
+        paymentType,
+        vendorObjectId,
+        urnNo,
+      );
+      return;
+    }
     try {
       const urnOptions = this.urnCandidates(urnNo);
       const product = await this.productModel
@@ -936,40 +1086,14 @@ export class PaymentsService {
         typeof product.urnStatus === 'number' ? product.urnStatus : 0;
       const manufacturerId = product.manufacturerId.toString();
 
-      if (hasProposalFile && paymentType === 'registration') {
-        await this.logTimelineEntry(
-          vendorId,
-          manufacturerId,
-          urnNo,
-          {
-            activity: 'Assign Registration Fee',
-            responsibility: 'Admin',
-            next_activity:
-              'Approve/Reject Registration Fee Proposal and make payment',
-            next_responsibility: 'Manufacturer',
-            activities_id: urnStatus,
-            activity_status: urnStatus,
-          },
-          urnStatus,
-        );
-        return;
-      }
-
-      const label =
-        paymentType === 'certification'
-          ? 'Assign Certification Fee'
-          : 'Assign Registration Fee';
       await this.logTimelineEntry(
         vendorId,
         manufacturerId,
         urnNo,
         {
-          activity: label,
+          activity: 'Assign Renewal Fee',
           responsibility: 'Admin',
-          next_activity:
-            paymentType === 'certification'
-              ? 'Certification Fee Payment'
-              : 'Approve/Reject Registration Fee Proposal and make payment',
+          next_activity: 'Manufacturer renewal fee payment',
           next_responsibility: 'Manufacturer',
           activities_id: urnStatus,
           activity_status: urnStatus,
@@ -1946,6 +2070,16 @@ export class PaymentsService {
         const productsRaw =
           updatedPayment.productsToBeCertified ??
           existingPayment.productsToBeCertified;
+        const productBeforeCert = await this.productModel
+          .findOne({
+            urnNo: { $in: urnOptions },
+            vendorId: effectiveVendorObjectId,
+          })
+          .select('manufacturerId urnStatus')
+          .session(session)
+          .lean()
+          .exec();
+        const previousCertUrnStatus = Number(productBeforeCert?.urnStatus ?? 0);
         const certificationResult =
           await this.certificationLifecycle.applyCertificationApproval({
             urnNoOptions: urnOptions,
@@ -1957,6 +2091,14 @@ export class PaymentsService {
         certifiedProductsForNotify = Number(
           certificationResult?.certifiedCount ?? 0,
         );
+        if (productBeforeCert?.manufacturerId) {
+          deferredUrnLog = {
+            urnNo: normalizedUrn,
+            newUrnStatus: 11,
+            previousUrnStatus: previousCertUrnStatus,
+            manufacturerId: productBeforeCert.manufacturerId.toString(),
+          };
+        }
       }
 
       const previousPaymentStatus = Number(existingPayment.paymentStatus ?? 0);
@@ -1983,6 +2125,27 @@ export class PaymentsService {
           },
           { session },
         );
+        const renewProduct = await this.productModel
+          .findOne(renewUrnFilter)
+          .select('manufacturerId')
+          .session(session)
+          .lean()
+          .exec();
+        if (renewProduct?.manufacturerId) {
+          await this.activityLogService.logActivity({
+            vendor_id: effectiveVendorObjectId,
+            manufacturer_id: renewProduct.manufacturerId,
+            urn_no: normalizedUrn,
+            activities_id: RENEWAL_URN_STATUS.PAYMENT_SUBMITTED,
+            activity: 'Vendor submitted renewal payment',
+            activity_status: RENEWAL_URN_STATUS.PAYMENT_SUBMITTED,
+            responsibility: 'Manufacturer',
+            next_activity: 'Admin approves renewal payment',
+            next_responsibility: 'Admin',
+            next_acitivities_id: RENEWAL_URN_STATUS.PAYMENT_APPROVED,
+            status: 0,
+          });
+        }
       }
 
       if (
@@ -2000,7 +2163,31 @@ export class PaymentsService {
           userId: effectiveVendorObjectId,
           session,
         });
-        // urnStatus + productRenewStatus: certified EOIs only — set in onRenewPaymentApproved
+        // Tip after commit — renew payment approved opens forms
+        const renewOwner = await this.productModel
+          .findOne({
+            urnNo: { $in: urnOptions },
+            vendorId: effectiveVendorObjectId,
+          })
+          .select('manufacturerId')
+          .session(session)
+          .lean()
+          .exec();
+        if (renewOwner?.manufacturerId) {
+          await this.activityLogService.logActivity({
+            vendor_id: effectiveVendorObjectId,
+            manufacturer_id: renewOwner.manufacturerId,
+            urn_no: normalizedUrn,
+            activities_id: RENEWAL_URN_STATUS.PAYMENT_APPROVED,
+            activity: 'Renewal payment approved by admin',
+            activity_status: RENEWAL_URN_STATUS.PAYMENT_APPROVED,
+            responsibility: 'Admin',
+            next_activity: 'Vendor completes renewal process forms',
+            next_responsibility: 'Manufacturer',
+            next_acitivities_id: RENEWAL_URN_STATUS.PAYMENT_APPROVED,
+            status: 0,
+          });
+        }
       }
 
       await session.commitTransaction();
@@ -2041,42 +2228,47 @@ export class PaymentsService {
       }
 
       if (proposalFile) {
-        const anyProduct = await this.findUrnProductForOrg(
-          normalizedUrn,
-          effectiveVendorObjectId,
-          'manufacturerId urnStatus',
-        );
-        if (anyProduct) {
-          const urnStatus =
-            typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
-          await this.logTimelineEntry(
-            effectiveVendorId,
-            anyProduct.manufacturerId.toString(),
+        if (
+          paymentType === 'registration' ||
+          paymentType === 'certification'
+        ) {
+          await this.advanceUrnStatusAfterFeeAssigned(
+            paymentType,
+            effectiveVendorObjectId,
             normalizedUrn,
-            {
-              activity:
-                currentApproval === 2
-                  ? 'Assign Registration Fee'
-                  : 'Assign Registration Fee',
-              responsibility: 'Admin',
-              next_activity:
-                'Approve/Reject Registration Fee Proposal and make payment',
-              next_responsibility: 'Manufacturer',
-              activities_id: urnStatus,
-              activity_status: urnStatus,
-            },
-            urnStatus,
           );
-          if (
-            paymentType === 'registration' ||
-            paymentType === 'certification'
-          ) {
-            this.tryNotifyPaymentProposalReady(
+          this.tryNotifyPaymentProposalReady(
+            normalizedUrn,
+            effectiveVendorObjectId,
+            updatedPayment.paymentId,
+            paymentType,
+            updatedPayment.quoteTotal,
+          );
+        } else {
+          const anyProduct = await this.findUrnProductForOrg(
+            normalizedUrn,
+            effectiveVendorObjectId,
+            'manufacturerId urnStatus',
+          );
+          if (anyProduct) {
+            const urnStatus =
+              typeof anyProduct.urnStatus === 'number'
+                ? anyProduct.urnStatus
+                : 0;
+            await this.logTimelineEntry(
+              effectiveVendorId,
+              anyProduct.manufacturerId.toString(),
               normalizedUrn,
-              effectiveVendorObjectId,
-              updatedPayment.paymentId,
-              paymentType,
-              updatedPayment.quoteTotal,
+              {
+                activity: 'Assign Registration Fee',
+                responsibility: 'Admin',
+                next_activity:
+                  'Approve/Reject Registration Fee Proposal and make payment',
+                next_responsibility: 'Manufacturer',
+                activities_id: urnStatus,
+                activity_status: urnStatus,
+              },
+              urnStatus,
             );
           }
         }
@@ -2113,6 +2305,11 @@ export class PaymentsService {
             },
             urnStatus,
           );
+          await this.reconcileTipForPaymentUrn(
+            effectiveVendorObjectId,
+            normalizedUrn,
+            { registrationPaymentStatus: newPaymentStatus },
+          );
         }
       }
 
@@ -2148,6 +2345,11 @@ export class PaymentsService {
               activity_status: urnStatus,
             },
             urnStatus,
+          );
+          await this.reconcileTipForPaymentUrn(
+            effectiveVendorObjectId,
+            normalizedUrn,
+            { certificationPaymentStatus: newPaymentStatus },
           );
           this.lifecycleNotification
             .notifyCertificationPaymentSubmitted({

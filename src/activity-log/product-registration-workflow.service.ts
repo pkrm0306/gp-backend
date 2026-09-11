@@ -12,9 +12,10 @@ import {
 import {
   ActivityWorkflowItemStatus,
   PRODUCT_REGISTRATION_ACTIVITY_ID,
-  URN_STATUS_PENDING_ACTIVITY,
   WORKFLOW_COMPLETE_NEXT,
   WORKFLOW_REJECT_TARGET,
+  WorkflowPaymentHints,
+  resolveExpectedPendingActivityId,
   workflowActivityName,
   workflowActivityResponsibility,
   workflowForwardNextActivityId,
@@ -80,6 +81,7 @@ export class ProductRegistrationWorkflowService {
     }
 
     const nextFields = this.buildNextFields(activityId);
+    const now = new Date();
     const row = new this.activityLogModel({
       vendor_id: this.toObjectId(ctx.vendorId, 'vendor_id'),
       manufacturer_id: this.toObjectId(ctx.manufacturerId, 'manufacturer_id'),
@@ -90,6 +92,10 @@ export class ProductRegistrationWorkflowService {
       responsibility: workflowActivityResponsibility(activityId),
       ...nextFields,
       status: itemStatus,
+      // Explicit timestamps so tip selection (sort by created_at) cannot stick
+      // on older Pending rows when schema timestamps are unavailable.
+      created_at: now,
+      updated_at: now,
     });
 
     if (ctx.session) {
@@ -134,11 +140,25 @@ export class ProductRegistrationWorkflowService {
       return tb - ta;
     });
 
+    // Newest Done per activity id supersedes older Pending for the same id
+    // (append-only log never updates prior rows).
+    const doneActivityIds = new Set<number>();
     for (const row of sorted) {
       if (isAuxiliaryActivityLog(row)) continue;
-      if (Number(row.status) === ActivityWorkflowItemStatus.Pending) {
-        return Number(row.activities_id ?? row.activity_status ?? NaN);
+      const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
+      if (!Number.isFinite(activityId)) continue;
+      if (Number(row.status) === ActivityWorkflowItemStatus.Done) {
+        doneActivityIds.add(activityId);
       }
+    }
+
+    for (const row of sorted) {
+      if (isAuxiliaryActivityLog(row)) continue;
+      if (Number(row.status) !== ActivityWorkflowItemStatus.Pending) continue;
+      const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
+      if (!Number.isFinite(activityId)) continue;
+      if (doneActivityIds.has(activityId)) continue;
+      return activityId;
     }
     return null;
   }
@@ -230,25 +250,47 @@ export class ProductRegistrationWorkflowService {
   }
 
   /**
-   * Align workflow pending activity with `products.urnStatus` without skipping steps.
+   * Align workflow pending activity with business state (urnStatus + payment hints).
    * Used when URN status is advanced through existing product/payment services.
    */
   async syncToUrnStatus(
     ctx: WorkflowTransitionContext,
     previousUrnStatus: number,
     nextUrnStatus: number,
+    hints?: WorkflowPaymentHints,
   ): Promise<void> {
     if (nextUrnStatus >= 12) return;
 
-    const targetPending = URN_STATUS_PENDING_ACTIVITY[nextUrnStatus];
+    const targetPending = resolveExpectedPendingActivityId(
+      nextUrnStatus,
+      hints,
+    );
     if (targetPending === undefined) return;
 
+    await this.syncTowardPendingActivity(
+      ctx,
+      targetPending,
+      previousUrnStatus,
+      nextUrnStatus,
+    );
+  }
+
+  /**
+   * Drive tip to an explicit pending activity id (or complete workflow when null).
+   */
+  async syncTowardPendingActivity(
+    ctx: WorkflowTransitionContext,
+    targetPending: number | null,
+    previousUrnStatus = 0,
+    nextUrnStatus = 0,
+  ): Promise<void> {
     const urnNo = this.normalizeUrn(ctx.urnNo);
     let pendingId = await this.getCurrentPendingActivityId(urnNo);
 
-    if (pendingId == null && nextUrnStatus === 0) {
+    if (pendingId == null && nextUrnStatus === 0 && targetPending !== null) {
       await this.initializeOnProductRegistration(ctx);
-      return;
+      pendingId = await this.getCurrentPendingActivityId(urnNo);
+      if (pendingId === targetPending) return;
     }
 
     if (targetPending === null) {
@@ -268,9 +310,7 @@ export class ProductRegistrationWorkflowService {
         continue;
       }
 
-      // Prefer forward complete over reject. Reject-first incorrectly treated
-      // approve 1→2 as a reject (rollback to 0 then complete forward), which
-      // oscillates forever and never opens Assign Registration Fee.
+      // Prefer forward complete over reject to avoid approve oscillation.
       if (this.shouldCompleteToReach(pendingId, targetPending)) {
         await this.completeActivity(ctx, pendingId);
       } else if (this.shouldRejectToReach(pendingId, targetPending)) {
@@ -289,6 +329,40 @@ export class ProductRegistrationWorkflowService {
         'Workflow sync exceeded maximum transition steps',
       );
     }
+  }
+
+  /**
+   * If activity tip drifted behind business state, advance tip to expected pending.
+   * @returns true when rows were written
+   */
+  async reconcilePendingToUrnStatus(
+    ctx: WorkflowTransitionContext,
+    urnStatus: number,
+    hints?: WorkflowPaymentHints,
+  ): Promise<boolean> {
+    if (urnStatus >= 12) return false;
+
+    const targetPending = resolveExpectedPendingActivityId(urnStatus, hints);
+    if (targetPending === undefined) return false;
+
+    const urnNo = this.normalizeUrn(ctx.urnNo);
+    const pendingId = await this.getCurrentPendingActivityId(urnNo);
+
+    if (targetPending === null) {
+      if (pendingId == null) return false;
+      await this.syncTowardPendingActivity(ctx, null, urnStatus, urnStatus);
+      return true;
+    }
+
+    if (pendingId === targetPending) return false;
+
+    await this.syncTowardPendingActivity(
+      ctx,
+      targetPending,
+      Math.max(0, urnStatus - 1),
+      urnStatus,
+    );
+    return true;
   }
 
   private shouldCompleteToReach(

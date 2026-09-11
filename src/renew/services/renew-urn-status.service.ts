@@ -244,6 +244,7 @@ export class RenewUrnStatusService {
       next_activity: nextActivity,
       next_responsibility: nextResponsibility,
       next_acitivities_id: nextActivitiesId,
+      status: 0, // Pending tip for renew Current/Next
     });
   }
 

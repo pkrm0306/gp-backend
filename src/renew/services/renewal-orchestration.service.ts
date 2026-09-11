@@ -764,6 +764,8 @@ export class RenewalOrchestrationService {
 
         next_acitivities_id: RENEWAL_URN_STATUS.PAYMENT_SUBMITTED,
 
+        status: 0,
+
       });
 
     } catch (error) {
@@ -890,6 +892,7 @@ export class RenewalOrchestrationService {
           responsibility: 'Admin',
           next_activity: RENEWAL_NEXT_ACTIVITY.CERTIFICATE_PUBLISHED,
           next_responsibility: 'Admin',
+          status: 1, // Done — renewal complete
         });
       } catch (logError) {
         this.logger.warn(

@@ -127,6 +127,30 @@ describe('ProductRegistrationWorkflowService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('syncs urn status 1→2 by completing Assign Registration Fee after fee is generated', async () => {
+    const { service, saveSpy } = createService([
+      {
+        urn_no: urnNo,
+        activities_id: PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+        status: ActivityWorkflowItemStatus.Pending,
+        created_at: new Date(),
+      },
+    ]);
+
+    await service.syncToUrnStatus(ctx, 1, 2);
+
+    expect(saveSpy).toHaveBeenCalledWith(
+      ctx,
+      PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+      ActivityWorkflowItemStatus.Done,
+    );
+    expect(saveSpy).toHaveBeenCalledWith(
+      ctx,
+      PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
+      ActivityWorkflowItemStatus.Pending,
+    );
+  });
+
   it('syncs urn status 0→1 by completing Product Approve/Reject (not reject oscillation)', async () => {
     const { service, saveSpy, rows } = createService([
       {
@@ -165,6 +189,31 @@ describe('ProductRegistrationWorkflowService', () => {
           r.status === ActivityWorkflowItemStatus.Pending,
       ),
     ).toHaveLength(1);
+  });
+
+  it('reconcilePendingToUrnStatus advances a stuck approve tip to Assign Registration Fee', async () => {
+    const { service, rows } = createService([
+      {
+        urn_no: urnNo,
+        activities_id: PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
+        status: ActivityWorkflowItemStatus.Pending,
+        created_at: new Date(),
+      },
+    ]);
+
+    const healed = await service.reconcilePendingToUrnStatus(ctx, 1);
+    expect(healed).toBe(true);
+    expect(await service.getCurrentPendingActivityId(urnNo)).toBe(
+      PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+    );
+    expect(
+      rows.some(
+        (r) =>
+          r.activities_id ===
+            PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT &&
+          r.status === ActivityWorkflowItemStatus.Done,
+      ),
+    ).toBe(true);
   });
 
   it('syncs reject-style urn status rollback via reject when complete cannot reach target', async () => {
