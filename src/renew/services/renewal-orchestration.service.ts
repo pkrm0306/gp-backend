@@ -97,6 +97,7 @@ import { RenewalCycleService } from './renewal-cycle.service';
 import { RenewalCycleDocument, RenewalCycleStatus } from '../schemas/renewal-cycle.schema';
 import { buildRenewProcessHeaderFilter } from '../helpers/renew-cycle-scope.util';
 import { RenewDocumentPromotionService } from './renew-document-promotion.service';
+import { RenewProductPerformancePromotionService } from './renew-product-performance-promotion.service';
 import { DocumentVersioningService } from '../../documents/document-versioning.service';
 import { renewProcessSectionKeys } from '../../documents/helpers/tab-review-section-keys.util';
 import { runInTransactionIfSupported } from '../helpers/mongo-session.util';
@@ -208,6 +209,8 @@ export class RenewalOrchestrationService {
     private readonly activityLogService: ActivityLogService,
 
     private readonly renewDocumentPromotionService: RenewDocumentPromotionService,
+
+    private readonly renewProductPerformancePromotionService: RenewProductPerformancePromotionService,
 
     private readonly documentVersioningService: DocumentVersioningService,
 
@@ -875,6 +878,19 @@ export class RenewalOrchestrationService {
           this.logger.warn(
             `Renew document promotion failed for URN ${trimmedUrn} (renewal still completed)`,
             promotionError instanceof Error ? promotionError.stack : String(promotionError),
+          );
+        }
+        try {
+          await this.renewProductPerformancePromotionService.promoteRenewProductPerformanceTestReportsForCompletedCycle(
+            trimmedUrn,
+            promotionCycleId,
+          );
+        } catch (ppPromotionError) {
+          this.logger.warn(
+            `Renew PP test-report metadata promotion failed for URN ${trimmedUrn} (renewal still completed)`,
+            ppPromotionError instanceof Error
+              ? ppPromotionError.stack
+              : String(ppPromotionError),
           );
         }
       }

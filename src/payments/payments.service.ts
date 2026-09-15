@@ -398,26 +398,13 @@ export class PaymentsService {
         .exec();
     }
 
-    let existingPayment = await this.paymentDetailsModel
+    // Do not fall back to a different paymentType — that can write proof onto the
+    // wrong fee row (e.g. registration submit updating certification).
+    return this.paymentDetailsModel
       .findOne(paymentQuery)
       .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
       .session(options?.session ?? null)
       .exec();
-
-    if (!existingPayment && paymentTypeHint) {
-      existingPayment = await this.paymentDetailsModel
-        .findOne({ urnNo: { $in: urnOptions } })
-        .sort({ updatedDate: -1, createdDate: -1, paymentId: -1 })
-        .session(options?.session ?? null)
-        .exec();
-      if (existingPayment?.paymentType === 'renew' && !renewCycleIdHint) {
-        throw new BadRequestException(
-          'renewalCycleId is required when loading renew payments',
-        );
-      }
-    }
-
-    return existingPayment;
   }
 
   private async findPaymentForVendorUrn(
@@ -582,6 +569,54 @@ export class PaymentsService {
     updateData.paymentChequeDate = null;
     updateData.tdsFile = null;
     updateData.chequeOrDdFile = null;
+  }
+
+  /**
+   * Proposal re-upload intentionally resets vendor proof so they can resubmit.
+   * Always reset paymentStatus to draft (0) when clearing proof — otherwise an
+   * approved/pending row can keep status 1/2 with empty paymentMode/reference.
+   */
+  private resetVendorPaymentProofForProposalReupload(
+    updateData: Record<string, unknown>,
+  ): void {
+    updateData.paymentStatus = 0;
+    this.clearVendorPaymentProofFields(updateData);
+  }
+
+  /** Vendor payment submit must persist a real mode + reference on the fee row. */
+  private assertVendorPaymentProofFieldsPresent(params: {
+    updatePaymentDto: UpdatePaymentDto;
+    existingPayment: PaymentDetailsDocument;
+    vendorProofUpdate: boolean;
+  }): void {
+    const requestingSubmit =
+      params.vendorProofUpdate ||
+      params.updatePaymentDto.paymentStatus === 1;
+    if (!requestingSubmit) return;
+
+    const mode = String(
+      params.updatePaymentDto.paymentMode ??
+        params.existingPayment.paymentMode ??
+        '',
+    ).trim();
+    if (!mode) {
+      throw new BadRequestException(
+        'paymentMode is required when submitting payment details',
+      );
+    }
+
+    const referenceSource =
+      params.updatePaymentDto.paymentReferenceNo !== undefined
+        ? params.updatePaymentDto.paymentReferenceNo
+        : params.existingPayment.paymentReferenceNo;
+    const reference = this.normalizePaymentReferenceNo(
+      referenceSource as string | undefined,
+    );
+    if (!reference) {
+      throw new BadRequestException(
+        'paymentReferenceNo is required when submitting payment details',
+      );
+    }
   }
 
   private isAdminQuoteFieldsUpdate(dto: UpdatePaymentDto): boolean {
@@ -1820,15 +1855,16 @@ export class PaymentsService {
           updateData.previousProposalFile = previousProposal;
           updateData.proposalRejectionRemarks = undefined;
           updateData.vendorProposalApprovalStatus = 0;
-          updateData.paymentStatus = 0;
-          this.clearVendorPaymentProofFields(updateData);
+          this.resetVendorPaymentProofForProposalReupload(updateData);
         } else if (currentApproval === 1) {
           updateData.previousProposalFile = previousProposal;
           updateData.vendorProposalApprovalStatus = 0;
-          this.clearVendorPaymentProofFields(updateData);
+          // Previously cleared mode/reference while leaving paymentStatus 1/2 —
+          // that produced Approved/Pending rows with Payment Mode N/A.
+          this.resetVendorPaymentProofForProposalReupload(updateData);
         } else {
           updateData.vendorProposalApprovalStatus = 0;
-          this.clearVendorPaymentProofFields(updateData);
+          this.resetVendorPaymentProofForProposalReupload(updateData);
         }
 
         updateData.proposalFile = newProposalPath;
@@ -1872,6 +1908,11 @@ export class PaymentsService {
           updatePaymentDto,
           vendorProofUpdate,
         });
+        this.assertVendorPaymentProofFieldsPresent({
+          updatePaymentDto,
+          existingPayment,
+          vendorProofUpdate,
+        });
       }
 
       if (
@@ -1900,8 +1941,10 @@ export class PaymentsService {
           updatePaymentDto.paymentType,
         );
       }
-      if (updatePaymentDto.paymentMode !== undefined)
-        updateData.paymentMode = updatePaymentDto.paymentMode;
+      if (updatePaymentDto.paymentMode !== undefined) {
+        const mode = String(updatePaymentDto.paymentMode).trim();
+        updateData.paymentMode = mode || null;
+      }
       if (updatePaymentDto.onlinePaymentId !== undefined)
         updateData.onlinePaymentId = updatePaymentDto.onlinePaymentId;
       if (updatePaymentDto.paymentReferenceNo !== undefined) {
@@ -1914,8 +1957,13 @@ export class PaymentsService {
             existingPayment._id,
             session,
           );
+          updateData.paymentReferenceNo = normalizedPaymentReferenceNo;
+        } else if (vendorProofUpdate || updatePaymentDto.paymentStatus === 1) {
+          throw new BadRequestException(
+            'paymentReferenceNo is required when submitting payment details',
+          );
         }
-        updateData.paymentReferenceNo = normalizedPaymentReferenceNo;
+        // Do not write undefined/null on non-submit updates — preserves existing ref.
       }
       if (updatePaymentDto.paymentChequeDate !== undefined) {
         updateData.paymentChequeDate = updatePaymentDto.paymentChequeDate

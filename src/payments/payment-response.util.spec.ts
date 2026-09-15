@@ -130,6 +130,25 @@ describe('payment-response.util', () => {
     });
   });
 
+  it('keeps payment submission fields visible after admin approves payment', () => {
+    const visible = formatPaymentRecordsForUrnDetails([
+      {
+        paymentType: 'registration',
+        vendorProposalApprovalStatus: 1,
+        paymentStatus: 2,
+        paymentMode: 'neft_or_rtgs',
+        paymentReferenceNo: 'REFAPPROVED',
+      },
+    ]);
+
+    expect(visible[0]).toMatchObject({
+      paymentStageActive: true,
+      paymentMode: 'neft_or_rtgs',
+      paymentReferenceNo: 'REFAPPROVED',
+      paymentProofEditable: false,
+    });
+  });
+
   it('marks draft payment proof as editable after proposal approval', () => {
     expect(
       isVendorPaymentProofEditable({

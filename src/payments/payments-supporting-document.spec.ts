@@ -268,3 +268,111 @@ describe('Payments submitted proposal lock validation', () => {
     ).not.toThrow();
   });
 });
+
+describe('Payments vendor proof fields + proposal re-upload reset', () => {
+  function serviceHarness() {
+    return Object.create(PaymentsService.prototype) as {
+      normalizePaymentReferenceNo: (value?: string) => string | undefined;
+      assertVendorPaymentProofFieldsPresent: (params: {
+        updatePaymentDto: {
+          paymentStatus?: number;
+          paymentMode?: string;
+          paymentReferenceNo?: string;
+        };
+        existingPayment: {
+          paymentMode?: string | null;
+          paymentReferenceNo?: string | null;
+        };
+        vendorProofUpdate: boolean;
+      }) => void;
+      resetVendorPaymentProofForProposalReupload: (
+        updateData: Record<string, unknown>,
+      ) => void;
+      clearVendorPaymentProofFields: (
+        updateData: Record<string, unknown>,
+      ) => void;
+      applyPaymentStatusUpdate: (
+        updateData: Record<string, unknown>,
+        updatePaymentDto: { paymentStatus?: number; paymentRejectionRemarks?: string },
+        existingPayment: { paymentStatus?: number },
+        actorRole?: string,
+      ) => {
+        adminRejectedPayment: boolean;
+        adminApprovedPayment: boolean;
+      };
+    };
+  }
+
+  it('requires paymentMode + paymentReferenceNo on vendor submit', () => {
+    const service = serviceHarness();
+
+    expect(() =>
+      service.assertVendorPaymentProofFieldsPresent({
+        updatePaymentDto: { paymentStatus: 1 },
+        existingPayment: {},
+        vendorProofUpdate: true,
+      }),
+    ).toThrow(BadRequestException);
+
+    expect(() =>
+      service.assertVendorPaymentProofFieldsPresent({
+        updatePaymentDto: {
+          paymentStatus: 1,
+          paymentMode: 'neft_or_rtgs',
+          paymentReferenceNo: 'REF123ABC',
+        },
+        existingPayment: {},
+        vendorProofUpdate: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it('requires fields for registration, certification, and renew submit shapes', () => {
+    const service = serviceHarness();
+    for (const paymentType of ['registration', 'certification', 'renew'] as const) {
+      expect(() =>
+        service.assertVendorPaymentProofFieldsPresent({
+          updatePaymentDto: {
+            paymentStatus: 1,
+            paymentMode: 'cheque_or_dd',
+            paymentReferenceNo: `REF${paymentType.toUpperCase()}1`,
+          },
+          existingPayment: { paymentMode: null, paymentReferenceNo: null },
+          vendorProofUpdate: true,
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it('proposal re-upload resets paymentStatus to 0 when clearing proof fields', () => {
+    const service = serviceHarness();
+    const updateData: Record<string, unknown> = {
+      paymentStatus: 2,
+      paymentMode: 'neft_or_rtgs',
+      paymentReferenceNo: 'REFKEEP',
+    };
+
+    service.resetVendorPaymentProofForProposalReupload(updateData);
+
+    expect(updateData.paymentStatus).toBe(0);
+    expect(updateData.paymentMode).toBeNull();
+    expect(updateData.paymentReferenceNo).toBeNull();
+  });
+
+  it('admin approve only sets paymentStatus 2 and does not clear proof fields', () => {
+    const service = serviceHarness();
+    const updateData: Record<string, unknown> = {};
+
+    const result = service.applyPaymentStatusUpdate(
+      updateData,
+      { paymentStatus: 2 },
+      { paymentStatus: 1 },
+      'admin',
+    );
+
+    expect(result.adminApprovedPayment).toBe(true);
+    expect(updateData.paymentStatus).toBe(2);
+    expect(updateData).not.toHaveProperty('paymentMode');
+    expect(updateData).not.toHaveProperty('paymentReferenceNo');
+  });
+});

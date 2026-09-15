@@ -121,10 +121,19 @@ import {
 } from './schemas/urn-renew-tab-review.schema';
 import { RenewUrnTabReviewService } from './services/renew-urn-tab-review.service';
 import { RenewDocumentPromotionService } from './services/renew-document-promotion.service';
+import { RenewProductPerformancePromotionService } from './services/renew-product-performance-promotion.service';
 import { RenewAdminTestValidityService } from './services/renew-admin-test-validity.service';
 import { RenewProcessHeaderIndexesService } from './services/renew-process-header-indexes.service';
 import { RenewActivityStateService } from './services/renew-activity-state.service';
 import { RenewActivityStateController } from './controllers/renew-activity-state.controller';
+import {
+  ProductPerformance,
+  ProductPerformanceSchema,
+} from '../product-performance/schemas/product-performance.schema';
+import {
+  PpTestReport,
+  PpTestReportSchema,
+} from '../product-performance/schemas/pp-test-report.schema';
 
 @Module({
   imports: [
@@ -180,6 +189,8 @@ import { RenewActivityStateController } from './controllers/renew-activity-state
       { name: DocStream.name, schema: DocStreamSchema },
       { name: ProductStatusAudit.name, schema: ProductStatusAuditSchema },
       { name: ProcessRenewPpTestReport.name, schema: ProcessRenewPpTestReportSchema },
+      { name: ProductPerformance.name, schema: ProductPerformanceSchema },
+      { name: PpTestReport.name, schema: PpTestReportSchema },
       { name: UrnRenewTabReview.name, schema: UrnRenewTabReviewSchema },
     ]),
     forwardRef(() => ProductRegistrationModule),
@@ -211,6 +222,7 @@ import { RenewActivityStateController } from './controllers/renew-activity-state
     RenewalCycleService,
     RenewalOrchestrationService,
     RenewDocumentPromotionService,
+    RenewProductPerformancePromotionService,
     RenewAdminTestValidityService,
     RenewQuickViewService,
     RenewDetailsService,
