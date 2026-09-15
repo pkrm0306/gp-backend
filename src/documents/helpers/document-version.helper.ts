@@ -188,7 +188,7 @@ export function slotKeyFromSubsection(subsection?: string | null): string {
   return subsection?.trim() || 'default';
 }
 
-/** Innovation and similar sections: one version stream per subsection + document tag. */
+/** @deprecated Tag-split streams removed; kept for callers that still import the helper. */
 export function slotKeyFromSubsectionAndTag(
   subsection?: string | null,
   tag?: string | null,
@@ -196,4 +196,16 @@ export function slotKeyFromSubsectionAndTag(
   const sub = subsection?.trim() || 'default';
   const t = tag?.trim() || 'tech';
   return `${sub}__${t}`;
+}
+
+/** True when slotKey is a legacy Innovation tag stream (`subsection__tech`). */
+export function isLegacySubsectionTagSlotKey(
+  slotKey: string,
+  subsectionKey?: string | null,
+): boolean {
+  const slot = String(slotKey ?? '').trim();
+  const sub = String(subsectionKey ?? '').trim();
+  if (!slot.includes('__')) return false;
+  if (!sub) return /^[^_]+__.+$/.test(slot);
+  return slot.startsWith(`${sub}__`);
 }

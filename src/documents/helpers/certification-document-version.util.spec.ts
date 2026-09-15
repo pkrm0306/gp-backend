@@ -1,6 +1,9 @@
 import {
+  certificationSlotKey,
+  certificationSlotKeyModeForSection,
   resolveCertificationVersionAction,
 } from './certification-document-version.util';
+import { DocumentSectionKey } from '../../common/constants/document-section-key.constants';
 
 describe('resolveCertificationVersionAction', () => {
   it('returns added for the first upload into an empty slot', () => {
@@ -11,6 +14,28 @@ describe('resolveCertificationVersionAction', () => {
   it('returns replaced when the slot already has live docs', () => {
     expect(resolveCertificationVersionAction(1, false)).toBe('replaced');
     expect(resolveCertificationVersionAction(2, true)).toBe('replaced');
+  });
+});
+
+describe('certificationSlotKeyModeForSection', () => {
+  it('versions Innovation as one subsection stream (not per documentTag)', () => {
+    expect(
+      certificationSlotKeyModeForSection(DocumentSectionKey.PROCESS_INNOVATION),
+    ).toBe('subsection');
+    expect(
+      certificationSlotKey(
+        DocumentSectionKey.PROCESS_INNOVATION,
+        'innovation_implementation_documents',
+        'tech',
+      ),
+    ).toBe('innovation_implementation_documents');
+    expect(
+      certificationSlotKey(
+        DocumentSectionKey.PROCESS_INNOVATION,
+        'innovation_implementation_documents',
+        'social',
+      ),
+    ).toBe('innovation_implementation_documents');
   });
 });
 

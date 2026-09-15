@@ -21,6 +21,33 @@ import { Model } from 'mongoose';
 import { Product, ProductDocument } from '../../product-registration/schemas/product.schema';
 import { assertRenewProcessActorForUrn } from '../helpers/renew-process-controller.util';
 import { parseMultipartJsonIdArray } from '../../product-design/product-design-upload.util';
+import {
+  normalizeInnovationDocumentTag,
+  parseInnovationDocumentTagsForUpload,
+  type InnovationDocumentTag,
+} from '../../process-innovation/utils/innovation-document-tag.util';
+
+function parseExistingDocumentTagsMap(
+  raw: unknown,
+): Record<string, InnovationDocumentTag> | undefined {
+  if (raw == null || raw === '') return undefined;
+  let obj: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return undefined;
+  const out: Record<string, InnovationDocumentTag> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    const id = Number(key);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    out[String(id)] = normalizeInnovationDocumentTag(value);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 @ApiTags('Renew - Innovation')
 @Controller('renew/process-innovation')
@@ -49,6 +76,13 @@ export class ProcessRenewInnovationController {
     const uploadFiles = (files || []).filter(
       (f) => f.fieldname === 'innovationImplementationDocumentsFile',
     );
+    const innovationDocumentTags = parseInnovationDocumentTagsForUpload(
+      body.innovationDocumentTags ?? body.innovationDocumentTagsJson,
+      uploadFiles.length,
+    );
+    const existingDocumentTags = parseExistingDocumentTagsMap(
+      body.existingDocumentTags ?? body.existing_document_tags,
+    );
     const data = await this.processRenewInnovationService.upsert(
       {
         urnNo: body.urnNo,
@@ -62,6 +96,8 @@ export class ProcessRenewInnovationController {
         existingDocumentIds: parseMultipartJsonIdArray(
           body.existingDocumentIds ?? body.existing_document_ids,
         ),
+        innovationDocumentTags,
+        existingDocumentTags,
       },
       uploadFiles,
     );

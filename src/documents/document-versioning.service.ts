@@ -25,6 +25,7 @@ import {
   buildPaymentDocumentTrackInput,
   buildStreamIdentityFilter,
   buildStreamKey,
+  isLegacySubsectionTagSlotKey,
   normalizeProcessType,
   normalizeRenewalCycleId,
   toObjectId,
@@ -750,6 +751,104 @@ export class DocumentVersioningService implements OnModuleInit {
     return n > 0 ? n : 1;
   }
 
+  /**
+   * Collapse legacy Innovation tag streams (`subsection__tech|process|social`)
+   * into one canonical subsection stream so post-reject uploads share Version N.
+   */
+  private async consolidateLegacyTagStreamsOntoCanonical(input: {
+    urnNo: string;
+    sectionKey: string;
+    subsectionKey: string | null;
+    slotKey: string;
+    streamKey: string;
+    activeSession: ClientSession;
+    now: Date;
+    userObjectId: Types.ObjectId;
+  }): Promise<DocStreamDocument | null> {
+    const subsection = String(input.subsectionKey ?? '').trim();
+    // Only when callers now use the plain subsection slot (not already a tag key).
+    if (!subsection || input.slotKey !== subsection) {
+      return null;
+    }
+
+    const legacyStreams = await this.docStreamModel
+      .find({
+        urnNo: input.urnNo,
+        processType: 'initial',
+        renewalCycleId: null,
+        sectionKey: input.sectionKey,
+        subsectionKey: input.subsectionKey,
+        isDeleted: { $ne: true },
+        slotKey: { $regex: `^${subsection.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}__` },
+      })
+      .session(input.activeSession)
+      .exec();
+
+    if (!legacyStreams.length) {
+      return null;
+    }
+
+    legacyStreams.sort((a, b) => {
+      const aAwait = a.awaitingRevision ? 1 : 0;
+      const bAwait = b.awaitingRevision ? 1 : 0;
+      if (bAwait !== aAwait) return bAwait - aAwait;
+      const aVer = Number(a.latestVersionNo ?? 0);
+      const bVer = Number(b.latestVersionNo ?? 0);
+      if (bVer !== aVer) return bVer - aVer;
+      const aTime = new Date(a.createdAt ?? 0).getTime();
+      const bTime = new Date(b.createdAt ?? 0).getTime();
+      return aTime - bTime;
+    });
+
+    const primary = legacyStreams[0]!;
+    const maxVersion = Math.max(
+      0,
+      ...legacyStreams.map((s) => Number(s.latestVersionNo ?? 0)),
+    );
+    const anyAwaiting = legacyStreams.some((s) => Boolean(s.awaitingRevision));
+
+    for (const sibling of legacyStreams.slice(1)) {
+      await this.docVersionModel
+        .updateMany(
+          { streamId: sibling._id },
+          { $set: { streamId: primary._id } },
+          { session: input.activeSession },
+        )
+        .exec();
+      await this.docStreamModel
+        .updateOne(
+          { _id: sibling._id },
+          {
+            $set: {
+              isDeleted: true,
+              awaitingRevision: false,
+              latestVersionNo: 0,
+              latestVersionId: null,
+              updatedAt: input.now,
+              updatedBy: input.userObjectId,
+            },
+          },
+          { session: input.activeSession },
+        )
+        .exec();
+    }
+
+    primary.slotKey = input.slotKey;
+    primary.streamKey = input.streamKey;
+    primary.latestVersionNo = maxVersion;
+    primary.awaitingRevision = anyAwaiting;
+    primary.isDeleted = false;
+    primary.updatedAt = input.now;
+    primary.updatedBy = input.userObjectId;
+    await primary.save({ session: input.activeSession });
+
+    this.logger.warn(
+      `Consolidated ${legacyStreams.length} legacy tag stream(s) into slotKey=${input.slotKey} for ${input.urnNo}/${input.sectionKey}`,
+    );
+
+    return primary;
+  }
+
   async trackDocumentVersionChange(
     input: TrackDocumentVersionChangeInput,
   ): Promise<{ streamId: Types.ObjectId; versionId: Types.ObjectId; versionNo: number }> {
@@ -819,6 +918,22 @@ export class DocumentVersioningService implements OnModuleInit {
         })
         .session(activeSession)
         .exec();
+
+      if (!stream) {
+        const consolidated = await this.consolidateLegacyTagStreamsOntoCanonical({
+          urnNo,
+          sectionKey: input.sectionKey,
+          subsectionKey,
+          slotKey,
+          streamKey,
+          activeSession,
+          now,
+          userObjectId,
+        });
+        if (consolidated) {
+          stream = consolidated as typeof stream;
+        }
+      }
 
       if (!stream) {
         const createdStreams = await this.docStreamModel.create(
@@ -1166,9 +1281,53 @@ export class DocumentVersioningService implements OnModuleInit {
     legacyVersions: Array<Record<string, unknown>>;
   }> {
     const filter = buildStreamIdentityFilter(query);
-    const canonicalStream = await this.docStreamModel.findOne(filter).exec();
+    let canonicalStream = await this.docStreamModel.findOne(filter).exec();
 
     const legacyVersions: Array<Record<string, unknown>> = [];
+    const subsection = String(query.subsectionKey ?? '').trim();
+    const slotKey = String(query.slotKey ?? '').trim();
+
+    // Pre-consolidation Innovation queries use the subsection slot, but older
+    // rows still live under `subsection__tech|process|social` streams.
+    if (
+      !canonicalStream &&
+      subsection &&
+      slotKey === subsection &&
+      !isLegacySubsectionTagSlotKey(slotKey, subsection)
+    ) {
+      const taggedStreams = await this.docStreamModel
+        .find({
+          urnNo: query.urnNo.trim(),
+          processType: 'initial',
+          renewalCycleId: null,
+          sectionKey: query.sectionKey,
+          subsectionKey: query.subsectionKey ?? null,
+          isDeleted: { $ne: true },
+          slotKey: {
+            $regex: `^${subsection.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}__`,
+          },
+        })
+        .exec();
+
+      if (taggedStreams.length) {
+        taggedStreams.sort((a, b) => {
+          const aAwait = a.awaitingRevision ? 1 : 0;
+          const bAwait = b.awaitingRevision ? 1 : 0;
+          if (bAwait !== aAwait) return bAwait - aAwait;
+          return (
+            Number(b.latestVersionNo ?? 0) - Number(a.latestVersionNo ?? 0)
+          );
+        });
+        canonicalStream = taggedStreams[0] ?? null;
+        for (const tagged of taggedStreams.slice(1)) {
+          const versions = await this.docVersionModel
+            .find({ streamId: tagged._id })
+            .lean()
+            .exec();
+          legacyVersions.push(...(versions as Array<Record<string, unknown>>));
+        }
+      }
+    }
 
     if (query.renewalCycleId && Types.ObjectId.isValid(query.renewalCycleId)) {
       const legacyCycleId = new Types.ObjectId(query.renewalCycleId);

@@ -34,8 +34,13 @@ import {
   applyRenewSectionDocumentKeepList,
   buildRenewSectionDocMigrationFilter,
   insertRenewSectionDocuments,
+  renewSectionDocumentSlotKeyMode,
 } from '../helpers/renew-section-documents.util';
 import { deleteUploadedFileByDocumentLink } from '../../utils/upload-file.util';
+import {
+  normalizeInnovationDocumentTag,
+  type InnovationDocumentTag,
+} from '../../process-innovation/utils/innovation-document-tag.util';
 import * as path from 'path';
 
 export interface UpsertRenewInnovationInput {
@@ -44,6 +49,13 @@ export interface UpsertRenewInnovationInput {
   innovationImplementationDetails?: string;
   processInnovationStatus?: number;
   existingDocumentIds?: string[];
+  /** One tag per uploaded file, same order as multipart files. */
+  innovationDocumentTags?: InnovationDocumentTag[];
+  /**
+   * Optional tag updates for existing renew docs (productDocumentId → tag).
+   * Metadata only — does not change version streams.
+   */
+  existingDocumentTags?: Record<string, InnovationDocumentTag>;
 }
 
 @Injectable()
@@ -142,6 +154,9 @@ export class ProcessRenewInnovationService {
         )
         .exec();
 
+      const tags = Array.isArray(input.innovationDocumentTags)
+        ? input.innovationDocumentTags
+        : [];
       const newDocRows = [];
       for (let i = 0; i < filePaths.length; i++) {
         newDocRows.push({
@@ -151,7 +166,7 @@ export class ProcessRenewInnovationService {
           documentOriginalName: uploadedFiles[i].originalname,
           documentLink: filePaths[i],
           eoiNo: '',
-          documentTag: 'tech' as const,
+          documentTag: normalizeInnovationDocumentTag(tags[i]),
         });
       }
 
@@ -169,8 +184,30 @@ export class ProcessRenewInnovationService {
         now,
         session,
         rows: newDocRows,
-        slotKeyMode: 'subsectionTag',
+        slotKeyMode: renewSectionDocumentSlotKeyMode(
+          DocumentSectionKey.PROCESS_INNOVATION,
+        ),
       });
+
+      const existingTagUpdates = input.existingDocumentTags ?? {};
+      for (const [idRaw, tagRaw] of Object.entries(existingTagUpdates)) {
+        const productDocumentId = Number(idRaw);
+        if (!Number.isFinite(productDocumentId) || productDocumentId <= 0) continue;
+        const documentTag = normalizeInnovationDocumentTag(tagRaw);
+        await this.renewDocumentModel
+          .updateOne(
+            {
+              urnNo: trimmedUrn,
+              renewalCycleId: renewalCycleObjectId,
+              productDocumentId,
+              documentForm: DocumentSectionKey.PROCESS_INNOVATION,
+              isDeleted: { $ne: true },
+            },
+            { $set: { documentTag, updatedDate: now } },
+            { session },
+          )
+          .exec();
+      }
 
       await session.commitTransaction();
       session.endSession();

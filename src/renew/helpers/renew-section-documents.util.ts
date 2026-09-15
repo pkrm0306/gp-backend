@@ -95,12 +95,13 @@ export function assertRenewDocumentMatchesCycle(
   }
 }
 
+/**
+ * Renew Innovation shares one stream per subsection (same as initial cert).
+ * documentTag is metadata only — do not split versions by tech/process/social.
+ */
 export function renewSectionDocumentSlotKeyMode(
-  sectionKey: DocumentSectionKey,
+  _sectionKey: DocumentSectionKey,
 ): 'subsection' | 'subsectionTag' {
-  if (sectionKey === DocumentSectionKey.PROCESS_INNOVATION) {
-    return 'subsectionTag';
-  }
   return 'subsection';
 }
 

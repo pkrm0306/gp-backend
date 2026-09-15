@@ -1479,6 +1479,31 @@ export class PaymentsService {
         const payment = new this.paymentDetailsModel(paymentData);
         const savedPayment = await payment.save({ session });
 
+        // Certification fee means registration stage is done. Heal stale
+        // vendorProposalApprovalStatus=0 on paid registration rows so Vendor UI
+        // does not keep showing registration proposal Approve/Reject.
+        if (normalizedPaymentType === 'certification') {
+          await this.paymentDetailsModel.updateMany(
+            {
+              urnNo: { $in: this.urnCandidates(normalizedUrnNo) },
+              paymentType: 'registration',
+              paymentStatus: { $in: [1, 2] },
+              $or: [
+                { vendorProposalApprovalStatus: 0 },
+                { vendorProposalApprovalStatus: { $exists: false } },
+                { vendorProposalApprovalStatus: null },
+              ],
+            },
+            {
+              $set: {
+                vendorProposalApprovalStatus: 1,
+                updatedDate: now,
+              },
+            },
+            { session },
+          );
+        }
+
         if (normalizedPaymentType === 'renew' && renewalCycleObjectId) {
           await this.renewalCycleModel.updateOne(
             { _id: renewalCycleObjectId },

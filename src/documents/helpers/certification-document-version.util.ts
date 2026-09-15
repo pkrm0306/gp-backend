@@ -64,12 +64,15 @@ export function resolveRenewDocumentVersionAction(
   return 'replaced';
 }
 
+/**
+ * Innovation (and all other certification sections) version as one stream per
+ * subsection. documentTag remains metadata on live rows only — it must not
+ * split Version 1 / Version 2 streams (tech/process/social).
+ */
 export function certificationSlotKeyModeForSection(
-  sectionKey: string,
+  _sectionKey: string,
 ): CertificationSlotKeyMode {
-  return sectionKey === DocumentSectionKey.PROCESS_INNOVATION
-    ? 'subsectionTag'
-    : 'subsection';
+  return 'subsection';
 }
 
 /** Align renew + initial certification subsection keys (e.g. product_performance → test_report_files). */
