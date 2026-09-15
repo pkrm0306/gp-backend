@@ -78,9 +78,24 @@ import { SpocAllocationModule } from './spoc-allocation/spoc-allocation.module';
     GlobalPhoneUniquenessModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        uri: configService.get<string>('MONGODB_URI'),
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const isProd =
+          String(configService.get<string>('NODE_ENV') || '')
+            .trim()
+            .toLowerCase() === 'production';
+        const poolRaw = configService.get<string>('MONGO_MAX_POOL_SIZE');
+        const maxPoolSize = Math.max(
+          1,
+          parseInt(poolRaw || (isProd ? '5' : '10'), 10) || (isProd ? 5 : 10),
+        );
+        return {
+          uri: configService.get<string>('MONGODB_URI'),
+          maxPoolSize,
+          minPoolSize: 0,
+          maxIdleTimeMS: 30_000,
+          serverSelectionTimeoutMS: 10_000,
+        };
+      },
       inject: [ConfigService],
     }),
     AuditLogModule,

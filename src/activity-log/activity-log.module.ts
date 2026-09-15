@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { PassportModule } from '@nestjs/passport';
 import { ActivityLog, ActivityLogSchema } from './schemas/activity-log.schema';
 import { ActivityLogService } from './activity-log.service';
 import { ActivityLogController } from './activity-log.controller';
@@ -11,10 +10,6 @@ import {
   Product,
   ProductSchema,
 } from '../product-registration/schemas/product.schema';
-import {
-  PaymentDetails,
-  PaymentDetailsSchema,
-} from '../payments/schemas/payment-details.schema';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RbacModule } from '../rbac/rbac.module';
 import { AuthModule } from '../auth/auth.module';
@@ -24,7 +19,6 @@ import { AuthModule } from '../auth/auth.module';
     MongooseModule.forFeature([
       { name: ActivityLog.name, schema: ActivityLogSchema },
       { name: Product.name, schema: ProductSchema },
-      { name: PaymentDetails.name, schema: PaymentDetailsSchema },
     ]),
     AuthModule,
     RbacModule,

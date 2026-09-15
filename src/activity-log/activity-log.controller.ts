@@ -69,7 +69,8 @@ export class ActivityLogController {
   @ApiOperation({
     summary: 'Get activity logs by URN (admin or vendor)',
     description:
-      'Returns workflow activity logs for a URN (site-visit admin events are in `auxiliaryEvents`, not `data`). ' +
+      'Read-only timeline for a URN (no tip reconcile / urnStatus heal on GET). ' +
+      'Site-visit admin events are in `auxiliaryEvents`, not `data`. ' +
       'Use `currentActivity` / `quickView` for Quick View status. ' +
       'Legacy clients that read the last `data[]` row should use workflow-only `data`. ' +
       '**Admin/staff** may read any URN. **Vendor/partner** may only read URNs they own (403 otherwise). ' +

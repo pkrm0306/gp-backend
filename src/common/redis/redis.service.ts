@@ -18,10 +18,29 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     string,
     { value: string; expiresAt?: number }
   >();
+  /** Cap process-local cache so Render free (512MB) cannot OOM from Map growth. */
+  private readonly maxInMemoryEntries: number;
+  private readonly maxInMemoryValueBytes: number;
 
   constructor(private readonly configService: ConfigService) {
     this.prefix =
       this.configService.get<string>('REDIS_KEY_PREFIX') || 'greenpro:';
+
+    this.maxInMemoryEntries = Math.max(
+      0,
+      parseInt(
+        this.configService.get<string>('IN_MEMORY_CACHE_MAX_ENTRIES') || '32',
+        10,
+      ) || 0,
+    );
+    this.maxInMemoryValueBytes = Math.max(
+      1024,
+      parseInt(
+        this.configService.get<string>('IN_MEMORY_CACHE_MAX_VALUE_BYTES') ||
+          '131072',
+        10,
+      ) || 131072,
+    );
 
     const redisEnabledRaw =
       this.configService.get<string>('REDIS_ENABLED') ?? 'true';
@@ -29,7 +48,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     if (!redisEnabled) {
       this.useInMemoryFallback = true;
       this.logger.log(
-        'Redis disabled (REDIS_ENABLED=false); using in-process cache (Map)',
+        `Redis disabled (REDIS_ENABLED=false); using capped in-process cache (maxEntries=${this.maxInMemoryEntries}, maxValueBytes=${this.maxInMemoryValueBytes})`,
       );
       return;
     }
@@ -76,10 +95,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     if (this.useInMemoryFallback || !this.client) {
       if (!this.useInMemoryFallback) {
-        this.useInMemoryFallback = true;
-        this.logger.warn(
-          'Redis client not configured; using in-process cache (Map)',
-        );
+      this.useInMemoryFallback = true;
+      this.logger.warn(
+        'Redis client not configured; using capped in-process cache (Map)',
+      );
       }
       return;
     }
@@ -96,7 +115,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.useInMemoryFallback = true;
       this.logger.warn(
-        `Redis unavailable at ${this.describeRedisTarget()}; using in-process cache (Map): ${
+        `Redis unavailable at ${this.describeRedisTarget()}; using capped in-process cache (Map): ${
           (error as Error)?.message || 'unknown error'
         }`,
       );
@@ -233,6 +252,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       this.inMemoryStore.delete(key);
       return null;
     }
+    // Refresh insertion order for simple LRU behavior.
+    this.inMemoryStore.delete(key);
+    this.inMemoryStore.set(key, entry);
     try {
       return JSON.parse(entry.value) as T;
     } catch {
@@ -240,7 +262,37 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private purgeExpiredInMemory(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.inMemoryStore) {
+      if (entry.expiresAt && entry.expiresAt <= now) {
+        this.inMemoryStore.delete(key);
+      }
+    }
+  }
+
   private setInMemory(key: string, serialized: string, ttlSeconds?: number): void {
+    if (this.maxInMemoryEntries <= 0) {
+      return;
+    }
+    if (serialized.length > this.maxInMemoryValueBytes) {
+      // Skip caching huge list/export payloads in-process (common OOM trigger).
+      return;
+    }
+
+    this.purgeExpiredInMemory();
+
+    if (this.inMemoryStore.has(key)) {
+      this.inMemoryStore.delete(key);
+    }
+    while (this.inMemoryStore.size >= this.maxInMemoryEntries) {
+      const oldest = this.inMemoryStore.keys().next().value as
+        | string
+        | undefined;
+      if (!oldest) break;
+      this.inMemoryStore.delete(oldest);
+    }
+
     this.inMemoryStore.set(key, {
       value: serialized,
       ...(ttlSeconds && ttlSeconds > 0

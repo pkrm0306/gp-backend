@@ -14,7 +14,11 @@ import express, {
 } from 'express';
 
 /** Bulk product registration and large JSON payloads exceed Express default 100kb. */
-const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '15mb';
+const DEFAULT_JSON_BODY_LIMIT =
+  process.env.RENDER === 'true' || process.env.RENDER_EXTERNAL_URL
+    ? '5mb'
+    : '15mb';
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || DEFAULT_JSON_BODY_LIMIT;
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
@@ -216,24 +220,37 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());
 
-  const config = new DocumentBuilder()
-    .setTitle('GreenPro API')
-    .setDescription('Production-ready NestJS backend API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  const enableSwagger =
+    String(process.env.ENABLE_SWAGGER ?? '')
+      .trim()
+      .toLowerCase() === 'true' ||
+    (process.env.NODE_ENV !== 'production' &&
+      String(process.env.ENABLE_SWAGGER ?? 'true').toLowerCase() !== 'false');
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true,
-    },
-  });
+  if (enableSwagger) {
+    const config = new DocumentBuilder()
+      .setTitle('GreenPro API')
+      .setDescription('Production-ready NestJS backend API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api', app, document, {
+      swaggerOptions: {
+        persistAuthorization: true,
+      },
+    });
+  }
 
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');
   console.log(`Application is running on: http://localhost:${port}`);
-  console.log(`Swagger documentation: http://localhost:${port}/api`);
+  if (enableSwagger) {
+    console.log(`Swagger documentation: http://localhost:${port}/api`);
+  } else {
+    console.log('Swagger disabled in production (set ENABLE_SWAGGER=true to enable)');
+  }
 }
 
 bootstrap();

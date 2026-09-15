@@ -2,7 +2,6 @@ import {
   Injectable,
   BadRequestException,
   InternalServerErrorException,
-  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -11,16 +10,6 @@ import {
   ActivityLogDocument,
 } from './schemas/activity-log.schema';
 import { ActivityLogAccessService } from './activity-log-access.service';
-import { ProductRegistrationWorkflowService } from './product-registration-workflow.service';
-import {
-  Product,
-  ProductDocument,
-} from '../product-registration/schemas/product.schema';
-import {
-  PaymentDetails,
-  PaymentDetailsDocument,
-} from '../payments/schemas/payment-details.schema';
-import { matchActiveProducts } from '../product-registration/constants/active-product.filter';
 import {
   ActivityLogCaller,
   formatActivityLogRow,
@@ -29,7 +18,6 @@ import {
   resolveCurrentWorkflowActivityLog,
   urnCandidates,
 } from './activity-log.util';
-import { WorkflowPaymentHints } from './activity-workflow.constants';
 
 export interface LogActivityInput {
   vendor_id: string | Types.ObjectId;
@@ -48,17 +36,10 @@ export interface LogActivityInput {
 
 @Injectable()
 export class ActivityLogService {
-  private readonly logger = new Logger(ActivityLogService.name);
-
   constructor(
     @InjectModel(ActivityLog.name)
     private activityLogModel: Model<ActivityLogDocument>,
-    @InjectModel(Product.name)
-    private readonly productModel: Model<ProductDocument>,
-    @InjectModel(PaymentDetails.name)
-    private readonly paymentDetailsModel: Model<PaymentDetailsDocument>,
     private readonly activityLogAccessService: ActivityLogAccessService,
-    private readonly productRegistrationWorkflowService: ProductRegistrationWorkflowService,
   ) {}
 
   /**
@@ -157,6 +138,7 @@ export class ActivityLogService {
 
   /**
    * Timeline for admin or vendor — vendor may only read owned URNs.
+   * Read-only: no tip reconcile / urnStatus self-heal on GET.
    */
   async getActivityLogsByUrnForCaller(
     urnNo: string,
@@ -187,29 +169,22 @@ export class ActivityLogService {
     return payload.currentActivity;
   }
 
+  /**
+   * Read-only Quick View payload: resolve tip from existing rows + urnStatus.
+   * Workflow tip reconcile / fee self-heal runs only on write paths
+   * (payments / product registration workflow), never on GET.
+   */
   private async buildUrnActivityLogPayload(normalizedUrn: string): Promise<{
     allEntries: Record<string, unknown>[];
     workflowEntries: Record<string, unknown>[];
     auxiliaryEvents: Record<string, unknown>[];
     currentActivity: Record<string, unknown> | null;
   }> {
-    let urnStatus =
-      await this.activityLogAccessService.resolveMaxUrnWorkflowStatus(
-        normalizedUrn,
-      );
+    const [urnStatus, rows] = await Promise.all([
+      this.activityLogAccessService.resolveMaxUrnWorkflowStatus(normalizedUrn),
+      this.getActivityLogsByUrn(normalizedUrn),
+    ]);
 
-    // Heal tip when urnStatus already advanced but activity_log lagged (stale
-    // process / swallowed sync). Registration only (< 12); renew is separate.
-    if (urnStatus < 12) {
-      await this.tryReconcileWorkflowTip(normalizedUrn, urnStatus);
-      // Re-read after self-heal (e.g. fee on file while urnStatus was still 1).
-      urnStatus =
-        await this.activityLogAccessService.resolveMaxUrnWorkflowStatus(
-          normalizedUrn,
-        );
-    }
-
-    const rows = await this.getActivityLogsByUrn(normalizedUrn);
     const allEntries = rows.map((row) => formatActivityLogRow(row));
     const workflowEntries = allEntries.filter(
       (row) => !isAuxiliaryActivityLog(row),
@@ -222,128 +197,6 @@ export class ActivityLogService {
       workflowEntries,
       auxiliaryEvents,
       currentActivity: resolveCurrentWorkflowActivityLog(rows, urnStatus),
-    };
-  }
-
-  private async tryReconcileWorkflowTip(
-    normalizedUrn: string,
-    urnStatus: number,
-  ): Promise<void> {
-    try {
-      const options = urnCandidates(normalizedUrn);
-      const product = await this.productModel
-        .findOne(matchActiveProducts({ urnNo: { $in: options } }))
-        .select('vendorId manufacturerId urnNo urnStatus')
-        .lean()
-        .exec();
-      if (!product?.vendorId || !product?.manufacturerId) return;
-
-      const paymentState = await this.loadPaymentStateForUrn(options);
-      let effectiveUrnStatus = Number(product.urnStatus ?? urnStatus);
-
-      // Self-heal: registration fee payment exists but urnStatus never left Assign Fee (1).
-      // Common when fee was created before advanceUrnStatusAfterFeeAssigned was deployed.
-      if (
-        effectiveUrnStatus === 1 &&
-        paymentState.registrationFeeAssigned
-      ) {
-        await this.productModel.updateMany(
-          matchActiveProducts({ urnNo: { $in: options } }),
-          { $set: { urnStatus: 2, updatedDate: new Date() } },
-        );
-        effectiveUrnStatus = 2;
-        this.logger.warn(
-          `Healed urnStatus 1→2 for ${normalizedUrn} (registration fee already on file)`,
-        );
-      }
-
-      // Self-heal: certification fee payment exists but still at Assign Cert Fee (6).
-      if (
-        effectiveUrnStatus === 6 &&
-        paymentState.certificationFeeAssigned
-      ) {
-        await this.productModel.updateMany(
-          matchActiveProducts({ urnNo: { $in: options } }),
-          { $set: { urnStatus: 7, updatedDate: new Date() } },
-        );
-        effectiveUrnStatus = 7;
-        this.logger.warn(
-          `Healed urnStatus 6→7 for ${normalizedUrn} (certification fee already on file)`,
-        );
-      }
-
-      const hints: WorkflowPaymentHints = {
-        registrationPaymentStatus: paymentState.registrationPaymentStatus,
-        certificationPaymentStatus: paymentState.certificationPaymentStatus,
-      };
-      const healed =
-        await this.productRegistrationWorkflowService.reconcilePendingToUrnStatus(
-          {
-            vendorId: product.vendorId,
-            manufacturerId: product.manufacturerId,
-            urnNo: String(product.urnNo ?? normalizedUrn),
-          },
-          effectiveUrnStatus,
-          hints,
-        );
-      if (healed) {
-        this.logger.warn(
-          `Reconciled activity_log tip for ${normalizedUrn} to urnStatus=${effectiveUrnStatus} hints=${JSON.stringify(hints)}`,
-        );
-      }
-    } catch (err) {
-      this.logger.error(
-        `Failed to reconcile activity_log tip for ${normalizedUrn}`,
-        err instanceof Error ? err.stack : err,
-      );
-    }
-  }
-
-  private async loadPaymentStateForUrn(urnOptions: string[]): Promise<{
-    registrationPaymentStatus: number | null;
-    certificationPaymentStatus: number | null;
-    registrationFeeAssigned: boolean;
-    certificationFeeAssigned: boolean;
-  }> {
-    const payments = await this.paymentDetailsModel
-      .find({ urnNo: { $in: urnOptions } })
-      .select('paymentType paymentStatus quoteTotal quoteAmount proposalFile')
-      .lean()
-      .exec();
-    let registrationPaymentStatus: number | null = null;
-    let certificationPaymentStatus: number | null = null;
-    let registrationFeeAssigned = false;
-    let certificationFeeAssigned = false;
-    for (const row of payments) {
-      const type = String(row.paymentType ?? '').toLowerCase();
-      const status = Number(row.paymentStatus ?? 0);
-      const hasQuote =
-        Number(row.quoteTotal ?? row.quoteAmount ?? 0) > 0 ||
-        Boolean(String((row as { proposalFile?: string }).proposalFile ?? '').trim());
-      if (type === 'registration') {
-        registrationPaymentStatus = Math.max(
-          registrationPaymentStatus ?? 0,
-          status,
-        );
-        if (hasQuote || status >= 0) {
-          // Any registration payment_details row means admin assigned a fee record.
-          registrationFeeAssigned = true;
-        }
-      } else if (type === 'certification') {
-        certificationPaymentStatus = Math.max(
-          certificationPaymentStatus ?? 0,
-          status,
-        );
-        if (hasQuote || status >= 0) {
-          certificationFeeAssigned = true;
-        }
-      }
-    }
-    return {
-      registrationPaymentStatus,
-      certificationPaymentStatus,
-      registrationFeeAssigned,
-      certificationFeeAssigned,
     };
   }
 }

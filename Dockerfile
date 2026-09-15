@@ -15,6 +15,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+# Keep V8 heap under Render free 512MB RSS so GC runs before OOM kill.
+ENV NODE_OPTIONS=--max-old-space-size=384
+ENV ENABLE_SWAGGER=false
 
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
