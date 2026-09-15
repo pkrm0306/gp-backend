@@ -123,6 +123,8 @@ import { RenewUrnTabReviewService } from './services/renew-urn-tab-review.servic
 import { RenewDocumentPromotionService } from './services/renew-document-promotion.service';
 import { RenewAdminTestValidityService } from './services/renew-admin-test-validity.service';
 import { RenewProcessHeaderIndexesService } from './services/renew-process-header-indexes.service';
+import { RenewActivityStateService } from './services/renew-activity-state.service';
+import { RenewActivityStateController } from './controllers/renew-activity-state.controller';
 
 @Module({
   imports: [
@@ -193,6 +195,7 @@ import { RenewProcessHeaderIndexesService } from './services/renew-process-heade
     AdminRenewProductDiscontinueController,
     VendorRenewController,
     RenewDetailsController,
+    RenewActivityStateController,
     RenewDocumentsController,
     ProcessRenewInnovationController,
     ProcessRenewManufacturingController,
@@ -211,6 +214,7 @@ import { RenewProcessHeaderIndexesService } from './services/renew-process-heade
     RenewAdminTestValidityService,
     RenewQuickViewService,
     RenewDetailsService,
+    RenewActivityStateService,
     AdminRenewProductDiscontinueService,
     RenewDocumentsService,
     ProcessRenewInnovationService,
@@ -232,6 +236,7 @@ import { RenewProcessHeaderIndexesService } from './services/renew-process-heade
     RenewAdminTestValidityService,
     RenewUrnTabReviewService,
     RenewDetailsService,
+    RenewActivityStateService,
     ProcessRenewCommentsService,
     RenewDocumentsService,
     ProcessRenewProductPerformanceService,
