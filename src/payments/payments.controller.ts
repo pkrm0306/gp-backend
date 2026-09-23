@@ -601,13 +601,14 @@ export class PaymentsController {
         tds_file: {
           type: 'string',
           format: 'binary',
-          description: 'Required when paymentMode is cheque_or_dd',
+          description:
+            'Optional Supporting Document / TDS file (not required for payment submission)',
         },
         supporting_document: {
           type: 'string',
           format: 'binary',
           description:
-            'Supporting Document for vendor payment submission. Alias of tds_file for backward compatibility.',
+            'Optional Supporting Document. Alias of tds_file for backward compatibility.',
         },
       },
     },

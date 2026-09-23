@@ -63,7 +63,9 @@ export function buildEoiNoFromManufacturerProfile(
  * Manufacturer-scoped EOI assignment.
  * Active pool = productStatus 0/1/2 and not soft-deleted.
  * Inactive rows (rejected, expired, soft-deleted) keep their stored eoiNo.
- * New/restored active products receive max(active suffix) + 1 — never compact siblings.
+ * New products receive max(active suffix) + 1 — never reclaim holes.
+ * Rejected restore may reuse the previous sequence when it is free among active products
+ * (see assignEoiForRejectedRestore).
  */
 @Injectable()
 export class EoiNumberService {
@@ -78,12 +80,17 @@ export class EoiNumberService {
   ) {}
 
   /**
-   * Max numeric EOI suffix among active (0/1/2, non-deleted) products for a manufacturer.
+   * Active EOI suffixes for a manufacturer (status 0/1/2, not soft-deleted).
+   * Source of truth is the numeric suffix of eoiNo (last 3 digits).
+   * Falls back to eoiSequence only when eoiNo cannot be parsed.
+   * Rejected (status 3) rows are excluded by matchEoiSequenceActiveProducts.
+   * `excludeProductIds` omits rows being restored so they cannot block their own sequence.
    */
-  async getMaxActiveSequenceSuffix(
+  async getActiveSequenceSuffixes(
     manufacturerId: string | Types.ObjectId,
     session?: ClientSession,
-  ): Promise<number> {
+    options?: { excludeProductIds?: ReadonlyArray<string | Types.ObjectId> },
+  ): Promise<Set<number>> {
     const manufacturerObjectId =
       manufacturerId instanceof Types.ObjectId
         ? manufacturerId
@@ -91,30 +98,155 @@ export class EoiNumberService {
 
     const useSession = session && session.inTransaction() ? session : undefined;
 
-    const rows = await this.productModel
-      .find(
-        matchEoiSequenceActiveProducts({
-          manufacturerId: manufacturerObjectId,
-        }),
-        { eoiNo: 1, eoiSequence: 1 },
+    const criteria: Record<string, unknown> = {
+      manufacturerId: manufacturerObjectId,
+    };
+    const excludeIds = (options?.excludeProductIds ?? [])
+      .map((id) =>
+        id instanceof Types.ObjectId ? id : new Types.ObjectId(String(id)),
       )
+      .filter((id) => Types.ObjectId.isValid(id));
+    if (excludeIds.length === 1) {
+      criteria._id = { $ne: excludeIds[0] };
+    } else if (excludeIds.length > 1) {
+      criteria._id = { $nin: excludeIds };
+    }
+
+    const rows = await this.productModel
+      .find(matchEoiSequenceActiveProducts(criteria), {
+        eoiNo: 1,
+        eoiSequence: 1,
+      })
       .session(useSession ?? null)
       .lean()
       .exec();
 
-    let maxSuffix = 0;
+    const suffixes = new Set<number>();
     for (const row of rows) {
+      const fromEoi = parseEoiSequenceSuffix(row.eoiNo);
       const fromField =
         row.eoiSequence != null && Number.isFinite(Number(row.eoiSequence))
           ? Number(row.eoiSequence)
           : null;
-      const fromEoi = parseEoiSequenceSuffix(row.eoiNo);
-      const suffix = fromField ?? fromEoi ?? 0;
+      // eoiNo suffix is authoritative for "is sequence N occupied?"
+      const suffix = fromEoi ?? fromField;
+      if (suffix != null && suffix >= 1) {
+        suffixes.add(suffix);
+      }
+    }
+    return suffixes;
+  }
+
+  /**
+   * Max numeric EOI suffix among active (0/1/2, non-deleted) products for a manufacturer.
+   */
+  async getMaxActiveSequenceSuffix(
+    manufacturerId: string | Types.ObjectId,
+    session?: ClientSession,
+  ): Promise<number> {
+    const suffixes = await this.getActiveSequenceSuffixes(
+      manufacturerId,
+      session,
+    );
+    let maxSuffix = 0;
+    for (const suffix of suffixes) {
       if (suffix > maxSuffix) {
         maxSuffix = suffix;
       }
     }
     return maxSuffix;
+  }
+
+  /**
+   * Whether sequence N is occupied by an ACTIVE product (0/1/2, not soft-deleted)
+   * for the manufacturer. Rejected products do not count.
+   * `reservedSequences` covers EOIs already assigned earlier in the same restore txn.
+   */
+  async isActiveSequenceOccupied(
+    manufacturerId: string | Types.ObjectId,
+    sequence: number,
+    session?: ClientSession,
+    options?: {
+      reservedSequences?: ReadonlySet<number>;
+      excludeProductIds?: ReadonlyArray<string | Types.ObjectId>;
+    },
+  ): Promise<boolean> {
+    if (!Number.isFinite(sequence) || sequence < 1) {
+      return true;
+    }
+    if (options?.reservedSequences?.has(sequence)) {
+      return true;
+    }
+    const suffixes = await this.getActiveSequenceSuffixes(
+      manufacturerId,
+      session,
+      { excludeProductIds: options?.excludeProductIds },
+    );
+    return suffixes.has(sequence);
+  }
+
+  /**
+   * Rejected-restore EOI assignment only:
+   * - If previous sequence from previousEoiNo is free among ACTIVE products → reuse it.
+   * - Else → MAX(active ∪ reserved) + 1.
+   * The product being restored must be excluded from the active occupancy check so it
+   * cannot block reuse of its own previous sequence (status races / stale reads).
+   * New registration must continue to use assignNextActiveEoiNo / generateNextEoiNo (max+1 only).
+   */
+  async assignEoiForRejectedRestore(
+    manufacturerId: string,
+    previousEoiNo: string,
+    session?: ClientSession,
+    options?: {
+      reservedSequences?: Set<number>;
+      excludeProductId?: string | Types.ObjectId;
+    },
+  ): Promise<NextActiveEoiAssignment> {
+    return this.withManufacturerLock(manufacturerId, async () => {
+      const previousSequence = parseEoiSequenceSuffix(previousEoiNo);
+      const excludeProductIds = options?.excludeProductId
+        ? [options.excludeProductId]
+        : undefined;
+      const activeSuffixes = await this.getActiveSequenceSuffixes(
+        manufacturerId,
+        session,
+        { excludeProductIds },
+      );
+      const reserved = options?.reservedSequences;
+
+      let nextSequence: number;
+      if (
+        previousSequence != null &&
+        !activeSuffixes.has(previousSequence) &&
+        !reserved?.has(previousSequence)
+      ) {
+        nextSequence = previousSequence;
+      } else {
+        let maxSuffix = 0;
+        for (const suffix of activeSuffixes) {
+          if (suffix > maxSuffix) maxSuffix = suffix;
+        }
+        if (reserved) {
+          for (const suffix of reserved) {
+            if (suffix > maxSuffix) maxSuffix = suffix;
+          }
+        }
+        nextSequence = maxSuffix + 1;
+      }
+
+      reserved?.add(nextSequence);
+
+      const eoiNo = await this.buildEoiNo(
+        manufacturerId,
+        nextSequence,
+        session,
+      );
+      return {
+        eoiNo,
+        eoiSequence: nextSequence,
+        previousEoiNo,
+      };
+    });
   }
 
   /** Load manufacturer fields needed to build EOIs (call once per bulk/resequence batch). */

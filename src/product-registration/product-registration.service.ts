@@ -71,7 +71,7 @@ import {
 } from './constants/active-product.filter';
 import { matchCertifiedProductsList, isOngoingRenewalProduct } from './constants/certified-product.filter';
 import { matchExpiredProducts } from './constants/expired-product.filter';
-import { matchWebsitePublicActiveCertifiedProducts } from './constants/website-public-product.filter';
+import { matchWebsitePublicActiveCertifiedProducts, matchWebsitePublicCertifiedProducts, computePublicWebsiteProductVisibilityFlags } from './constants/website-public-product.filter';
 import { matchPublicWebsiteManufacturerVisibility } from '../manufacturers/constants/public-website-manufacturer-visibility.filter';
 import { invalidateProductListingsCache as invalidateAllProductListingsCache } from './helpers/invalidate-product-listings-cache.util';
 import {
@@ -149,6 +149,7 @@ import {
   VendorProductChangeRequestDocument,
 } from './schemas/vendor-product-change-request.schema';
 import { PRODUCT_STATUS_CERTIFIED } from '../renew/constants/product-status.constants';
+import { resolveCertificateTemplateVersion } from './helpers/certificate-template-version.util';
 import { RENEWAL_URN_STATUS } from '../renew/constants/renewal-urn-status.constants';
 import {
   getRenewalUrnStatusLabel,
@@ -2231,6 +2232,7 @@ export class ProductRegistrationService implements OnModuleInit {
       ),
       validtillDate: e?.validtillDate ?? null,
       validTill: e?.validtillDate ?? null,
+      certifiedDate: e?.certifiedDate ?? null,
       createdDate: e?.createdDate,
       hpUnits: units,
       plantCount: units,
@@ -2265,6 +2267,9 @@ export class ProductRegistrationService implements OnModuleInit {
     return {
       ...base,
       plantMergeSource: false,
+      certificateTemplateVersion: resolveCertificateTemplateVersion(
+        e?.certifiedDate as Date | string | null | undefined,
+      ),
       certificateDownloadUrl: `/products/certificates/eoi/${productId}`,
       certificateZipDownloadUrl: `/products/certificates/eoi/${productId}?format=zip`,
       plantCertificatesListUrl: `/products/certificates/eoi/${productId}/plants`,
@@ -4307,13 +4312,12 @@ export class ProductRegistrationService implements OnModuleInit {
     const productObjectId = this.toObjectId(productId, 'productId');
     const row = await this.productModel
       .findOne(
-        matchActiveProducts({
+        matchWebsitePublicCertifiedProducts({
           _id: productObjectId,
-          productStatus: 2,
         }),
       )
       .select(
-        '_id urnNo eoiNo productName slug productImage validtillDate productPassport productDetails productStatus categoryId manufacturerId meta_title meta_description meta_image meta_keywords',
+        '_id urnNo eoiNo productName slug productImage validtillDate certifiedDate productPassport productDetails productStatus productRenewStatus urnStatus categoryId manufacturerId meta_title meta_description meta_image meta_keywords',
       )
       .lean()
       .exec();
@@ -4354,6 +4358,14 @@ export class ProductRegistrationService implements OnModuleInit {
     const manufacturerSlug =
       String((manufacturer as { slug?: string } | null)?.slug ?? '').trim() || null;
 
+    const visibility = computePublicWebsiteProductVisibilityFlags({
+      productStatus: Number(row.productStatus ?? 0),
+      certifiedDate: (row as { certifiedDate?: Date }).certifiedDate,
+      validtillDate: row.validtillDate,
+      urnStatus: (row as { urnStatus?: number }).urnStatus,
+      productRenewStatus: (row as { productRenewStatus?: number }).productRenewStatus,
+    });
+
     return {
       _id: this.toMongoIdString(row._id),
       id: this.toMongoIdString(row._id),
@@ -4366,7 +4378,6 @@ export class ProductRegistrationService implements OnModuleInit {
       validtillDate: row.validtillDate ?? null,
       passport: String(row.productPassport ?? ''),
       productDetails: String(row.productDetails ?? '').trim() || null,
-      productStatus: Number(row.productStatus ?? 0),
       categoryId: row.categoryId ? this.toMongoIdString(row.categoryId) : null,
       categoryName: String((category as { category_name?: string } | null)?.category_name ?? '').trim() || null,
       categorySlug,
@@ -4377,6 +4388,7 @@ export class ProductRegistrationService implements OnModuleInit {
       manufacturerSlug,
       manufacturer,
       manufacturer_details: manufacturer,
+      ...visibility,
       ...seo,
     };
   }
@@ -4395,13 +4407,12 @@ export class ProductRegistrationService implements OnModuleInit {
 
     const row = await this.productModel
       .findOne(
-        matchActiveProducts({
+        matchWebsitePublicCertifiedProducts({
           slug,
-          productStatus: 2,
         }),
       )
       .select(
-        '_id productId urnNo eoiNo productName slug productImage validtillDate productPassport productDetails productStatus categoryId manufacturerId meta_title meta_description meta_image meta_keywords',
+        '_id productId urnNo eoiNo productName slug productImage validtillDate certifiedDate productPassport productDetails productStatus productRenewStatus urnStatus categoryId manufacturerId meta_title meta_description meta_image meta_keywords',
       )
       .lean()
       .exec();
@@ -4439,6 +4450,14 @@ export class ProductRegistrationService implements OnModuleInit {
       primaryImage: productImage ?? productImageRaw,
     });
 
+    const visibility = computePublicWebsiteProductVisibilityFlags({
+      productStatus: Number(row.productStatus ?? 0),
+      certifiedDate: (row as { certifiedDate?: Date }).certifiedDate,
+      validtillDate: row.validtillDate,
+      urnStatus: (row as { urnStatus?: number }).urnStatus,
+      productRenewStatus: (row as { productRenewStatus?: number }).productRenewStatus,
+    });
+
     return {
       _id: this.toMongoIdString(row._id),
       id: this.toMongoIdString(row._id),
@@ -4452,7 +4471,6 @@ export class ProductRegistrationService implements OnModuleInit {
       validtillDate: row.validtillDate ?? null,
       passport: String(row.productPassport ?? ''),
       productDetails: String(row.productDetails ?? '').trim() || null,
-      productStatus: Number(row.productStatus ?? 0),
       categoryId: row.categoryId ? this.toMongoIdString(row.categoryId) : null,
       categoryName:
         String((category as { category_name?: string } | null)?.category_name ?? '').trim() ||
@@ -4468,6 +4486,7 @@ export class ProductRegistrationService implements OnModuleInit {
         null,
       manufacturer,
       manufacturer_details: manufacturer,
+      ...visibility,
       ...seo,
     };
   }
@@ -4813,17 +4832,21 @@ export class ProductRegistrationService implements OnModuleInit {
 
     const rx = new RegExp(this.escapeRegexLiteral(term), 'i');
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 30) : 15;
+    const now = new Date();
 
     const rows = await this.productModel
       .aggregate([
         {
           $match: {
-            ...matchActiveProducts(),
-            productStatus: 2,
-            $or: [
-              { productName: rx },
-              { eoiNo: rx },
-              { urnNo: rx },
+            $and: [
+              matchWebsitePublicCertifiedProducts({}, now),
+              {
+                $or: [
+                  { productName: rx },
+                  { eoiNo: rx },
+                  { urnNo: rx },
+                ],
+              },
             ],
           },
         },
@@ -4880,6 +4903,11 @@ export class ProductRegistrationService implements OnModuleInit {
             slug: { $ifNull: ['$slug', null] },
             eoiNo: 1,
             urnNo: 1,
+            productStatus: 1,
+            productRenewStatus: 1,
+            urnStatus: 1,
+            certifiedDate: 1,
+            validtillDate: 1,
             productImage: {
               $ifNull: ['$productImage', '$product_image'],
             },
@@ -4903,7 +4931,19 @@ export class ProductRegistrationService implements OnModuleInit {
       ])
       .exec();
 
-    return rows ?? [];
+    return (rows ?? []).map((row: Record<string, unknown>) => ({
+      ...row,
+      ...computePublicWebsiteProductVisibilityFlags(
+        {
+          productStatus: Number(row.productStatus ?? 0),
+          certifiedDate: row.certifiedDate as Date | string | null | undefined,
+          validtillDate: row.validtillDate as Date | string | null | undefined,
+          urnStatus: Number(row.urnStatus ?? 0),
+          productRenewStatus: Number(row.productRenewStatus ?? 0),
+        },
+        now,
+      ),
+    }));
   }
 
   /**
@@ -5075,6 +5115,7 @@ export class ProductRegistrationService implements OnModuleInit {
 
   /**
    * Flat certified product cards for public website grid (not URN/manufacturer groups).
+   * Uses shared public visibility (active + renewal window + expiry grace).
    */
   async listPublicCertifiedProductsFlat(
     dto: AdminListProductsDto,
@@ -5082,10 +5123,15 @@ export class ProductRegistrationService implements OnModuleInit {
   ) {
     const listDto: AdminListProductsDto = {
       ...dto,
-      status: [2],
+      status: undefined,
+      productStatus: undefined,
+      product_status: undefined,
     };
+    const now = new Date();
     const locationProductIds =
-      await this.findCertifiedProductIdsByPlantLocation(listDto);
+      await this.findAdminListProductIdsByPlantLocation({
+        ...listDto,
+      });
     if (locationProductIds !== null && locationProductIds.length === 0) {
       const page = listDto.page ?? 1;
       const limit = listDto.limit ?? 10;
@@ -5101,6 +5147,7 @@ export class ProductRegistrationService implements OnModuleInit {
     const { page, limit, skip, sortOrder, rowBase, urnSortField } =
       this.buildAdminListRowBase(listDto, locationProductIds, {
         requirePublicWebsiteManufacturerVisibility: true,
+        usePublicWebsiteProductVisibility: true,
       });
 
     let pipeline: any[] = [...rowBase];
@@ -5132,6 +5179,10 @@ export class ProductRegistrationService implements OnModuleInit {
           productName: 1,
           slug: { $ifNull: ['$slug', null] },
           productDetails: 1,
+          productStatus: 1,
+          productRenewStatus: 1,
+          urnStatus: 1,
+          certifiedDate: 1,
           productImage: {
             $ifNull: ['$productImage', '$product_image'],
           },
@@ -5198,26 +5249,38 @@ export class ProductRegistrationService implements OnModuleInit {
         {
           $facet: {
             data: dataPipeline,
-            total: [...pipeline, { $count: 'count' }],
+            totalCount: [...pipeline, { $count: 'count' }],
           },
         },
       ])
+      .allowDiskUse(true)
       .exec();
 
-    const payload = facetResult[0] ?? { data: [], total: [] };
-    const total = payload.total?.[0]?.count ?? 0;
-    const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
-
-    const data = (payload.data ?? []).map((row: Record<string, unknown>) =>
-      this.mapPublicCertifiedProductFlatRow(row),
-    );
+    const facet = facetResult[0] ?? { data: [], totalCount: [] };
+    const total = Number(facet.totalCount?.[0]?.count ?? 0);
+    const data = (facet.data ?? []).map((row: Record<string, unknown>) => {
+      const mapped = this.mapPublicCertifiedProductFlatRow(row);
+      return {
+        ...mapped,
+        ...computePublicWebsiteProductVisibilityFlags(
+          {
+            productStatus: Number(row.productStatus ?? 0),
+            certifiedDate: row.certifiedDate as Date | string | null | undefined,
+            validtillDate: row.validtillDate as Date | string | null | undefined,
+            urnStatus: Number(row.urnStatus ?? 0),
+            productRenewStatus: Number(row.productRenewStatus ?? 0),
+          },
+          now,
+        ),
+      };
+    });
 
     return {
       data,
       total,
       page,
       limit,
-      totalPages,
+      totalPages: total > 0 ? Math.ceil(total / limit) : 0,
     };
   }
 
@@ -6750,6 +6813,7 @@ export class ProductRegistrationService implements OnModuleInit {
                   eoiNo: 1,
                   productName: 1,
                   productStatus: 1,
+                  certifiedDate: 1,
                   validtillDate: 1,
                   createdDate: 1,
                   plantCount: 1,
@@ -9529,6 +9593,7 @@ export class ProductRegistrationService implements OnModuleInit {
     locationProductIds: Types.ObjectId[] | null = null,
     options?: {
       requirePublicWebsiteManufacturerVisibility?: boolean;
+      usePublicWebsiteProductVisibility?: boolean;
       scopedProductIds?: number[] | null;
     },
   ): {
@@ -9869,7 +9934,9 @@ export class ProductRegistrationService implements OnModuleInit {
     })();
 
     let statusMatch: Record<string, unknown> | null = null;
-    if (statuses.length > 0) {
+    if (options?.usePublicWebsiteProductVisibility) {
+      statusMatch = matchWebsitePublicCertifiedProducts({}, now);
+    } else if (statuses.length > 0) {
       // Same status semantics as vendor list / dashboard KPIs:
       // status=[2] → active certified only (excludes expired certificates).
       // status=[4] → expired/discontinued.

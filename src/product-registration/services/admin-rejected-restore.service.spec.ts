@@ -23,9 +23,8 @@ describe('AdminRejectedRestoreService', () => {
   let updateOne: jest.Mock;
   let productStatusAuditCreate: jest.Mock;
   let auditRecord: jest.Mock;
-  let assignNextActiveEoiNo: jest.Mock;
+  let assignEoiForRejectedRestore: jest.Mock;
   let applyEoiReassignment: jest.Mock;
-  let getMaxActiveSequenceSuffix: jest.Mock;
   let startSession: jest.Mock;
   let service: AdminRejectedRestoreService;
 
@@ -38,13 +37,12 @@ describe('AdminRejectedRestoreService', () => {
     });
     productStatusAuditCreate = jest.fn().mockResolvedValue({});
     auditRecord = jest.fn().mockResolvedValue(undefined);
-    assignNextActiveEoiNo = jest.fn().mockResolvedValue({
-      eoiNo: 'GPPMI003006',
-      eoiSequence: 6,
-      previousEoiNo: 'GPPMI003003',
+    assignEoiForRejectedRestore = jest.fn().mockResolvedValue({
+      eoiNo: 'GPPMI003004',
+      eoiSequence: 4,
+      previousEoiNo: 'GPPMI003004',
     });
     applyEoiReassignment = jest.fn().mockResolvedValue(undefined);
-    getMaxActiveSequenceSuffix = jest.fn().mockResolvedValue(5);
 
     const session = {
       startTransaction: jest.fn(),
@@ -72,9 +70,8 @@ describe('AdminRejectedRestoreService', () => {
       { create: productStatusAuditCreate } as never,
       { startSession } as never,
       {
-        assignNextActiveEoiNo,
+        assignEoiForRejectedRestore,
         applyEoiReassignment,
-        getMaxActiveSequenceSuffix,
       } as never,
       { record: auditRecord } as never,
       {
@@ -108,10 +105,10 @@ describe('AdminRejectedRestoreService', () => {
   });
 
   describe('restoreProduct', () => {
-    it('assigns new eoiNo on restore to uncertified', async () => {
+    it('assigns EOI via assignEoiForRejectedRestore (reuse when free)', async () => {
       findOneExec.mockResolvedValue({
         _id: productObjectId,
-        eoiNo: 'GPPMI003003',
+        eoiNo: 'GPPMI003004',
         productStatus: PRODUCT_STATUS_REJECTED,
         manufacturerId,
       });
@@ -124,12 +121,13 @@ describe('AdminRejectedRestoreService', () => {
         adminUserId,
       );
 
-      expect(result.previousEoiNo).toBe('GPPMI003003');
-      expect(result.eoiNo).toBe('GPPMI003006');
-      expect(assignNextActiveEoiNo).toHaveBeenCalledWith(
+      expect(result.previousEoiNo).toBe('GPPMI003004');
+      expect(result.eoiNo).toBe('GPPMI003004');
+      expect(assignEoiForRejectedRestore).toHaveBeenCalledWith(
         String(manufacturerId),
+        'GPPMI003004',
         expect.any(Object),
-        { previousEoiNo: 'GPPMI003003' },
+        { excludeProductId: productObjectId },
       );
       expect(applyEoiReassignment).toHaveBeenCalled();
       expect(auditRecord).toHaveBeenCalledWith(
@@ -195,11 +193,11 @@ describe('AdminRejectedRestoreService', () => {
   });
 
   describe('restoreUrn', () => {
-    it('restores all rejected products to uncertified with sequential new EOIs', async () => {
+    it('restores all rejected products using assignEoiForRejectedRestore with reserved set', async () => {
       findLeanExec.mockResolvedValue([
         {
           _id: productObjectId,
-          eoiNo: 'GPPMI003003',
+          eoiNo: 'GPPMI003004',
           manufacturerId,
         },
       ]);
@@ -212,8 +210,17 @@ describe('AdminRejectedRestoreService', () => {
       );
 
       expect(result.updatedCount).toBe(1);
-      expect(result.previousEoiNos).toEqual(['GPPMI003003']);
-      expect(result.updatedEoiNos).toEqual(['GPPMI003006']);
+      expect(result.previousEoiNos).toEqual(['GPPMI003004']);
+      expect(result.updatedEoiNos).toEqual(['GPPMI003004']);
+      expect(assignEoiForRejectedRestore).toHaveBeenCalledWith(
+        String(manufacturerId),
+        'GPPMI003004',
+        expect.any(Object),
+        {
+          reservedSequences: expect.any(Set),
+          excludeProductId: expect.anything(),
+        },
+      );
     });
 
     it('throws 404 when URN has no rejected products', async () => {

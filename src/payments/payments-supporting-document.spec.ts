@@ -41,7 +41,7 @@ describe('Payments supporting document validation', () => {
     } as Express.Multer.File;
   }
 
-  it('rejects vendor payment submission when Supporting Document is missing', () => {
+  it('allows vendor payment submission when Supporting Document is missing', () => {
     const service = serviceHarness();
 
     expect(() =>
@@ -51,15 +51,7 @@ describe('Payments supporting document validation', () => {
         actorRole: 'vendor',
         vendorProofUpdate: false,
       }),
-    ).toThrow(BadRequestException);
-    expect(() =>
-      service.validateSupportingDocumentForPaymentSubmission({
-        dto: { paymentStatus: 1 },
-        existingPayment: {},
-        actorRole: 'vendor',
-        vendorProofUpdate: false,
-      }),
-    ).toThrow('Supporting Document is required.');
+    ).not.toThrow();
   });
 
   it('allows vendor payment submission when Supporting Document is uploaded', () => {
@@ -146,31 +138,25 @@ describe('Payments supporting document validation', () => {
     });
   });
 
-  it('accepts alphanumeric Transaction Reference Number values', () => {
+  it('accepts Transaction Reference Number with letters, digits, and special characters', () => {
     const service = serviceHarness();
 
     expect(service.normalizePaymentReferenceNo(' REF123456ABC ')).toBe(
       'REF123456ABC',
     );
-  });
-
-  it('rejects Transaction Reference Number with non-alphanumeric characters', () => {
-    const service = serviceHarness();
-
-    expect(() => service.normalizePaymentReferenceNo('REF-123')).toThrow(
-      BadRequestException,
+    expect(service.normalizePaymentReferenceNo('REF-123/456#ABC')).toBe(
+      'REF-123/456#ABC',
     );
-    expect(() => service.normalizePaymentReferenceNo('REF-123')).toThrow(
-      'Transaction Reference Number must be alphanumeric',
+    expect(service.normalizePaymentReferenceNo('TXN_2026.09.22 (1)')).toBe(
+      'TXN_2026.09.22 (1)',
     );
   });
 
-  it('rejects Transaction Reference Number beyond existing length constraints', () => {
+  it('accepts Transaction Reference Number longer than the former 16/50 character caps', () => {
     const service = serviceHarness();
+    const longRef = `REF-${'A'.repeat(80)}/99`;
 
-    expect(() => service.normalizePaymentReferenceNo('A'.repeat(51))).toThrow(
-      'Transaction Reference Number must not exceed 50 characters',
-    );
+    expect(service.normalizePaymentReferenceNo(longRef)).toBe(longRef);
   });
 });
 

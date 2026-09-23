@@ -108,8 +108,9 @@ export class CreatePaymentDto {
   onlinePaymentId?: number;
 
   @ApiProperty({
-    description: 'Payment reference number',
-    example: 'REF123456',
+    description:
+      'Payment / transaction reference number (any characters; no length limit)',
+    example: 'REF-123/456#ABC',
     required: false,
   })
   @IsOptional()

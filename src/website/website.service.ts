@@ -941,7 +941,7 @@ export class WebsiteService {
       'public',
       'certified-products',
       'flat',
-      'v15-plant-country',
+      'v16-renewal-visibility',
       this.shortHash(this.stableJsonStringify({ ...(resolvedDto as object), origin })),
     );
     try {
@@ -1024,6 +1024,8 @@ export class WebsiteService {
       status: [2],
       groupBy: 'urn',
     });
+    // Note: legacy URN-grouped list still uses certified status=[2]
+    // (includes ongoing renewal). Prefer flat list + visibility flags.
     this.redisService
       .set(cacheKey, result, this.getWebsitePublicListCacheTtlSeconds())
       .catch((error) => {

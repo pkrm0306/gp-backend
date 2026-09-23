@@ -49,7 +49,7 @@ describe('VendorCertificateService', () => {
     service = module.get(VendorCertificateService);
   });
 
-  function mockCertifiedProduct() {
+  function mockCertifiedProduct(overrides: Record<string, unknown> = {}) {
     return {
       _id: productObjectId,
       vendorId,
@@ -57,9 +57,11 @@ describe('VendorCertificateService', () => {
       urnNo: 'URN-TEST',
       productName: 'Test Product',
       productStatus: 2,
+      certifiedDate: new Date('2025-06-01T00:00:00.000Z'),
       validtillDate: new Date('2028-12-31'),
       categoryId: new Types.ObjectId(),
       manufacturerId: new Types.ObjectId(),
+      ...overrides,
     };
   }
 
@@ -140,5 +142,42 @@ describe('VendorCertificateService', () => {
 
     expect(list.plants).toHaveLength(1);
     expect(list.plants[0].location).toBe('Unit A, Pune, Maharashtra');
+    expect(list.certificateTemplateVersion).toBe(1);
+  });
+
+  it('reports template v2 for products certified on or after 22 Sep 2026', async () => {
+    const product = mockCertifiedProduct({
+      certifiedDate: new Date('2026-09-22T00:00:00.000Z'),
+    });
+    productModel.findOne.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(product),
+    });
+    categoryModel.findById.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ categoryName: 'Category' }),
+      }),
+    });
+    manufacturerModel.findById.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ manufacturerName: 'Acme' }),
+      }),
+    });
+    mockPlantsAggregate([
+      {
+        _id: plantObjectId,
+        productPlantId: 1,
+        plantName: 'Pune Plant',
+        plantLocation: 'Pune',
+        city: 'Pune',
+        state: [{ stateName: 'Maharashtra' }],
+      },
+    ]);
+
+    const list = await service.listEoiPlantCertificates(
+      String(vendorId),
+      String(productObjectId),
+    );
+
+    expect(list.certificateTemplateVersion).toBe(2);
   });
 });

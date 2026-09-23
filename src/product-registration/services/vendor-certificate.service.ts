@@ -37,6 +37,12 @@ import {
 import { readUploadedFileBuffer } from '../../utils/upload-file-read.util';
 import { formatCertificatePlantLocation, resolveCertificateRegionName } from '../utils/certificate-plant-location.util';
 import { countCertifiedPlantCertificatesByManufacturerIds as countCertifiedPlantCertificatesByManufacturerIdsUtil } from '../helpers/certified-plant-certificate-count.util';
+import {
+  CertificateTemplateLayout,
+  CertificateTemplateVersion,
+  resolveCertificateTemplateLayout,
+  resolveCertificateTemplateVersion,
+} from '../helpers/certificate-template-version.util';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -45,11 +51,6 @@ const PAGE_W = 787;
 const PAGE_H = 590;
 /** Max certificate pages per bulk PDF (legacy PHP BATCH_SIZE). */
 export const BULK_CERTIFICATE_BATCH_SIZE = 100;
-const CERTIFICATE_BACKGROUND_FILES = [
-  'GPAMNS281001 2_page-0001.jpg',
-  'cert-bg2.jpg',
-  'cert-bg.jpg',
-] as const;
 
 export type CertificateDownloadFile = {
   buffer: Buffer;
@@ -118,6 +119,9 @@ export type EoiPlantCertificateList = {
   eoiNo: string;
   productName: string;
   plantCount: number;
+  /** 1 = legacy template, 2 = Certificate-template.jpg (from 2026-09-22). */
+  certificateTemplateVersion: CertificateTemplateVersion;
+  certifiedDate: Date | string | null;
   plants: EoiPlantCertificateItem[];
   downloads: {
     mergedPdfPath: string;
@@ -128,8 +132,11 @@ export type EoiPlantCertificateList = {
 @Injectable()
 export class VendorCertificateService {
   private readonly logger = new Logger(VendorCertificateService.name);
-  /** Reused across one download-all run so we do not re-fetch artwork 100s of times. */
-  private certificateBackgroundBytesPromise: Promise<Buffer | null> | null = null;
+  /** Per-template-version cache so bulk downloads with mixed ages stay correct. */
+  private readonly certificateBackgroundBytesByVersion = new Map<
+    CertificateTemplateVersion,
+    Promise<Buffer | null>
+  >();
 
   constructor(
     @InjectModel(Product.name)
@@ -252,11 +259,16 @@ export class VendorCertificateService {
     );
     const trimmedProductId = String(product._id);
 
+    const certifiedDate =
+      (product as { certifiedDate?: Date | string | null }).certifiedDate ?? null;
+
     return {
       productId: trimmedProductId,
       eoiNo: String(product.eoiNo ?? ''),
       productName: String(product.productName ?? ''),
       plantCount: plants.length,
+      certificateTemplateVersion: resolveCertificateTemplateVersion(certifiedDate),
+      certifiedDate,
       plants: plants.map((plant, index) => ({
         plantId: plant.id,
         productPlantId: plant.productPlantId,
@@ -373,8 +385,6 @@ export class VendorCertificateService {
       throw new NotFoundException('No Certified Products Found');
     }
 
-    this.certificateBackgroundBytesPromise =
-      this.loadCertificateBackgroundBytesFresh();
     try {
       this.logger.log(
         `[downloadVendorAll] vendor=${vendorId} certificates=${entries.length} format=zip`,
@@ -408,7 +418,7 @@ export class VendorCertificateService {
         certificateCount: files.length,
       };
     } finally {
-      this.certificateBackgroundBytesPromise = null;
+      this.certificateBackgroundBytesByVersion.clear();
     }
   }
 
@@ -572,8 +582,6 @@ export class VendorCertificateService {
     entries: Array<{ product: ProductWithRelations; plant: PlantWithGeo }>,
     batch: number,
   ): Promise<CertificateDownloadFile> {
-    this.certificateBackgroundBytesPromise =
-      this.loadCertificateBackgroundBytesFresh();
     try {
       const mergedPdf = await PDFLibDocument.create();
       let addedPages = 0;
@@ -596,7 +604,7 @@ export class VendorCertificateService {
         certificateCount: entries.length,
       };
     } finally {
-      this.certificateBackgroundBytesPromise = null;
+      this.certificateBackgroundBytesByVersion.clear();
     }
   }
 
@@ -1135,12 +1143,14 @@ export class VendorCertificateService {
     return Buffer.from(await pdfDoc.save());
   }
 
-  private resolveCertificateBackgroundPath(): string | null {
+  private resolveCertificateBackgroundPath(
+    layout: CertificateTemplateLayout,
+  ): string | null {
     const roots = [
       join(process.cwd(), 'uploads', 'certificates'),
       join(process.cwd(), 'public', 'certificate'),
     ];
-    for (const fileName of CERTIFICATE_BACKGROUND_FILES) {
+    for (const fileName of layout.backgroundFiles) {
       for (const root of roots) {
         const candidate = join(root, fileName);
         if (existsSync(candidate)) return candidate;
@@ -1149,16 +1159,22 @@ export class VendorCertificateService {
     return null;
   }
 
-  private async loadCertificateBackgroundBytes(): Promise<Buffer | null> {
-    if (!this.certificateBackgroundBytesPromise) {
-      this.certificateBackgroundBytesPromise =
-        this.loadCertificateBackgroundBytesFresh();
+  private async loadCertificateBackgroundBytes(
+    layout: CertificateTemplateLayout,
+  ): Promise<Buffer | null> {
+    const version = layout.version;
+    let pending = this.certificateBackgroundBytesByVersion.get(version);
+    if (!pending) {
+      pending = this.loadCertificateBackgroundBytesFresh(layout);
+      this.certificateBackgroundBytesByVersion.set(version, pending);
     }
-    return this.certificateBackgroundBytesPromise;
+    return pending;
   }
 
-  private async loadCertificateBackgroundBytesFresh(): Promise<Buffer | null> {
-    const bgPath = this.resolveCertificateBackgroundPath();
+  private async loadCertificateBackgroundBytesFresh(
+    layout: CertificateTemplateLayout,
+  ): Promise<Buffer | null> {
+    const bgPath = this.resolveCertificateBackgroundPath(layout);
     if (bgPath) {
       try {
         return readFileSync(bgPath);
@@ -1175,7 +1191,7 @@ export class VendorCertificateService {
       .replace(/\/+$/, '');
     if (!base) return null;
 
-    for (const fileName of CERTIFICATE_BACKGROUND_FILES) {
+    for (const fileName of layout.backgroundFiles) {
       const url = `${base}/${encodeURIComponent(fileName)}`;
       try {
         const res = await fetch(url);
@@ -1190,8 +1206,9 @@ export class VendorCertificateService {
   private async embedCertificateBackground(
     pdfDoc: PDFLibDocument,
     page: PDFPage,
+    layout: CertificateTemplateLayout,
   ): Promise<void> {
-    const bytes = await this.loadCertificateBackgroundBytes();
+    const bytes = await this.loadCertificateBackgroundBytes(layout);
     if (!bytes) return;
 
     try {
@@ -1209,10 +1226,13 @@ export class VendorCertificateService {
     product: ProductWithRelations,
     locationOverride?: string,
   ): Promise<Buffer> {
+    const layout = resolveCertificateTemplateLayout(
+      (product as { certifiedDate?: Date | string | null }).certifiedDate,
+    );
     const pdfDoc = await PDFLibDocument.create();
     const page = pdfDoc.addPage([PAGE_W, PAGE_H]);
 
-    await this.embedCertificateBackground(pdfDoc, page);
+    await this.embedCertificateBackground(pdfDoc, page, layout);
 
     const regular = await pdfDoc.embedStandardFont(StandardFonts.Helvetica);
     const bold = await pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
@@ -1221,15 +1241,16 @@ export class VendorCertificateService {
       StandardFonts.HelveticaBoldOblique,
     );
 
-    // Fixed typography + baselines (pdf-lib bottom-origin — match website/vendor).
-    const PRODUCT_SZ = 18;
-    const EOI_SZ = 15;
-    const P_SZ = 12;
-    const Y_PRODUCT = 341.4;
-    const Y_EOI = 311.8;
-    const Y_MANU1 = 283.6;
-    const Y_MANU2 = 261.7;
-    const Y_VALID = 239.7;
+    const {
+      productSize: PRODUCT_SZ,
+      eoiSize: EOI_SZ,
+      bodySize: P_SZ,
+      yProduct: Y_PRODUCT,
+      yEoi: Y_EOI,
+      yManu1: Y_MANU1,
+      yManu2: Y_MANU2,
+      yValid: Y_VALID,
+    } = layout;
 
     const productName = this.safeLatinText(product.productName || 'N/A');
     const eoiNo = this.safeLatinText(product.eoiNo || 'N/A');

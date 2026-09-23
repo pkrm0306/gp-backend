@@ -231,25 +231,27 @@ export class AdminRejectedRestoreService {
     const restoredRows: RestoreResultRow[] = [];
 
     await this.runInTransaction(async (session) => {
-      const runningMaxByManufacturer = new Map<string, number>();
+      const reservedSequencesByManufacturer = new Map<string, Set<number>>();
 
       for (const product of products) {
         const manufacturerId = String(product.manufacturerId);
-        let runningMax = runningMaxByManufacturer.get(manufacturerId);
-        if (runningMax == null) {
-          runningMax = await this.eoiNumberService.getMaxActiveSequenceSuffix(
-            manufacturerId,
-            session,
-          );
+        let reserved = reservedSequencesByManufacturer.get(manufacturerId);
+        if (!reserved) {
+          reserved = new Set<number>();
+          reservedSequencesByManufacturer.set(manufacturerId, reserved);
         }
 
         const previousEoiNo = String(product.eoiNo);
-        const assignment = await this.eoiNumberService.assignNextActiveEoiNo(
-          manufacturerId,
-          session,
-          { runningMaxSuffix: runningMax, previousEoiNo },
-        );
-        runningMaxByManufacturer.set(manufacturerId, assignment.eoiSequence);
+        const assignment =
+          await this.eoiNumberService.assignEoiForRejectedRestore(
+            manufacturerId,
+            previousEoiNo,
+            session,
+            {
+              reservedSequences: reserved,
+              excludeProductId: product._id as Types.ObjectId,
+            },
+          );
         await this.applyStatusRestoreUpdate(
           product._id as Types.ObjectId,
           targetStatus,
@@ -314,10 +316,11 @@ export class AdminRejectedRestoreService {
     now: Date,
     session: ClientSession,
   ): Promise<RestoreResultRow> {
-    const assignment = await this.eoiNumberService.assignNextActiveEoiNo(
+    const assignment = await this.eoiNumberService.assignEoiForRejectedRestore(
       manufacturerId,
+      previousEoiNo,
       session,
-      { previousEoiNo },
+      { excludeProductId: productObjectId },
     );
     await this.applyStatusRestoreUpdate(
       productObjectId,

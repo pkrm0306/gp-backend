@@ -90,9 +90,6 @@ import { toRenewObjectId } from '../renew/helpers/renew-common.util';
 import { RedisService } from '../common/redis/redis.service';
 import { invalidateAdminDashboardCache } from '../admin/helpers/invalidate-admin-dashboard-cache.util';
 
-const PAYMENT_REFERENCE_MAX_LENGTH = 50;
-const PAYMENT_REFERENCE_ALPHANUMERIC = /^[a-zA-Z0-9]+$/;
-
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -445,36 +442,14 @@ export class PaymentsService {
     );
   }
 
-  private validateSupportingDocumentForPaymentSubmission(params: {
+  private validateSupportingDocumentForPaymentSubmission(_params: {
     dto: UpdatePaymentDto;
     existingPayment: PaymentDetailsDocument;
     tdsFile?: Express.Multer.File;
     actorRole?: string;
     vendorProofUpdate: boolean;
   }): void {
-    if (!this.isVendorPortalRole(params.actorRole)) {
-      return;
-    }
-    const submittingPayment =
-      params.vendorProofUpdate || params.dto.paymentStatus === 1;
-    if (!submittingPayment) {
-      return;
-    }
-    const existingSupportingDocument = String(
-      params.existingPayment.tdsFile ?? '',
-    ).trim();
-    if (!this.hasUploadedFile(params.tdsFile) && !existingSupportingDocument) {
-      throw new BadRequestException('Supporting Document is required.');
-    }
-  }
-
-  private hasUploadedFile(file?: Express.Multer.File): boolean {
-    return Boolean(
-      file &&
-      (String(file.originalname ?? '').trim() ||
-        (file.size ?? 0) > 0 ||
-        (file.buffer?.length ?? 0) > 0),
-    );
+    // Supporting Document / tds_file is optional for registration and certification payments.
   }
 
   private normalizePaymentReferenceNo(value?: string): string | undefined {
@@ -485,16 +460,8 @@ export class PaymentsService {
     if (!reference) {
       return undefined;
     }
-    if (reference.length > PAYMENT_REFERENCE_MAX_LENGTH) {
-      throw new BadRequestException(
-        `Transaction Reference Number must not exceed ${PAYMENT_REFERENCE_MAX_LENGTH} characters`,
-      );
-    }
-    if (!PAYMENT_REFERENCE_ALPHANUMERIC.test(reference)) {
-      throw new BadRequestException(
-        'Transaction Reference Number must be alphanumeric',
-      );
-    }
+    // Allow any printable characters (incl. special chars); no max-length cap.
+    // Uniqueness is still enforced via assertPaymentReferenceNoUnique.
     return reference;
   }
 
@@ -1917,10 +1884,11 @@ export class PaymentsService {
 
       if (
         updatePaymentDto.paymentMode === 'cheque_or_dd' &&
-        (!chequeOrDdFile || !tdsFile)
+        !chequeOrDdFile &&
+        !String(existingPayment.chequeOrDdFile ?? '').trim()
       ) {
         throw new BadRequestException(
-          'For paymentMode=cheque_or_dd, both cheque_or_dd_file and tds_file are required',
+          'For paymentMode=cheque_or_dd, cheque_or_dd_file is required',
         );
       }
 
