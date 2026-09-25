@@ -10,6 +10,7 @@ describe('LifecycleNotificationService', () => {
   const resolveByManufacturerId = jest.fn();
   const createFeedNotification = jest.fn();
   const sendAdminAlertEmailInBackground = jest.fn();
+  const resolveBusinessRecipients = jest.fn();
 
   const service = new LifecycleNotificationService(
     { send, sendInBackground } as any,
@@ -18,6 +19,7 @@ describe('LifecycleNotificationService', () => {
       createFeedNotification,
       sendAdminAlertEmailInBackground,
     } as any,
+    { resolveBusinessRecipients } as any,
   );
 
   beforeEach(() => {
@@ -28,25 +30,45 @@ describe('LifecycleNotificationService', () => {
       vendorName: 'Acme Vendor',
       companyName: 'Acme Co',
     });
+    resolveBusinessRecipients.mockResolvedValue({
+      manufacturerEmail: 'vendor@example.com',
+      spocEmails: ['spoc@example.com'],
+      teamLeadEmails: ['tl1@example.com', 'tl2@example.com'],
+      to: 'vendor@example.com',
+      cc: ['spoc@example.com', 'tl1@example.com', 'tl2@example.com'],
+      allUniqueEmails: [
+        'vendor@example.com',
+        'spoc@example.com',
+        'tl1@example.com',
+        'tl2@example.com',
+      ],
+    });
   });
 
-  it('sends email + in-app for URN initial approval and notifies admin', async () => {
+  it('sends separate To emails to manufacturer, SPOC, and each Team Lead', async () => {
     await service.notifyUrnInitialApproved({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
+    });
+    expect(resolveBusinessRecipients).toHaveBeenCalledWith({
+      urnNo: 'URN-1',
+      manufacturerEmail: 'vendor@example.com',
     });
     expect(sendInBackground).toHaveBeenCalledWith(
       expect.objectContaining({
         type: [NotificationChannel.EMAIL, NotificationChannel.IN_APP],
         template: NotificationTemplateCode.URN_INITIAL_APPROVED,
+        email: 'vendor@example.com',
+        emails: ['spoc@example.com', 'tl1@example.com', 'tl2@example.com'],
       }),
     );
+    expect(sendInBackground.mock.calls[0][0].cc).toBeUndefined();
     expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         referenceType: 'urn_initial_approved',
-        ccGroups: ['TEAM_LEADS'],
       }),
     );
+    expect(createFeedNotification.mock.calls[0][0].ccGroups).toBeUndefined();
   });
 
   it('queues email-only for signup (USER_CREATED)', async () => {
@@ -234,19 +256,55 @@ describe('LifecycleNotificationService', () => {
     );
   });
 
-  it('sends vendor email only on urn registration rejected', async () => {
+  it('sends registration rejected to manufacturer plus separate To for SPOC/TL', async () => {
     await service.notifyUrnRegistrationRejected({
       manufacturerId: '507f1f77bcf86cd799439011',
       urnNo: 'URN-1',
       productName: 'Widget',
       reason: 'Incomplete documents',
     });
+    expect(resolveBusinessRecipients).toHaveBeenCalledWith({
+      urnNo: 'URN-1',
+      manufacturerEmail: 'vendor@example.com',
+    });
     expect(sendInBackground).toHaveBeenCalledWith(
       expect.objectContaining({
         template: NotificationTemplateCode.URN_REGISTRATION_REJECTED,
+        email: 'vendor@example.com',
+        emails: ['spoc@example.com', 'tl1@example.com', 'tl2@example.com'],
       }),
     );
     expect(createFeedNotification).not.toHaveBeenCalled();
+  });
+
+  it('uses first SPOC/TL as To when manufacturer email is missing', async () => {
+    resolveByManufacturerId.mockResolvedValue({
+      userId: '507f1f77bcf86cd799439011',
+      vendorName: 'Acme Vendor',
+      companyName: 'Acme Co',
+    });
+    resolveBusinessRecipients.mockResolvedValue({
+      manufacturerEmail: undefined,
+      spocEmails: ['spoc@example.com'],
+      teamLeadEmails: ['tl1@example.com'],
+      to: 'spoc@example.com',
+      cc: ['tl1@example.com'],
+      allUniqueEmails: ['spoc@example.com', 'tl1@example.com'],
+    });
+
+    await service.notifyUrnInitialApproved({
+      manufacturerId: '507f1f77bcf86cd799439011',
+      urnNo: 'URN-1',
+    });
+
+    expect(sendInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: NotificationTemplateCode.URN_INITIAL_APPROVED,
+        email: 'spoc@example.com',
+        emails: ['tl1@example.com'],
+        userId: '507f1f77bcf86cd799439011',
+      }),
+    );
   });
 
   it('sends admin feed + email on manufacturer approved', async () => {
@@ -540,17 +598,17 @@ describe('LifecycleNotificationService', () => {
     expect(createFeedNotification).toHaveBeenCalled();
   });
 
-  it('creates admin feed + email for 60-day expiry reminder', async () => {
+  it('creates admin feed + email for 90-day expiry reminder', async () => {
     await service.notifyCertificationExpiryAdmin({
       manufacturerName: 'Acme Co',
       urnNo: 'URN-1',
       eoiNo: 'EOI-1',
-      stage: '60-day',
+      stage: '90-day',
       includeAdminEmail: false,
     });
     expect(createFeedNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        referenceType: 'certification_expiry_60-day',
+        referenceType: 'certification_expiry_90-day',
         ccGroups: ['SHEshi'],
       }),
     );

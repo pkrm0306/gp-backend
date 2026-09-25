@@ -84,6 +84,7 @@ var CronController = function () {
     var _classExtraInitializers = [];
     var _classThis;
     var _instanceExtraInitializers = [];
+    var _before3Month_decorators;
     var _before2Month_decorators;
     var _weeklyMail_decorators;
     var _deactivationMail_decorators;
@@ -91,15 +92,29 @@ var CronController = function () {
         function CronController_1(certificationExpiryService) {
             this.certificationExpiryService = (__runInitializers(this, _instanceExtraInitializers), certificationExpiryService);
         }
+        CronController_1.prototype.before3Month = function () {
+            return __awaiter(this, void 0, void 0, function () {
+                var data;
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0: return [4 /*yield*/, this.certificationExpiryService.runBefore3Month()];
+                        case 1:
+                            data = _a.sent();
+                            return [2 /*return*/, { message: 'before3month job finished', data: data }];
+                    }
+                });
+            });
+        };
+        /** @deprecated Prefer POST before3month — alias for one release. */
         CronController_1.prototype.before2Month = function () {
             return __awaiter(this, void 0, void 0, function () {
                 var data;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
-                        case 0: return [4 /*yield*/, this.certificationExpiryService.runBefore2Month()];
+                        case 0: return [4 /*yield*/, this.certificationExpiryService.runBefore3Month()];
                         case 1:
                             data = _a.sent();
-                            return [2 /*return*/, { message: 'before2month job finished', data: data }];
+                            return [2 /*return*/, { message: 'before3month job finished', data: data }];
                     }
                 });
             });
@@ -135,9 +150,11 @@ var CronController = function () {
     __setFunctionName(_classThis, "CronController");
     (function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
-        _before2Month_decorators = [(0, common_1.Post)('before2month'), (0, swagger_1.ApiOperation)({ summary: 'Certification expiry — first notify (2 months before)' })];
+        _before3Month_decorators = [(0, common_1.Post)('before3month'), (0, swagger_1.ApiOperation)({ summary: 'Certification expiry — first notify (3 months before validtillDate)' })];
+        _before2Month_decorators = [(0, common_1.Post)('before2month'), (0, swagger_1.ApiOperation)({ summary: '[Deprecated] Alias of before3month — first notify (3 months before validtillDate)', deprecated: true })];
         _weeklyMail_decorators = [(0, common_1.Post)('weekly-mail'), (0, swagger_1.ApiOperation)({ summary: 'Certification expiry — weekly reminder' })];
-        _deactivationMail_decorators = [(0, common_1.Post)('deactivation-mail'), (0, swagger_1.ApiOperation)({ summary: 'Certification expiry — deactivate expired products' })];
+        _deactivationMail_decorators = [(0, common_1.Post)('deactivation-mail'), (0, swagger_1.ApiOperation)({ summary: 'Certification expiry — deactivate after 3-month grace past validtillDate' })];
+        __esDecorate(_classThis, null, _before3Month_decorators, { kind: "method", name: "before3Month", static: false, private: false, access: { has: function (obj) { return "before3Month" in obj; }, get: function (obj) { return obj.before3Month; } }, metadata: _metadata }, null, _instanceExtraInitializers);
         __esDecorate(_classThis, null, _before2Month_decorators, { kind: "method", name: "before2Month", static: false, private: false, access: { has: function (obj) { return "before2Month" in obj; }, get: function (obj) { return obj.before2Month; } }, metadata: _metadata }, null, _instanceExtraInitializers);
         __esDecorate(_classThis, null, _weeklyMail_decorators, { kind: "method", name: "weeklyMail", static: false, private: false, access: { has: function (obj) { return "weeklyMail" in obj; }, get: function (obj) { return obj.weeklyMail; } }, metadata: _metadata }, null, _instanceExtraInitializers);
         __esDecorate(_classThis, null, _deactivationMail_decorators, { kind: "method", name: "deactivationMail", static: false, private: false, access: { has: function (obj) { return "deactivationMail" in obj; }, get: function (obj) { return obj.deactivationMail; } }, metadata: _metadata }, null, _instanceExtraInitializers);

@@ -98,6 +98,7 @@ exports.AdminDashboardWidgetsService = void 0;
 var common_1 = require("@nestjs/common");
 var mongoose_1 = require("mongoose");
 var product_status_constants_1 = require("../../renew/constants/product-status.constants");
+var renewal_eligibility_constants_1 = require("../../renew/constants/renewal-eligibility.constants");
 var dashboard_metrics_filters_util_1 = require("../utils/dashboard-metrics-filters.util");
 var admin_dashboard_revenue_util_1 = require("../utils/admin-dashboard-revenue.util");
 var PAYMENT_STATUS_PAID = 2;
@@ -248,8 +249,7 @@ var AdminDashboardWidgetsService = function () {
                         case 0:
                             now = new Date();
                             productMatch = (0, dashboard_metrics_filters_util_1.buildProductSnapshotMatch)(filters, now);
-                            thresholdDate = new Date(now);
-                            thresholdDate.setDate(thresholdDate.getDate() + 60);
+                            thresholdDate = (0, renewal_eligibility_constants_1.renewEligibilityThresholdDate)(now);
                             return [4 /*yield*/, this.productModel
                                     .aggregate([
                                     { $match: productMatch },
@@ -325,8 +325,7 @@ var AdminDashboardWidgetsService = function () {
                         case 0:
                             now = new Date();
                             productMatch = (0, dashboard_metrics_filters_util_1.buildProductSnapshotMatch)(filters, now);
-                            thresholdDate = new Date(now);
-                            thresholdDate.setDate(thresholdDate.getDate() + 60);
+                            thresholdDate = (0, renewal_eligibility_constants_1.renewEligibilityThresholdDate)(now);
                             expiringSoonMatch = __assign(__assign({}, productMatch), { productStatus: product_status_constants_1.PRODUCT_STATUS_CERTIFIED, validtillDate: {
                                     $exists: true,
                                     $ne: null,

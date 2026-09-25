@@ -14,6 +14,7 @@ import {
   ManufacturerDocument,
 } from '../../manufacturers/schemas/manufacturer.schema';
 import { PRODUCT_STATUS_CERTIFIED } from '../../renew/constants/product-status.constants';
+import { renewEligibilityThresholdDate } from '../../renew/constants/renewal-eligibility.constants';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
 import {
   buildProductSnapshotMatch,
@@ -185,8 +186,7 @@ export class AdminDashboardWidgetsService {
   ): Promise<DashboardRecentApplicationRow[]> {
     const now = new Date();
     const productMatch = buildProductSnapshotMatch(filters, now);
-    const thresholdDate = new Date(now);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(now);
 
     const rows = await this.productModel
       .aggregate([
@@ -259,8 +259,7 @@ export class AdminDashboardWidgetsService {
   async getAlerts(filters: ResolvedDashboardFilters): Promise<DashboardAlertItem[]> {
     const now = new Date();
     const productMatch = buildProductSnapshotMatch(filters, now);
-    const thresholdDate = new Date(now);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(now);
 
     const expiringSoonMatch = {
       ...productMatch,

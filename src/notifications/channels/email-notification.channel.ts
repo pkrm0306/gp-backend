@@ -41,6 +41,7 @@ export class EmailNotificationChannel implements NotificationChannelHandler {
         context.template,
         email,
         context.payload,
+        context.cc,
       );
       if (!delivered) {
         return {
@@ -64,6 +65,7 @@ export class EmailNotificationChannel implements NotificationChannelHandler {
     template: NotificationTemplateCode,
     email: string,
     payload: Record<string, unknown>,
+    cc?: string | string[],
   ): Promise<boolean> {
     if (template === NotificationTemplateCode.USER_CREATED) {
       return this.emailService.sendRegistrationEmail(
@@ -91,7 +93,7 @@ export class EmailNotificationChannel implements NotificationChannelHandler {
       resolved.subject,
       resolved.html,
       resolved.text,
-      { primaryOnly: true, skipAdminCc: true },
+      { primaryOnly: true, skipAdminCc: true, cc },
     );
   }
 }

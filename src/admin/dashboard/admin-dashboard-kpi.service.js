@@ -97,6 +97,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminDashboardKpiService = void 0;
 var common_1 = require("@nestjs/common");
 var product_status_constants_1 = require("../../renew/constants/product-status.constants");
+var renewal_eligibility_constants_1 = require("../../renew/constants/renewal-eligibility.constants");
 var admin_dashboard_metrics_util_1 = require("../admin-dashboard-metrics.util");
 var dashboard_metrics_filters_util_1 = require("../utils/dashboard-metrics-filters.util");
 var admin_dashboard_revenue_util_1 = require("../utils/admin-dashboard-revenue.util");
@@ -142,8 +143,7 @@ var AdminDashboardKpiService = function () {
                             productMatch = (0, dashboard_metrics_filters_util_1.buildProductSnapshotMatch)(filters, now);
                             manufacturerMatch = (0, dashboard_metrics_filters_util_1.buildManufacturerSnapshotMatch)(filters);
                             paymentVendorScope = this.buildPaymentVendorScope(filters);
-                            thresholdDate = new Date(now);
-                            thresholdDate.setDate(thresholdDate.getDate() + 60);
+                            thresholdDate = (0, renewal_eligibility_constants_1.renewEligibilityThresholdDate)(now);
                             monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
                             renewEoiMatch = __assign(__assign({}, productMatch), { productStatus: product_status_constants_1.PRODUCT_STATUS_CERTIFIED, $or: [
                                     {

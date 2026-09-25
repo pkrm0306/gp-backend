@@ -34,40 +34,36 @@ function subMonths(date, months) {
     return addMonths(date, -months);
 }
 /**
- * Validity end date for a newly certified product.
+ * Validity end for a newly certified product:
+ * last calendar day of the month that is exactly 2 years after the
+ * certification month (e.g. 2026-09-24 → 2028-09-30).
  *
- * Default rule: Dec 31 of (certified year + 2).
- *
- * Special business rule (2026 issuance window):
- * - 2026-01-01 .. 2026-04-30  => 2027-12-31
- * - 2026-05-01 .. 2026-12-31  => 2028-12-31
+ * Not “same calendar day + 2 years” — always month-end.
  */
 function computeValidTillFromCertified(certifiedDate) {
-    var y = certifiedDate.getFullYear();
-    if (y === 2026) {
-        var month = certifiedDate.getMonth(); // 0-based
-        var day = certifiedDate.getDate();
-        // Jan 1 .. Apr 30
-        if (month < 4 || (month === 3 && day <= 30)) {
-            return startOfDay(new Date(2027, 11, 31));
-        }
-        // May 1 .. Dec 31
-        return startOfDay(new Date(2028, 11, 31));
-    }
-    return startOfDay(new Date(y + 2, 11, 31));
+    var base = startOfDay(certifiedDate);
+    return startOfDay(new Date(base.getFullYear() + 2, base.getMonth() + 1, 0));
 }
-/** Notify offsets from validtill (calendar months), stored at start of day. */
+/**
+ * Notify offsets from validtill (calendar months), stored at start of day.
+ *
+ * | Field | Offset |
+ * |-------|--------|
+ * | firstNotifyDate | validtill − 3 months (first expiry reminder) |
+ * | secondNotifyDate | validtill − 2 months (second / weekly window start) |
+ * | thirdNotifyDate | validtill + 3 months (grace end / deactivation) |
+ */
 function computeNotifyDates(validtillDate) {
     var vt = startOfDay(validtillDate);
     return {
-        firstNotifyDate: startOfDay(subMonths(vt, 2)),
-        secondNotifyDate: startOfDay(subMonths(vt, 1)),
+        firstNotifyDate: startOfDay(subMonths(vt, 3)),
+        secondNotifyDate: startOfDay(subMonths(vt, 2)),
         thirdNotifyDate: computeGraceEndDate(validtillDate),
     };
 }
-/** End of the 1-month grace period after validtillDate. */
+/** End of the 3-month grace period after validtillDate. */
 function computeGraceEndDate(validtillDate) {
-    return startOfDay(addMonths(startOfDay(validtillDate), 1));
+    return startOfDay(addMonths(startOfDay(validtillDate), 3));
 }
 /** Full bundle when admin approves certification payment. */
 function computeCertificationDates(approvedAt) {

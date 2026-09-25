@@ -55,7 +55,7 @@ export class ProductsController {
   @ApiOperation({
     summary: 'Get products eligible for renewal',
     description:
-      'Returns a list of certified products (product_status = 2) for the logged-in manufacturer that are expiring within 60 days (validtill_date < current_date + 60 days). Products are joined with categories collection to get category_name. Results are sorted by created_date DESC.',
+      'Returns a list of certified products (product_status = 2) for the logged-in manufacturer that are expiring within 90 days (validtill_date < current_date + 90 days). Products are joined with categories collection to get category_name. Results are sorted by created_date DESC.',
   })
   @ApiResponse({
     status: 200,

@@ -2,12 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import SMTPTransport from 'nodemailer/lib/smtp-transport';
+import type { Attachment } from 'nodemailer/lib/mailer';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import {
   mergeOutgoingCc,
   parseEmailList,
 } from '../../notifications/utils/notification-recipient-groups.util';
+import {
+  buildGreenProEmailHtml,
+  highlightTerm,
+  mergeGreenProEmailAttachments,
+} from '../email/greenpro-email-layout';
 
 type SmtpEndpointConfig = {
   label: string;
@@ -63,39 +69,38 @@ export class EmailService {
     return `<p>${escaped}</p>`;
   }
 
+  private resolvePublicSiteBase(): string {
+    return (
+      this.configService.get<string>('WEBSITE_URL')?.replace(/\/$/, '') ||
+      this.configService.get<string>('PUBLIC_WEBSITE_URL')?.replace(/\/$/, '') ||
+      this.configService.get<string>('APP_BASE_URL')?.replace(/\/$/, '') ||
+      ''
+    );
+  }
+
   private wrapWithGreenProTemplate(subject: string, content: string): string {
-    const title = this.escapeHtml(subject || 'GreenPro Notification');
     const normalizedContent = this.normalizeContentForTemplate(content);
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${title}</title>
-      </head>
-      <body style="margin:0; padding:20px; background:#f3f4f6; font-family: Arial, sans-serif; color:#1f2937;">
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:700px; margin:0 auto; background:#ffffff; border-radius:8px; overflow:hidden; border:1px solid #e5e7eb;">
-          <tr>
-            <td style="background:#16a34a; color:#ffffff; text-align:center; padding:22px 16px;">
-              <h1 style="margin:0; font-size:28px; line-height:1.3; font-weight:700;">GreenPro</h1>
-              <p style="margin:8px 0 0; font-size:16px; font-weight:500; opacity:0.95;">${title}</p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:28px 32px; font-size:16px; line-height:1.7; color:#111827;">
-              ${normalizedContent}
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 32px 24px; font-size:12px; color:#6b7280;">
-              This is an automated email from GreenPro.
-            </td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
+    const base = this.resolvePublicSiteBase();
+    return buildGreenProEmailHtml({
+      subject,
+      bodyHtml: normalizedContent,
+      contactEmail:
+        this.configService.get<string>('GREENPRO_CONTACT_EMAIL')?.trim() ||
+        this.configService.get<string>('SUPPORT_EMAIL')?.trim() ||
+        undefined,
+      aboutUrl: base ? `${base}/about` : undefined,
+      contactUrl: base ? `${base}/contact` : undefined,
+      facebookUrl:
+        this.configService.get<string>('EMAIL_SOCIAL_FACEBOOK')?.trim() ||
+        undefined,
+      twitterUrl:
+        this.configService.get<string>('EMAIL_SOCIAL_TWITTER')?.trim() ||
+        undefined,
+      linkedinUrl:
+        this.configService.get<string>('EMAIL_SOCIAL_LINKEDIN')?.trim() ||
+        undefined,
+      includeStandardSignOff: true,
+    });
   }
 
   private looksLikeFullHtmlDocument(html: string): boolean {
@@ -299,11 +304,16 @@ export class EmailService {
         this.configService.get<string>('SMTP_SERVER_FROM') ||
         this.configService.get<string>('MAIL_FROM_ADDRESS') ||
         'noreply@greenpro.com';
-      const useRawHtml =
-        options?.rawHtml === true || this.looksLikeFullHtmlDocument(htmlBody);
+      // Intentional exclusion only: options.rawHtml === true.
+      // Full HTML documents are body-extracted then wrapped so every send
+      // gets the shared GreenPro shell (unless rawHtml bypass).
+      const useRawHtml = options?.rawHtml === true;
+      const bodyForWrap = this.looksLikeFullHtmlDocument(htmlBody)
+        ? this.extractBodyContent(htmlBody)
+        : htmlBody;
       const html = useRawHtml
         ? htmlBody
-        : this.wrapWithGreenProTemplate(subject, htmlBody);
+        : this.wrapWithGreenProTemplate(subject, bodyForWrap);
       const text = textBody || this.stripHtml(htmlBody);
       const cc = options?.skipAdminCc
         ? parseEmailList(
@@ -313,7 +323,11 @@ export class EmailService {
           )
         : mergeOutgoingCc(this.configService, to, options?.cc);
       const ccList = cc?.length ? cc : undefined;
-      const attachments = options?.attachments;
+      const attachments = useRawHtml
+        ? options?.attachments
+        : mergeGreenProEmailAttachments(
+            options?.attachments as Attachment[] | undefined,
+          );
 
       this.saveLocalMailPreview({
         to,
@@ -523,18 +537,16 @@ export class EmailService {
     const safePassword = this.escapeHtml(password);
     const safeOtp = this.escapeHtml(otp);
     const htmlBody = `
-      <p>Dear Vendor,</p>
-      <p>Your account has been created successfully. Below are your login credentials:</p>
+      <p>You've applied for registration. Your account has been created successfully. Below are your login credentials:</p>
       <div style="background:#f9fafb; padding:16px; border-radius:8px; border-left:4px solid #16a34a; margin:16px 0;">
         <p style="margin:5px 0;"><strong>Email:</strong> ${safeEmail}</p>
         <p style="margin:5px 0;"><strong>Password:</strong> ${safePassword}</p>
       </div>
-      <p><strong>Please verify your email using the OTP below:</strong></p>
-      <div style="background:#fff3cd; border:1px solid #ffc107; padding:14px; text-align:center; margin:16px 0; border-radius:8px;">
-        <p style="margin:0; color:#856404; font-size:28px; letter-spacing:4px; font-weight:700;">${safeOtp}</p>
+      <p>Please verify your email using the ${highlightTerm('OTP')} below:</p>
+      <div style="background:#fff8ee; border:1px solid #ffe5b4; padding:14px; text-align:center; margin:16px 0; border-radius:8px;">
+        <p style="margin:0; color:#9a3412; font-size:28px; letter-spacing:4px; font-weight:700;">${safeOtp}</p>
       </div>
-      <p>Thank you for joining GreenPro!</p>
-      <p>Best regards,<br>The GreenPro Team</p>
+      <p>If this message looks suspicious or the registration was not initiated by you, please ignore this email or contact support.</p>
     `;
 
     const textBody = `
@@ -571,7 +583,6 @@ Thank you for joining GreenPro!
       <p>Thanks for subscribing to GreenPro. You will receive updates for:</p>
       <p><strong>Subscribed For:</strong> ${this.escapeHtml(prefs)}</p>
       <p><strong>Email:</strong> ${this.escapeHtml(email)}</p>
-      <p>Best regards,<br/>The GreenPro Team</p>
     `;
     const textBody = `Thanks for subscribing to GreenPro.\n\nSubscribed For: ${prefs}\nEmail: ${email}\n\nBest regards,\nThe GreenPro Team`;
     await this.sendEmail(email, subject, htmlBody, textBody);
@@ -585,17 +596,15 @@ Thank you for joining GreenPro!
     const subject = 'GreenPro - Password Reset';
     const safePassword = this.escapeHtml(newPassword);
     const htmlBody = `
-      <p>Dear User,</p>
       <p>Your password has been reset successfully. Please find your new password below:</p>
       <div style="background:#f9fafb; padding:16px; border-radius:8px; border-left:4px solid #16a34a; margin:16px 0;">
         <p style="margin:5px 0;"><strong>Your new password:</strong></p>
         <p style="margin:10px 0; font-size:18px; font-weight:700; color:#16a34a;">${safePassword}</p>
       </div>
-      <div style="background:#fff3cd; border:1px solid #ffc107; padding:14px; margin:16px 0; border-radius:8px;">
-        <p style="margin:0; color:#856404;"><strong>Important:</strong> Please login and change your password immediately for security reasons.</p>
+      <div style="background:#fff8ee; border:1px solid #ffe5b4; padding:14px; margin:16px 0; border-radius:8px;">
+        <p style="margin:0; color:#9a3412;"><strong>Important:</strong> Please login and change your password immediately for security reasons.</p>
       </div>
       <p>If you did not request this password reset, please contact our support team immediately.</p>
-      <p>Best regards,<br>The GreenPro Team</p>
     `;
 
     const textBody = `
@@ -633,7 +642,6 @@ The GreenPro Team
         <p style="margin:5px 0;"><strong>Password:</strong> ${safePassword}</p>
       </div>
       <p>For security, please sign in and change your password immediately.</p>
-      <p>Best regards,<br>The GreenPro Team</p>
     `;
     const textBody = `
 GreenPro Team Access
@@ -645,9 +653,6 @@ Email: ${email}
 Password: ${password}
 
 For security, please sign in and change your password immediately.
-
-Best regards,
-The GreenPro Team
     `;
 
     await this.sendEmail(email, subject, htmlBody, textBody);
@@ -684,7 +689,6 @@ The GreenPro Team
         <p style="margin:5px 0;"><strong>Product Name:</strong> ${safeProduct}</p>
         <p style="margin:5px 0;"><strong>Vendor Name:</strong> ${safeVendor}</p>
       </div>
-      <p>Best regards,<br>The GreenPro Team</p>
     `;
     const textBody = `
 GreenPro SPOC ${isReassign ? 'Reassignment' : 'Assignment'}
@@ -696,9 +700,6 @@ You have been ${actionLabel} as the SPOC for the following product:
 URN: ${params.urn?.trim() || '—'}
 Product Name: ${params.productName?.trim() || '—'}
 Vendor Name: ${params.vendorName?.trim() || '—'}
-
-Best regards,
-The GreenPro Team
     `;
 
     return this.sendEmail(email, subject, htmlBody, textBody);
@@ -725,7 +726,6 @@ The GreenPro Team
         <p style="margin:5px 0;"><strong>Password:</strong> ${safePassword}</p>
       </div>
       <p>For security, please sign in and change your password after your first login.</p>
-      <p>Best regards,<br>The GreenPro Team</p>
     `;
       const textBody = `
 Hello ${vendorName?.trim() || 'Vendor'},
@@ -753,7 +753,6 @@ The GreenPro Team
       </div>
       <p>Your password is unchanged. Sign in with this email and your existing password.</p>
       <p>If you cannot sign in, use <strong>Forgot password</strong> on the login page.</p>
-      <p>Best regards,<br>The GreenPro Team</p>
     `;
 
     const textBody = `
@@ -802,7 +801,6 @@ The GreenPro Team
         <p style="margin:5px 0;"><strong>Password:</strong> ${password}</p>
       </div>
       <p>The team member can sign in to the vendor portal with the email and password above.</p>
-      <p>Best regards,<br>The GreenPro System</p>
     `;
     const textBody = `
 A new team member was added from the vendor panel.
@@ -857,7 +855,6 @@ The GreenPro System
       </div>
       ${loginLinkHtml}
       <p>For security, please change your password after your first login.</p>
-      <p>Best regards,<br>The GreenPro Team</p>
     `;
     const textBody = `
 Hello ${params.memberName.trim() || 'Team Member'},

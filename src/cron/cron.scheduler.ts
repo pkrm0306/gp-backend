@@ -52,8 +52,8 @@ export class CronScheduler implements OnModuleInit {
 
     const jobs: Array<{ name: string; run: () => Promise<unknown> }> = [
       {
-        name: 'before2month',
-        run: () => this.certificationExpiryService.runBefore2Month(),
+        name: 'before3month',
+        run: () => this.certificationExpiryService.runBefore3Month(),
       },
       {
         name: 'weeklyMail',

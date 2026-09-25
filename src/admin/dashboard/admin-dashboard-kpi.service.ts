@@ -26,6 +26,7 @@ import {
   PRODUCT_STATUS_PENDING,
   PRODUCT_STATUS_SUBMITTED,
 } from '../../renew/constants/product-status.constants';
+import { renewEligibilityThresholdDate } from '../../renew/constants/renewal-eligibility.constants';
 import { manufacturerStatusKey } from '../admin-dashboard-metrics.util';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
 import { NOT_SOFT_DELETED } from '../../common/utils/soft-delete.util';
@@ -95,8 +96,7 @@ export class AdminDashboardKpiService {
     const manufacturerMatch = buildManufacturerTrendMatch(filters);
     const paymentVendorScope = this.buildPaymentVendorScope(filters);
 
-    const thresholdDate = new Date(now);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(now);
 
     // Same eligibility + EOI grain as Renew listing "Total Renew Products".
     const renewMatch = this.buildRenewDueMatch(filters, thresholdDate);
@@ -289,8 +289,7 @@ export class AdminDashboardKpiService {
     const manufacturerMatch = buildManufacturerSnapshotMatch(filters);
     const paymentVendorScope = this.buildPaymentVendorScope(filters);
 
-    const thresholdDate = new Date(now);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(now);
 
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 

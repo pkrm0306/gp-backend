@@ -99,6 +99,7 @@ var common_1 = require("@nestjs/common");
 var mongoose_1 = require("mongoose");
 var crypto_1 = require("crypto");
 var product_status_constants_1 = require("../../renew/constants/product-status.constants");
+var renewal_eligibility_constants_1 = require("../../renew/constants/renewal-eligibility.constants");
 var dashboard_metrics_filters_util_1 = require("../utils/dashboard-metrics-filters.util");
 var PAYMENT_STATUS_PENDING = 1;
 var PAYMENT_STATUS_PAID = 2;
@@ -271,8 +272,7 @@ var AdminDashboardOptimizedService = function () {
                     switch (_7.label) {
                         case 0:
                             now = new Date();
-                            thresholdDate = new Date(now);
-                            thresholdDate.setDate(thresholdDate.getDate() + 60);
+                            thresholdDate = (0, renewal_eligibility_constants_1.renewEligibilityThresholdDate)(now);
                             previousRange = filters.dateRange
                                 ? (0, dashboard_metrics_filters_util_1.resolvePreviousDashboardDateRange)(filters.dateRange)
                                 : undefined;
@@ -925,7 +925,7 @@ var AdminDashboardOptimizedService = function () {
                     id: 'alert-certs-expiring',
                     key: 'certificatesExpiringSoon',
                     title: 'Certificates expiring soon',
-                    message: "".concat(signals.certificatesExpiringSoon, " certificates expire within 60 days."),
+                    message: "".concat(signals.certificatesExpiringSoon, " certificates expire within 90 days."),
                     severity: signals.certificatesExpiringSoon >= 10 ? 'critical' : 'warning',
                     timestamp: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
                     actionLabel: 'View renewals',
@@ -1011,8 +1011,7 @@ var AdminDashboardOptimizedService = function () {
                             manufacturerMatch = (0, dashboard_metrics_filters_util_1.buildManufacturerSnapshotMatch)(filters);
                             paymentIds = (0, dashboard_metrics_filters_util_1.resolveManufacturerScopeIds)(filters);
                             paymentMatch = __assign({ paymentStatus: { $in: [PAYMENT_STATUS_PAID, PAYMENT_STATUS_PENDING] } }, (paymentIds ? { vendorId: { $in: paymentIds } } : {}));
-                            thresholdDate = new Date(now);
-                            thresholdDate.setDate(thresholdDate.getDate() + 60);
+                            thresholdDate = (0, renewal_eligibility_constants_1.renewEligibilityThresholdDate)(now);
                             return [4 /*yield*/, Promise.all([
                                     this.manufacturerModel
                                         .find(manufacturerMatch)

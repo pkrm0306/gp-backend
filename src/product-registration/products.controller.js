@@ -450,7 +450,7 @@ var ProductsController = function () {
         var _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
         _getRenewList_decorators = [(0, common_1.Get)('renew-list'), (0, swagger_1.ApiOperation)({
                 summary: 'Get products eligible for renewal',
-                description: 'Returns a list of certified products (product_status = 2) for the logged-in manufacturer that are expiring within 60 days (validtill_date < current_date + 60 days). Products are joined with categories collection to get category_name. Results are sorted by created_date DESC.',
+                description: 'Returns a list of certified products (product_status = 2) for the logged-in manufacturer that are expiring within 90 days (validtill_date < current_date + 90 days). Products are joined with categories collection to get category_name. Results are sorted by created_date DESC.',
             }), (0, swagger_1.ApiResponse)({
                 status: 200,
                 description: 'Renew list retrieved successfully',

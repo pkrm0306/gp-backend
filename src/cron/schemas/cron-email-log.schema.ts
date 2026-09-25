@@ -4,6 +4,8 @@ import { Document, Types } from 'mongoose';
 export type CronEmailLogDocument = CronEmailLog & Document;
 
 export const CRON_JOB_TYPES = [
+  'before3month',
+  /** @deprecated Legacy jobType retained so historical cron_email_logs remain readable. */
   'before2month',
   'weeklyMail',
   'deactivationMail',

@@ -39,19 +39,13 @@ export class CertificationExpiryTemplateService {
   private fallbackTemplate(fileName: string): string {
     if (fileName.includes('deactivation')) {
       return `
-        <html><body style="font-family:Arial,sans-serif">
           <p>Dear Vendor,</p>
           <p>Your GreenPro certified product registration has been deactivated as the certificate validity period has ended.</p>
-          <p>Registration year reference: @productRegistrationyear@</p>
-          <p>&copy; @currentYear@ GreenPro</p>
-        </body></html>`;
+          <p>Registration year reference: @productRegistrationyear@</p>`;
     }
     return `
-      <html><body style="font-family:Arial,sans-serif">
         <p>Dear Vendor,</p>
-        <p>This is a reminder that your GreenPro product certification is approaching its validity end date. Please initiate renewal if eligible.</p>
-        <p>&copy; @year@ GreenPro</p>
-      </body></html>`;
+        <p>This is a reminder that your GreenPro product certification is approaching its validity end date. Please initiate renewal if eligible.</p>`;
   }
 
   private applyLegacyAssetPlaceholders(html: string): string {

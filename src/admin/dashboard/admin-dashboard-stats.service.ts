@@ -6,6 +6,7 @@ import {
   ProductDocument,
 } from '../../product-registration/schemas/product.schema';
 import { PRODUCT_STATUS_CERTIFIED, PRODUCT_STATUS_DISCONTINUED } from '../../renew/constants/product-status.constants';
+import { renewEligibilityThresholdDate } from '../../renew/constants/renewal-eligibility.constants';
 import type { DashboardMetricsQueryDto } from '../dto/dashboard-metrics-query.dto';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
 import {
@@ -156,8 +157,7 @@ export class AdminDashboardStatsService {
       : buildProductSnapshotMatch(filters, now);
     const certifiedActive = this.certifiedActiveExpr(now);
     const expired = this.expiredExpr(now);
-    const thresholdDate = new Date(now);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(now);
     const renewListMatch = this.buildRenewListMatch(
       filters,
       thresholdDate,

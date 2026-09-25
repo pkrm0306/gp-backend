@@ -6,13 +6,19 @@
  *   pnpm email:test -- you@example.com
  */
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { EmailService } from '../common/services/email.service';
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true })],
-  providers: [EmailService],
+  providers: [
+    {
+      provide: EmailService,
+      useFactory: (config: ConfigService) => new EmailService(config),
+      inject: [ConfigService],
+    },
+  ],
 })
 class EmailTestModule {}
 
@@ -54,7 +60,7 @@ async function run() {
     `;
 
     await emailService.sendEmail(to, subject, html, undefined, {
-      rawHtml: true,
+      rawHtml: false,
     });
 
     console.log(`\nOK — test email sent to ${to}\n`);

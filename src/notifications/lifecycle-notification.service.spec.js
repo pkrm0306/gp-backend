@@ -575,20 +575,20 @@ describe('LifecycleNotificationService', function () {
             }
         });
     }); });
-    it('creates admin feed + email for 60-day expiry reminder', function () { return __awaiter(void 0, void 0, void 0, function () {
+    it('creates admin feed + email for 90-day expiry reminder', function () { return __awaiter(void 0, void 0, void 0, function () {
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0: return [4 /*yield*/, service.notifyCertificationExpiryAdmin({
                         manufacturerName: 'Acme Co',
                         urnNo: 'URN-1',
                         eoiNo: 'EOI-1',
-                        stage: '60-day',
+                        stage: '90-day',
                         includeAdminEmail: false,
                     })];
                 case 1:
                     _a.sent();
                     expect(createFeedNotification).toHaveBeenCalledWith(expect.objectContaining({
-                        referenceType: 'certification_expiry_60-day',
+                        referenceType: 'certification_expiry_90-day',
                         ccGroups: ['SHEshi'],
                     }));
                     return [2 /*return*/];

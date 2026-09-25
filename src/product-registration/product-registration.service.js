@@ -141,6 +141,7 @@ var upload_file_util_1 = require("../utils/upload-file.util");
 var product_status_constants_1 = require("../renew/constants/product-status.constants");
 var renewal_urn_status_constants_1 = require("../renew/constants/renewal-urn-status.constants");
 var renewal_urn_status_constants_2 = require("../renew/constants/renewal-urn-status.constants");
+var renewal_eligibility_constants_1 = require("../renew/constants/renewal-eligibility.constants");
 var urn_tab_review_constants_1 = require("./constants/urn-tab-review.constants");
 var category_change_constants_1 = require("./constants/category-change.constants");
 var category_change_util_1 = require("./helpers/category-change.util");
@@ -5264,8 +5265,7 @@ var ProductRegistrationService = function () {
                     switch (_a.label) {
                         case 0:
                             currentDate = new Date();
-                            thresholdDate = new Date(currentDate);
-                            thresholdDate.setDate(thresholdDate.getDate() + 60);
+                            thresholdDate = (0, renewal_eligibility_constants_1.renewEligibilityThresholdDate)(currentDate);
                             renewMatch = __assign(__assign({ productStatus: product_status_constants_1.PRODUCT_STATUS_CERTIFIED }, (0, active_product_filter_1.matchActiveProducts)()), { $or: [
                                     {
                                         validtillDate: {
@@ -5441,7 +5441,7 @@ var ProductRegistrationService = function () {
          * Conditions:
          * - product_status = 2 (Certified)
          * - manufacturer_id = logged-in manufacturer
-         * - validtill_date < (current_date + 60 days)
+         * - validtill_date < (current_date + 90 days)
          */
         ProductRegistrationService_1.prototype.getRenewList = function (manufacturerId) {
             return __awaiter(this, void 0, void 0, function () {
@@ -5451,16 +5451,16 @@ var ProductRegistrationService = function () {
                         case 0:
                             _a.trys.push([0, 2, , 3]);
                             manufacturerObjectId = this.toObjectId(manufacturerId, 'manufacturerId');
+                            // Calculate date threshold: current date + RENEW_ELIGIBILITY_DAYS_BEFORE_EXPIRY (90)
                             currentDate = new Date();
-                            thresholdDate = new Date(currentDate);
-                            thresholdDate.setDate(thresholdDate.getDate() + 60);
+                            thresholdDate = (0, renewal_eligibility_constants_1.renewEligibilityThresholdDate)(currentDate);
                             pipeline = [];
                             // Stage 1: $match - Filter by manufacturerId, productStatus = 2, and validtillDate < threshold
                             pipeline.push({
                                 $match: __assign({ manufacturerId: manufacturerObjectId, productStatus: 2, validtillDate: {
                                         $exists: true,
                                         $ne: null,
-                                        $lt: thresholdDate, // validtillDate < (current_date + 60 days)
+                                        $lt: thresholdDate, // validtillDate < (current_date + 90 days)
                                     } }, (0, active_product_filter_1.matchActiveProducts)()),
                             });
                             // Stage 2: $lookup category by categoryId

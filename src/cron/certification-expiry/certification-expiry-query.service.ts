@@ -7,6 +7,7 @@ import {
 } from '../../product-registration/schemas/product.schema';
 import { matchActiveProducts } from '../../product-registration/constants/active-product.filter';
 import { PRODUCT_STATUS_CERTIFIED } from '../../renew/constants/product-status.constants';
+import { renewEligibilityThresholdDate } from '../../renew/constants/renewal-eligibility.constants';
 import { PRODUCT_RENEW_STATUS } from '../../renew/constants/renewal-urn-status.constants';
 import { EligibleExpiryProduct } from './certification-expiry.types';
 
@@ -21,8 +22,7 @@ export class CertificationExpiryQueryService {
 
   /** Legacy getEligibleProducts() + MERN renewal exclusions (notify jobs only). */
   async getEligibleProducts(asOf = new Date()): Promise<EligibleExpiryProduct[]> {
-    const thresholdDate = new Date(asOf);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(asOf);
 
     return this.findExpiryProducts({
       ...matchActiveProducts(),

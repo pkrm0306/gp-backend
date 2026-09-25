@@ -476,4 +476,60 @@ describe('CertificationExpiryService.planDeactivationBatch', () => {
     expect(planned).toHaveLength(0);
     expect(result.skipped).toBe(1);
   });
+
+  it('skips deactivation when today is still inside the 3-month grace', async () => {
+    // validtill = today − 1 month → grace end = today + 2 months → still inside grace
+    const validtill = new Date();
+    validtill.setMonth(validtill.getMonth() - 1);
+    const product = makeProduct(101, { validtillDate: validtill });
+    const result = {
+      success: true,
+      jobType: 'deactivationMail' as const,
+      processed: 0,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      deactivated: 0,
+      errors: [],
+    };
+
+    const planned = await service.planDeactivationBatch(
+      [product],
+      todayIsoInTimeZone(),
+      result,
+    );
+
+    expect(planned).toHaveLength(0);
+    expect(result.skipped).toBe(1);
+  });
+
+  it('allows deactivation when today is on or after validtill + 3 months', async () => {
+    const validtill = new Date();
+    validtill.setMonth(validtill.getMonth() - 3);
+    validtill.setDate(validtill.getDate() - 1); // past grace end by ≥1 day
+    const product = makeProduct(102, { validtillDate: validtill });
+    productFindLeanExec.mockResolvedValue([
+      { productId: 102, productStatus: PRODUCT_STATUS_CERTIFIED },
+    ]);
+    cronLogFindLeanExec.mockResolvedValue([]);
+    const result = {
+      success: true,
+      jobType: 'deactivationMail' as const,
+      processed: 0,
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      deactivated: 0,
+      errors: [],
+    };
+
+    const planned = await service.planDeactivationBatch(
+      [product],
+      todayIsoInTimeZone(),
+      result,
+    );
+
+    expect(planned).toHaveLength(1);
+    expect(planned[0].product.productId).toBe(102);
+  });
 });

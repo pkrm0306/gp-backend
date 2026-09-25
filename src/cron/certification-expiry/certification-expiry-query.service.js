@@ -90,6 +90,7 @@ var common_1 = require("@nestjs/common");
 var active_product_filter_1 = require("../../product-registration/constants/active-product.filter");
 var product_status_constants_1 = require("../../renew/constants/product-status.constants");
 var renewal_urn_status_constants_1 = require("../../renew/constants/renewal-urn-status.constants");
+var renewal_eligibility_constants_1 = require("../../renew/constants/renewal-eligibility.constants");
 var ACTIVE_RENEWAL_URN_STATUSES = [12, 13, 14, 15, 16, 17];
 var CertificationExpiryQueryService = function () {
     var _classDecorators = [(0, common_1.Injectable)()];
@@ -106,8 +107,7 @@ var CertificationExpiryQueryService = function () {
                 var thresholdDate;
                 if (asOf === void 0) { asOf = new Date(); }
                 return __generator(this, function (_a) {
-                    thresholdDate = new Date(asOf);
-                    thresholdDate.setDate(thresholdDate.getDate() + 60);
+                    thresholdDate = (0, renewal_eligibility_constants_1.renewEligibilityThresholdDate)(asOf);
                     return [2 /*return*/, this.findExpiryProducts(__assign(__assign({}, (0, active_product_filter_1.matchActiveProducts)()), { productStatus: product_status_constants_1.PRODUCT_STATUS_CERTIFIED, productRenewStatus: renewal_urn_status_constants_1.PRODUCT_RENEW_STATUS.NOT_RENEWED, urnStatus: { $nin: ACTIVE_RENEWAL_URN_STATUSES }, validtillDate: { $exists: true, $ne: null, $lt: thresholdDate } }))];
                 });
             });

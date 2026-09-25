@@ -1,7 +1,6 @@
 /**
  * Rich HTML card for product share emails (Outlook / Gmail).
- * Two-column layout matching the product-share email mockup:
- * image left | title, badges, description, meta rows, CTA right.
+ * Body fragment only — GreenPro branded shell is applied by EmailService.
  */
 
 export type ProductShareEmailCardInput = {
@@ -85,7 +84,7 @@ export function buildProductShareEmailText(
     .join('\n');
 }
 
-/** Full HTML document — send with EmailService `rawHtml: true` (do not wrap). */
+/** Body fragment (product card) — wrapped by EmailService GreenPro shell. */
 export function buildProductShareEmailHtml(
   input: ProductShareEmailCardInput,
 ): string {
@@ -120,34 +119,17 @@ export function buildProductShareEmailHtml(
     ? `<a href="${escapeHtml(shareUrl)}" style="display:inline-block;padding:12px 22px;border-radius:10px;background:#0a7d44;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;font-family:Arial,Helvetica,sans-serif;">View Product Details</a>`
     : '';
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>${escapeHtml(productName)}</title>
-<!--[if mso]>
-<style type="text/css">
-body, table, td { font-family: Arial, Helvetica, sans-serif !important; }
-</style>
-<![endif]-->
-</head>
-<body style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#ffffff;">
+  return `
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;">
 <tr>
-<td align="center" style="padding:24px 16px;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:680px;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;">
-<tr>
-<td style="padding:20px;">
+<td style="padding:16px;">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
 <tr>
-<!-- Left: product image -->
 <td valign="top" width="280" style="padding:0 16px 0 0;width:280px;">
 ${imageCell}
 </td>
-<!-- Right: details -->
 <td valign="top" style="padding:0;">
-<h1 style="margin:0 0 12px;font-size:26px;line-height:1.25;color:#111827;font-weight:700;font-family:Arial,Helvetica,sans-serif;">${escapeHtml(productName)}</h1>
+<h1 style="margin:0 0 12px;font-size:22px;line-height:1.25;color:#111827;font-weight:700;font-family:Arial,Helvetica,sans-serif;">${escapeHtml(productName)}</h1>
 <p style="margin:0 0 12px;">
 <span style="display:inline-block;padding:5px 12px;border-radius:999px;background:#0a7d44;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:0.04em;font-family:Arial,Helvetica,sans-serif;">GREENPRO CERTIFIED</span>
 <span style="display:inline-block;margin-left:8px;padding:5px 12px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:700;letter-spacing:0.04em;font-family:Arial,Helvetica,sans-serif;">${escapeHtml(categoryBadge)}</span>
@@ -166,10 +148,5 @@ ${cta}
 </table>
 </td>
 </tr>
-</table>
-</td>
-</tr>
-</table>
-</body>
-</html>`;
+</table>`;
 }

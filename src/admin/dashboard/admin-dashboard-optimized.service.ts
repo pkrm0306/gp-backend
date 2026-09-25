@@ -22,6 +22,7 @@ import {
   PRODUCT_STATUS_REJECTED,
   PRODUCT_STATUS_SUBMITTED,
 } from '../../renew/constants/product-status.constants';
+import { renewEligibilityThresholdDate } from '../../renew/constants/renewal-eligibility.constants';
 import type { ResolvedDashboardFilters } from '../utils/dashboard-metrics-filters.util';
 import {
   buildManufacturerSnapshotMatch,
@@ -202,8 +203,7 @@ export class AdminDashboardOptimizedService {
     filters: ResolvedDashboardFilters,
   ): Promise<DashboardOpsSignals> {
     const now = new Date();
-    const thresholdDate = new Date(now);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(now);
 
     const previousRange = filters.dateRange
       ? resolvePreviousDashboardDateRange(filters.dateRange)
@@ -1516,8 +1516,7 @@ export class AdminDashboardOptimizedService {
         : {}),
     };
 
-    const thresholdDate = new Date(now);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(now);
     const renewalsMatch: Record<string, unknown> = {
       ...buildProductSnapshotMatch(filters, now),
       productStatus: PRODUCT_STATUS_CERTIFIED,

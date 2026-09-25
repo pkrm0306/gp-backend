@@ -42,6 +42,8 @@ exports.CronEmailLogSchema = exports.CronEmailLog = exports.CRON_JOB_TYPES = voi
 var mongoose_1 = require("@nestjs/mongoose");
 var mongoose_2 = require("mongoose");
 exports.CRON_JOB_TYPES = [
+    'before3month',
+    /** @deprecated Legacy jobType retained so historical cron_email_logs remain readable. */
     'before2month',
     'weeklyMail',
     'deactivationMail',

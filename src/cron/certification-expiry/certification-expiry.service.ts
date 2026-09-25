@@ -83,7 +83,7 @@ export class CertificationExpiryService {
 
   private notifyExpiryAdmin(
     product: EligibleExpiryProduct,
-    stage: '60-day' | 'weekly' | 'deactivation',
+    stage: '90-day' | 'weekly' | 'deactivation',
     includeAdminEmail: boolean,
   ): void {
     const manufacturerName = String(
@@ -105,8 +105,8 @@ export class CertificationExpiryService {
       );
   }
 
-  async runBefore2Month(asOf = new Date()): Promise<CronJobRunResult> {
-    return this.runJob('before2month', asOf, async (products, todayIso, result) => {
+  async runBefore3Month(asOf = new Date()): Promise<CronJobRunResult> {
+    return this.runJob('before3month', asOf, async (products, todayIso, result) => {
       const year = Number(todayIso.slice(0, 4));
       const vendorCc = this.resolveExpiryVendorCc();
 
@@ -124,7 +124,7 @@ export class CertificationExpiryService {
           { includeYear: true, year },
         );
         await this.processProductEmail(product, {
-          jobType: 'before2month',
+          jobType: 'before3month',
           notifyDate: todayIso,
           subject: `GreenPro — Expiry reminder (${product.eoiNo || product.urnNo})`,
           html,
@@ -133,6 +133,11 @@ export class CertificationExpiryService {
         });
       }
     });
+  }
+
+  /** @deprecated Prefer runBefore3Month — kept as alias for one release. */
+  async runBefore2Month(asOf = new Date()): Promise<CronJobRunResult> {
+    return this.runBefore3Month(asOf);
   }
 
   async runWeeklyMail(asOf = new Date()): Promise<CronJobRunResult> {
@@ -595,20 +600,21 @@ export class CertificationExpiryService {
       await this.writeLog(product, jobType, notifyDate);
       result.sent += 1;
       const expiryStage =
-        jobType === 'before2month'
-          ? '60-day'
+        jobType === 'before3month' || jobType === 'before2month'
+          ? '90-day'
           : jobType === 'weeklyMail'
             ? 'weekly'
             : 'deactivation';
-      const includeAdminEmail = jobType !== 'before2month';
+      const includeAdminEmail =
+        jobType !== 'before3month' && jobType !== 'before2month';
       this.notifyExpiryAdmin(product, expiryStage, includeAdminEmail);
       this.lifecycleNotification.notifyVendorCertificationExpiryInApp({
         manufacturerId: String(product.vendorId),
         productName: String(product.productName ?? product.eoiNo ?? product.urnNo),
         eoiNo: String(product.eoiNo ?? ''),
         reminderStage:
-          expiryStage === '60-day'
-            ? '60-day expiry reminder'
+          expiryStage === '90-day'
+            ? '90-day expiry reminder'
             : expiryStage === 'weekly'
               ? 'Weekly expiry reminder'
               : 'Product deactivated due to certification expiry',
@@ -641,7 +647,6 @@ export class CertificationExpiryService {
       html,
       undefined,
       {
-        rawHtml: true,
         cc: ccFiltered.length ? ccFiltered : undefined,
       },
     );

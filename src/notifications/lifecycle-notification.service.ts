@@ -11,6 +11,7 @@ import {
   resolveManufacturerDisplayName,
 } from './helpers/admin-notification-messages';
 import { NotificationCcGroup } from './utils/notification-recipient-groups.util';
+import { UrnLifecycleRecipientResolver } from './helpers/urn-lifecycle-recipient.resolver';
 
 @Injectable()
 export class LifecycleNotificationService {
@@ -20,6 +21,7 @@ export class LifecycleNotificationService {
     private readonly notificationHelper: NotificationHelper,
     private readonly recipientService: NotificationRecipientService,
     private readonly adminSystemNotification: AdminSystemNotificationService,
+    private readonly urnLifecycleRecipients: UrnLifecycleRecipientResolver,
   ) {}
 
   private manufacturerLabelFromRecipient(
@@ -98,6 +100,7 @@ export class LifecycleNotificationService {
     template: NotificationTemplateCode,
     payload: Record<string, unknown>,
     logContext?: string,
+    cc?: string | string[],
   ): void {
     const email = recipient?.email?.trim();
     const userId = recipient?.userId?.trim();
@@ -122,7 +125,104 @@ export class LifecycleNotificationService {
       template,
       userId,
       email,
+      cc,
       payload: { manufacturerName, vendorName: manufacturerName, ...payload },
+      async: true,
+    });
+  }
+
+  /**
+   * URN approve/reject business mail: one To email per unique recipient
+   * (manufacturer + SPOC + each Team Lead). Deduped. Manufacturer also gets in-app.
+   */
+  private async sendUrnLifecycleBusinessNotification(input: {
+    recipient: {
+      userId?: string;
+      email?: string;
+      companyName?: string;
+      vendorName?: string;
+    } | null;
+    urnNo: string;
+    template: NotificationTemplateCode;
+    payload: Record<string, unknown>;
+    logContext: string;
+  }): Promise<void> {
+    const manufacturerEmail =
+      input.recipient?.email?.trim() || undefined;
+    const userId = input.recipient?.userId?.trim();
+    const manufacturerName = this.manufacturerLabelFromRecipient(
+      input.recipient,
+    );
+
+    let allUniqueEmails: string[] = [];
+    try {
+      const resolved =
+        await this.urnLifecycleRecipients.resolveBusinessRecipients({
+          urnNo: input.urnNo,
+          manufacturerEmail,
+        });
+      allUniqueEmails = resolved.allUniqueEmails ?? [];
+      if (allUniqueEmails.length === 0 && resolved.to) {
+        allUniqueEmails = [resolved.to, ...(resolved.cc ?? [])].filter(Boolean);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `[sendUrnLifecycleBusinessNotification] recipient resolve failed (${input.logContext}): ${(error as Error)?.message || error}`,
+      );
+      allUniqueEmails = manufacturerEmail ? [manufacturerEmail] : [];
+    }
+
+    if (allUniqueEmails.length === 0 && !userId) {
+      this.logger.warn(
+        `[sendUrnLifecycleBusinessNotification] Skipping ${input.template} — no manufacturer/SPOC/Team Lead email (${input.logContext})`,
+      );
+      return;
+    }
+
+    if (allUniqueEmails.length === 0 && userId) {
+      this.logger.warn(
+        `[sendUrnLifecycleBusinessNotification] ${input.template} — no outbound emails; in-app only (${input.logContext})`,
+      );
+      this.notificationHelper.sendInBackground({
+        type: [NotificationChannel.IN_APP],
+        template: input.template,
+        userId,
+        payload: {
+          manufacturerName,
+          vendorName: manufacturerName,
+          ...input.payload,
+        },
+        async: true,
+      });
+      return;
+    }
+
+    // Manufacturer (or first address) is the primary email+optional in-app recipient.
+    // Remaining unique addresses (SPOC + each Team Lead) each get their own To copy.
+    const primaryEmail = manufacturerEmail || allUniqueEmails[0];
+    const otherEmails = allUniqueEmails.filter(
+      (e) => e.toLowerCase() !== primaryEmail.toLowerCase(),
+    );
+
+    this.logger.log(
+      `[sendUrnLifecycleBusinessNotification] ${input.template} To=${primaryEmail}` +
+        (otherEmails.length
+          ? ` + ${otherEmails.length} separate To copies (${otherEmails.join(', ')})`
+          : '') +
+        ` (${input.logContext})`,
+    );
+
+    this.notificationHelper.sendInBackground({
+      type: this.vendorNotifyChannels(userId),
+      template: input.template,
+      userId,
+      email: primaryEmail,
+      emails: otherEmails.length ? otherEmails : undefined,
+      payload: {
+        manufacturerName,
+        vendorName: manufacturerName,
+        ...input.payload,
+      },
       async: true,
     });
   }
@@ -296,16 +396,19 @@ export class LifecycleNotificationService {
       params.manufacturerName ??
       this.manufacturerLabelFromRecipient(recipient);
     const productName = params.productName ?? params.urnNo;
-    this.sendVendorNotificationInBackground(
+    await this.sendUrnLifecycleBusinessNotification({
       recipient,
-      NotificationTemplateCode.URN_INITIAL_APPROVED,
-      {
+      urnNo: params.urnNo,
+      template: NotificationTemplateCode.URN_INITIAL_APPROVED,
+      payload: {
         urnNo: params.urnNo,
         productName,
         approvedBy: params.approvedBy ?? 'GreenPro Admin',
       },
-      `notifyUrnInitialApproved manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
-    );
+      logContext: `notifyUrnInitialApproved manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
+    });
+    // Keep admin bell feed + ops companion email, but omit TEAM_LEADS CC so
+    // Team Leads receive only the manufacturer business email (To/CC above).
     await this.notifyAdminFeedAndEmail({
       copy: AdminNotificationMessages.urnInitialApproved(
         manufacturerName,
@@ -315,7 +418,6 @@ export class LifecycleNotificationService {
       referenceType: 'urn_initial_approved',
       referenceId: params.urnNo,
       type: 'success',
-      ccGroups: ['TEAM_LEADS'],
     });
   }
 
@@ -333,17 +435,18 @@ export class LifecycleNotificationService {
       String(params.reason ?? '').trim() ||
       'Your registration was not approved at the initial review stage.';
     const productName = params.productName ?? params.urnNo;
-    this.sendVendorNotificationInBackground(
+    await this.sendUrnLifecycleBusinessNotification({
       recipient,
-      NotificationTemplateCode.URN_REGISTRATION_REJECTED,
-      {
+      urnNo: params.urnNo,
+      template: NotificationTemplateCode.URN_REGISTRATION_REJECTED,
+      payload: {
         urnNo: params.urnNo,
         productName,
         reason,
         rejectedBy: params.rejectedBy ?? 'GreenPro Admin',
       },
-      `notifyUrnRegistrationRejected manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
-    );
+      logContext: `notifyUrnRegistrationRejected manufacturerId=${params.manufacturerId} urn=${params.urnNo}`,
+    });
   }
 
   async notifyProductRegistered(params: {
@@ -1024,13 +1127,13 @@ export class LifecycleNotificationService {
     manufacturerName: string;
     urnNo: string;
     eoiNo: string;
-    stage: '60-day' | 'weekly' | 'deactivation';
+    stage: '90-day' | 'weekly' | 'deactivation';
     productId?: number;
     includeAdminEmail?: boolean;
   }): Promise<void> {
     const stageLabel =
-      params.stage === '60-day'
-        ? '60-day expiry'
+      params.stage === '90-day'
+        ? '90-day expiry'
         : params.stage === 'weekly'
           ? 'Weekly expiry'
           : 'Deactivation';

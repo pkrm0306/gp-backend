@@ -149,6 +149,7 @@ import {
   VendorProductChangeRequestDocument,
 } from './schemas/vendor-product-change-request.schema';
 import { PRODUCT_STATUS_CERTIFIED } from '../renew/constants/product-status.constants';
+import { renewEligibilityThresholdDate } from '../renew/constants/renewal-eligibility.constants';
 import { resolveCertificateTemplateVersion } from './helpers/certificate-template-version.util';
 import { RENEWAL_URN_STATUS } from '../renew/constants/renewal-urn-status.constants';
 import {
@@ -6941,8 +6942,7 @@ export class ProductRegistrationService implements OnModuleInit {
     total: number;
   }> {
     const currentDate = new Date();
-    const thresholdDate = new Date(currentDate);
-    thresholdDate.setDate(thresholdDate.getDate() + 60);
+    const thresholdDate = renewEligibilityThresholdDate(currentDate);
 
     const renewMatch = {
       productStatus: PRODUCT_STATUS_CERTIFIED,
@@ -7121,7 +7121,7 @@ export class ProductRegistrationService implements OnModuleInit {
    * Conditions:
    * - product_status = 2 (Certified)
    * - manufacturer_id = logged-in manufacturer
-   * - validtill_date < (current_date + 60 days)
+   * - validtill_date < (current_date + 90 days)
    */
   async getRenewList(manufacturerId: string) {
     try {
@@ -7130,10 +7130,9 @@ export class ProductRegistrationService implements OnModuleInit {
         'manufacturerId',
       );
 
-      // Calculate date threshold: current date + 60 days
+      // Calculate date threshold: current date + RENEW_ELIGIBILITY_DAYS_BEFORE_EXPIRY (90)
       const currentDate = new Date();
-      const thresholdDate = new Date(currentDate);
-      thresholdDate.setDate(thresholdDate.getDate() + 60);
+      const thresholdDate = renewEligibilityThresholdDate(currentDate);
 
       // Aggregation pipeline
       const pipeline: any[] = [];
@@ -7146,7 +7145,7 @@ export class ProductRegistrationService implements OnModuleInit {
           validtillDate: {
             $exists: true,
             $ne: null,
-            $lt: thresholdDate, // validtillDate < (current_date + 60 days)
+            $lt: thresholdDate, // validtillDate < (current_date + 90 days)
           },
           ...matchActiveProducts(),
         },

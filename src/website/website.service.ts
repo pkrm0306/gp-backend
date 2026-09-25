@@ -2045,7 +2045,6 @@ ${visitorDetailsBlock}
       html,
       text,
       {
-        rawHtml: true,
         skipAdminCc: true,
         ...(imageAttachment ? { attachments: [imageAttachment] } : {}),
       },

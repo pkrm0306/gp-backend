@@ -28,8 +28,10 @@ import { AdminSystemNotificationService } from './helpers/admin-system-notificat
 import { LifecycleNotificationService } from './lifecycle-notification.service';
 import { ProductDocumentUploadNotificationHelper } from './helpers/product-document-upload-notification.helper';
 import { VendorUsersModule } from '../vendor-users/vendor-users.module';
+import { SpocAllocationModule } from '../spoc-allocation/spoc-allocation.module';
 import { UserNotificationsService } from './user-notifications.service';
 import { VendorNotificationsController } from './vendor-notifications.controller';
+import { UrnLifecycleRecipientResolver } from './helpers/urn-lifecycle-recipient.resolver';
 
 @Global()
 @Module({
@@ -37,6 +39,7 @@ import { VendorNotificationsController } from './vendor-notifications.controller
     ConfigModule,
     EmailModule,
     VendorUsersModule,
+    SpocAllocationModule,
     MongooseModule.forFeature([
       { name: UserNotification.name, schema: UserNotificationSchema },
       { name: Notification.name, schema: NotificationSchema },
@@ -62,6 +65,7 @@ import { VendorNotificationsController } from './vendor-notifications.controller
     NotificationHelper,
     NotificationRecipientService,
     AdminSystemNotificationService,
+    UrnLifecycleRecipientResolver,
     LifecycleNotificationService,
     ProductDocumentUploadNotificationHelper,
     UserNotificationsService,
@@ -74,6 +78,7 @@ import { VendorNotificationsController } from './vendor-notifications.controller
     ProductDocumentUploadNotificationHelper,
     NotificationRecipientService,
     AdminSystemNotificationService,
+    UrnLifecycleRecipientResolver,
     UserNotificationsService,
   ],
 })

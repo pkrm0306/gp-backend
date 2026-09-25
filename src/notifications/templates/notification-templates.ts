@@ -30,7 +30,6 @@ export const NOTIFICATION_TEMPLATES: Record<
       html: `
         <p>Hello,</p>
         <p>Your product <strong>{{productName}}</strong> has been certified successfully.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Your product {{productName}} has been certified successfully.',
     },
@@ -67,11 +66,11 @@ export const NOTIFICATION_TEMPLATES: Record<
     email: {
       subject: 'Welcome to GreenPro - Registration Successful',
       html: `
-        <p>Dear {{name}},</p>
-        <p>Your account has been created.</p>
+        <p>You've applied for registration. Your account has been created.</p>
         <p><strong>Email:</strong> {{email}}</p>
         <p><strong>Password:</strong> {{password}}</p>
-        <p><strong>OTP:</strong> {{otp}}</p>
+        <p>Your verification <span style="background-color:#ffe5b4;padding:2px 6px;border-radius:2px;">OTP</span> is <strong>{{otp}}</strong>.</p>
+        <p>If this message looks suspicious or the registration was not initiated by you, please ignore this email.</p>
       `,
       text: 'Welcome. Email: {{email}} Password: {{password}} OTP: {{otp}}',
     },
@@ -126,7 +125,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Dear {{manufacturerName}},</p>
         <p>Your email has been verified and your GreenPro account is ready.</p>
         <p>You can sign in and continue product registration.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Your GreenPro vendor registration is complete. You can sign in now.',
     },
@@ -142,10 +140,8 @@ export const NOTIFICATION_TEMPLATES: Record<
     email: {
       subject: 'GreenPro — URN {{urnNo}} approved for registration',
       html: `
-        <p>Hello {{manufacturerName}},</p>
-        <p>Your product registration for URN <strong>{{urnNo}}</strong> has been approved by GreenPro.</p>
+        <p>Your product registration for URN <strong>{{urnNo}}</strong> has been approved by <span style="background-color:#ffe5b4;padding:2px 6px;border-radius:2px;">GreenPro</span>.</p>
         <p>Please sign in to the vendor portal to review the registration fee proposal and complete the next steps.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'URN {{urnNo}} registration approved. Sign in to review the registration fee proposal.',
     },
@@ -162,11 +158,8 @@ export const NOTIFICATION_TEMPLATES: Record<
     email: {
       subject: 'GreenPro — URN {{urnNo}} registration not approved',
       html: `
-        <p>Hello {{manufacturerName}},</p>
         <p>Your product registration for URN <strong>{{urnNo}}</strong> was not approved at this stage.</p>
         <p>{{reason}}</p>
-        <p>Contact GreenPro support if you need more information.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'URN {{urnNo}} registration was not approved. {{reason}}',
     },
@@ -185,7 +178,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Hello {{manufacturerName}},</p>
         <p>Your certification forms for URN <strong>{{urnNo}}</strong> have been submitted for GreenPro review.</p>
         <p>Our team will verify your submission and update you on next steps.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'URN {{urnNo}} submitted for review. We will notify you when verification progresses.',
     },
@@ -205,7 +197,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>We received your certification payment submission for URN <strong>{{urnNo}}</strong>.</p>
         <p>Payment reference: {{paymentId}}. Amount: {{quoteTotal}}.</p>
         <p>Admin verification is pending.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Certification payment submitted for {{urnNo}}. Pending admin approval.',
     },
@@ -224,7 +215,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Hello {{manufacturerName}},</p>
         <p>Your certification payment for URN <strong>{{urnNo}}</strong> has been approved.</p>
         <p>Payment reference: {{paymentId}}.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Certification payment approved for {{urnNo}}.',
     },
@@ -245,7 +235,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Please review the payment details and resubmit.</p>
         <p>{{remarksBlock}}</p>
         <p>Payment reference: {{paymentId}}.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Your {{paymentTypeLabel}} payment for {{urnNo}} has been rejected. Please review and resubmit.',
     },
@@ -266,7 +255,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Your {{paymentTypeLabel}} for URN <strong>{{urnNo}}</strong> has been approved.</p>
         <p>{{paymentTypeLabel}} approved successfully. You may proceed to the next stage.</p>
         <p>Payment reference: {{paymentId}}.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Your {{paymentTypeLabel}} for {{urnNo}} has been approved. You may proceed to the next stage.',
     },
@@ -286,7 +274,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Hello {{manufacturerName}},</p>
         <p>Your GreenPro manufacturer account has been verified and activated.</p>
         <p>You can sign in to the vendor portal and continue product registration.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Your GreenPro manufacturer account has been approved.',
     },
@@ -306,7 +293,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Hello {{manufacturerName}},</p>
         <p>Your GreenPro manufacturer account has been marked inactive.</p>
         <p>Vendor portal access is suspended until your account is reactivated by GreenPro.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Your GreenPro manufacturer account is inactive.',
     },
@@ -345,7 +331,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>A {{paymentTypeLabel}} payment proposal for URN <strong>{{urnNo}}</strong> is ready for your review.</p>
         <p>Payment reference: {{paymentId}}. Amount: {{quoteTotal}}.</p>
         <p>Please sign in to the vendor portal to review and proceed.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: '{{paymentTypeLabel}} proposal ready for {{urnNo}}. Sign in to review.',
     },
@@ -366,7 +351,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>You received a new product enquiry from <strong>{{visitorName}}</strong> ({{visitorEmail}}).</p>
         <p>Phone: {{visitorPhone}}</p>
         <p>{{visitorMessage}}</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'New enquiry from {{visitorName}} ({{visitorEmail}}).',
     },
@@ -425,7 +409,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>GreenPro completed a manufacturing plant merge for {{productName}} on URN <strong>{{urnNo}}</strong>{{eoiSuffix}}.</p>
         <p>{{mergeSummary}}</p>
         <p>Please review plant details in the vendor portal.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Manufacturing plant merge completed for {{urnNo}}. {{mergeSummary}}',
     },
@@ -478,7 +461,6 @@ export const NOTIFICATION_TEMPLATES: Record<
       html: `
         <p>Hello {{manufacturerName}},</p>
         <p>Renewal for URN <strong>{{urnNo}}</strong> is complete. Your renewed validity dates are updated in the portal.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Renewal completed for {{urnNo}}.',
     },
@@ -525,7 +507,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p><strong>Subject:</strong> {{subject}}</p>
         <p><strong>Category:</strong> {{category}}</p>
         <p>Please sign in to the portal to review the response.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Admin responded to grievance {{grievanceNo}} ({{subject}}). Please review it in the portal.',
     },
@@ -547,7 +528,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p><strong>Subject:</strong> {{subject}}</p>
         <p><strong>Category:</strong> {{category}}</p>
         <p>Please sign in to the portal for details.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Grievance {{grievanceNo}} ({{subject}}) has been closed. Please review it in the portal.',
     },
@@ -568,7 +548,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Your account deletion request <strong>{{requestNo}}</strong> has been approved.</p>
         <p><strong>Reason:</strong> {{reason}}</p>
         <p>This does not automatically delete your account. Our team will process the request as per policy.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Account deletion request {{requestNo}} has been approved. This does not automatically delete your account.',
     },
@@ -590,7 +569,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p><strong>Reason:</strong> {{reason}}</p>
         <p><strong>Remarks:</strong> {{adminRemarks}}</p>
         <p>Please sign in to the portal for details.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Account deletion request {{requestNo}} was rejected. Remarks: {{adminRemarks}}.',
     },
@@ -611,7 +589,6 @@ export const NOTIFICATION_TEMPLATES: Record<
         <p>Your account deletion request <strong>{{requestNo}}</strong> has been marked completed in our workflow.</p>
         <p><strong>Reason:</strong> {{reason}}</p>
         <p>Please contact support if you have questions.</p>
-        <p>Thank you,<br/>The GreenPro Team</p>
       `,
       text: 'Account deletion request {{requestNo}} has been marked completed.',
     },
