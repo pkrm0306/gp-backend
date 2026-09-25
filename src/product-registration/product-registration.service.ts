@@ -6418,23 +6418,49 @@ export class ProductRegistrationService implements OnModuleInit {
             ),
           );
       } else if (dto.updateStatusTo === 3 && previousProductStatus !== 3) {
-        const notifyRejected =
-          previousUrnStatus < 2
-            ? this.lifecycleNotification.notifyUrnRegistrationRejected({
+        if (previousUrnStatus < 2) {
+          const manufacturer = await this.manufacturerModel
+            .findById(manufacturerId)
+            .select('manufacturerName vendor_name vendor_email')
+            .lean()
+            .exec();
+          const vendorEmail = String(manufacturer?.vendor_email ?? '').trim();
+          const manufacturerName =
+            String(manufacturer?.manufacturerName ?? '').trim() ||
+            String(manufacturer?.vendor_name ?? '').trim();
+
+          this.logger.log(
+            `[Admin URN Status] Registration reject email for ${urnNo} (product_status → 3, urnStatus=${previousUrnStatus})`,
+          );
+          this.lifecycleNotification
+            .notifyUrnRegistrationRejected({
+              manufacturerId: manufacturerId.toString(),
+              urnNo,
+              productName: sampleProductName || urnNo,
+              vendorEmail: vendorEmail || undefined,
+              manufacturerName: manufacturerName || undefined,
+            })
+            .catch((err) =>
+              this.logger.warn(
+                `[Admin URN Status] Product rejected notification failed: ${(err as Error).message}`,
+              ),
+            );
+        } else {
+          this.logger.debug(
+            `[Admin URN Status] Skipping URN registration reject fan-out — urnStatus=${previousUrnStatus} >= 2; using product rejected notify`,
+          );
+          this.lifecycleNotification
+            .notifyProductRejected({
               manufacturerId: manufacturerId.toString(),
               urnNo,
               productName: sampleProductName || urnNo,
             })
-            : this.lifecycleNotification.notifyProductRejected({
-              manufacturerId: manufacturerId.toString(),
-              urnNo,
-              productName: sampleProductName || urnNo,
-            });
-        notifyRejected.catch((err) =>
-          this.logger.warn(
-            `[Admin URN Status] Product rejected notification failed: ${(err as Error).message}`,
-          ),
-        );
+            .catch((err) =>
+              this.logger.warn(
+                `[Admin URN Status] Product rejected notification failed: ${(err as Error).message}`,
+              ),
+            );
+        }
       } else if (
         (dto.updateStatusTo === 2 && previousProductStatus === 2) ||
         (dto.updateStatusTo === 3 && previousProductStatus === 3)

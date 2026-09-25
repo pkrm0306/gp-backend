@@ -250,8 +250,13 @@ function startOfDay(date) {
     d.setHours(0, 0, 0, 0);
     return d;
 }
-/** Extend validity by 24 months and normalize to Dec 31 of the resulting year. */
+/**
+ * Extend validity by 24 months, then normalize to the last day of that month.
+ * Aligns with first-certification month-end rule (not Dec 31 of year).
+ * e.g. 2028-09-30 → 2030-09-30
+ */
 function extendValidityForRenewal(currentValidTill) {
-    var extended = addMonths(currentValidTill, 24);
-    return startOfDay(new Date(extended.getFullYear(), 11, 31));
+    var base = startOfDay(currentValidTill);
+    var plus24 = addMonths(base, 24);
+    return startOfDay(new Date(plus24.getFullYear(), plus24.getMonth() + 1, 0));
 }

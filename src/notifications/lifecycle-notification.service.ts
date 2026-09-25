@@ -427,10 +427,19 @@ export class LifecycleNotificationService {
     productName?: string;
     reason?: string;
     rejectedBy?: string;
+    vendorEmail?: string;
+    manufacturerName?: string;
   }): Promise<void> {
-    const recipient = await this.recipientService.resolveByManufacturerId(
+    let recipient = await this.recipientService.resolveByManufacturerId(
       params.manufacturerId,
     );
+    if (!recipient?.email && params.vendorEmail?.trim()) {
+      recipient = {
+        email: params.vendorEmail.trim().toLowerCase(),
+        companyName: params.manufacturerName,
+        vendorName: params.manufacturerName,
+      };
+    }
     const reason =
       String(params.reason ?? '').trim() ||
       'Your registration was not approved at the initial review stage.';

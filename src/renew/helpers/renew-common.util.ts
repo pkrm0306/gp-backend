@@ -214,10 +214,17 @@ export function startOfDay(date: Date): Date {
   return d;
 }
 
-/** Extend validity by 24 months and normalize to Dec 31 of the resulting year. */
+/**
+ * Extend validity by 24 months, then normalize to the last day of that month.
+ * Aligns with first-certification month-end rule (not Dec 31 of year).
+ * e.g. 2028-09-30 → 2030-09-30
+ */
 export function extendValidityForRenewal(currentValidTill: Date): Date {
-  const extended = addMonths(currentValidTill, 24);
-  return startOfDay(new Date(extended.getFullYear(), 11, 31));
+  const base = startOfDay(currentValidTill);
+  const plus24 = addMonths(base, 24);
+  return startOfDay(
+    new Date(plus24.getFullYear(), plus24.getMonth() + 1, 0),
+  );
 }
 
 export type RenewalCycleRef = RenewalCycle & { _id: Types.ObjectId };

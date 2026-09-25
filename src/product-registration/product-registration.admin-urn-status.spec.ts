@@ -434,6 +434,8 @@ describe('ProductRegistrationService.adminUpdateUrnStatus', () => {
     } as LeanExec<typeof baseProducts>);
     const notifyUrnRegistrationRejected = (service as any).lifecycleNotification
       .notifyUrnRegistrationRejected as jest.Mock;
+    const notifyProductRejected = (service as any).lifecycleNotification
+      .notifyProductRejected as jest.Mock;
 
     await service.adminUpdateUrnStatus({
       urnNo: 'URN-202604010001',
@@ -445,8 +447,79 @@ describe('ProductRegistrationService.adminUpdateUrnStatus', () => {
       expect.objectContaining({
         manufacturerId: manufacturerId.toString(),
         urnNo: 'URN-202604010001',
+        vendorEmail: 'vendor@example.com',
+        manufacturerName: 'Acme Co',
       }),
     );
+    expect(notifyProductRejected).not.toHaveBeenCalled();
+  });
+
+  it('notifies registration rejected with vendorEmail when urnStatus is 1', async () => {
+    const { service, find } = createServiceHarness();
+    find.mockReturnValue({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue([
+          {
+            urnNo: 'URN-202604010001',
+            urnStatus: 1,
+            productStatus: 1,
+            vendorId,
+            manufacturerId,
+            productName: 'Test Product',
+          },
+        ]),
+      }),
+    } as LeanExec<typeof baseProducts>);
+    const notifyUrnRegistrationRejected = (service as any).lifecycleNotification
+      .notifyUrnRegistrationRejected as jest.Mock;
+    const notifyProductRejected = (service as any).lifecycleNotification
+      .notifyProductRejected as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'product_status',
+      updateStatusTo: 3,
+    });
+
+    expect(notifyUrnRegistrationRejected).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manufacturerId: manufacturerId.toString(),
+        vendorEmail: 'vendor@example.com',
+        manufacturerName: 'Acme Co',
+      }),
+    );
+    expect(notifyProductRejected).not.toHaveBeenCalled();
+  });
+
+  it('uses product rejected notify (not registration fan-out) when urnStatus >= 2', async () => {
+    const { service, find } = createServiceHarness();
+    find.mockReturnValue({
+      lean: () => ({
+        exec: jest.fn().mockResolvedValue([
+          {
+            urnNo: 'URN-202604010001',
+            urnStatus: 4,
+            productStatus: 1,
+            vendorId,
+            manufacturerId,
+            productName: 'Test Product',
+          },
+        ]),
+      }),
+    } as LeanExec<typeof baseProducts>);
+    const notifyUrnRegistrationRejected = (service as any).lifecycleNotification
+      .notifyUrnRegistrationRejected as jest.Mock;
+    const notifyProductRejected = (service as any).lifecycleNotification
+      .notifyProductRejected as jest.Mock;
+
+    await service.adminUpdateUrnStatus({
+      urnNo: 'URN-202604010001',
+      updateStatusType: 'product_status',
+      updateStatusTo: 3,
+    });
+
+    expect(notifyProductRejected).toHaveBeenCalled();
+    expect(notifyUrnRegistrationRejected).not.toHaveBeenCalled();
   });
 
   it('notifies urn initial approved when urn_status becomes 1 from 0 (legacy approve)', async () => {

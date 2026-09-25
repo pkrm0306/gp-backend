@@ -277,6 +277,46 @@ describe('LifecycleNotificationService', () => {
     expect(createFeedNotification).not.toHaveBeenCalled();
   });
 
+  it('uses vendorEmail fallback on registration rejected when resolve has no email', async () => {
+    resolveByManufacturerId.mockResolvedValue({
+      userId: '507f1f77bcf86cd799439011',
+      vendorName: 'Acme Vendor',
+      companyName: 'Acme Co',
+    });
+    resolveBusinessRecipients.mockResolvedValue({
+      manufacturerEmail: 'fallback@example.com',
+      spocEmails: ['spoc@example.com'],
+      teamLeadEmails: ['tl1@example.com'],
+      to: 'fallback@example.com',
+      cc: ['spoc@example.com', 'tl1@example.com'],
+      allUniqueEmails: [
+        'fallback@example.com',
+        'spoc@example.com',
+        'tl1@example.com',
+      ],
+    });
+
+    await service.notifyUrnRegistrationRejected({
+      manufacturerId: '507f1f77bcf86cd799439011',
+      urnNo: 'URN-1',
+      productName: 'Widget',
+      vendorEmail: 'fallback@example.com',
+      manufacturerName: 'Acme Co',
+    });
+
+    expect(resolveBusinessRecipients).toHaveBeenCalledWith({
+      urnNo: 'URN-1',
+      manufacturerEmail: 'fallback@example.com',
+    });
+    expect(sendInBackground).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: NotificationTemplateCode.URN_REGISTRATION_REJECTED,
+        email: 'fallback@example.com',
+        emails: ['spoc@example.com', 'tl1@example.com'],
+      }),
+    );
+  });
+
   it('uses first SPOC/TL as To when manufacturer email is missing', async () => {
     resolveByManufacturerId.mockResolvedValue({
       userId: '507f1f77bcf86cd799439011',
