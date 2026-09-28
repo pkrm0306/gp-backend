@@ -68,7 +68,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
       typeof reqPath === 'string' &&
       reqPath.startsWith('/uploads');
 
-    if (!isMissingStaticUpload) {
+    const isBenignProbe404 =
+      status === HttpStatus.NOT_FOUND &&
+      reqMethod === 'GET' &&
+      typeof reqPath === 'string' &&
+      (reqPath === '/favicon.ico' || reqPath === '/robots.txt');
+
+    if (!isMissingStaticUpload && !isBenignProbe404) {
       console.error(
         `[HttpExceptionFilter] ${reqMethod} ${reqPath} -> ${status}`,
         {

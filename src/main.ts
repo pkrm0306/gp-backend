@@ -81,6 +81,36 @@ function mountUploadStaticOnExpress(server: express.Application) {
   });
 }
 
+/** Browser / load-balancer / IDE probes — avoid Nest 404 noise on GET / and GET /json/version. */
+function mountRootHealthRoutes(server: express.Application) {
+  const payload = () => ({
+    success: true,
+    message: 'GreenPro API',
+    data: {
+      status: 'ok',
+      name: 'greenpro-backend',
+      version: process.env.npm_package_version || '1.0.0',
+      swagger: '/api',
+    },
+  });
+
+  server.get('/', (_req: Request, res: Response) => {
+    res.status(200).json(payload());
+  });
+
+  server.get('/health', (_req: Request, res: Response) => {
+    res.status(200).json(payload());
+  });
+
+  /** Common probe path (e.g. tooling); same payload as root health. */
+  server.get('/json/version', (_req: Request, res: Response) => {
+    res.status(200).json({
+      version: process.env.npm_package_version || '1.0.0',
+      name: 'greenpro-backend',
+    });
+  });
+}
+
 /** Legacy admin links used `/standards/{file}.pdf` before uploadFile() used `/uploads/standards/`. */
 function mountLegacyStandardsFileRedirect(server: express.Application) {
   const uploadsRoot = join(process.cwd(), 'uploads');
@@ -156,6 +186,7 @@ async function bootstrap() {
   server.use(json({ limit: JSON_BODY_LIMIT }));
   server.use(urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
   mountUploadStaticOnExpress(server);
+  mountRootHealthRoutes(server);
   mountLegacyStandardsFileRedirect(server);
 
   const app = await NestFactory.create<NestExpressApplication>(
