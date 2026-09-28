@@ -228,7 +228,7 @@ var AdminDashboardWidgetsService = function () {
                                         paymentModeLabel: row.paymentMode
                                             ? _this.formatPaymentMode(row.paymentMode)
                                             : null,
-                                        amount: (0, admin_dashboard_revenue_util_1.roundRevenueAmount)(Number((_l = row.quoteTotal) !== null && _l !== void 0 ? _l : 0)),
+                                        amount: (0, admin_dashboard_revenue_util_1.roundRevenueAmount)(Number((_l = row.quoteAmount) !== null && _l !== void 0 ? _l : 0)),
                                         currency: 'INR',
                                         date: date ? new Date(date).toISOString().slice(0, 10) : '',
                                         status: status,

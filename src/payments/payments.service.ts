@@ -50,6 +50,11 @@ import {
   PAYMENT_REFERENCE_UNIQUE_MESSAGE,
 } from './payment-response.util';
 import {
+  DEFAULT_PAYMENT_CURRENCY,
+  normalizePaymentCurrencyCode,
+  readExplicitPaymentCurrency,
+} from './payment-currency.util';
+import {
   paymentStreamSubsectionKey,
   paymentTypeToProcessType,
 } from '../documents/helpers/document-version.helper';
@@ -346,10 +351,23 @@ export class PaymentsService {
       renewalCycleId: plain.renewalCycleId as Types.ObjectId | string | null,
       tdsFile: String(plain.tdsFile ?? plain.tds_file ?? ''),
     });
-    return enrichPaymentByUrnResponse(plain, {
-      tdsFileMetadata,
-      referenceNumberMustBeUnique: true,
-    });
+    const paymentType = String(plain.paymentType ?? 'registration')
+      .trim()
+      .toLowerCase();
+    const registrationCurrency =
+      paymentType === 'certification' && !readExplicitPaymentCurrency(plain)
+        ? await this.findRegistrationPaymentCurrency(String(plain.urnNo ?? ''))
+        : null;
+    return enrichPaymentByUrnResponse(
+      {
+        ...plain,
+        registrationCurrency,
+      },
+      {
+        tdsFileMetadata,
+        referenceNumberMustBeUnique: true,
+      },
+    );
   }
 
   private async findPaymentRecordForUrn(
@@ -592,6 +610,8 @@ export class PaymentsService {
       dto.quoteGstAmount !== undefined ||
       dto.quoteTdsAmount !== undefined ||
       dto.quoteTotal !== undefined ||
+      dto.currency !== undefined ||
+      dto.quoteCurrency !== undefined ||
       dto.adminGstNo !== undefined ||
       dto.vendorGstNo !== undefined
     );
@@ -740,6 +760,68 @@ export class PaymentsService {
     const normalized = this.normalizeUrnNo(urnNo);
     if (!normalized) return [];
     return [normalized, `${normalized}/`];
+  }
+
+  /**
+   * Currency from `currency` or `quoteCurrency`.
+   * Undefined when both are omitted. Rejects a non-empty value that is not a 3-letter code.
+   */
+  private resolveIncomingCurrency(
+    currency?: string | null,
+    quoteCurrency?: string | null,
+  ): string | undefined {
+    const candidates = [currency, quoteCurrency];
+    for (const candidate of candidates) {
+      if (candidate === undefined || candidate === null) continue;
+      const trimmed = String(candidate).trim();
+      if (!trimmed) continue;
+      const code = normalizePaymentCurrencyCode(trimmed);
+      if (!code) {
+        throw new BadRequestException(
+          'currency must be a 3-letter currency code (for example USD or INR)',
+        );
+      }
+      return code;
+    }
+    return undefined;
+  }
+
+  private async findRegistrationPaymentCurrency(
+    urnNo: string,
+    session?: ClientSession,
+  ): Promise<string | null> {
+    const urnOptions = this.urnCandidates(urnNo);
+    if (urnOptions.length === 0) return null;
+    const row = await this.paymentDetailsModel
+      .findOne({
+        urnNo: { $in: urnOptions },
+        paymentType: 'registration',
+      })
+      .select('currency quoteCurrency')
+      .session(session ?? null)
+      .lean()
+      .exec();
+    return readExplicitPaymentCurrency(row as Record<string, unknown> | null);
+  }
+
+  /**
+   * Registration and renew keep the submitted currency (default INR).
+   * Certification always follows the registration currency when that fee exists.
+   */
+  private async resolveCurrencyForPaymentWrite(
+    paymentType: string,
+    urnNo: string,
+    requested: string | undefined,
+    session?: ClientSession,
+  ): Promise<string> {
+    if (paymentType === 'certification') {
+      const registrationCurrency = await this.findRegistrationPaymentCurrency(
+        urnNo,
+        session,
+      );
+      if (registrationCurrency) return registrationCurrency;
+    }
+    return requested ?? DEFAULT_PAYMENT_CURRENCY;
   }
 
   /** Expand distinct product URNs to include legacy trailing-slash variants. */
@@ -1437,6 +1519,16 @@ export class PaymentsService {
           }
         }
 
+        const currency = await this.resolveCurrencyForPaymentWrite(
+          normalizedPaymentType,
+          normalizedUrnNo,
+          this.resolveIncomingCurrency(
+            createPaymentDto.currency,
+            createPaymentDto.quoteCurrency,
+          ),
+          session,
+        );
+
         const normalizedPaymentReferenceNo = this.normalizePaymentReferenceNo(
           createPaymentDto.paymentReferenceNo,
         );
@@ -1457,6 +1549,7 @@ export class PaymentsService {
           quoteGstAmount: createPaymentDto.quoteGstAmount,
           quoteTdsAmount: createPaymentDto.quoteTdsAmount,
           quoteTotal: createPaymentDto.quoteTotal,
+          currency,
           proposalFile: proposalFilePath,
           adminGstNo: createPaymentDto.adminGstNo,
           vendorGstNo: createPaymentDto.vendorGstNo,
@@ -1900,6 +1993,24 @@ export class PaymentsService {
         updateData.quoteTdsAmount = updatePaymentDto.quoteTdsAmount;
       if (updatePaymentDto.quoteTotal !== undefined)
         updateData.quoteTotal = updatePaymentDto.quoteTotal;
+      const requestedCurrency = this.resolveIncomingCurrency(
+        updatePaymentDto.currency,
+        updatePaymentDto.quoteCurrency,
+      );
+      const existingCurrency = readExplicitPaymentCurrency(
+        this.paymentToPlain(existingPayment),
+      );
+      if (
+        requestedCurrency !== undefined ||
+        (paymentType === 'certification' && !existingCurrency)
+      ) {
+        updateData.currency = await this.resolveCurrencyForPaymentWrite(
+          paymentType,
+          normalizedUrn,
+          requestedCurrency ?? existingCurrency ?? undefined,
+          session,
+        );
+      }
       if (updatePaymentDto.adminGstNo !== undefined)
         updateData.adminGstNo = updatePaymentDto.adminGstNo;
       if (updatePaymentDto.vendorGstNo !== undefined)

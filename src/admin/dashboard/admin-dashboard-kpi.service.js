@@ -421,7 +421,7 @@ var AdminDashboardKpiService = function () {
                                     {
                                         $group: {
                                             _id: null,
-                                            amount: { $sum: '$quoteTotal' },
+                                            amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                                             count: { $sum: 1 },
                                         },
                                     },

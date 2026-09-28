@@ -4572,7 +4572,7 @@ export class AdminService {
   }
 
   /**
-   * Revenue from paid/approved payments (`paymentStatus` 1–2), summed on `quoteTotal`.
+   * Revenue from paid/approved payments (`paymentStatus` 1–2), summed on `quoteAmount` (ex-GST).
    * Date filters use cheque date, else created/updated date.
    */
   async getRevenueAnalytics(

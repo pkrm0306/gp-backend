@@ -1,5 +1,6 @@
 import { basename } from 'path';
 import { fileMetadataFromMulter } from '../documents/helpers/document-version.helper';
+import { registrationCurrencyFromPayments } from './payment-currency.util';
 import {
   formatPaymentRecord,
   PaymentProposalLike,
@@ -191,8 +192,12 @@ export function formatPaymentRecordsForUrnDetails(
   if (!Array.isArray(payments)) {
     return [];
   }
+  const registrationCurrency = registrationCurrencyFromPayments(payments);
   return payments.map((payment) => {
-    const formatted = formatPaymentRecord(payment);
+    const formatted = formatPaymentRecord({
+      ...payment,
+      registrationCurrency,
+    });
     const paymentProofEditable = isVendorPaymentProofEditable(formatted);
     const paymentProofLockMessage = resolveVendorPaymentProofLockMessage(formatted);
     return maskPaymentSubmissionFields({

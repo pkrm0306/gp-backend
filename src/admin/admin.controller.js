@@ -2534,7 +2534,7 @@ var AdminController = function () {
         _getRevenueAnalytics_decorators = [(0, common_1.Get)('dashboard/revenue-analytics'), (0, any_permissions_decorator_1.AnyPermissions)(permissions_constants_1.PERMISSIONS.DASHBOARD_VIEW, permissions_constants_1.PERMISSIONS.PAYMENTS_VIEW), (0, common_1.HttpCode)(common_1.HttpStatus.OK), (0, swagger_1.ApiOperation)({
                 summary: 'Revenue analytics for admin dashboard',
                 description: 'Returns donut (`distribution`: total centre + fee %/amount) and weekly line chart (`weeklyComparison`). ' +
-                    'Source: `payment_details` with `paymentStatus` 1–2, summed on `quoteTotal`. ' +
+                    'Source: `payment_details` with `paymentStatus` 1–2, summed on `quoteAmount` (ex-GST). ' +
                     'Filters: `period=last_month|this_month|this_week|this_year` (or alias `last_month`, `month`, `week`, `year`). ' +
                     'Prefer GET /admin/dashboard/revenue for the same payload.',
             }), (0, swagger_1.ApiResponse)({ status: 200, description: 'Revenue analytics retrieved' })];

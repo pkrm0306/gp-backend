@@ -4,7 +4,7 @@ import type { DashboardGranularity } from './utils/dashboard-metrics-filters.uti
 export type RevenuePaymentTypeKey = 'registration' | 'certification' | 'renew';
 
 export interface RevenueTypeTotals {
-  /** Sum of `quoteTotal` for completed payments */
+  /** Sum of `quoteAmount` (ex-GST) for completed payments */
   amount: number;
   /** Sum of `quoteGstAmount` */
   gstAmount: number;

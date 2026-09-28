@@ -561,7 +561,7 @@ export class AdminDashboardOptimizedService {
                 {
                   $group: {
                     _id: null,
-                    total: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+                    total: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                   },
                 },
               ],
@@ -590,7 +590,7 @@ export class AdminDashboardOptimizedService {
                       {
                         $group: {
                           _id: null,
-                          total: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+                          total: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                         },
                       },
                     ]
@@ -1188,7 +1188,7 @@ export class AdminDashboardOptimizedService {
         .aggregate<{
           urnNo: string;
           paymentType?: string;
-          quoteTotal?: number;
+          quoteAmount?: number;
           updatedDate?: Date;
           createdDate?: Date;
           vendorId?: Types.ObjectId;
@@ -1203,7 +1203,7 @@ export class AdminDashboardOptimizedService {
               },
               urnNo: { $first: '$urnNo' },
               paymentType: { $first: '$paymentType' },
-              quoteTotal: { $first: '$quoteTotal' },
+              quoteAmount: { $first: '$quoteAmount' },
               updatedDate: { $first: '$updatedDate' },
               createdDate: { $first: '$createdDate' },
               vendorId: { $first: '$vendorId' },
@@ -1296,7 +1296,7 @@ export class AdminDashboardOptimizedService {
       const mfrDoc = manufacturerMap.get(vendorKey);
       const mfr = mfrDoc?.manufacturerName ?? mfrDoc?.vendor_name ?? 'Unknown';
       const feeType = this.formatPaymentType(row.paymentType);
-      const amount = Number(row.quoteTotal ?? 0);
+      const amount = Number(row.quoteAmount ?? 0);
       const ts = row.updatedDate ?? row.createdDate
         ? new Date((row.updatedDate ?? row.createdDate) as Date).toISOString()
         : now.toISOString();
@@ -1728,7 +1728,7 @@ export class AdminDashboardOptimizedService {
         companyName,
         paymentType: this.formatPaymentType(row.paymentType),
         paymentMode: String(row.paymentMode ?? "").trim() || "—",
-        amount: Number(row.quoteTotal ?? 0),
+        amount: Number(row.quoteAmount ?? 0),
         currency: 'INR',
         paidAt: (row.createdDate ?? row.updatedDate)
           ? new Date((row.createdDate ?? row.updatedDate) as Date).toISOString().slice(0, 10)

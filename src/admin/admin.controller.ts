@@ -541,7 +541,7 @@ export class AdminController {
     summary: 'Revenue analytics for admin dashboard',
     description:
       'Returns donut (`distribution`: total centre + fee %/amount) and weekly line chart (`weeklyComparison`). ' +
-      'Source: `payment_details` with `paymentStatus` 1–2, summed on `quoteTotal`. ' +
+      'Source: `payment_details` with `paymentStatus` 1–2, summed on `quoteAmount` (ex-GST). ' +
       'Filters: `period=last_month|this_month|this_week|this_year` (or alias `last_month`, `month`, `week`, `year`). ' +
       'Prefer GET /admin/dashboard/revenue for the same payload.',
   })

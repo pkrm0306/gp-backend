@@ -58,6 +58,26 @@ describe('payment-response.util', () => {
     });
   });
 
+  it('returns the stored registration currency and copies it onto certification fees', () => {
+    const [registration, certification] = formatPaymentRecordsForUrnDetails([
+      {
+        paymentType: 'registration',
+        currency: 'USD',
+        paymentStatus: 2,
+        vendorProposalApprovalStatus: 1,
+      },
+      {
+        paymentType: 'certification',
+        paymentStatus: 0,
+      },
+    ]);
+
+    expect(registration.currency).toBe('USD');
+    expect(registration.quoteCurrency).toBe('USD');
+    expect(certification.currency).toBe('USD');
+    expect(certification.quoteCurrency).toBe('USD');
+  });
+
   it('keeps registration payment stage inactive until proposal is approved', () => {
     expect(
       isPaymentSubmissionStageActive({

@@ -246,6 +246,17 @@ export class PaymentsController {
           description: 'Total amount (mandatory)',
           example: 10800.0,
         },
+        currency: {
+          type: 'string',
+          description:
+            'ISO 4217 currency code. Certification payments default to the registration currency.',
+          example: 'USD',
+        },
+        quoteCurrency: {
+          type: 'string',
+          description: 'Alias of currency',
+          example: 'USD',
+        },
         adminGstNo: {
           type: 'string',
           description: 'Admin GST number',
@@ -346,6 +357,8 @@ export class PaymentsController {
         quoteGstAmount: parseFloat(body.quoteGstAmount),
         quoteTdsAmount: parseFloat(body.quoteTdsAmount),
         quoteTotal: parseFloat(body.quoteTotal),
+        currency: body.currency,
+        quoteCurrency: body.quoteCurrency ?? body.quote_currency,
         adminGstNo: body.adminGstNo,
         vendorGstNo: body.vendorGstNo,
         paymentType: body.paymentType,
@@ -679,6 +692,8 @@ export class PaymentsController {
           body.quoteTotal !== undefined
             ? parseFloat(body.quoteTotal)
             : undefined,
+        currency: body.currency,
+        quoteCurrency: body.quoteCurrency ?? body.quote_currency,
         adminGstNo: body.adminGstNo,
         vendorGstNo: body.vendorGstNo,
         paymentType: body.paymentType,

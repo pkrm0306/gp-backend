@@ -26,6 +26,10 @@ export class PaymentDetails {
   @Prop({ required: true, type: Number })
   quoteTotal: number;
 
+  /** ISO 4217 code. Omitted on legacy rows; responses default those to INR. */
+  @Prop()
+  currency?: string;
+
   @Prop()
   proposalFile?: string;
 

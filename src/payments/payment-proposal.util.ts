@@ -1,3 +1,5 @@
+import { resolvePaymentCurrencyForResponse } from './payment-currency.util';
+
 /**
  * Vendor registration-fee proposal approval — response shaping and legacy defaults.
  */
@@ -63,17 +65,28 @@ export function formatPaymentRecord<T extends Record<string, unknown>>(
   payment_rejection_remarks: string | null;
   adminPaymentRejectionRemarks: string | null;
   admin_payment_rejection_remarks: string | null;
+  currency: string;
+  quoteCurrency: string;
 } {
+  const { registrationCurrency, ...paymentFields } = payment as T & {
+    registrationCurrency?: string | null;
+  };
   const vendorProposalApprovalStatus =
-    resolveVendorProposalApprovalStatus(payment);
+    resolveVendorProposalApprovalStatus(paymentFields);
   const proposalRejectionRemarks =
-    (payment.proposalRejectionRemarks ??
-      payment.proposal_rejection_remarks ??
+    (paymentFields.proposalRejectionRemarks ??
+      paymentFields.proposal_rejection_remarks ??
       null) as string | null;
-  const paymentRejectionRemarks = resolvePaymentRejectionRemarks(payment);
+  const paymentRejectionRemarks = resolvePaymentRejectionRemarks(paymentFields);
+  const currency = resolvePaymentCurrencyForResponse({
+    payment: paymentFields,
+    registrationCurrency,
+  });
 
   return {
-    ...payment,
+    ...paymentFields,
+    currency,
+    quoteCurrency: currency,
     vendorProposalApprovalStatus,
     vendor_proposal_approval_status: vendorProposalApprovalStatus,
     proposalRejectionRemarks,
@@ -82,6 +95,17 @@ export function formatPaymentRecord<T extends Record<string, unknown>>(
     payment_rejection_remarks: paymentRejectionRemarks,
     adminPaymentRejectionRemarks: paymentRejectionRemarks,
     admin_payment_rejection_remarks: paymentRejectionRemarks,
+  } as T & {
+    vendorProposalApprovalStatus: number;
+    vendor_proposal_approval_status: number;
+    proposalRejectionRemarks: string | null;
+    proposal_rejection_remarks: string | null;
+    paymentRejectionRemarks: string | null;
+    payment_rejection_remarks: string | null;
+    adminPaymentRejectionRemarks: string | null;
+    admin_payment_rejection_remarks: string | null;
+    currency: string;
+    quoteCurrency: string;
   };
 }
 

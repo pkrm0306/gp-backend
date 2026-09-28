@@ -85,7 +85,7 @@ export class AdminDashboardKpiService {
    * Executive KPI strip for the admin dashboard home.
    * Summary cards (manufacturers, URNs, registered, certified) respect date range
    * via manufacturer `createdAt` / product `createdDate` when filters.dateRange is set.
-   * Revenue cards: paid payments only (`paymentStatus` 2), sum of `quoteTotal`,
+   * Revenue cards: paid payments only (`paymentStatus` 2), sum of `quoteAmount` (ex-GST),
    * bucketed by recognition date (cheque date → updated → created).
    */
   async getExecutiveKpis(
@@ -646,7 +646,7 @@ export class AdminDashboardKpiService {
       {
         $group: {
           _id: null,
-          amount: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+          amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
         },
       },
     ];
@@ -686,7 +686,7 @@ export class AdminDashboardKpiService {
               {
                 $group: {
                   _id: null,
-                  amount: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+                  amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                 },
               },
             ],
@@ -718,7 +718,7 @@ export class AdminDashboardKpiService {
                       timezone: 'Asia/Kolkata',
                     },
                   },
-                  amount: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+                  amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                 },
               },
               { $sort: { _id: 1 } },
@@ -883,7 +883,7 @@ export class AdminDashboardKpiService {
         {
           $group: {
             _id: null,
-            amount: { $sum: '$quoteTotal' },
+            amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
             count: { $sum: 1 },
           },
         },

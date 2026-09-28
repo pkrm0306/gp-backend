@@ -204,7 +204,7 @@ export class AdminDashboardController {
   @ApiOperation({
     summary: 'Executive KPI strip (counts + paid collection buckets)',
     description:
-      'Returns the dashboard executive cards. Revenue/collection cards sum `quoteTotal` for ' +
+      'Returns the dashboard executive cards. Revenue/collection cards sum `quoteAmount` (ex-GST) for ' +
       'paid payments (`paymentStatus` 2) by recognition date (cheque → updated → created): ' +
       'Total (all-time), Today, Month-to-date, Year-to-date. % change vs yesterday / prior MTD / prior YTD.',
   })

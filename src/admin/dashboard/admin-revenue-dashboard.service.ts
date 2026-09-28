@@ -197,7 +197,7 @@ export class AdminRevenueDashboardService {
               {
                 $group: {
                   _id: '$revenuePaymentType',
-                  amount: { $sum: '$quoteTotal' },
+                  amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                   gstAmount: { $sum: '$quoteGstAmount' },
                   tdsAmount: { $sum: '$quoteTdsAmount' },
                   count: { $sum: 1 },
@@ -208,7 +208,7 @@ export class AdminRevenueDashboardService {
               {
                 $group: {
                   _id: { bucket: bucketId, paymentType: '$revenuePaymentType' },
-                  amount: { $sum: '$quoteTotal' },
+                  amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                   count: { $sum: 1 },
                 },
               },
@@ -426,7 +426,7 @@ export class AdminRevenueDashboardService {
         {
           $group: {
             _id: bucketId,
-            amount: { $sum: '$quoteTotal' },
+            amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
             count: { $sum: 1 },
           },
         },

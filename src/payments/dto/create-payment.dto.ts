@@ -61,6 +61,23 @@ export class CreatePaymentDto {
   quoteTotal: number;
 
   @ApiPropertyOptional({
+    description:
+      'ISO 4217 currency code. Certification payments default to the registration payment currency when this is omitted.',
+    example: 'USD',
+  })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias of currency',
+    example: 'USD',
+  })
+  @IsOptional()
+  @IsString()
+  quoteCurrency?: string;
+
+  @ApiPropertyOptional({
     description: 'Admin GST number',
     example: '29ABCDE1234F1Z5',
   })

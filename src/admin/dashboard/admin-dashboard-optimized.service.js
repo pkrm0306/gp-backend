@@ -418,7 +418,7 @@ var AdminDashboardOptimizedService = function () {
                                                     {
                                                         $group: {
                                                             _id: null,
-                                                            total: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+                                                            total: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                                                         },
                                                     },
                                                 ], false),
@@ -446,7 +446,7 @@ var AdminDashboardOptimizedService = function () {
                                                         {
                                                             $group: {
                                                                 _id: null,
-                                                                total: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+                                                                total: { $sum: { $ifNull: ['$quoteAmount', 0] } },
                                                             },
                                                         },
                                                     ]
@@ -1167,7 +1167,7 @@ var AdminDashboardOptimizedService = function () {
                                         : "TXN-".concat(paymentId || row._id),
                                     companyName: companyName,
                                     paymentType: String((_g = row.paymentType) !== null && _g !== void 0 ? _g : 'Fee'),
-                                    amount: Number((_h = row.quoteTotal) !== null && _h !== void 0 ? _h : 0),
+                                    amount: Number((_h = row.quoteAmount) !== null && _h !== void 0 ? _h : 0),
                                     currency: 'INR',
                                     paidAt: ((_j = row.updatedDate) !== null && _j !== void 0 ? _j : row.createdDate)
                                         ? new Date(((_k = row.updatedDate) !== null && _k !== void 0 ? _k : row.createdDate)).toISOString().slice(0, 10)

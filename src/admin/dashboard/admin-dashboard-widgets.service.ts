@@ -102,7 +102,7 @@ export class AdminDashboardWidgetsService {
           $group: {
             _id: '$paymentStatus',
             count: { $sum: 1 },
-            amount: { $sum: { $ifNull: ['$quoteTotal', 0] } },
+            amount: { $sum: { $ifNull: ['$quoteAmount', 0] } },
           },
         },
       ])
@@ -171,7 +171,7 @@ export class AdminDashboardWidgetsService {
         paymentModeLabel: row.paymentMode
           ? this.formatPaymentMode(row.paymentMode)
           : null,
-        amount: roundRevenueAmount(Number(row.quoteTotal ?? 0)),
+        amount: roundRevenueAmount(Number(row.quoteAmount ?? 0)),
         currency: 'INR' as const,
         date: date ? new Date(date).toISOString().slice(0, 10) : '',
         status,

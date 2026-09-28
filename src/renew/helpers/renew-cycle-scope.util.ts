@@ -231,6 +231,12 @@ export function mapRenewPaymentForApi(
     quoteGstAmount: plain.quoteGstAmount,
     quoteTdsAmount: plain.quoteTdsAmount,
     quoteTotal: plain.quoteTotal,
+    ...(plain.currency
+      ? {
+          currency: plain.currency,
+          quoteCurrency: plain.quoteCurrency ?? plain.currency,
+        }
+      : {}),
     totalAmount: plain.quoteTotal,
     paymentMode: plain.paymentMode ?? null,
     paymentReferenceNo: plain.paymentReferenceNo ?? null,

@@ -60,6 +60,25 @@ export class UpdatePaymentDto {
   quoteTotal?: number;
 
   @ApiProperty({
+    description:
+      'ISO 4217 currency code. Certification updates keep the registration payment currency when one is stored.',
+    example: 'USD',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiProperty({
+    description: 'Alias of currency',
+    example: 'USD',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  quoteCurrency?: string;
+
+  @ApiProperty({
     description: 'Admin GST number',
     example: '29ABCDE1234F1Z9',
     required: false,
