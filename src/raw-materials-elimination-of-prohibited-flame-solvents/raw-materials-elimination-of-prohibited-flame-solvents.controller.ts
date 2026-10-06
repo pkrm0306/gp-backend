@@ -24,6 +24,7 @@ import {
   collectAllUploadFiles,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -131,11 +132,13 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsController {
       persistedRecordCount,
     });
 
-    const data = await this.service.create(
-      dto,
-      user.vendorId,
-      uploadFiles[0],
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
     );
+    const data = await this.service.create(dto, user.vendorId, {
+      uploadFiles,
+      existingDocumentIds,
+    });
     return { success: true, data };
   }
 

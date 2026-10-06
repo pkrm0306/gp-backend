@@ -6,10 +6,10 @@ import {
   Post,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -20,12 +20,15 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
+import { filterUploadFilesByFieldNames } from '../common/raw-materials/raw-materials-desired-document-sync.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsAdditivesService } from './raw-materials-additives.service';
 import { CreateRawMaterialsAdditivesDto } from './dto/create-raw-materials-additives.dto';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseMultipartJsonArray,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
@@ -67,7 +70,7 @@ export class RawMaterialsAdditivesController {
   @Post()
   @ApiOperation({ summary: 'Create raw materials additives record (per URN)' })
   @UseInterceptors(
-    FileInterceptor('additivesFile', rawMaterialsMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -120,7 +123,7 @@ export class RawMaterialsAdditivesController {
   async create(
     @CurrentUser() user: any,
     @Body() body: any,
-    @UploadedFile() additivesFile?: Express.Multer.File,
+    @UploadedFiles() uploadedFiles?: Express.Multer.File[],
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
@@ -128,8 +131,15 @@ export class RawMaterialsAdditivesController {
 
     const units = parseMultipartJsonArray(body.units, 'units');
 
-    if (additivesFile) {
-      assertRawMaterialsDocumentTypes([additivesFile]);
+    const uploadFiles = filterUploadFilesByFieldNames(
+      collectAllUploadFiles(uploadedFiles),
+      ['additivesFile'],
+    );
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
     }
     const urnNo = parseRequiredRawMaterialsUrn(body);
     const persistedRecordCount = await this.service.countPersistedByUrn(
@@ -140,7 +150,7 @@ export class RawMaterialsAdditivesController {
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
-      files: additivesFile ? [additivesFile] : [],
+      files: uploadFiles,
       rows: units as Array<Record<string, unknown>>,
       rowKeys: ADDITIVES_UNIT_ROW_KEYS,
       persistedRecordCount,
@@ -152,7 +162,7 @@ export class RawMaterialsAdditivesController {
       additivesFileName: body.additivesFileName,
     };
 
-    const data = await this.service.create(dto, user.vendorId, additivesFile);
+    const data = await this.service.create(dto, user.vendorId, { uploadFiles, existingDocumentIds });
     return { success: true, data };
   }
 

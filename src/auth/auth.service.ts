@@ -13,10 +13,7 @@ import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { ManufacturersService } from '../manufacturers/manufacturers.service';
 import { VendorUsersService } from '../vendor-users/vendor-users.service';
-import {
-  pickRecaptchaToken,
-  RecaptchaService,
-} from '../common/services/recaptcha.service';
+import { RecaptchaService } from '../common/services/recaptcha.service';
 import { NotificationHelper } from '../notifications/notification.helper';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
 import { WebsiteAnalyticsService } from '../website/website-analytics.service';
@@ -427,11 +424,6 @@ export class AuthService {
     if (registerDto.password !== registerDto.confirmPassword) {
       throw new BadRequestException('Passwords do not match');
     }
-
-    // Google reCAPTCHA v2 — verify before any registration business logic.
-    await this.captchaService.assertRecaptchaToken(
-      pickRecaptchaToken(registerDto as unknown as Record<string, unknown>),
-    );
 
     const normalizedEmail = String(registerDto.email || '')
       .trim()

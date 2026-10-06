@@ -238,12 +238,15 @@ export class RawMaterialsHazardousProductsController {
         : meaningfulProductCount,
     });
 
-    if (!hasProductText && uploadFiles.length > 0) {
+    const existingDocumentIds = parseMultipartJsonIdArray(body.existingDocumentIds);
+
+    if (!hasProductText && (uploadFiles.length > 0 || existingDocumentIds !== undefined)) {
       const data = await this.service.createDocumentsOnly(
         urnNo,
         user.vendorId,
         uploadFiles,
         parseRawMaterialsFormString(body.eoiNo),
+        existingDocumentIds,
       );
       return {
         success: true,

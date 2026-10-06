@@ -56,4 +56,22 @@ export class CreateProcessLifeCycleApproachDto {
   @IsString()
   @IsOptional()
   lifeCycleImplementationDocumentsFileName?: string;
+
+  @ApiProperty({
+    description:
+      'JSON array of product document ids to keep for Assessment (life_cycle_assesment_reports). Omit to keep all assessment docs; send [] to clear that slot only.',
+    required: false,
+    example: '["101","102"]',
+  })
+  @IsOptional()
+  existingAssessmentDocumentIds?: string[];
+
+  @ApiProperty({
+    description:
+      'JSON array of product document ids to keep for Implementation (life_cycle_implementation_documents). Omit to keep all implementation docs; send [] to clear that slot only.',
+    required: false,
+    example: '["201","202"]',
+  })
+  @IsOptional()
+  existingImplementationDocumentIds?: string[];
 }

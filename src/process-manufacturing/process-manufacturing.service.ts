@@ -19,6 +19,7 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import {
   deleteUploadedFile,
+  deleteUploadedFileByDocumentLink,
   uploadFile,
   UploadResult,
 } from '../utils/upload-file.util';
@@ -30,6 +31,11 @@ import {
   trackInsertedCertificationDocuments,
 } from '../documents/helpers/certification-document-version.util';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
+import {
+  resolveDesiredDocumentIdRefs,
+  softDeleteUnkeptCertificationDocuments,
+} from '../documents/helpers/desired-document-state.apply';
+import { partitionLiveDocumentsForDesiredState } from '../documents/helpers/desired-document-state.sync';
 
 @Injectable()
 export class ProcessManufacturingService implements OnModuleInit {
@@ -97,28 +103,39 @@ export class ProcessManufacturingService implements OnModuleInit {
   async countRetainedProcessManufacturingDocuments(
     urnNo: string,
     vendorId: string,
+    existingDocumentIds?: string[],
   ): Promise<number> {
     if (!Types.ObjectId.isValid(vendorId)) {
       return 0;
     }
-    return this.allProductDocumentModel
-      .countDocuments({
-        vendorId: new Types.ObjectId(vendorId),
+    const vendorObjectId = new Types.ObjectId(vendorId);
+    const existingDocs = await this.allProductDocumentModel
+      .find({
+        vendorId: vendorObjectId,
         urnNo,
         documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
         isDeleted: { $ne: true },
       })
+      .lean()
       .exec();
+
+    if (existingDocumentIds === undefined) {
+      return existingDocs.length;
+    }
+    const keepRefs = resolveDesiredDocumentIdRefs(existingDocumentIds);
+    return partitionLiveDocumentsForDesiredState(existingDocs, keepRefs).retain
+      .length;
   }
 
   /**
-   * Create process manufacturing with file uploads
+   * Create process manufacturing with file uploads (DesiredState when keep list sent).
    */
   async createProcessManufacturing(
     createProcessManufacturingDto: CreateProcessManufacturingDto,
     vendorId: string,
     energyConservationSupportingDocumentsFiles?: Express.Multer.File[],
     energyConsumptionDocumentsFiles?: Express.Multer.File[],
+    existingDocumentIds?: string[],
   ): Promise<ProcessManufacturingDocument> {
     await assertVendorCanEditUrn(
       this.productModel,
@@ -129,6 +146,7 @@ export class ProcessManufacturingService implements OnModuleInit {
     session.startTransaction();
 
     const createdUploads: UploadResult[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
@@ -155,8 +173,71 @@ export class ProcessManufacturingService implements OnModuleInit {
         createProcessManufacturingDto.energyConsumptionDocumentsFileName?.trim() ||
         '';
 
-      let energyConservationSupportingDocuments =
-        existingManufacturing?.energyConservationSupportingDocuments ?? null;
+      const liveDocs = await this.allProductDocumentModel
+        .find({
+          vendorId: vendorObjectId,
+          urnNo: createProcessManufacturingDto.urnNo,
+          documentForm: DocumentSectionKey.PROCESS_MANUFACTURING,
+          isDeleted: { $ne: true },
+        })
+        .session(session);
+
+      const keepRefs =
+        existingDocumentIds !== undefined
+          ? resolveDesiredDocumentIdRefs(existingDocumentIds)
+          : null;
+
+      const sync = await softDeleteUnkeptCertificationDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo: createProcessManufacturingDto.urnNo,
+        sectionKey: DocumentSectionKey.PROCESS_MANUFACTURING,
+        vendorObjectId,
+        now,
+        session,
+        liveDocs,
+        keepRefs,
+      });
+      oldFileLinksToDeleteAfterCommit = sync.oldFileLinks;
+
+      if (sync.retainIds.length) {
+        await this.allProductDocumentModel.updateMany(
+          { _id: { $in: sync.retainIds } },
+          {
+            $set: {
+              formPrimaryId: processManufacturingId,
+              updatedDate: now,
+            },
+          },
+          { session },
+        );
+      }
+
+      let energyConservationSupportingDocuments: number | null = null;
+      let energyConsumptionDocuments: number | null = null;
+
+      const retainedLive = liveDocs.filter((d) =>
+        sync.retainIds.some((id) => id.equals(d._id as Types.ObjectId)),
+      );
+      if (
+        retainedLive.some(
+          (d) =>
+            String(d.documentFormSubsection ?? '') ===
+            'energy_conservation_supporting_documents',
+        )
+      ) {
+        energyConservationSupportingDocuments = 1;
+      }
+      if (
+        retainedLive.some(
+          (d) =>
+            String(d.documentFormSubsection ?? '') ===
+            'energy_consumption_documents',
+        )
+      ) {
+        energyConsumptionDocuments = 1;
+      }
+
       const energyConservationUploads: UploadResult[] = [];
       if (energyConservationFiles.length > 0) {
         for (const energyConservationSupportingDocumentsFile of energyConservationFiles) {
@@ -170,8 +251,6 @@ export class ProcessManufacturingService implements OnModuleInit {
         energyConservationSupportingDocuments = 1;
       }
 
-      let energyConsumptionDocuments =
-        existingManufacturing?.energyConsumptionDocuments ?? null;
       const energyConsumptionUploads: UploadResult[] = [];
       if (energyConsumptionFiles.length > 0) {
         for (const energyConsumptionDocumentsFile of energyConsumptionFiles) {
@@ -184,10 +263,6 @@ export class ProcessManufacturingService implements OnModuleInit {
         }
         energyConsumptionDocuments = 1;
       }
-
-      // Do not soft-delete existing all_product_documents rows here. Vendors add
-      // documents incrementally; removing every PROCESS_MANUFACTURING doc on each
-      // upload left only the latest batch visible and deleted prior files from disk.
 
       const processManufacturingData = {
         vendorId: vendorObjectId,
@@ -250,7 +325,7 @@ export class ProcessManufacturingService implements OnModuleInit {
           formPrimaryId: savedProcessManufacturing.processManufacturingId,
           documentName: consumptionDisplayName || uploaded.fileName,
           documentOriginalName: energyConsumptionFiles[i].originalname,
-          documentLink: uploaded.fileUrl, 
+          documentLink: uploaded.fileUrl,
           createdDate: now,
           updatedDate: now,
         });
@@ -281,6 +356,14 @@ export class ProcessManufacturingService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
+
+      for (const link of oldFileLinksToDeleteAfterCommit) {
+        try {
+          await deleteUploadedFileByDocumentLink(link);
+        } catch {
+          // ignore disk cleanup failures
+        }
+      }
 
       this.documentUploadNotification.notifyAfterDocumentsUploaded(
         vendorId,

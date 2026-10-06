@@ -28,6 +28,7 @@ import {
   ECO_VISION_SUBSECTION,
   SUPPORTING_SUBSECTION,
 } from './product-design-upload.util';
+import { partitionLiveDocumentsForDesiredState } from '../documents/helpers/desired-document-state.sync';
 import { normalizeMeasureBenefitRow } from '../common/form-partial-field.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
@@ -360,9 +361,6 @@ export class ProductDesignService implements OnModuleInit {
       urnNo,
       session,
     );
-    // New uploads for a subsection replace the prior current set (History keeps old versions).
-    const ecoReplaceOnUpload = ecoVisionFiles.length > 0;
-    const supportingReplaceOnUpload = supportingDocumentFiles.length > 0;
 
     const existingDocs = await this.allProductDocumentModel
       .find({
@@ -375,55 +373,50 @@ export class ProductDesignService implements OnModuleInit {
 
     const retainIds: Types.ObjectId[] = [];
     const explicitDeleteIds: Types.ObjectId[] = [];
-    const supersedeDeleteIds: Types.ObjectId[] = [];
     const docsToDeleteExplicit: typeof existingDocs = [];
     const oldFileLinksToDeleteAfterCommit: string[] = [];
 
+    const ecoLive: typeof existingDocs = [];
+    const supportingLive: typeof existingDocs = [];
+
     for (const doc of existingDocs) {
       const subsection = String(doc.documentFormSubsection ?? '');
-      const isEco = subsection === ECO_VISION_SUBSECTION;
-      const isSupporting = subsection === SUPPORTING_SUBSECTION;
-
-      if (!isEco && !isSupporting) {
+      if (subsection === ECO_VISION_SUBSECTION) {
+        ecoLive.push(doc);
+      } else if (subsection === SUPPORTING_SUBSECTION) {
+        supportingLive.push(doc);
+      } else if (doc._id) {
+        // Unknown subsection — leave untouched.
         retainIds.push(doc._id as Types.ObjectId);
-        continue;
-      }
-
-      const forceSupersede =
-        (isEco && ecoReplaceOnUpload) ||
-        (isSupporting && supportingReplaceOnUpload);
-
-      const retain = forceSupersede
-        ? false
-        : isEco
-          ? ecoKeepRefs === null || this.docMatchesIdRefs(doc, ecoKeepRefs)
-          : supportingKeepRefs === null ||
-            this.docMatchesIdRefs(doc, supportingKeepRefs);
-
-      if (retain) {
-        retainIds.push(doc._id as Types.ObjectId);
-      } else if (forceSupersede) {
-        // Soft-delete after version tracking so priorInSlot still counts for "replaced".
-        supersedeDeleteIds.push(doc._id as Types.ObjectId);
-        if (doc.documentLink) {
-          oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
-        }
-      } else {
-        explicitDeleteIds.push(doc._id as Types.ObjectId);
-        docsToDeleteExplicit.push(doc);
-        if (doc.documentLink) {
-          oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
-        }
       }
     }
 
-    const softDeleteProductDesignDocs = async (ids: Types.ObjectId[]) => {
+    // DesiredState per subsection: keepRefs + new uploads. Never wipe on upload alone.
+    const ecoPart = partitionLiveDocumentsForDesiredState(ecoLive, ecoKeepRefs);
+    const supportingPart = partitionLiveDocumentsForDesiredState(
+      supportingLive,
+      supportingKeepRefs,
+    );
+
+    retainIds.push(...ecoPart.retainIds, ...supportingPart.retainIds);
+    explicitDeleteIds.push(...ecoPart.removeIds, ...supportingPart.removeIds);
+    docsToDeleteExplicit.push(...ecoPart.remove, ...supportingPart.remove);
+    oldFileLinksToDeleteAfterCommit.push(
+      ...ecoPart.oldFileLinks,
+      ...supportingPart.oldFileLinks,
+    );
+
+    const softDeleteProductDesignDocs = async (
+      ids: Types.ObjectId[],
+      options?: { historyHidden?: boolean },
+    ) => {
       if (!ids.length) return;
       await this.allProductDocumentModel.updateMany(
         { _id: { $in: ids } },
         {
           $set: {
             isDeleted: true,
+            ...(options?.historyHidden ? { historyHidden: true } : {}),
             deletedAt: now,
             deletedBy: vendorObjectId,
             updatedDate: now,
@@ -434,7 +427,9 @@ export class ProductDesignService implements OnModuleInit {
     };
 
     if (explicitDeleteIds.length) {
-      await softDeleteProductDesignDocs(explicitDeleteIds);
+      await softDeleteProductDesignDocs(explicitDeleteIds, {
+        historyHidden: true,
+      });
       await trackProductDocumentDeleteBatch({
         versioning: this.documentVersioningService,
         urnNo,
@@ -520,9 +515,6 @@ export class ProductDesignService implements OnModuleInit {
         filesByIndex: [...ecoVisionFiles, ...supportingDocumentFiles],
       });
     }
-
-    // After "replaced" is stamped, drop superseded live rows from the current list.
-    await softDeleteProductDesignDocs(supersedeDeleteIds);
 
     const baseDocFilter = {
       vendorId: vendorObjectId,

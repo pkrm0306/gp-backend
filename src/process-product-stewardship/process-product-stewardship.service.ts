@@ -33,6 +33,14 @@ import {
 } from '../documents/helpers/certification-document-version.util';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
 import { ProductStewardshipProgrammeDetailDto } from './dto/create-process-product-stewardship.dto';
+import {
+  resolveDesiredDocumentIdRefs,
+  softDeleteUnkeptCertificationDocuments,
+} from '../documents/helpers/desired-document-state.apply';
+
+const SEA_SUBSECTION = 'sea_supporting_documents';
+const QM_SUBSECTION = 'qm_supporting_documents';
+const EPR_SUBSECTION = 'epr_supporting_documents';
 
 @Injectable()
 export class ProcessProductStewardshipService implements OnModuleInit {
@@ -116,7 +124,9 @@ export class ProcessProductStewardshipService implements OnModuleInit {
   }
 
   /**
-   * Create process product stewardship with file uploads
+   * Create process product stewardship with file uploads.
+   * DesiredState keep lists are independent per SEA / QM / EPR document slot.
+   * Programme-row soft-delete + insertMany remains replace-all (not DesiredState).
    */
   async createProcessProductStewardship(
     createProcessProductStewardshipDto: CreateProcessProductStewardshipDto,
@@ -172,12 +182,109 @@ export class ProcessProductStewardshipService implements OnModuleInit {
         createProcessProductStewardshipDto.eprSupportingDocumentsFileName?.trim() ||
         '';
 
-      // Handle file uploads and set flags
-      let seaSupportingDocuments =
-        existingStewardship?.seaSupportingDocuments ?? null;
+      const liveDocs = await this.allProductDocumentModel
+        .find({
+          vendorId: vendorObjectId,
+          urnNo: createProcessProductStewardshipDto.urnNo,
+          documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+          isDeleted: { $ne: true },
+        })
+        .session(session);
+
+      const seaLive = liveDocs.filter(
+        (d) => String(d.documentFormSubsection ?? '') === SEA_SUBSECTION,
+      );
+      const qmLive = liveDocs.filter(
+        (d) => String(d.documentFormSubsection ?? '') === QM_SUBSECTION,
+      );
+      const eprLive = liveDocs.filter(
+        (d) => String(d.documentFormSubsection ?? '') === EPR_SUBSECTION,
+      );
+
+      const { existingSeaDocumentIds, existingQmDocumentIds, existingEprDocumentIds } =
+        createProcessProductStewardshipDto;
+
+      const seaKeepRefs =
+        existingSeaDocumentIds !== undefined
+          ? resolveDesiredDocumentIdRefs(existingSeaDocumentIds)
+          : null;
+      const qmKeepRefs =
+        existingQmDocumentIds !== undefined
+          ? resolveDesiredDocumentIdRefs(existingQmDocumentIds)
+          : null;
+      const eprKeepRefs =
+        existingEprDocumentIds !== undefined
+          ? resolveDesiredDocumentIdRefs(existingEprDocumentIds)
+          : null;
+
+      const seaSync = await softDeleteUnkeptCertificationDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo: createProcessProductStewardshipDto.urnNo,
+        sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+        vendorObjectId,
+        now,
+        session,
+        liveDocs: seaLive,
+        keepRefs: seaKeepRefs,
+      });
+      const qmSync = await softDeleteUnkeptCertificationDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo: createProcessProductStewardshipDto.urnNo,
+        sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+        vendorObjectId,
+        now,
+        session,
+        liveDocs: qmLive,
+        keepRefs: qmKeepRefs,
+      });
+      const eprSync = await softDeleteUnkeptCertificationDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo: createProcessProductStewardshipDto.urnNo,
+        sectionKey: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
+        vendorObjectId,
+        now,
+        session,
+        liveDocs: eprLive,
+        keepRefs: eprKeepRefs,
+      });
+
+      oldFileLinksToDeleteAfterCommit = [
+        ...seaSync.oldFileLinks,
+        ...qmSync.oldFileLinks,
+        ...eprSync.oldFileLinks,
+      ];
+
+      const allRetainIds = [
+        ...seaSync.retainIds,
+        ...qmSync.retainIds,
+        ...eprSync.retainIds,
+      ];
+      if (allRetainIds.length) {
+        await this.allProductDocumentModel.updateMany(
+          { _id: { $in: allRetainIds } },
+          {
+            $set: {
+              formPrimaryId: processProductStewardshipId,
+              updatedDate: now,
+            },
+          },
+          { session },
+        );
+      }
+
+      // DesiredState flags: retained live docs + new uploads per slot only.
+      let seaSupportingDocuments: number | null =
+        seaSync.retainIds.length > 0 ? 1 : null;
+      let qmSupportingDocuments: number | null =
+        qmSync.retainIds.length > 0 ? 1 : null;
+      let eprSupportingDocuments: number | null =
+        eprSync.retainIds.length > 0 ? 1 : null;
+
       const seaFilePaths: string[] = [];
       const seaStoredNames: string[] = [];
-
       if (seaFiles.length > 0) {
         for (const seaSupportingDocumentsFile of seaFiles) {
           const uploaded = await this.saveFileToUrnFolder(
@@ -191,11 +298,8 @@ export class ProcessProductStewardshipService implements OnModuleInit {
         seaSupportingDocuments = 1;
       }
 
-      let qmSupportingDocuments =
-        existingStewardship?.qmSupportingDocuments ?? null;
       const qmFilePaths: string[] = [];
       const qmStoredNames: string[] = [];
-
       if (qmFiles.length > 0) {
         for (const qmSupportingDocumentsFile of qmFiles) {
           const uploaded = await this.saveFileToUrnFolder(
@@ -209,11 +313,8 @@ export class ProcessProductStewardshipService implements OnModuleInit {
         qmSupportingDocuments = 1;
       }
 
-      let eprSupportingDocuments =
-        existingStewardship?.eprSupportingDocuments ?? null;
       const eprFilePaths: string[] = [];
       const eprStoredNames: string[] = [];
-
       if (eprFiles.length > 0) {
         for (const eprSupportingDocumentsFile of eprFiles) {
           const uploaded = await this.saveFileToUrnFolder(
@@ -265,6 +366,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
           )
           .exec();
 
+      // Programme rows: soft-delete + insertMany replace (NOT DesiredState).
       if (createProcessProductStewardshipDto.programmeDetails !== undefined) {
         const normalizedProgrammeRows = this.normalizeProgrammeRows(
           createProcessProductStewardshipDto.programmeDetails,
@@ -318,7 +420,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             urnNo: createProcessProductStewardshipDto.urnNo,
             eoiNo: '',
             documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
-            documentFormSubsection: 'sea_supporting_documents',
+            documentFormSubsection: SEA_SUBSECTION,
             formPrimaryId:
               savedProcessProductStewardship.processProductStewardshipId,
             documentName: seaDisplayName || seaStoredNames[i],
@@ -357,7 +459,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             urnNo: createProcessProductStewardshipDto.urnNo,
             eoiNo: '',
             documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
-            documentFormSubsection: 'qm_supporting_documents',
+            documentFormSubsection: QM_SUBSECTION,
             formPrimaryId:
               savedProcessProductStewardship.processProductStewardshipId,
             documentName: qmDisplayName || qmStoredNames[i],
@@ -396,7 +498,7 @@ export class ProcessProductStewardshipService implements OnModuleInit {
             urnNo: createProcessProductStewardshipDto.urnNo,
             eoiNo: '',
             documentForm: DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP,
-            documentFormSubsection: 'epr_supporting_documents',
+            documentFormSubsection: EPR_SUBSECTION,
             formPrimaryId:
               savedProcessProductStewardship.processProductStewardshipId,
             documentName: eprDisplayName || eprStoredNames[i],

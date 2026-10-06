@@ -28,7 +28,7 @@ import {
 import * as path from 'path';
 import { uploadFile } from '../utils/upload-file.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
-import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
+import { softDeleteUnkeptRawMaterialsSupportingDocuments } from '../common/raw-materials/raw-materials-desired-document-sync.util';
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
 
@@ -115,42 +115,16 @@ export class RawMaterialsEliminationOfFormaldehydeService {
       inserted.push(doc);
     }
 
-    const keepIds = params.existingDocumentIds ?? [];
-    const existingDocs = await this.allProductDocumentModel.find({
-      vendorId: vendorObjectId,
+    const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
+      documentModel: this.allProductDocumentModel,
+      versioning: this.documentVersioningService,
       urnNo,
+      vendorObjectId,
+      sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
       documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
-      isDeleted: { $ne: true },
+      existingDocumentIds: params.existingDocumentIds,
+      now,
     });
-
-    const keepRefs = params.existingDocumentIds !== undefined ? keepIds : null;
-    const oldLinks: string[] = [];
-    const docsToDelete: typeof existingDocs = [];
-    for (const doc of existingDocs) {
-      const keep =
-        keepRefs === null ||
-        keepIds.includes(String(doc.productDocumentId)) ||
-        keepIds.includes(String(doc._id));
-      if (!keep) {
-        docsToDelete.push(doc);
-        if (doc.documentLink) oldLinks.push(doc.documentLink);
-        doc.isDeleted = true;
-        doc.deletedAt = now;
-        doc.deletedBy = vendorObjectId;
-        doc.updatedDate = now;
-        await doc.save();
-      }
-    }
-    if (docsToDelete.length) {
-      await trackProductDocumentDeleteBatch({
-        versioning: this.documentVersioningService,
-        urnNo,
-        sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
-        userId: vendorObjectId,
-        docs: docsToDelete,
-        slotKeyMode: 'subsection',
-      });
-    }
 
     const documents = [];
     const firstId = inserted[0]?.rawMaterialsEliminationOfFormaldehydeId;
@@ -186,7 +160,7 @@ export class RawMaterialsEliminationOfFormaldehydeService {
         });
     }
 
-    for (const link of oldLinks) {
+    for (const link of sync.oldFileLinks) {
       try {
         await deleteUploadedFileByDocumentLink(link);
       } catch {
@@ -247,7 +221,11 @@ export class RawMaterialsEliminationOfFormaldehydeService {
     dto: CreateRawMaterialsEliminationOfFormaldehydeDto,
     vendorId: string,
     formaldehydeFile?: Express.Multer.File,
-    options?: { replaceTableBeforeInsert?: boolean },
+    options?: {
+      replaceTableBeforeInsert?: boolean;
+      uploadFiles?: Express.Multer.File[];
+      existingDocumentIds?: string[];
+    },
   ): Promise<
     | RawMaterialsEliminationOfFormaldehydeDocument
     | { documentOnly: true; documents: unknown[] }
@@ -255,6 +233,9 @@ export class RawMaterialsEliminationOfFormaldehydeService {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
+      const uploadFiles =
+        options?.uploadFiles ??
+        (formaldehydeFile ? [formaldehydeFile] : []);
       const productRow = normalizeRawMaterialsProductRow({
         productsName: dto.productsName,
         productsTestReport: dto.productsTestReport,
@@ -265,8 +246,29 @@ export class RawMaterialsEliminationOfFormaldehydeService {
         await this.deleteAllProductsForUrn(urnNo, vendorId);
       }
 
-      if (!hasProductText && formaldehydeFile) {
-        return this.saveDocumentOnly(urnNo, vendorObjectId, formaldehydeFile);
+      if (!hasProductText && (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined)) {
+        const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
+          documentModel: this.allProductDocumentModel,
+          versioning: this.documentVersioningService,
+          urnNo,
+          vendorObjectId,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+          existingDocumentIds: options?.existingDocumentIds,
+        });
+        const documents = [];
+        for (const file of uploadFiles) {
+          const part = await this.saveDocumentOnly(urnNo, vendorObjectId, file);
+          documents.push(...part.documents);
+        }
+        for (const link of sync.oldFileLinks) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore
+          }
+        }
+        return { documentOnly: true as const, documents };
       }
 
       if (!hasProductText) {
@@ -289,36 +291,56 @@ export class RawMaterialsEliminationOfFormaldehydeService {
 
       const saved = await doc.save();
 
-      if (formaldehydeFile) {
-        const uploaded = await this.saveFileToUrnFolder(formaldehydeFile, urnNo);
-        const productDocumentId =
-          await this.sequenceHelper.getProductDocumentId();
-        const createdDoc = await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm:
-            DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId: id,
-          documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
-          documentOriginalName: formaldehydeFile.originalname,
-          documentLink: uploaded.fileUrl,
-          createdDate: now,
-          updatedDate: now,
-        });
-        await trackCertificationDocumentAfterCreate({
-          productModel: this.productModel,
-          versioning: this.documentVersioningService,
+      if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+        const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
           documentModel: this.allProductDocumentModel,
+          versioning: this.documentVersioningService,
           urnNo,
+          vendorObjectId,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
-          userId: vendorObjectId,
-          vendorId: vendorObjectId,
-          doc: createdDoc,
-          file: formaldehydeFile,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+          existingDocumentIds: options?.existingDocumentIds,
+          now,
         });
+        for (let i = 0; i < uploadFiles.length; i++) {
+          const file = uploadFiles[i];
+          const uploaded = await this.saveFileToUrnFolder(file, urnNo);
+          const productDocumentId =
+            await this.sequenceHelper.getProductDocumentId();
+          const createdDoc = await this.allProductDocumentModel.create({
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo,
+            eoiNo: '',
+            documentForm:
+              DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+            documentFormSubsection: 'supporting_documents',
+            formPrimaryId: i === 0 ? id : productDocumentId,
+            documentName: uploaded.fileName || path.basename(uploaded.fileUrl),
+            documentOriginalName: file.originalname,
+            documentLink: uploaded.fileUrl,
+            createdDate: now,
+            updatedDate: now,
+          });
+          await trackCertificationDocumentAfterCreate({
+            productModel: this.productModel,
+            versioning: this.documentVersioningService,
+            documentModel: this.allProductDocumentModel,
+            urnNo,
+            sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_FORMALDEHYDE,
+            userId: vendorObjectId,
+            vendorId: vendorObjectId,
+            doc: createdDoc,
+            file,
+          });
+        }
+        for (const link of sync.oldFileLinks) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore
+          }
+        }
       }
 
       return saved;

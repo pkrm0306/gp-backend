@@ -21,10 +21,11 @@ import {
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
+import { softDeleteUnkeptRawMaterialsSupportingDocuments } from '../common/raw-materials/raw-materials-desired-document-sync.util';
 import {
   assertUnitYearFieldsPositive,
   filterMeaningfulRows,
@@ -135,7 +136,12 @@ export class RawMaterialsRecycledContentService {
   async create(
     dto: CreateRawMaterialsRecycledContentDto,
     vendorId: string,
-    recycledContentFile?: Express.Multer.File,
+    options?: {
+      uploadFiles?: Express.Multer.File[];
+      existingDocumentIds?: string[];
+      /** @deprecated Prefer options.uploadFiles */
+      recycledContentFile?: Express.Multer.File;
+    },
   ): Promise<{
     urnNo: string;
     vendorId: string;
@@ -155,6 +161,9 @@ export class RawMaterialsRecycledContentService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
       const now = new Date();
+      const uploadFiles =
+        options?.uploadFiles ??
+        (options?.recycledContentFile ? [options.recycledContentFile] : []);
       const docsToCreate: Array<
         Omit<RawMaterialsRecycledContent, 'createdDate' | 'updatedDate'> & {
           createdDate: Date;
@@ -188,40 +197,66 @@ export class RawMaterialsRecycledContentService {
       const created = await this.model.insertMany(docsToCreate);
       const documents: RecycledContentProductDocumentRow[] = [];
 
-      if (recycledContentFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          recycledContentFile,
-          urnNo,
-          'recycled_content_supporting_document',
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        const masterDoc = await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId:
-            created[0]?.rawMaterialsRecycledContentId ?? productDocumentId,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: recycledContentFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
-        });
-        documents.push(this.mapProductDocument(masterDoc));
-        await trackCertificationDocumentAfterCreate({
-          productModel: this.productModel,
-          versioning: this.documentVersioningService,
+      if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+        const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
           documentModel: this.allProductDocumentModel,
+          versioning: this.documentVersioningService,
           urnNo,
+          vendorObjectId,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
-          userId: vendorObjectId,
-          vendorId: vendorObjectId,
-          doc: masterDoc,
-          file: recycledContentFile,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
+          existingDocumentIds: options?.existingDocumentIds,
+          now,
         });
+
+        const formPrimaryId =
+          created[0]?.rawMaterialsRecycledContentId ??
+          (await this.sequenceHelper.getProductDocumentId());
+
+        for (let i = 0; i < uploadFiles.length; i++) {
+          const file = uploadFiles[i];
+          const storedRelativePath = await this.saveFileToUrnFolder(
+            file,
+            urnNo,
+            'recycled_content_supporting_document',
+          );
+          const productDocumentId =
+            await this.sequenceHelper.getProductDocumentId();
+          const masterDoc = await this.allProductDocumentModel.create({
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo,
+            eoiNo: '',
+            documentForm: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
+            documentFormSubsection: 'supporting_documents',
+            formPrimaryId: i === 0 ? formPrimaryId : productDocumentId,
+            documentName: path.basename(storedRelativePath),
+            documentOriginalName: file.originalname,
+            documentLink: storedRelativePath,
+            createdDate: now,
+            updatedDate: now,
+          });
+          documents.push(this.mapProductDocument(masterDoc));
+          await trackCertificationDocumentAfterCreate({
+            productModel: this.productModel,
+            versioning: this.documentVersioningService,
+            documentModel: this.allProductDocumentModel,
+            urnNo,
+            sectionKey: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
+            userId: vendorObjectId,
+            vendorId: vendorObjectId,
+            doc: masterDoc,
+            file,
+          });
+        }
+
+        for (const link of sync.oldFileLinks) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore storage cleanup failures
+          }
+        }
       }
 
       return {

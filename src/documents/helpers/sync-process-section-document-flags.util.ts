@@ -41,6 +41,23 @@ const SUBSECTION_FLAG_TARGETS: Partial<
       emptyValue: 0,
     },
   },
+  [DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH]: {
+    life_cycle_assesment_reports: {
+      collection: 'process_life_cycle_approach',
+      field: 'lifeCycleAssesmentReports',
+      emptyValue: null,
+    },
+    life_cycle_assessment_reports: {
+      collection: 'process_life_cycle_approach',
+      field: 'lifeCycleAssesmentReports',
+      emptyValue: null,
+    },
+    life_cycle_implementation_documents: {
+      collection: 'process_life_cycle_approach',
+      field: 'lifeCycleImplementationDocuments',
+      emptyValue: null,
+    },
+  },
   [DocumentSectionKey.PROCESS_PRODUCT_STEWARDSHIP]: {
     sea_supporting_documents: {
       collection: 'process_product_stewardship',

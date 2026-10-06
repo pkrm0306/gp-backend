@@ -26,10 +26,12 @@ import { RawMaterialsRapidlyRenewableMaterialsService } from './raw-materials-ra
 import { CreateRawMaterialsRapidlyRenewableMaterialsDto } from './dto/create-raw-materials-rapidly-renewable-materials.dto';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseMultipartJsonArray,
-  pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { filterUploadFilesByFieldNames } from '../common/raw-materials/raw-materials-desired-document-sync.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 
@@ -148,15 +150,16 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
     }
 
     const units = parseMultipartJsonArray(body.units, 'units');
-    const rapidlyRenewableFile = pickUploadFile(uploadedFiles, [
-      'rapidlyRenewableFile',
-      'file',
-      'supportingDocument',
-      'document',
-    ]);
+    const uploadFiles = filterUploadFilesByFieldNames(
+      collectAllUploadFiles(uploadedFiles),
+      ['rapidlyRenewableFile', 'rapdlyRenewableFile', 'file', 'supportingDocument', 'document'],
+    );
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
 
-    if (rapidlyRenewableFile) {
-      assertRawMaterialsDocumentTypes([rapidlyRenewableFile]);
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
     }
     const urnNo = parseRequiredRawMaterialsUrn(body);
     const persistedRecordCount = await this.service.countPersistedByUrn(
@@ -167,7 +170,7 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_RAPIDLY_RENEWABLE_MATERIALS,
-      files: rapidlyRenewableFile ? [rapidlyRenewableFile] : [],
+      files: uploadFiles,
       rows: units as Array<Record<string, unknown>>,
       rowKeys: RAPIDLY_RENEWABLE_UNIT_ROW_KEYS,
       persistedRecordCount,
@@ -180,7 +183,10 @@ export class RawMaterialsRapidlyRenewableMaterialsController {
       units: units as CreateRawMaterialsRapidlyRenewableMaterialsDto['units'],
     };
 
-    const data = await this.service.create(dto, user.vendorId, rapidlyRenewableFile);
+    const data = await this.service.create(dto, user.vendorId, {
+      uploadFiles,
+      existingDocumentIds,
+    });
     return { success: true, data };
   }
 

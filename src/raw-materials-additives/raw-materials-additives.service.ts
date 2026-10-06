@@ -19,7 +19,8 @@ import {
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
+import { softDeleteUnkeptRawMaterialsSupportingDocuments } from '../common/raw-materials/raw-materials-desired-document-sync.util';
 import {
   filterMeaningfulRows,
   mapRawMaterialsAdditivesUnitForSave,
@@ -168,7 +169,11 @@ export class RawMaterialsAdditivesService {
   async create(
     dto: CreateRawMaterialsAdditivesDto,
     vendorId: string,
-    additivesFile?: Express.Multer.File,
+    options?: {
+      uploadFiles?: Express.Multer.File[];
+      existingDocumentIds?: string[];
+      additivesFile?: Express.Multer.File;
+    },
   ): Promise<{
     urnNo: string;
     vendorId: string;
@@ -197,6 +202,9 @@ export class RawMaterialsAdditivesService {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
+      const uploadFiles =
+        options?.uploadFiles ??
+        (options?.additivesFile ? [options.additivesFile] : []);
       const now = new Date();
       const docsToCreate: Array<
         Omit<RawMaterialsAdditives, 'createdDate' | 'updatedDate'> & {
@@ -228,40 +236,58 @@ export class RawMaterialsAdditivesService {
       const created = await this.model.insertMany(docsToCreate);
       const documents: AdditivesProductDocumentRow[] = [];
 
-      if (additivesFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          additivesFile,
-          urnNo,
-          'additives_supporting_document',
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        const masterDoc = await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId:
-            created[0]?.rawMaterialsAdditivesId ?? productDocumentId,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: additivesFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
-        });
-        documents.push(this.mapProductDocument(masterDoc));
-        await trackCertificationDocumentAfterCreate({
-          productModel: this.productModel,
-          versioning: this.documentVersioningService,
+      if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+        const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
           documentModel: this.allProductDocumentModel,
+          versioning: this.documentVersioningService,
           urnNo,
+          vendorObjectId,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
-          userId: vendorObjectId,
-          vendorId: vendorObjectId,
-          doc: masterDoc,
-          file: additivesFile,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
+          existingDocumentIds: options?.existingDocumentIds,
+          now,
         });
+        for (let i = 0; i < uploadFiles.length; i++) {
+          const file = uploadFiles[i];
+          const storedRelativePath = await this.saveFileToUrnFolder(
+            file,
+            urnNo,
+            'additives_supporting_document',
+          );
+          const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+          const createdDoc = await this.allProductDocumentModel.create({
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo,
+            eoiNo: '',
+            documentForm: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
+            documentFormSubsection: 'supporting_documents',
+            formPrimaryId: i === 0 ? (created[0]?.rawMaterialsAdditivesId ?? productDocumentId) : productDocumentId,
+            documentName: path.basename(storedRelativePath),
+            documentOriginalName: file.originalname,
+            documentLink: storedRelativePath,
+            createdDate: now,
+            updatedDate: now,
+          });
+          await trackCertificationDocumentAfterCreate({
+            productModel: this.productModel,
+            versioning: this.documentVersioningService,
+            documentModel: this.allProductDocumentModel,
+            urnNo,
+            sectionKey: DocumentSectionKey.RAW_MATERIALS_ADDITIVES,
+            userId: vendorObjectId,
+            vendorId: vendorObjectId,
+            doc: createdDoc,
+            file,
+          });
+        }
+        for (const link of sync.oldFileLinks) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore
+          }
+        }
       }
 
       return {

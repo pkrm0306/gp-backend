@@ -123,4 +123,31 @@ export class CreateProcessProductStewardshipDto {
   @IsString()
   @IsOptional()
   eprSupportingDocumentsFileName?: string;
+
+  @ApiProperty({
+    description:
+      'JSON array of product document ids to keep for SEA supporting documents (DesiredState). Omit to keep all existing SEA docs; send [] to clear.',
+    required: false,
+    example: '["101","102"]',
+  })
+  @IsOptional()
+  existingSeaDocumentIds?: string[];
+
+  @ApiProperty({
+    description:
+      'JSON array of product document ids to keep for QM supporting documents (DesiredState). Omit to keep all existing QM docs; send [] to clear.',
+    required: false,
+    example: '["201","202"]',
+  })
+  @IsOptional()
+  existingQmDocumentIds?: string[];
+
+  @ApiProperty({
+    description:
+      'JSON array of product document ids to keep for EPR supporting documents (DesiredState). Omit to keep all existing EPR docs; send [] to clear.',
+    required: false,
+    example: '["301","302"]',
+  })
+  @IsOptional()
+  existingEprDocumentIds?: string[];
 }

@@ -5,11 +5,11 @@ import {
   Get,
   Param,
   Post,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -20,12 +20,15 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
+import { filterUploadFilesByFieldNames } from '../common/raw-materials/raw-materials-desired-document-sync.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateRawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesDto } from './dto/create-raw-materials-elimination-of-ozone-depleting-global-warming-substances.dto';
 import { RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesService } from './raw-materials-elimination-of-ozone-depleting-global-warming-substances.service';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
@@ -44,7 +47,7 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
 
   @Post()
   @UseInterceptors(
-    FileInterceptor('ozoneReportFile', rawMaterialsMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiOperation({
     summary:
@@ -69,7 +72,7 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
   async create(
     @CurrentUser() user: any,
     @Body() body: any,
-    @UploadedFile() ozoneReportFile?: Express.Multer.File,
+    @UploadedFiles() uploadedFiles?: Express.Multer.File[],
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
@@ -80,8 +83,15 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
       ozoneReportFileName: body.ozoneReportFileName,
     };
 
-    if (ozoneReportFile) {
-      assertRawMaterialsDocumentTypes([ozoneReportFile]);
+    const uploadFiles = filterUploadFilesByFieldNames(
+      collectAllUploadFiles(uploadedFiles),
+      ['ozoneReportFile'],
+    );
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
     }
     const persistedRecordCount = await this.service.countPersistedByUrn(
       dto.urnNo,
@@ -92,12 +102,12 @@ export class RawMaterialsEliminationOfOzoneDepletingGlobalWarmingSubstancesContr
       urnNo: dto.urnNo,
       documentForm:
         DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_OZONE_DEPLETING_GLOBAL_WARMING_SUBSTANCES,
-      files: ozoneReportFile ? [ozoneReportFile] : [],
+      files: uploadFiles,
       textValues: [dto.ozoneReportFileName],
       persistedRecordCount,
     });
 
-    const data = await this.service.create(dto, user.vendorId, ozoneReportFile);
+    const data = await this.service.create(dto, user.vendorId, { uploadFiles, existingDocumentIds });
     return { success: true, data };
   }
 

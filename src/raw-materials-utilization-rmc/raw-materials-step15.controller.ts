@@ -21,6 +21,7 @@ import {
   parseRequiredRawMaterialsUrn,
   rawMaterialsMultipartMemoryMulterOptions,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -101,10 +102,13 @@ export class RawMaterialsStep15Controller {
       multipartBody: body ?? {},
     });
 
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
     const data = await this.service.create(
       body,
       user.vendorId,
-      { file1, file2 },
+      { file1, file2, existingDocumentIds },
       urnNo,
     );
     return {

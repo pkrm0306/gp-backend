@@ -6,12 +6,12 @@ import {
   Post,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
   BadRequestException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -22,6 +22,8 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
+import { filterUploadFilesByFieldNames } from '../common/raw-materials/raw-materials-desired-document-sync.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
@@ -31,6 +33,7 @@ import { RawMaterialsUtilizationManufacturingUnitsService } from '../raw-materia
 import { CreateRawMaterialsUtilizationDto } from './dto/create-raw-materials-utilization.dto';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseRawMaterialsFormString,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
@@ -52,7 +55,7 @@ export class RawMaterialsUtilizationController {
     summary: 'Create raw materials utilization record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('utilizationFile', rawMaterialsMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -77,7 +80,7 @@ export class RawMaterialsUtilizationController {
   async create(
     @CurrentUser() user: any,
     @Body() body: any,
-    @UploadedFile() utilizationFile?: Express.Multer.File,
+    @UploadedFiles() uploadedFiles?: Express.Multer.File[],
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
@@ -88,8 +91,15 @@ export class RawMaterialsUtilizationController {
       details: parseRawMaterialsFormString(body.details),
       utilizationFileName: parseRawMaterialsFormString(body.utilizationFileName),
     };
-    if (utilizationFile) {
-      assertRawMaterialsDocumentTypes([utilizationFile]);
+    const uploadFiles = filterUploadFilesByFieldNames(
+      collectAllUploadFiles(uploadedFiles),
+      ['utilizationFile'],
+    );
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
     }
     const [utilCount, mfgCount] = await Promise.all([
       this.service.countPersistedByUrn(urnNo, user.vendorId),
@@ -99,11 +109,14 @@ export class RawMaterialsUtilizationController {
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_UTILIZATION,
-      files: utilizationFile ? [utilizationFile] : [],
+      files: uploadFiles,
       textValues: [dto.details],
       persistedRecordCount: utilCount + mfgCount,
     });
-    const data = await this.service.create(dto, user.vendorId, utilizationFile);
+    const data = await this.service.create(dto, user.vendorId, {
+      uploadFiles,
+      existingDocumentIds,
+    });
     return { success: true, data };
   }
 

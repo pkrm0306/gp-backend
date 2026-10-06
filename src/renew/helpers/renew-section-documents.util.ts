@@ -114,6 +114,8 @@ export async function applyRenewSectionDocumentKeepList(params: {
   cycleNo: number;
   sectionKey: DocumentSectionKey;
   existingDocumentIds?: string[];
+  /** When set, only docs in these subsections are considered for DesiredState sync. */
+  subsectionFilter?: string | string[];
   urnStatus: number;
   now: Date;
   session: ClientSession;
@@ -127,6 +129,7 @@ export async function applyRenewSectionDocumentKeepList(params: {
     cycleNo,
     sectionKey,
     existingDocumentIds,
+    subsectionFilter,
     now,
     session,
   } = params;
@@ -143,12 +146,22 @@ export async function applyRenewSectionDocumentKeepList(params: {
     cycleNo > 1,
   );
 
+  const subsectionList = Array.isArray(subsectionFilter)
+    ? subsectionFilter
+    : subsectionFilter
+      ? [subsectionFilter]
+      : null;
+
   const existingDocs = await renewDocumentModel.find(baseFilter).session(session);
   const deleteIds: Types.ObjectId[] = [];
   const docsToDelete: AllRenewProductDocumentDocument[] = [];
   const oldFileLinksToDeleteAfterCommit: string[] = [];
 
   for (const doc of existingDocs) {
+    if (subsectionList) {
+      const sub = String(doc.documentFormSubsection ?? '');
+      if (!subsectionList.includes(sub)) continue;
+    }
     if (renewDocumentMatchesIdRefs(doc, keepRefs)) {
       await renewDocumentModel.updateOne(
         { _id: doc._id },
@@ -175,6 +188,7 @@ export async function applyRenewSectionDocumentKeepList(params: {
       {
         $set: {
           isDeleted: true,
+          historyHidden: true,
           deletedAt: now,
           deletedBy: vendorObjectId,
           updatedDate: now,

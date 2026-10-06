@@ -21,6 +21,7 @@ import { ProcessWasteManagementService } from './process-waste-management.servic
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProcessWasteManagementDto } from './dto/create-process-waste-management.dto';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 
 @ApiTags('Process Waste Management')
 @Controller('process-waste-management')
@@ -77,6 +78,11 @@ export class ProcessWasteManagementController {
           },
           description: 'Waste management supporting documents files (multiple)',
         },
+        existingDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentId values to keep (DesiredState). Omit = keep all.',
+        },
       },
     },
   })
@@ -121,6 +127,10 @@ export class ProcessWasteManagementController {
       wmSupportingDocumentsFileName: body.wmSupportingDocumentsFileName,
     };
 
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
+
     const wmSupportingDocumentsFiles = (files || []).filter(
       (f) => f.fieldname === 'wmSupportingDocumentsFile',
     );
@@ -141,6 +151,7 @@ export class ProcessWasteManagementController {
         dto,
         user.vendorId,
         wmSupportingDocumentsFiles,
+        existingDocumentIds,
       );
     return { success: true, data };
   }

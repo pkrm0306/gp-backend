@@ -19,7 +19,8 @@ import {
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
+import { softDeleteUnkeptRawMaterialsSupportingDocuments } from '../common/raw-materials/raw-materials-desired-document-sync.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
 import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
@@ -59,11 +60,18 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
   async create(
     dto: CreateRawMaterialsEliminationOfProhibitedFlameSolventsDto,
     vendorId: string,
-    prohibitedFlameSolventsFile?: Express.Multer.File,
+    options?: {
+      uploadFiles?: Express.Multer.File[];
+      existingDocumentIds?: string[];
+      prohibitedFlameSolventsFile?: Express.Multer.File;
+    },
   ): Promise<RawMaterialsEliminationOfProhibitedFlameSolventsDocument | null> {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
+      const uploadFiles =
+        options?.uploadFiles ??
+        (options?.prohibitedFlameSolventsFile ? [options.prohibitedFlameSolventsFile] : []);
       const now = new Date();
       const details = dto.details?.trim() || '';
       const hasText = hasAnyTrimmedText(details);
@@ -93,39 +101,57 @@ export class RawMaterialsEliminationOfProhibitedFlameSolventsService {
         await this.model.deleteMany({ urnNo, vendorId: vendorObjectId });
       }
 
-      if (prohibitedFlameSolventsFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          prohibitedFlameSolventsFile,
-          urnNo,
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        const createdDoc = await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm:
-            DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId: formPrimaryId || productDocumentId,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: prohibitedFlameSolventsFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
-        });
-        await trackCertificationDocumentAfterCreate({
-          productModel: this.productModel,
-          versioning: this.documentVersioningService,
+      if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+        const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
           documentModel: this.allProductDocumentModel,
+          versioning: this.documentVersioningService,
           urnNo,
-          sectionKey:
-            DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
-          userId: vendorObjectId,
-          vendorId: vendorObjectId,
-          doc: createdDoc,
-          file: prohibitedFlameSolventsFile,
+          vendorObjectId,
+          sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+          existingDocumentIds: options?.existingDocumentIds,
+          now,
         });
+        for (let i = 0; i < uploadFiles.length; i++) {
+          const file = uploadFiles[i];
+          const storedRelativePath = await this.saveFileToUrnFolder(
+            file,
+            urnNo,
+          );
+          const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+          const createdDoc = await this.allProductDocumentModel.create({
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo,
+            eoiNo: '',
+            documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+            documentFormSubsection: 'supporting_documents',
+            formPrimaryId: i === 0 ? (formPrimaryId || productDocumentId) : productDocumentId,
+            documentName: path.basename(storedRelativePath),
+            documentOriginalName: file.originalname,
+            documentLink: storedRelativePath,
+            createdDate: now,
+            updatedDate: now,
+          });
+          await trackCertificationDocumentAfterCreate({
+            productModel: this.productModel,
+            versioning: this.documentVersioningService,
+            documentModel: this.allProductDocumentModel,
+            urnNo,
+            sectionKey: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME_SOLVENTS,
+            userId: vendorObjectId,
+            vendorId: vendorObjectId,
+            doc: createdDoc,
+            file,
+          });
+        }
+        for (const link of sync.oldFileLinks) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore
+          }
+        }
       }
 
       return saved;

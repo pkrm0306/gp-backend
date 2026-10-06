@@ -19,7 +19,8 @@ import {
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
+import { softDeleteUnkeptRawMaterialsSupportingDocuments } from '../common/raw-materials/raw-materials-desired-document-sync.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
@@ -135,7 +136,11 @@ export class RawMaterialsOptimizationOfRawMixService {
   async create(
     dto: CreateRawMaterialsOptimizationOfRawMixDto,
     vendorId: string,
-    optimizationOfRawMixFile?: Express.Multer.File,
+    options?: {
+      uploadFiles?: Express.Multer.File[];
+      existingDocumentIds?: string[];
+      optimizationOfRawMixFile?: Express.Multer.File;
+    },
   ): Promise<{
     urnNo: string;
     vendorId: string;
@@ -152,6 +157,9 @@ export class RawMaterialsOptimizationOfRawMixService {
     try {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
+      const uploadFiles =
+        options?.uploadFiles ??
+        (options?.optimizationOfRawMixFile ? [options.optimizationOfRawMixFile] : []);
       const now = new Date();
       const docsToCreate: Array<
         Omit<RawMaterialsOptimizationOfRawMix, 'createdDate' | 'updatedDate'> & {
@@ -190,40 +198,58 @@ export class RawMaterialsOptimizationOfRawMixService {
       const created = await this.model.insertMany(docsToCreate);
       const documents: RawMixProductDocumentRow[] = [];
 
-      if (optimizationOfRawMixFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          optimizationOfRawMixFile,
-          urnNo,
-          'raw_mix_optimization_supporting_document',
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        const masterDoc = await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId:
-            created[0]?.rawMaterialsOptimizationOfRawMixId ?? productDocumentId,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: optimizationOfRawMixFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
-        });
-        documents.push(this.mapProductDocument(masterDoc));
-        await trackCertificationDocumentAfterCreate({
-          productModel: this.productModel,
-          versioning: this.documentVersioningService,
+      if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+        const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
           documentModel: this.allProductDocumentModel,
+          versioning: this.documentVersioningService,
           urnNo,
+          vendorObjectId,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
-          userId: vendorObjectId,
-          vendorId: vendorObjectId,
-          doc: masterDoc,
-          file: optimizationOfRawMixFile,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+          existingDocumentIds: options?.existingDocumentIds,
+          now,
         });
+        for (let i = 0; i < uploadFiles.length; i++) {
+          const file = uploadFiles[i];
+          const storedRelativePath = await this.saveFileToUrnFolder(
+            file,
+            urnNo,
+            'raw_mix_optimization_supporting_document',
+          );
+          const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+          const createdDoc = await this.allProductDocumentModel.create({
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo,
+            eoiNo: '',
+            documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+            documentFormSubsection: 'supporting_documents',
+            formPrimaryId: i === 0 ? (created[0]?.rawMaterialsOptimizationOfRawMixId ?? productDocumentId) : productDocumentId,
+            documentName: path.basename(storedRelativePath),
+            documentOriginalName: file.originalname,
+            documentLink: storedRelativePath,
+            createdDate: now,
+            updatedDate: now,
+          });
+          await trackCertificationDocumentAfterCreate({
+            productModel: this.productModel,
+            versioning: this.documentVersioningService,
+            documentModel: this.allProductDocumentModel,
+            urnNo,
+            sectionKey: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
+            userId: vendorObjectId,
+            vendorId: vendorObjectId,
+            doc: createdDoc,
+            file,
+          });
+        }
+        for (const link of sync.oldFileLinks) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore
+          }
+        }
       }
 
       return {

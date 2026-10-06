@@ -6,10 +6,10 @@ import {
   Post,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -20,12 +20,15 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
+import { filterUploadFilesByFieldNames } from '../common/raw-materials/raw-materials-desired-document-sync.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsEliminationOfProhibitedFlameService } from './raw-materials-elimination-of-prohibited-flame.service';
 import { CreateRawMaterialsEliminationOfProhibitedFlameDto } from './dto/create-raw-materials-elimination-of-prohibited-flame.dto';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
@@ -48,7 +51,7 @@ export class RawMaterialsEliminationOfProhibitedFlameController {
       'Create raw materials elimination of prohibited flame record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('prohibitedFlameFile', rawMaterialsMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -73,7 +76,7 @@ export class RawMaterialsEliminationOfProhibitedFlameController {
   async create(
     @CurrentUser() user: any,
     @Body() body: any,
-    @UploadedFile() prohibitedFlameFile?: Express.Multer.File,
+    @UploadedFiles() uploadedFiles?: Express.Multer.File[],
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
@@ -83,8 +86,15 @@ export class RawMaterialsEliminationOfProhibitedFlameController {
       measuresImplemented: body.measuresImplemented,
       prohibitedFlameFileName: body.prohibitedFlameFileName,
     };
-    if (prohibitedFlameFile) {
-      assertRawMaterialsDocumentTypes([prohibitedFlameFile]);
+    const uploadFiles = filterUploadFilesByFieldNames(
+      collectAllUploadFiles(uploadedFiles),
+      ['prohibitedFlameFile'],
+    );
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
     }
     const persistedRecordCount = await this.service.countPersistedByUrn(
       dto.urnNo,
@@ -94,11 +104,14 @@ export class RawMaterialsEliminationOfProhibitedFlameController {
       vendorId: user.vendorId,
       urnNo: dto.urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_ELIMINATION_OF_PROHIBITED_FLAME,
-      files: prohibitedFlameFile ? [prohibitedFlameFile] : [],
+      files: uploadFiles,
       textValues: [dto.measuresImplemented],
       persistedRecordCount,
     });
-    const data = await this.service.create(dto, user.vendorId, prohibitedFlameFile);
+    const data = await this.service.create(dto, user.vendorId, {
+      uploadFiles,
+      existingDocumentIds,
+    });
     return { success: true, data };
   }
 

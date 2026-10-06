@@ -26,10 +26,12 @@ import { RawMaterialsRecycledContentService } from './raw-materials-recycled-con
 import { CreateRawMaterialsRecycledContentDto } from './dto/create-raw-materials-recycled-content.dto';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseMultipartJsonArray,
-  pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { filterUploadFilesByFieldNames } from '../common/raw-materials/raw-materials-desired-document-sync.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 
@@ -57,7 +59,7 @@ export class RawMaterialsRecycledContentController {
   @ApiOperation({
     summary: 'Create raw materials recycled content units (per URN)',
     description:
-      '**units** and **recycledContentFile** are optional individually; at least one non-empty unit row or file is required (vendor enforces in UI). **units** replaces all rows for the URN.',
+      '**units** and **recycledContentFile** are optional individually; at least one non-empty unit row or file is required (vendor enforces in UI). **units** replaces all rows for the URN. Multiple supporting files supported. `existingDocumentIds`: omit = keep all docs; JSON array = retain only listed IDs.',
   })
   @UseInterceptors(
     AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
@@ -73,6 +75,11 @@ export class RawMaterialsRecycledContentController {
         recycledContentFileName: {
           type: 'string',
           example: 'Recycled Content Supporting Document - 2026',
+        },
+        existingDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentId (or ObjectId) values to retain. Omit to keep all.',
         },
         units: {
           oneOf: [
@@ -143,15 +150,16 @@ export class RawMaterialsRecycledContentController {
     }
 
     const units = parseMultipartJsonArray(body.units, 'units');
-    const recycledContentFile = pickUploadFile(uploadedFiles, [
-      'recycledContentFile',
-      'file',
-      'supportingDocument',
-      'document',
-    ]);
+    const uploadFiles = filterUploadFilesByFieldNames(
+      collectAllUploadFiles(uploadedFiles),
+      ['recycledContentFile', 'file', 'supportingDocument', 'document'],
+    );
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
 
-    if (recycledContentFile) {
-      assertRawMaterialsDocumentTypes([recycledContentFile]);
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
     }
     const urnNo = parseRequiredRawMaterialsUrn(body);
     const persistedRecordCount = await this.service.countPersistedByUrn(
@@ -162,7 +170,7 @@ export class RawMaterialsRecycledContentController {
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_RECYCLED_CONTENT,
-      files: recycledContentFile ? [recycledContentFile] : [],
+      files: uploadFiles,
       rows: units as Array<Record<string, unknown>>,
       rowKeys: RECYCLED_UNIT_ROW_KEYS,
       persistedRecordCount,
@@ -175,7 +183,10 @@ export class RawMaterialsRecycledContentController {
       units: units as CreateRawMaterialsRecycledContentDto['units'],
     };
 
-    const data = await this.service.create(dto, user.vendorId, recycledContentFile);
+    const data = await this.service.create(dto, user.vendorId, {
+      uploadFiles,
+      existingDocumentIds,
+    });
     return { success: true, data };
   }
 

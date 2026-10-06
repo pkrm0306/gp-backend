@@ -27,6 +27,7 @@ import {
   assertAtLeastOneProcessManufacturingField,
   collectProcessManufacturingUploadFiles,
 } from './process-manufacturing-upload.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 
 @ApiTags('Process Manufacturing')
 @Controller('process-manufacturing')
@@ -113,6 +114,11 @@ export class ProcessManufacturingController {
           description:
             'Energy consumption documents files (multiple supported)',
         },
+        existingDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentId values to keep (DesiredState). Omit = keep all.',
+        },
       },
     },
   })
@@ -171,6 +177,10 @@ export class ProcessManufacturingController {
         body.energyConsumptionDocumentsFileName,
     };
 
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
+
     // Extract files by fieldname from the files array
     const { energyConservationFiles, energyConsumptionFiles } =
       collectProcessManufacturingUploadFiles(files);
@@ -214,6 +224,7 @@ export class ProcessManufacturingController {
       await this.processManufacturingService.countRetainedProcessManufacturingDocuments(
         urnNo,
         user.vendorId,
+        existingDocumentIds,
       );
 
     assertAtLeastOneProcessManufacturingField({
@@ -232,6 +243,7 @@ export class ProcessManufacturingController {
         user.vendorId,
         energyConservationFiles,
         energyConsumptionFiles,
+        existingDocumentIds,
       );
     return { success: true, data };
   }

@@ -17,6 +17,7 @@ import {
   AllProductDocumentDocument,
 } from '../product-design/schemas/all-product-document.schema';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { partitionLiveDocumentsForDesiredState } from '../documents/helpers/desired-document-state.sync';
 import {
   hasPartialRawMaterialsProductRow,
   normalizeRawMaterialsProductRow,
@@ -324,27 +325,12 @@ export class RawMaterialsHazardousProductsService {
       })
       .session(session);
 
-    const retainIds: Types.ObjectId[] = [];
-    const deleteIds: Types.ObjectId[] = [];
-    const docsToDelete: typeof existingDocs = [];
-    const oldFileLinksToDeleteAfterCommit: string[] = [];
-
-    for (const doc of existingDocs) {
-      // New uploads replace prior live files in this slot (History keeps old versions).
-      const retain =
-        uploadedFiles.length > 0
-          ? false
-          : keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
-      if (retain) {
-        retainIds.push(doc._id as Types.ObjectId);
-      } else {
-        deleteIds.push(doc._id as Types.ObjectId);
-        docsToDelete.push(doc);
-        if (doc.documentLink) {
-          oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
-        }
-      }
-    }
+    // DesiredState: keepRefs + new uploads. Never wipe live docs merely because files arrived.
+    const part = partitionLiveDocumentsForDesiredState(existingDocs, keepRefs);
+    const retainIds = part.retainIds;
+    const deleteIds = part.removeIds;
+    const docsToDelete = part.remove;
+    const oldFileLinksToDeleteAfterCommit = [...part.oldFileLinks];
 
     if (deleteIds.length) {
       await this.allProductDocumentModel.updateMany(
@@ -352,6 +338,7 @@ export class RawMaterialsHazardousProductsService {
         {
           $set: {
             isDeleted: true,
+            historyHidden: true,
             deletedAt: now,
             deletedBy: vendorObjectId,
             updatedDate: now,
@@ -730,12 +717,56 @@ export class RawMaterialsHazardousProductsService {
     vendorId: string,
     files: Express.Multer.File[],
     eoiNo?: string,
+    existingDocumentIds?: string[],
   ) {
     const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
+    const trimmedUrn = urnNo.trim();
+    const now = new Date();
+
+    // DesiredState sync when keep list is provided (legacy callers omit → append-only).
+    if (existingDocumentIds !== undefined) {
+      const session = await this.connection.startSession();
+      session.startTransaction();
+      const createdFileFullPaths: string[] = [];
+      try {
+        const docSync = await this.syncHazardousProductDocuments({
+          urnNo: trimmedUrn,
+          vendorObjectId,
+          eoiNo: String(eoiNo ?? '').trim(),
+          now,
+          session,
+          uploadedFiles: files,
+          existingDocumentIds,
+          createdFileFullPaths,
+        });
+        await session.commitTransaction();
+        session.endSession();
+        for (const link of docSync.oldFileLinksToDeleteAfterCommit) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore
+          }
+        }
+        return { documentOnly: true, documents: docSync.documents };
+      } catch (error) {
+        await session.abortTransaction();
+        session.endSession();
+        for (const link of createdFileFullPaths) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore
+          }
+        }
+        throw error;
+      }
+    }
+
     const documents = [];
     for (const file of files) {
       const result = await this.saveDocumentOnly(
-        urnNo.trim(),
+        trimmedUrn,
         vendorObjectId,
         file,
         String(eoiNo ?? '').trim(),

@@ -136,7 +136,15 @@ describe('payment-response.util', () => {
         paymentStatus: 1,
         paymentMode: 'neft_or_rtgs',
         paymentReferenceNo: 'REF123',
+        paymentChequeDate: '2026-09-15T00:00:00.000Z',
         tdsFile: '/uploads/payments/supporting-doc.pdf',
+      },
+      {
+        paymentType: 'certification',
+        paymentStatus: 1,
+        paymentMode: 'cheque_or_dd',
+        paymentReferenceNo: 'CERT-REF',
+        paymentChequeDate: '2026-09-20T00:00:00.000Z',
       },
     ]);
 
@@ -144,9 +152,16 @@ describe('payment-response.util', () => {
       paymentStageActive: true,
       paymentMode: 'neft_or_rtgs',
       paymentReferenceNo: 'REF123',
+      paymentChequeDate: '2026-09-15T00:00:00.000Z',
+      paymentDate: '2026-09-15T00:00:00.000Z',
       tdsFile: '/uploads/payments/supporting-doc.pdf',
       paymentProofEditable: false,
       paymentProofLockMessage: PAYMENT_PROOF_SUBMITTED_LOCKED_MESSAGE,
+    });
+    expect(visible[1]).toMatchObject({
+      paymentType: 'certification',
+      paymentChequeDate: '2026-09-20T00:00:00.000Z',
+      paymentDate: '2026-09-20T00:00:00.000Z',
     });
   });
 

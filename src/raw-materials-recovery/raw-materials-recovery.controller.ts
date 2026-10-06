@@ -26,10 +26,12 @@ import { RawMaterialsRecoveryService } from './raw-materials-recovery.service';
 import { CreateRawMaterialsRecoveryDto } from './dto/create-raw-materials-recovery.dto';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseMultipartJsonArray,
-  pickUploadFile,
   parseRequiredRawMaterialsUrn,
 } from '../common/raw-materials/raw-materials-upload.util';
+import { filterUploadFilesByFieldNames } from '../common/raw-materials/raw-materials-desired-document-sync.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import { RawMaterialsStepGateService } from '../common/raw-materials/raw-materials-step-gate.service';
 
@@ -109,15 +111,16 @@ export class RawMaterialsRecoveryController {
     }
 
     const units = parseMultipartJsonArray(body.units, 'units');
-    const recoveryFile = pickUploadFile(uploadedFiles, [
-      'recoveryFile',
-      'file',
-      'supportingDocument',
-      'document',
-    ]);
+    const uploadFiles = filterUploadFilesByFieldNames(
+      collectAllUploadFiles(uploadedFiles),
+      ['recoveryFile', 'file', 'supportingDocument', 'document'],
+    );
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
 
-    if (recoveryFile) {
-      assertRawMaterialsDocumentTypes([recoveryFile]);
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
     }
     const urnNo = parseRequiredRawMaterialsUrn(body);
     const persistedRecordCount = await this.service.countPersistedByUrn(
@@ -128,7 +131,7 @@ export class RawMaterialsRecoveryController {
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
-      files: recoveryFile ? [recoveryFile] : [],
+      files: uploadFiles,
       rows: units as Array<Record<string, unknown>>,
       rowKeys: RECOVERY_UNIT_ROW_KEYS,
       persistedRecordCount,
@@ -141,7 +144,10 @@ export class RawMaterialsRecoveryController {
       units: units as CreateRawMaterialsRecoveryDto['units'],
     };
 
-    const data = await this.service.create(dto, user.vendorId, recoveryFile);
+    const data = await this.service.create(dto, user.vendorId, {
+      uploadFiles,
+      existingDocumentIds,
+    });
     return { success: true, data };
   }
 

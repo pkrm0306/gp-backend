@@ -19,7 +19,8 @@ import {
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
+import { softDeleteUnkeptRawMaterialsSupportingDocuments } from '../common/raw-materials/raw-materials-desired-document-sync.util';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import {
   countVendorUrnDocuments,
@@ -400,12 +401,37 @@ export class RawMaterialsUtilizationRmcService {
     formPrimaryId: number,
     files: Step15Files,
     fileNameHint?: string,
+    existingDocumentIds?: string[],
   ): Promise<void> {
-    if (!files.file1 && !files.file2) {
+    if (!files.file1 && !files.file2 && existingDocumentIds === undefined) {
       return;
     }
 
     const now = new Date();
+
+    // DesiredState across both step_15_1 / step_15_2 subsections for this form.
+    if (existingDocumentIds !== undefined) {
+      const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo,
+        vendorObjectId,
+        sectionKey: DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+        documentForm: DocumentSectionKey.RAW_MATERIALS_RMC_ALTERNATIVE_RAW_MATERIALS,
+        existingDocumentIds,
+        now,
+      });
+      for (const link of sync.oldFileLinks) {
+        try {
+          await deleteUploadedFileByDocumentLink(link);
+        } catch {
+          // ignore
+        }
+      }
+      if (!files.file1 && !files.file2) {
+        return;
+      }
+    }
 
     const createDoc = async (
       file: Express.Multer.File,
@@ -465,7 +491,7 @@ export class RawMaterialsUtilizationRmcService {
   async create(
     dto: Record<string, any>,
     vendorId: string,
-    files?: Step15Files,
+    files?: Step15Files & { existingDocumentIds?: string[] },
     urnNoFromPath?: string,
   ): Promise<any> {
     try {
@@ -518,6 +544,7 @@ export class RawMaterialsUtilizationRmcService {
         upserted.rawMaterialsUtilizationRmcId,
         files ?? {},
         dto?.utilizationRmcFileName,
+        files?.existingDocumentIds,
       );
       return this.buildResponse(upserted.toObject());
     } catch (error: any) {

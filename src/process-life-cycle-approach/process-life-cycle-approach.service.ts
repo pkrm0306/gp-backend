@@ -19,7 +19,10 @@ import { SequenceHelper } from '../product-registration/helpers/sequence.helper'
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import {
+  deleteUploadedFileByDocumentLink,
+  uploadFile,
+} from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
@@ -28,6 +31,53 @@ import {
   trackInsertedCertificationDocuments,
 } from '../documents/helpers/certification-document-version.util';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
+import {
+  resolveDesiredDocumentIdRefs,
+  softDeleteUnkeptCertificationDocuments,
+} from '../documents/helpers/desired-document-state.apply';
+
+/** Canonical write subsection (API typo spelling preserved). */
+export const LCA_ASSESSMENT_SUBSECTION = 'life_cycle_assesment_reports';
+export const LCA_IMPLEMENTATION_SUBSECTION =
+  'life_cycle_implementation_documents';
+
+const LCA_ASSESSMENT_SUBSECTIONS = new Set([
+  'life_cycle_assesment_reports',
+  'life_cycle_assessment_reports',
+  'life_cycle_assessment_report',
+  'lca_assessment_report',
+  'lca_reports',
+]);
+
+const LCA_IMPLEMENTATION_SUBSECTIONS = new Set([
+  'life_cycle_implementation_documents',
+  'life_cycle_implementation_document',
+  'life_cycle_supporting_documents',
+  'supporting_documents',
+]);
+
+/** Partition helper for DesiredState isolation tests / sync. */
+export function partitionLcaLiveDocsBySubsection<
+  T extends { documentFormSubsection?: string | null },
+>(liveDocs: T[]): { assessment: T[]; implementation: T[]; other: T[] } {
+  const assessment: T[] = [];
+  const implementation: T[] = [];
+  const other: T[] = [];
+  for (const doc of liveDocs) {
+    const sub = String(doc.documentFormSubsection ?? '')
+      .trim()
+      .toLowerCase();
+    if (LCA_IMPLEMENTATION_SUBSECTIONS.has(sub)) {
+      implementation.push(doc);
+    } else if (LCA_ASSESSMENT_SUBSECTIONS.has(sub) || !sub) {
+      // Legacy empty subsection → assessment (matches vendor FE).
+      assessment.push(doc);
+    } else {
+      other.push(doc);
+    }
+  }
+  return { assessment, implementation, other };
+}
 
 @Injectable()
 export class ProcessLifeCycleApproachService implements OnModuleInit {
@@ -85,13 +135,16 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
   }
 
   /**
-   * Create process life cycle approach with file uploads
+   * Create process life cycle approach with file uploads.
+   * DesiredState: independent keep lists per Assessment / Implementation subsection.
    */
   async createProcessLifeCycleApproach(
     createProcessLifeCycleApproachDto: CreateProcessLifeCycleApproachDto,
     vendorId: string,
     lifeCycleAssesmentReportsFiles?: Express.Multer.File[],
     lifeCycleImplementationDocumentsFiles?: Express.Multer.File[],
+    existingAssessmentDocumentIds?: string[],
+    existingImplementationDocumentIds?: string[],
   ): Promise<ProcessLifeCycleApproachDocument> {
     await assertVendorCanEditUrn(
       this.productModel,
@@ -102,12 +155,10 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
     session.startTransaction();
 
     let createdFileFullPaths: string[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
-      // Convert vendorId to ObjectId
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
-
-      // Get current date
       const now = new Date();
       const existingLifeCycle = await this.processLifeCycleApproachModel
         .findOne({ urnNo: createProcessLifeCycleApproachDto.urnNo })
@@ -131,9 +182,76 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
         createProcessLifeCycleApproachDto.lifeCycleImplementationDocumentsFileName?.trim() ||
         '';
 
-      // Handle file uploads and set flags
+      const liveDocs = await this.allProductDocumentModel
+        .find({
+          vendorId: vendorObjectId,
+          urnNo: createProcessLifeCycleApproachDto.urnNo,
+          documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
+          isDeleted: { $ne: true },
+        })
+        .session(session);
+
+      const { assessment: assessmentLive, implementation: implementationLive } =
+        partitionLcaLiveDocsBySubsection(liveDocs);
+
+      const assessmentKeepRefs =
+        existingAssessmentDocumentIds !== undefined
+          ? resolveDesiredDocumentIdRefs(existingAssessmentDocumentIds)
+          : null;
+      const implementationKeepRefs =
+        existingImplementationDocumentIds !== undefined
+          ? resolveDesiredDocumentIdRefs(existingImplementationDocumentIds)
+          : null;
+
+      const assessmentSync = await softDeleteUnkeptCertificationDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo: createProcessLifeCycleApproachDto.urnNo,
+        sectionKey: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
+        vendorObjectId,
+        now,
+        session,
+        liveDocs: assessmentLive,
+        keepRefs: assessmentKeepRefs,
+      });
+      const implementationSync = await softDeleteUnkeptCertificationDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo: createProcessLifeCycleApproachDto.urnNo,
+        sectionKey: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
+        vendorObjectId,
+        now,
+        session,
+        liveDocs: implementationLive,
+        keepRefs: implementationKeepRefs,
+      });
+      oldFileLinksToDeleteAfterCommit = [
+        ...assessmentSync.oldFileLinks,
+        ...implementationSync.oldFileLinks,
+      ];
+
+      const retainIds = [
+        ...assessmentSync.retainIds,
+        ...implementationSync.retainIds,
+      ];
+      if (retainIds.length) {
+        await this.allProductDocumentModel.updateMany(
+          { _id: { $in: retainIds } },
+          {
+            $set: {
+              formPrimaryId: processLifeCycleApproachId,
+              updatedDate: now,
+            },
+          },
+          { session },
+        );
+      }
+
       let lifeCycleAssesmentReports =
-        existingLifeCycle?.lifeCycleAssesmentReports ?? null;
+        assessmentSync.retainIds.length > 0 ? 1 : null;
+      let lifeCycleImplementationDocuments =
+        implementationSync.retainIds.length > 0 ? 1 : null;
+
       const lcaReportsFilePaths: string[] = [];
       const lcaReportsStoredNames: string[] = [];
 
@@ -153,8 +271,6 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
         lifeCycleAssesmentReports = 1;
       }
 
-      let lifeCycleImplementationDocuments =
-        existingLifeCycle?.lifeCycleImplementationDocuments ?? null;
       const lcaImplementationFilePaths: string[] = [];
       const lcaImplementationStoredNames: string[] = [];
 
@@ -174,11 +290,6 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
         lifeCycleImplementationDocuments = 1;
       }
 
-      // Append-only per upload field: do not soft-delete all PROCESS_LIFE_CYCLE_APPROACH
-      // documents when only one of the two upload fields is used — each subsection keeps
-      // its existing files (same behaviour as process-manufacturing).
-
-      // Create process life cycle approach data
       const processLifeCycleApproachData = {
         vendorId: vendorObjectId,
         urnNo: createProcessLifeCycleApproachDto.urnNo,
@@ -203,7 +314,6 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           )
           .exec();
 
-      // Insert uploaded documents into all_product_documents (master table)
       const docsToInsert = [];
       for (let i = 0; i < lcaReportsFilePaths.length; i++) {
         const productDocumentId = await this.sequenceHelper.getProductDocumentId();
@@ -213,7 +323,7 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           urnNo: createProcessLifeCycleApproachDto.urnNo,
           eoiNo: '',
           documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
-          documentFormSubsection: 'life_cycle_assesment_reports',
+          documentFormSubsection: LCA_ASSESSMENT_SUBSECTION,
           formPrimaryId: savedProcessLifeCycleApproach.processLifeCycleApproachId,
           documentName: lcaReportsDisplayName || lcaReportsStoredNames[i],
           documentOriginalName: lcaReportsFiles[i].originalname,
@@ -230,7 +340,7 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
           urnNo: createProcessLifeCycleApproachDto.urnNo,
           eoiNo: '',
           documentForm: DocumentSectionKey.PROCESS_LIFE_CYCLE_APPROACH,
-          documentFormSubsection: 'life_cycle_implementation_documents',
+          documentFormSubsection: LCA_IMPLEMENTATION_SUBSECTION,
           formPrimaryId: savedProcessLifeCycleApproach.processLifeCycleApproachId,
           documentName:
             lcaImplementationDisplayName || lcaImplementationStoredNames[i],
@@ -267,6 +377,14 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
       await session.commitTransaction();
       session.endSession();
 
+      for (const link of oldFileLinksToDeleteAfterCommit) {
+        try {
+          await deleteUploadedFileByDocumentLink(link);
+        } catch {
+          // ignore
+        }
+      }
+
       if (docsToInsert.length > 0) {
         this.documentUploadNotification.notifyAfterDocumentsUploaded(
           vendorId,
@@ -280,7 +398,6 @@ export class ProcessLifeCycleApproachService implements OnModuleInit {
       await session.abortTransaction();
       session.endSession();
 
-      // Clean up uploaded files if transaction fails (files were moved to URN folder)
       try {
         for (const fullPath of createdFileFullPaths) {
           if (fs.existsSync(fullPath)) {

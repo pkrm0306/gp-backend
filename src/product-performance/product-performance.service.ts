@@ -22,6 +22,7 @@ import {
 import { CreateProductPerformanceDto } from './dto/create-product-performance.dto';
 import { SequenceHelper } from '../product-registration/helpers/sequence.helper';
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
+import { partitionLiveDocumentsForDesiredState } from '../documents/helpers/desired-document-state.sync';
 import { normalizeTestReportRow } from '../common/form-partial-field.util';
 import {
   deleteUploadedFileByDocumentLink,
@@ -313,7 +314,6 @@ export class ProductPerformanceService implements OnModuleInit {
       urnNo,
       session,
     );
-    const replaceOnUpload = uploadedFiles.length > 0;
 
     const existingDocs = await this.allProductDocumentModel
       .find({
@@ -324,31 +324,12 @@ export class ProductPerformanceService implements OnModuleInit {
       })
       .session(session);
 
-    const retainIds: Types.ObjectId[] = [];
-    const explicitDeleteIds: Types.ObjectId[] = [];
-    const supersedeDeleteIds: Types.ObjectId[] = [];
-    const docsToDeleteExplicit: typeof existingDocs = [];
-    const oldFileLinksToDeleteAfterCommit: string[] = [];
-
-    for (const doc of existingDocs) {
-      const retain = replaceOnUpload
-        ? false
-        : keepRefs === null || this.docMatchesIdRefs(doc, keepRefs);
-      if (retain) {
-        retainIds.push(doc._id as Types.ObjectId);
-      } else if (replaceOnUpload) {
-        supersedeDeleteIds.push(doc._id as Types.ObjectId);
-        if (doc.documentLink) {
-          oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
-        }
-      } else {
-        explicitDeleteIds.push(doc._id as Types.ObjectId);
-        docsToDeleteExplicit.push(doc);
-        if (doc.documentLink) {
-          oldFileLinksToDeleteAfterCommit.push(doc.documentLink);
-        }
-      }
-    }
+    // DesiredState: keepRefs + new uploads. Never wipe live docs merely because files arrived.
+    const part = partitionLiveDocumentsForDesiredState(existingDocs, keepRefs);
+    const retainIds = part.retainIds;
+    const explicitDeleteIds = part.removeIds;
+    const docsToDeleteExplicit = part.remove;
+    const oldFileLinksToDeleteAfterCommit = [...part.oldFileLinks];
 
     const softDeletePerformanceDocs = async (
       ids: Types.ObjectId[],
@@ -432,9 +413,6 @@ export class ProductPerformanceService implements OnModuleInit {
         filesByIndex: uploadedFiles,
       });
     }
-
-    // Supersede soft-deletes keep prior versions visible in History (no historyHidden).
-    await softDeletePerformanceDocs(supersedeDeleteIds);
 
     const totalDocumentCount = await this.allProductDocumentModel
       .countDocuments({

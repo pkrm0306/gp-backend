@@ -6,10 +6,10 @@ import {
   Post,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -20,12 +20,15 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import { rawMaterialsMultipartMemoryMulterOptions } from '../common/raw-materials/raw-materials-upload.util';
+import { filterUploadFilesByFieldNames } from '../common/raw-materials/raw-materials-desired-document-sync.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsOptimizationOfRawMixService } from './raw-materials-optimization-of-raw-mix.service';
 import { CreateRawMaterialsOptimizationOfRawMixDto } from './dto/create-raw-materials-optimization-of-raw-mix.dto';
 import {
   assertRawMaterialsDocumentTypes,
+  collectAllUploadFiles,
   parseMultipartJsonArray,
   pickUploadFile,
   parseRequiredRawMaterialsUrn,
@@ -57,7 +60,7 @@ export class RawMaterialsOptimizationOfRawMixController {
     summary: 'Create raw materials optimization of raw mix record (per URN)',
   })
   @UseInterceptors(
-    FileInterceptor('optimizationOfRawMixFile', rawMaterialsMultipartMemoryMulterOptions()),
+    AnyFilesInterceptor(rawMaterialsMultipartMemoryMulterOptions()),
   )
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiBody({
@@ -99,7 +102,7 @@ export class RawMaterialsOptimizationOfRawMixController {
   async create(
     @CurrentUser() user: any,
     @Body() body: any,
-    @UploadedFile() optimizationOfRawMixFile?: Express.Multer.File,
+    @UploadedFiles() uploadedFiles?: Express.Multer.File[],
   ) {
     if (!user?.vendorId) {
       throw new BadRequestException('Vendor ID not found in token');
@@ -107,8 +110,15 @@ export class RawMaterialsOptimizationOfRawMixController {
 
     const units = parseMultipartJsonArray(body.units, 'units');
 
-    if (optimizationOfRawMixFile) {
-      assertRawMaterialsDocumentTypes([optimizationOfRawMixFile]);
+    const uploadFiles = filterUploadFilesByFieldNames(
+      collectAllUploadFiles(uploadedFiles),
+      ['optimizationOfRawMixFile'],
+    );
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
+    if (uploadFiles.length > 0) {
+      assertRawMaterialsDocumentTypes(uploadFiles);
     }
     const urnNo = parseRequiredRawMaterialsUrn(body);
     const persistedRecordCount = await this.service.countPersistedByUrn(
@@ -119,7 +129,7 @@ export class RawMaterialsOptimizationOfRawMixController {
       vendorId: user.vendorId,
       urnNo,
       documentForm: DocumentSectionKey.RAW_MATERIALS_RAW_MIX_OPTIMIZATION,
-      files: optimizationOfRawMixFile ? [optimizationOfRawMixFile] : [],
+      files: uploadFiles,
       rows: units as Array<Record<string, unknown>>,
       rowKeys: RAW_MIX_UNIT_ROW_KEYS,
       persistedRecordCount,
@@ -131,7 +141,7 @@ export class RawMaterialsOptimizationOfRawMixController {
       optimizationOfRawMixFileName: body.optimizationOfRawMixFileName,
     };
 
-    const data = await this.service.create(dto, user.vendorId, optimizationOfRawMixFile);
+    const data = await this.service.create(dto, user.vendorId, { uploadFiles, existingDocumentIds });
     return { success: true, data };
   }
 

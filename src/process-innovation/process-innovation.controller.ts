@@ -24,6 +24,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProcessInnovationDto } from './dto/create-process-innovation.dto';
 import { PatchInnovationDocumentTagDto } from './dto/patch-innovation-document-tag.dto';
 import { parseInnovationDocumentTagsForUpload } from './utils/innovation-document-tag.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 
 @ApiTags('Process Innovation')
 @Controller('process-innovation')
@@ -43,7 +44,9 @@ export class ProcessInnovationController {
     description:
       'Creates or updates process innovation data with supporting documents. Files under uploads/urns/{urn_no}/. ' +
       'Optional **innovationDocumentTags**: JSON array string (same order as files), e.g. `["tech","process","social"]`. ' +
-      'Omitted or short arrays default missing slots to **tech**. New rows append to `all_product_documents` (existing innovation docs are not removed).',
+      'Omitted or short arrays default missing slots to **tech**. ' +
+      'When **existingDocumentIds** is provided (DesiredState), soft-deletes innovation_implementation_documents not in the keep list, then inserts new files. ' +
+      'Omit existingDocumentIds to retain all existing docs (legacy). documentTag is metadata, not a separate DesiredState slot.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -76,7 +79,7 @@ export class ProcessInnovationController {
         innovationDocumentTags: {
           type: 'string',
           description:
-            'JSON array of tags **tech** | **process** | **social**, one per file in upload order. Example: `["tech","process"]`. Optional; defaults to tech.',
+            'JSON array of tags **tech** | **process** | **social**, one per file in upload order. Example: `["tech","process"]`. Optional; defaults to tech. Metadata only — not a DesiredState slot.',
           example: '["tech","process","social"]',
         },
         innovationImplementationDocumentsFile: {
@@ -87,6 +90,11 @@ export class ProcessInnovationController {
           },
           description:
             'Innovation implementation documents files (multiple supported)',
+        },
+        existingDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentId values to keep (DesiredState). Omit = keep all.',
         },
       },
     },
@@ -146,6 +154,10 @@ export class ProcessInnovationController {
           : undefined,
     };
 
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
+
     // Validate file name if file is uploaded
     if (
       innovationImplementationDocumentsFiles.length > 0 &&
@@ -162,6 +174,7 @@ export class ProcessInnovationController {
       user.vendorId,
       innovationImplementationDocumentsFiles,
       innovationDocumentTags,
+      existingDocumentIds,
     );
     return { success: true, data };
   }

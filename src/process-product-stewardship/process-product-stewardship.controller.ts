@@ -25,6 +25,7 @@ import {
   CreateProcessProductStewardshipDto,
   ProductStewardshipProgrammeDetailDto,
 } from './dto/create-process-product-stewardship.dto';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 
 @ApiTags('Process Product Stewardship')
 @Controller('process-product-stewardship')
@@ -42,7 +43,9 @@ export class ProcessProductStewardshipController {
   @ApiOperation({
     summary: 'Create process product stewardship data',
     description:
-      'Creates process product stewardship data with file uploads. Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Only PDF and Excel (.pdf, .xls, .xlsx) uploads are allowed.',
+      'Creates process product stewardship data with file uploads. Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Only PDF and Excel (.pdf, .xls, .xlsx) uploads are allowed. ' +
+      '**existingSeaDocumentIds** / **existingQmDocumentIds** / **existingEprDocumentIds** control DesiredState keep lists per document slot (independent). ' +
+      'Programme-row replace (programmeDetails) is unchanged and is not DesiredState.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -126,6 +129,24 @@ export class ProcessProductStewardshipController {
           },
           description: 'EPR supporting documents files (multiple supported)',
         },
+        existingSeaDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentId values to keep for sea_supporting_documents (DesiredState). Omit = keep all SEA docs.',
+          example: '[101,102]',
+        },
+        existingQmDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentId values to keep for qm_supporting_documents (DesiredState). Omit = keep all QM docs.',
+          example: '[201,202]',
+        },
+        existingEprDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentId values to keep for epr_supporting_documents (DesiredState). Omit = keep all EPR docs.',
+          example: '[301,302]',
+        },
       },
     },
   })
@@ -179,6 +200,15 @@ export class ProcessProductStewardshipController {
       seaSupportingDocumentsFileName: body.seaSupportingDocumentsFileName,
       qmSupportingDocumentsFileName: body.qmSupportingDocumentsFileName,
       eprSupportingDocumentsFileName: body.eprSupportingDocumentsFileName,
+      existingSeaDocumentIds: parseMultipartJsonIdArray(
+        body.existingSeaDocumentIds ?? body.existing_sea_document_ids,
+      ),
+      existingQmDocumentIds: parseMultipartJsonIdArray(
+        body.existingQmDocumentIds ?? body.existing_qm_document_ids,
+      ),
+      existingEprDocumentIds: parseMultipartJsonIdArray(
+        body.existingEprDocumentIds ?? body.existing_epr_document_ids,
+      ),
     };
 
     // Extract files by fieldname from the files array

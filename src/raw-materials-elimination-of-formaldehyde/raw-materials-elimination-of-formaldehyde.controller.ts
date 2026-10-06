@@ -198,8 +198,13 @@ export class RawMaterialsEliminationOfFormaldehydeController {
       formaldehydeFileName: parseRawMaterialsFormString(body.formaldehydeFileName),
     };
 
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
     const data = await this.service.create(dto, user.vendorId, formaldehydeFile, {
       replaceTableBeforeInsert,
+      uploadFiles: uploadFiles.length ? uploadFiles : formaldehydeFile ? [formaldehydeFile] : [],
+      existingDocumentIds,
     });
     return {
       success: true,

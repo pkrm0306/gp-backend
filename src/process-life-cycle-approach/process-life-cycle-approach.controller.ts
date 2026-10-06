@@ -22,6 +22,7 @@ import { ProcessLifeCycleApproachService } from './process-life-cycle-approach.s
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateProcessLifeCycleApproachDto } from './dto/create-process-life-cycle-approach.dto';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 
 @ApiTags('Process Life Cycle Approach')
 @Controller('process-life-cycle-approach')
@@ -39,7 +40,8 @@ export class ProcessLifeCycleApproachController {
   @ApiOperation({
     summary: 'Create process life cycle approach data',
     description:
-      'Creates process life cycle approach data with file uploads. Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Only PDF and Excel (.pdf, .xls, .xlsx) uploads are allowed.',
+      'Creates process life cycle approach data with file uploads. Files are stored in URN-specific folder (uploads/urns/{urn_no}/). Only PDF and Excel (.pdf, .xls, .xlsx) uploads are allowed. ' +
+      '**existingAssessmentDocumentIds** / **existingImplementationDocumentIds** control which prior uploads are kept per subsection (DesiredState).',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -75,6 +77,18 @@ export class ProcessLifeCycleApproachController {
           description:
             'Life cycle implementation documents display name (required if uploading lifeCycleImplementationDocumentsFile)',
           example: 'Life Cycle Implementation Documents - March 2026',
+        },
+        existingAssessmentDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentIds to keep for Assessment. Send [] to clear Assessment only.',
+          example: '[101,102]',
+        },
+        existingImplementationDocumentIds: {
+          type: 'string',
+          description:
+            'JSON array of productDocumentIds to keep for Implementation. Send [] to clear Implementation only.',
+          example: '[201,202]',
         },
         lifeCycleAssesmentReportsFile: {
           type: 'array',
@@ -130,7 +144,6 @@ export class ProcessLifeCycleApproachController {
     if (!user?.vendorId)
       throw new BadRequestException('Vendor ID not found in token');
 
-    // Parse body to get DTO
     const dto: CreateProcessLifeCycleApproachDto = {
       urnNo: body.urnNo,
       lifeCycleImplementationDetails: body.lifeCycleImplementationDetails,
@@ -142,8 +155,16 @@ export class ProcessLifeCycleApproachController {
         body.lifeCycleImplementationDocumentsFileName,
     };
 
-    // Extract files by fieldname from the files array
-    // AnyFilesInterceptor captures all files and stores them with their fieldname
+    const existingAssessmentDocumentIds = parseMultipartJsonIdArray(
+      body.existingAssessmentDocumentIds ??
+        body.existingLifeCycleAssesmentDocumentIds ??
+        body.existingLifeCycleAssessmentDocumentIds,
+    );
+    const existingImplementationDocumentIds = parseMultipartJsonIdArray(
+      body.existingImplementationDocumentIds ??
+        body.existingLifeCycleImplementationDocumentIds,
+    );
+
     const lifeCycleAssesmentReportsFiles = (files || []).filter(
       (f) => f.fieldname === 'lifeCycleAssesmentReportsFile',
     );
@@ -151,7 +172,6 @@ export class ProcessLifeCycleApproachController {
       (f) => f.fieldname === 'lifeCycleImplementationDocumentsFile',
     );
 
-    // Validate file names if files are uploaded
     if (
       lifeCycleAssesmentReportsFiles.length > 0 &&
       (!dto.lifeCycleAssesmentReportsFileName ||
@@ -178,6 +198,8 @@ export class ProcessLifeCycleApproachController {
         user.vendorId,
         lifeCycleAssesmentReportsFiles,
         lifeCycleImplementationDocumentsFiles,
+        existingAssessmentDocumentIds,
+        existingImplementationDocumentIds,
       );
     return { success: true, data };
   }

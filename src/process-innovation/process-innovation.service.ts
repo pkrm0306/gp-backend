@@ -23,7 +23,10 @@ import { DocumentSectionKey } from '../common/constants/document-section-key.con
 import type { InnovationDocumentTag } from './utils/innovation-document-tag.util';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import {
+  deleteUploadedFileByDocumentLink,
+  uploadFile,
+} from '../utils/upload-file.util';
 import { ProductDocumentUploadNotificationHelper } from '../notifications/helpers/product-document-upload-notification.helper';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
 import {
@@ -31,6 +34,10 @@ import {
   trackInsertedCertificationDocuments,
 } from '../documents/helpers/certification-document-version.util';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
+import {
+  resolveDesiredDocumentIdRefs,
+  softDeleteUnkeptCertificationDocuments,
+} from '../documents/helpers/desired-document-state.apply';
 
 @Injectable()
 export class ProcessInnovationService implements OnModuleInit {
@@ -87,13 +94,15 @@ export class ProcessInnovationService implements OnModuleInit {
   }
 
   /**
-   * Create process innovation with file upload
+   * Create process innovation with file upload (DesiredState when keep list sent).
+   * documentTag is metadata on each row — not a separate DesiredState slot.
    */
   async createProcessInnovation(
     createProcessInnovationDto: CreateProcessInnovationDto,
     vendorId: string,
     innovationImplementationDocumentsFiles?: Express.Multer.File[],
     innovationDocumentTags?: InnovationDocumentTag[],
+    existingDocumentIds?: string[],
   ): Promise<ProcessInnovationDocument> {
     await assertVendorCanEditUrn(
       this.productModel,
@@ -104,6 +113,7 @@ export class ProcessInnovationService implements OnModuleInit {
     session.startTransaction();
 
     let createdFileFullPaths: string[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
@@ -123,9 +133,52 @@ export class ProcessInnovationService implements OnModuleInit {
         ? innovationImplementationDocumentsFiles
         : [];
 
-      // Handle file upload and set flag
+      const INNOVATION_DOCS_SUBSECTION = 'innovation_implementation_documents';
+
+      const liveDocs = await this.allProductDocumentModel
+        .find({
+          vendorId: vendorObjectId,
+          urnNo: createProcessInnovationDto.urnNo,
+          documentForm: DocumentSectionKey.PROCESS_INNOVATION,
+          documentFormSubsection: INNOVATION_DOCS_SUBSECTION,
+          isDeleted: { $ne: true },
+        })
+        .session(session);
+
+      const keepRefs =
+        existingDocumentIds !== undefined
+          ? resolveDesiredDocumentIdRefs(existingDocumentIds)
+          : null;
+
+      const sync = await softDeleteUnkeptCertificationDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo: createProcessInnovationDto.urnNo,
+        sectionKey: DocumentSectionKey.PROCESS_INNOVATION,
+        vendorObjectId,
+        now,
+        session,
+        liveDocs,
+        keepRefs,
+      });
+      oldFileLinksToDeleteAfterCommit = sync.oldFileLinks;
+
+      if (sync.retainIds.length) {
+        await this.allProductDocumentModel.updateMany(
+          { _id: { $in: sync.retainIds } },
+          {
+            $set: {
+              formPrimaryId: processInnovationId,
+              updatedDate: now,
+            },
+          },
+          { session },
+        );
+      }
+
+      // DesiredState: flag from retained live docs + any new uploads (never wipe merely because files present).
       let innovationImplementationDocuments =
-        existingInnovation?.innovationImplementationDocuments ?? 0;
+        sync.retainIds.length > 0 ? 1 : 0;
       const innovationImplementationDocumentsFilePaths: string[] = [];
 
       if (uploadedInnovationFiles.length > 0) {
@@ -145,8 +198,6 @@ export class ProcessInnovationService implements OnModuleInit {
         }
         innovationImplementationDocuments = 1;
       }
-
-      const INNOVATION_DOCS_SUBSECTION = 'innovation_implementation_documents';
 
       // Create process innovation data
       const processInnovationData = {
@@ -224,6 +275,14 @@ export class ProcessInnovationService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
+
+      for (const link of oldFileLinksToDeleteAfterCommit) {
+        try {
+          await deleteUploadedFileByDocumentLink(link);
+        } catch {
+          // ignore
+        }
+      }
 
       this.documentUploadNotification.notifyAfterDocumentsUploaded(
         vendorId,

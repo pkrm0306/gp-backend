@@ -200,13 +200,23 @@ export function formatPaymentRecordsForUrnDetails(
     });
     const paymentProofEditable = isVendorPaymentProofEditable(formatted);
     const paymentProofLockMessage = resolveVendorPaymentProofLockMessage(formatted);
-    return maskPaymentSubmissionFields({
+    const enriched = maskPaymentSubmissionFields({
       ...formatted,
       paymentProofEditable,
       payment_proof_editable: paymentProofEditable,
       paymentProofLockMessage,
       payment_proof_lock_message: paymentProofLockMessage,
     });
+    const enrichedRecord = enriched as Record<string, unknown>;
+    const paymentDate =
+      enrichedRecord.paymentChequeDate ??
+      enrichedRecord.payment_cheque_date ??
+      null;
+    return {
+      ...enriched,
+      paymentDate,
+      payment_date: paymentDate,
+    };
   });
 }
 

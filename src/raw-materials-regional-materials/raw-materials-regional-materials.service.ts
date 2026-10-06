@@ -22,10 +22,13 @@ import {
   deleteUploadedFileByDocumentLink,
   uploadFile,
 } from '../utils/upload-file.util';
-import { trackProductDocumentDeleteBatch } from '../documents/helpers/product-document-version.integration';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
+import {
+  resolveDesiredDocumentIdRefs,
+  softDeleteUnkeptCertificationDocuments,
+} from '../documents/helpers/desired-document-state.apply';
 import {
   assertUnitYearFieldsPositive,
   filterMeaningfulRows,
@@ -113,38 +116,19 @@ export class RawMaterialsRegionalMaterialsService {
     });
 
     const keepRefs =
-      existingDocumentIds !== undefined ? existingDocumentIds : null;
-    const oldLinks: string[] = [];
-    const docsToDelete: AllProductDocumentDocument[] = [];
-
-    if (keepRefs !== null) {
-      for (const doc of existingDocs) {
-        const keep =
-          keepRefs.includes(String(doc.productDocumentId)) ||
-          keepRefs.includes(String(doc._id));
-        if (!keep) {
-          docsToDelete.push(doc);
-          if (doc.documentLink) {
-            oldLinks.push(doc.documentLink);
-          }
-          doc.isDeleted = true;
-          doc.deletedAt = now;
-          doc.deletedBy = vendorObjectId;
-          doc.updatedDate = now;
-          await doc.save();
-        }
-      }
-      if (docsToDelete.length) {
-        await trackProductDocumentDeleteBatch({
-          versioning: this.documentVersioningService,
-          urnNo,
-          sectionKey: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
-          userId: vendorObjectId,
-          docs: docsToDelete,
-          slotKeyMode: 'subsection',
-        });
-      }
-    }
+      existingDocumentIds !== undefined
+        ? resolveDesiredDocumentIdRefs(existingDocumentIds)
+        : null;
+    const sync = await softDeleteUnkeptCertificationDocuments({
+      documentModel: this.allProductDocumentModel,
+      versioning: this.documentVersioningService,
+      urnNo,
+      sectionKey: DocumentSectionKey.RAW_MATERIALS_REGIONAL_MATERIALS,
+      vendorObjectId,
+      now,
+      liveDocs: existingDocs as any,
+      keepRefs,
+    });
 
     const documents: RegionalMaterialsProductDocumentRow[] = [];
     for (let i = 0; i < uploadFiles.length; i++) {
@@ -179,7 +163,7 @@ export class RawMaterialsRegionalMaterialsService {
       });
     }
 
-    for (const link of oldLinks) {
+    for (const link of sync.oldFileLinks) {
       try {
         await deleteUploadedFileByDocumentLink(link);
       } catch {

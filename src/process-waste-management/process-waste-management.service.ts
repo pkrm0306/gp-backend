@@ -28,6 +28,11 @@ import {
   trackInsertedCertificationDocuments,
 } from '../documents/helpers/certification-document-version.util';
 import { assertVendorCanEditUrn } from '../common/vendor/vendor-urn-edit.util';
+import {
+  resolveDesiredDocumentIdRefs,
+  softDeleteUnkeptCertificationDocuments,
+} from '../documents/helpers/desired-document-state.apply';
+import { deleteUploadedFileByDocumentLink } from '../utils/upload-file.util';
 
 @Injectable()
 export class ProcessWasteManagementService implements OnModuleInit {
@@ -84,12 +89,13 @@ export class ProcessWasteManagementService implements OnModuleInit {
   }
 
   /**
-   * Create process waste management with file upload
+   * Create process waste management with file upload (DesiredState when keep list sent).
    */
   async createProcessWasteManagement(
     createProcessWasteManagementDto: CreateProcessWasteManagementDto,
     vendorId: string,
     wmSupportingDocumentsFiles?: Express.Multer.File[],
+    existingDocumentIds?: string[],
   ): Promise<ProcessWasteManagementDocument> {
     await assertVendorCanEditUrn(
       this.productModel,
@@ -100,6 +106,7 @@ export class ProcessWasteManagementService implements OnModuleInit {
     session.startTransaction();
 
     let createdFileFullPaths: string[] = [];
+    let oldFileLinksToDeleteAfterCommit: string[] = [];
 
     try {
       // Convert vendorId to ObjectId
@@ -117,9 +124,48 @@ export class ProcessWasteManagementService implements OnModuleInit {
         ? wmSupportingDocumentsFiles
         : [];
 
-      // Handle file upload and set flag
-      let wmSupportingDocuments =
-        existingWasteManagement?.wmSupportingDocuments ?? null;
+      const liveDocs = await this.allProductDocumentModel
+        .find({
+          vendorId: vendorObjectId,
+          urnNo: createProcessWasteManagementDto.urnNo,
+          documentForm: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+          isDeleted: { $ne: true },
+        })
+        .session(session);
+
+      const keepRefs =
+        existingDocumentIds !== undefined
+          ? resolveDesiredDocumentIdRefs(existingDocumentIds)
+          : null;
+
+      const sync = await softDeleteUnkeptCertificationDocuments({
+        documentModel: this.allProductDocumentModel,
+        versioning: this.documentVersioningService,
+        urnNo: createProcessWasteManagementDto.urnNo,
+        sectionKey: DocumentSectionKey.PROCESS_WASTE_MANAGEMENT,
+        vendorObjectId,
+        now,
+        session,
+        liveDocs,
+        keepRefs,
+      });
+      oldFileLinksToDeleteAfterCommit = sync.oldFileLinks;
+
+      if (sync.retainIds.length) {
+        await this.allProductDocumentModel.updateMany(
+          { _id: { $in: sync.retainIds } },
+          {
+            $set: {
+              formPrimaryId: processWasteManagementId,
+              updatedDate: now,
+            },
+          },
+          { session },
+        );
+      }
+
+      let wmSupportingDocuments: number | null =
+        sync.retainIds.length > 0 ? 1 : null;
       const wmSupportingDocumentsFilePaths: string[] = [];
 
       if (uploadedWmFiles.length > 0) {
@@ -136,10 +182,6 @@ export class ProcessWasteManagementService implements OnModuleInit {
         }
         wmSupportingDocuments = 1;
       }
-
-      // Append-only document rows (same behaviour as process-manufacturing):
-      // do not soft-delete existing PROCESS_WASTE_MANAGEMENT all_product_documents
-      // on each upload — vendors add files incrementally.
 
       // Create process waste management data
       const processWasteManagementData = {
@@ -209,6 +251,14 @@ export class ProcessWasteManagementService implements OnModuleInit {
 
       await session.commitTransaction();
       session.endSession();
+
+      for (const link of oldFileLinksToDeleteAfterCommit) {
+        try {
+          await deleteUploadedFileByDocumentLink(link);
+        } catch {
+          // ignore
+        }
+      }
 
       this.documentUploadNotification.notifyAfterDocumentsUploaded(
         vendorId,

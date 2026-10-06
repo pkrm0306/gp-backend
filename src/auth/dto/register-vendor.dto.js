@@ -130,12 +130,12 @@ var RegisterVendorDto = function () {
                 }), (0, class_validator_1.IsString)(), (0, class_validator_1.IsOptional)()];
             _password_decorators = [(0, swagger_1.ApiProperty)(), (0, class_validator_1.IsString)(), (0, class_validator_1.MinLength)(6)];
             _confirmPassword_decorators = [(0, swagger_1.ApiProperty)(), (0, class_validator_1.IsString)(), (0, class_validator_1.IsNotEmpty)()];
-            _captchaToken_decorators = [(0, swagger_1.ApiProperty)({
-                    description: 'Google reCAPTCHA v2 response token from the signup checkbox.',
+            _captchaToken_decorators = [(0, swagger_1.ApiPropertyOptional)({
+                    description: 'Optional Google reCAPTCHA v2 token. Not required for vendor create account.',
                 }), (0, class_transformer_1.Transform)(function (_b) {
                     var value = _b.value;
                     return (typeof value === 'string' ? value.trim() : value);
-                }), (0, class_validator_1.IsString)(), (0, class_validator_1.IsNotEmpty)({ message: 'Please complete the reCAPTCHA verification.' })];
+                }), (0, class_validator_1.IsOptional)(), (0, class_validator_1.IsString)()];
             __esDecorate(null, null, _name_decorators, { kind: "field", name: "name", static: false, private: false, access: { has: function (obj) { return "name" in obj; }, get: function (obj) { return obj.name; }, set: function (obj, value) { obj.name = value; } }, metadata: _metadata }, _name_initializers, _name_extraInitializers);
             __esDecorate(null, null, _companySize_decorators, { kind: "field", name: "companySize", static: false, private: false, access: { has: function (obj) { return "companySize" in obj; }, get: function (obj) { return obj.companySize; }, set: function (obj, value) { obj.companySize = value; } }, metadata: _metadata }, _companySize_initializers, _companySize_extraInitializers);
             __esDecorate(null, null, _companyName_decorators, { kind: "field", name: "companyName", static: false, private: false, access: { has: function (obj) { return "companyName" in obj; }, get: function (obj) { return obj.companyName; }, set: function (obj, value) { obj.companyName = value; } }, metadata: _metadata }, _companyName_initializers, _companyName_extraInitializers);

@@ -19,7 +19,8 @@ import {
 import { DocumentSectionKey } from '../common/constants/document-section-key.constants';
 import * as fs from 'fs';
 import * as path from 'path';
-import { uploadFile } from '../utils/upload-file.util';
+import { deleteUploadedFileByDocumentLink, uploadFile } from '../utils/upload-file.util';
+import { softDeleteUnkeptRawMaterialsSupportingDocuments } from '../common/raw-materials/raw-materials-desired-document-sync.util';
 import { DocumentVersioningService } from '../documents/document-versioning.service';
 import { Product, ProductDocument } from '../product-registration/schemas/product.schema';
 import { trackCertificationDocumentAfterCreate } from '../documents/helpers/certification-document-version.util';
@@ -133,7 +134,11 @@ export class RawMaterialsRecoveryService {
   async create(
     dto: CreateRawMaterialsRecoveryDto,
     vendorId: string,
-    recoveryFile?: Express.Multer.File,
+    options?: {
+      uploadFiles?: Express.Multer.File[];
+      existingDocumentIds?: string[];
+      recoveryFile?: Express.Multer.File;
+    },
   ): Promise<{
     urnNo: string;
     vendorId: string;
@@ -153,6 +158,9 @@ export class RawMaterialsRecoveryService {
       const vendorObjectId = this.toObjectId(vendorId, 'vendorId');
       const urnNo = dto.urnNo.trim();
       const now = new Date();
+      const uploadFiles =
+        options?.uploadFiles ??
+        (options?.recoveryFile ? [options.recoveryFile] : []);
       const docsToCreate: Array<
         Omit<RawMaterialsRecovery, 'createdDate' | 'updatedDate'> & {
           createdDate: Date;
@@ -185,40 +193,62 @@ export class RawMaterialsRecoveryService {
       const created = await this.model.insertMany(docsToCreate);
       const documents: RecoveryProductDocumentRow[] = [];
 
-      if (recoveryFile) {
-        const storedRelativePath = await this.saveFileToUrnFolder(
-          recoveryFile,
-          urnNo,
-          'recovery_supporting_document',
-        );
-        const productDocumentId = await this.sequenceHelper.getProductDocumentId();
-        const masterDoc = await this.allProductDocumentModel.create({
-          productDocumentId,
-          vendorId: vendorObjectId,
-          urnNo,
-          eoiNo: '',
-          documentForm: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
-          documentFormSubsection: 'supporting_documents',
-          formPrimaryId:
-            created[0]?.rawMaterialsRecoveryId ?? productDocumentId,
-          documentName: path.basename(storedRelativePath),
-          documentOriginalName: recoveryFile.originalname,
-          documentLink: storedRelativePath,
-          createdDate: now,
-          updatedDate: now,
-        });
-        documents.push(this.mapProductDocument(masterDoc));
-        await trackCertificationDocumentAfterCreate({
-          productModel: this.productModel,
-          versioning: this.documentVersioningService,
+      if (uploadFiles.length > 0 || options?.existingDocumentIds !== undefined) {
+        const sync = await softDeleteUnkeptRawMaterialsSupportingDocuments({
           documentModel: this.allProductDocumentModel,
+          versioning: this.documentVersioningService,
           urnNo,
+          vendorObjectId,
           sectionKey: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
-          userId: vendorObjectId,
-          vendorId: vendorObjectId,
-          doc: masterDoc,
-          file: recoveryFile,
+          documentForm: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
+          existingDocumentIds: options?.existingDocumentIds,
+          now,
         });
+        const formPrimaryId =
+          created[0]?.rawMaterialsRecoveryId ??
+          (await this.sequenceHelper.getProductDocumentId());
+        for (let i = 0; i < uploadFiles.length; i++) {
+          const file = uploadFiles[i];
+          const storedRelativePath = await this.saveFileToUrnFolder(
+            file,
+            urnNo,
+            'recovery_supporting_document',
+          );
+          const productDocumentId = await this.sequenceHelper.getProductDocumentId();
+          const masterDoc = await this.allProductDocumentModel.create({
+            productDocumentId,
+            vendorId: vendorObjectId,
+            urnNo,
+            eoiNo: '',
+            documentForm: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
+            documentFormSubsection: 'supporting_documents',
+            formPrimaryId: i === 0 ? formPrimaryId : productDocumentId,
+            documentName: path.basename(storedRelativePath),
+            documentOriginalName: file.originalname,
+            documentLink: storedRelativePath,
+            createdDate: now,
+            updatedDate: now,
+          });
+          documents.push(this.mapProductDocument(masterDoc));
+          await trackCertificationDocumentAfterCreate({
+            productModel: this.productModel,
+            versioning: this.documentVersioningService,
+            documentModel: this.allProductDocumentModel,
+            urnNo,
+            sectionKey: DocumentSectionKey.RAW_MATERIALS_RECOVERY,
+            userId: vendorObjectId,
+            vendorId: vendorObjectId,
+            doc: masterDoc,
+            file,
+          });
+        }
+        for (const link of sync.oldFileLinks) {
+          try {
+            await deleteUploadedFileByDocumentLink(link);
+          } catch {
+            // ignore
+          }
+        }
       }
 
       return {

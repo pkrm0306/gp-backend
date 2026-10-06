@@ -25,6 +25,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RawMaterialsUtilizationRmcService } from './raw-materials-utilization-rmc.service';
 import { assertRawMaterialsDocumentTypes } from '../common/raw-materials/raw-materials-upload.util';
+import { parseMultipartJsonIdArray } from '../product-design/product-design-upload.util';
 
 @ApiTags('Raw Materials Utilization RMC')
 @Controller('raw-materials-utilization-rmc')
@@ -80,8 +81,15 @@ export class RawMaterialsUtilizationRmcController {
     if (stepFiles.length > 0) {
       assertRawMaterialsDocumentTypes(stepFiles);
     }
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
 
-    const data = await this.service.create(body, user.vendorId, { file1, file2 });
+    const data = await this.service.create(body, user.vendorId, {
+      file1,
+      file2,
+      existingDocumentIds,
+    });
     return { success: true, data };
   }
 
@@ -129,8 +137,16 @@ export class RawMaterialsUtilizationRmcController {
     if (stepFiles.length > 0) {
       assertRawMaterialsDocumentTypes(stepFiles);
     }
+    const existingDocumentIds = parseMultipartJsonIdArray(
+      body.existingDocumentIds ?? body.existing_document_ids,
+    );
 
-    const data = await this.service.create(body, user.vendorId, { file1, file2 }, urnNo.trim());
+    const data = await this.service.create(
+      body,
+      user.vendorId,
+      { file1, file2, existingDocumentIds },
+      urnNo.trim(),
+    );
     return { success: true, data };
   }
 
