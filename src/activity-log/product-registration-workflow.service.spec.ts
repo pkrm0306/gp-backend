@@ -280,4 +280,58 @@ describe('ProductRegistrationWorkflowService', () => {
       ActivityWorkflowItemStatus.Done,
     );
   });
+
+  it('reopens Process Forms tip after reject when older Done(5) exists', async () => {
+    const { service, rows } = createService([
+      {
+        urn_no: urnNo,
+        activities_id: PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS,
+        status: ActivityWorkflowItemStatus.Done,
+        created_at: new Date('2026-01-01'),
+      },
+      {
+        urn_no: urnNo,
+        activities_id:
+          PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW,
+        status: ActivityWorkflowItemStatus.Pending,
+        created_at: new Date('2026-01-02'),
+      },
+    ]);
+
+    await service.rejectActivity(
+      ctx,
+      PRODUCT_REGISTRATION_ACTIVITY_ID.REVIEW_SUBMIT_FINAL_REVIEW,
+    );
+
+    expect(await service.getCurrentPendingActivityId(urnNo)).toBe(
+      PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS,
+    );
+    expect(
+      rows.filter(
+        (r) =>
+          r.activities_id ===
+            PRODUCT_REGISTRATION_ACTIVITY_ID.PROCESS_FORMS_IN_PROGRESS &&
+          r.status === ActivityWorkflowItemStatus.Pending,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('rejectActivityIfPending is no-op when tip does not match', async () => {
+    const { service, saveSpy } = createService([
+      {
+        urn_no: urnNo,
+        activities_id:
+          PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
+        status: ActivityWorkflowItemStatus.Pending,
+        created_at: new Date(),
+      },
+    ]);
+
+    const ok = await service.rejectActivityIfPending(
+      ctx,
+      PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REGISTRATION_FEE,
+    );
+    expect(ok).toBe(false);
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
 });

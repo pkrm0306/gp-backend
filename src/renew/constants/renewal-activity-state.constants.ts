@@ -174,6 +174,20 @@ export function resolveRenewalActivityState(
     };
   }
 
+  // Rejected payment — must win over urnStatus still at PAYMENT_SUBMITTED (13).
+  if (paymentStatus === RENEW_PAYMENT_STATUS.REJECTED) {
+    return {
+      ...base,
+      phase: 'payment_rejected_resubmit',
+      completed: tip(RENEWAL_ACTIVITY_UI.PAYMENT_REJECTED, 1, 'Admin'),
+      current: tip(RENEWAL_ACTIVITY_UI.PAYMENT_PENDING, 0, 'Manufacturer', {
+        activity: RENEWAL_ACTIVITY_UI.PAYMENT_VERIFICATION,
+        responsibility: 'Admin',
+      }),
+      next: tip(RENEWAL_ACTIVITY_UI.PAYMENT_VERIFICATION, 0, 'Admin'),
+    };
+  }
+
   // Payment submitted / awaiting admin verification
   if (
     urnStatus === RENEWAL_URN_STATUS.PAYMENT_SUBMITTED ||
@@ -188,20 +202,6 @@ export function resolveRenewalActivityState(
         responsibility: 'Manufacturer',
       }),
       next: tip(RENEWAL_ACTIVITY_UI.FORMS_IN_PROGRESS, 0, 'Manufacturer'),
-    };
-  }
-
-  // Rejected payment — manufacturer must pay again (fee still on file)
-  if (paymentStatus === RENEW_PAYMENT_STATUS.REJECTED) {
-    return {
-      ...base,
-      phase: 'payment_rejected_resubmit',
-      completed: tip(RENEWAL_ACTIVITY_UI.PAYMENT_REJECTED, 1, 'Admin'),
-      current: tip(RENEWAL_ACTIVITY_UI.PAYMENT_PENDING, 0, 'Manufacturer', {
-        activity: RENEWAL_ACTIVITY_UI.PAYMENT_VERIFICATION,
-        responsibility: 'Admin',
-      }),
-      next: tip(RENEWAL_ACTIVITY_UI.PAYMENT_VERIFICATION, 0, 'Admin'),
     };
   }
 

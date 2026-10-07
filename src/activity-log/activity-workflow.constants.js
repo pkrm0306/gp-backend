@@ -40,7 +40,7 @@ exports.PRODUCT_REGISTRATION_WORKFLOW_STEPS = (_a = {},
         responsibility: 'Admin',
     },
     _a[exports.PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE] = {
-        activity: 'Assign Registration Fee',
+        activity: 'Assign Registration Fee and Proposal Document',
         responsibility: 'Admin',
     },
     _a[exports.PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT] = {

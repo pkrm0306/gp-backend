@@ -40,7 +40,7 @@ export const PRODUCT_REGISTRATION_WORKFLOW_STEPS: Readonly<
     responsibility: 'Admin',
   },
   [PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE]: {
-    activity: 'Assign Registration Fee',
+    activity: 'Assign Registration Fee and Proposal Document',
     responsibility: 'Admin',
   },
   [PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT]: {
@@ -158,8 +158,9 @@ export function resolveExpectedPendingActivityId(
 
   if (urnStatus === 2) {
     const ps = Number(hints?.registrationPaymentStatus ?? 0);
-    // Proof submitted (or approved while status still 2) → Admin Approve/Reject Registration Fee
-    if (Number.isFinite(ps) && ps >= 1) {
+    // Submitted (1) or approved (2) → Admin Approve/Reject Registration Fee.
+    // Rejected (3) or created (0) → Manufacturer proposal/payment rework.
+    if (ps === 1 || ps === 2) {
       return PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REGISTRATION_FEE;
     }
     return PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT;
@@ -167,7 +168,7 @@ export function resolveExpectedPendingActivityId(
 
   if (urnStatus === 7 || urnStatus === 8) {
     const ps = Number(hints?.certificationPaymentStatus ?? 0);
-    if (Number.isFinite(ps) && ps >= 1) {
+    if (ps === 1 || ps === 2) {
       return PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE;
     }
     return PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT;

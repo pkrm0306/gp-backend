@@ -52,6 +52,7 @@ import {
   canAdminSaveUncertifiedProcessComments,
   resolveProcessCommentsBlockReason,
 } from '../process-comments/helpers/process-comments-lock.util';
+import { ActivityLogService } from '../activity-log/activity-log.service';
 
 const TAB_KEY_TO_PROCESS_COMMENT_FIELD: Record<string, string> = {
   'product-design': 'productDesign',
@@ -76,6 +77,7 @@ export class UrnTabReviewService {
     @Inject(forwardRef(() => RenewUrnTabReviewService))
     private readonly renewUrnTabReviewService: RenewUrnTabReviewService,
     private readonly documentVersioningService: DocumentVersioningService,
+    private readonly activityLogService: ActivityLogService,
   ) {}
 
   async ensurePendingReviewsForUrn(urnNo: string): Promise<void> {
@@ -535,6 +537,13 @@ export class UrnTabReviewService {
       });
     }
 
+    const historyActivity = await this.logCertTabReviewDecision(
+      context,
+      dto.tabKey,
+      dto.decision,
+      dto.rejectionRemarks,
+    );
+
     const requiredSlots = buildRequiredReviewSlots(
       context.visibleRawMaterialSteps,
     );
@@ -545,9 +554,60 @@ export class UrnTabReviewService {
       updatedReview: this.formatReviewRow(dto.tabKey, stepIdStored, updated),
       summary,
       quickActions: this.buildQuickActions(summary),
-      /** Reserved for future timeline hook when patch writes activity rows. */
-      activity: null,
+      /** History narrative only — tip stays at Review until admin resend. */
+      activity: historyActivity,
     };
+  }
+
+  /**
+   * Append-only history for section approve/reject. Does not move the workflow tip
+   * (tip moves on admin resend 4→5 via rejectActivity(7)).
+   */
+  private async logCertTabReviewDecision(
+    context: {
+      urnNo: string;
+      urnStatus: number;
+      vendorId: Types.ObjectId;
+      manufacturerId: Types.ObjectId;
+    },
+    tabKey: string,
+    decision: 'approved' | 'rejected',
+    rejectionRemarks?: string,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const label = tabKey
+        .split('-')
+        .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+        .join(' ');
+      const remarks =
+        decision === 'rejected'
+          ? String(rejectionRemarks ?? '').trim()
+          : '';
+      const activity =
+        decision === 'rejected'
+          ? remarks
+            ? `Section rejected: ${label}: ${remarks}`
+            : `Section rejected: ${label}`
+          : `Section approved: ${label}`;
+
+      // History Done row keyed by urnStatus (not tip id 7) so Review tip stays Pending.
+      const saved = await this.activityLogService.logActivity({
+        vendor_id: context.vendorId.toString(),
+        manufacturer_id: context.manufacturerId.toString(),
+        urn_no: context.urnNo,
+        activities_id: context.urnStatus,
+        activity,
+        activity_status: context.urnStatus,
+        responsibility: 'Admin',
+        next_responsibility: 'Admin',
+        next_acitivities_id: context.urnStatus,
+        next_activity: 'Review & Submit for Final Review',
+        status: 1,
+      });
+      return saved?.toObject?.() ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private formatReviewRow(
@@ -654,7 +714,9 @@ export class UrnTabReviewService {
 
     const product = await this.productModel
       .findOne(matchActiveProducts({ urnNo: trimmed }))
-      .select('urnNo urnStatus categoryId vendorId productRenewStatus productStatus')
+      .select(
+        'urnNo urnStatus categoryId vendorId manufacturerId productRenewStatus productStatus',
+      )
       .sort({ createdDate: 1 })
       .lean()
       .exec();
@@ -681,6 +743,7 @@ export class UrnTabReviewService {
       productStatus: Number(product.productStatus ?? 0),
       productRenewStatus: Number(product.productRenewStatus ?? 0),
       vendorId: product.vendorId as Types.ObjectId,
+      manufacturerId: product.manufacturerId as Types.ObjectId,
       categoryRawMaterialForms,
       visibleRawMaterialSteps,
     };

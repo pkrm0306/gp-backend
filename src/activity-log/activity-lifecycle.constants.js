@@ -15,7 +15,7 @@ exports.ACTIVITY_LIFECYCLE_STEPS = {
         responsibility: 'Admin',
     },
     2: {
-        activity: 'Assign Registration Fee',
+        activity: 'Assign Registration Fee and Proposal Document',
         responsibility: 'Admin',
     },
     3: {

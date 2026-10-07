@@ -58,8 +58,33 @@ function sortActivityLogsChronologically(
 }
 
 /**
- * Quick View current step — last lifecycle Pending that has not been superseded by a
- * later Done for the same activities_id (append-only activity_log).
+ * Latest non-auxiliary status per activities_id (newest created_at wins).
+ * Supports reopen after reject: Done(T1) then Pending(T2) → Pending.
+ */
+export function latestWorkflowStatusByActivityId(
+  logs: ActivityLogLike[],
+): Map<number, number> {
+  const sorted = sortActivityLogsChronologically(logs);
+  const latest = new Map<number, number>();
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const row = sorted[i]!;
+    if (isAuxiliaryActivityLog(row)) continue;
+    const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
+    if (!Number.isFinite(activityId) || latest.has(activityId)) continue;
+    const status = Number(row.status);
+    if (
+      status === ActivityWorkflowItemStatus.Pending ||
+      status === ActivityWorkflowItemStatus.Done
+    ) {
+      latest.set(activityId, status);
+    }
+  }
+  return latest;
+}
+
+/**
+ * Quick View current step — newest Pending among activities whose latest
+ * workflow state is Pending (append-only activity_log; reopen after reject).
  */
 export function resolveCurrentWorkflowActivityLog(
   logs: ActivityLogLike[],
@@ -67,24 +92,14 @@ export function resolveCurrentWorkflowActivityLog(
 ): Record<string, unknown> | null {
   const sorted = sortActivityLogsChronologically(logs);
   const newestFirst = [...sorted].reverse();
-
-  const doneActivityIds = new Set<number>();
-  for (const row of newestFirst) {
-    if (isAuxiliaryActivityLog(row)) continue;
-    const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
-    if (
-      Number.isFinite(activityId) &&
-      Number(row.status) === ActivityWorkflowItemStatus.Done
-    ) {
-      doneActivityIds.add(activityId);
-    }
-  }
+  const latestById = latestWorkflowStatusByActivityId(logs);
 
   for (const row of newestFirst) {
     if (isAuxiliaryActivityLog(row)) continue;
     if (Number(row.status) !== ActivityWorkflowItemStatus.Pending) continue;
     const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
-    if (Number.isFinite(activityId) && doneActivityIds.has(activityId)) {
+    if (!Number.isFinite(activityId)) continue;
+    if (latestById.get(activityId) !== ActivityWorkflowItemStatus.Pending) {
       continue;
     }
     return {

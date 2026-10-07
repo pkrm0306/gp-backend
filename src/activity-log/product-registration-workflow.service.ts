@@ -20,7 +20,11 @@ import {
   workflowActivityResponsibility,
   workflowForwardNextActivityId,
 } from './activity-workflow.constants';
-import { isAuxiliaryActivityLog, urnCandidates } from './activity-log.util';
+import {
+  isAuxiliaryActivityLog,
+  latestWorkflowStatusByActivityId,
+  urnCandidates,
+} from './activity-log.util';
 
 export type WorkflowTransitionContext = {
   vendorId: string | Types.ObjectId;
@@ -134,33 +138,114 @@ export class ProductRegistrationWorkflowService {
       .lean()
       .exec();
 
-    const sorted = [...rows].sort((a, b) => {
+    const sortedNewestFirst = [...rows].sort((a, b) => {
       const ta = new Date(a.created_at ?? 0).getTime();
       const tb = new Date(b.created_at ?? 0).getTime();
       return tb - ta;
     });
 
-    // Newest Done per activity id supersedes older Pending for the same id
-    // (append-only log never updates prior rows).
-    const doneActivityIds = new Set<number>();
-    for (const row of sorted) {
-      if (isAuxiliaryActivityLog(row)) continue;
-      const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
-      if (!Number.isFinite(activityId)) continue;
-      if (Number(row.status) === ActivityWorkflowItemStatus.Done) {
-        doneActivityIds.add(activityId);
-      }
-    }
+    // Newest status per activities_id wins (supports reopen after reject).
+    const latestById = latestWorkflowStatusByActivityId(rows);
 
-    for (const row of sorted) {
+    for (const row of sortedNewestFirst) {
       if (isAuxiliaryActivityLog(row)) continue;
       if (Number(row.status) !== ActivityWorkflowItemStatus.Pending) continue;
       const activityId = Number(row.activities_id ?? row.activity_status ?? NaN);
       if (!Number.isFinite(activityId)) continue;
-      if (doneActivityIds.has(activityId)) continue;
+      if (latestById.get(activityId) !== ActivityWorkflowItemStatus.Pending) {
+        continue;
+      }
       return activityId;
     }
     return null;
+  }
+
+  /**
+   * Reject current tip when it matches `activityId`; no-op otherwise.
+   * Used by payment/product reject paths that must not throw on tip drift.
+   */
+  async rejectActivityIfPending(
+    ctx: WorkflowTransitionContext,
+    activityId: number,
+  ): Promise<boolean> {
+    const pendingId = await this.getCurrentPendingActivityId(
+      this.normalizeUrn(ctx.urnNo),
+    );
+    if (pendingId !== activityId) return false;
+    await this.rejectActivity(ctx, activityId);
+    return true;
+  }
+
+  /**
+   * Drive tip to rollback target when rejectActivity cannot run (tip drift).
+   */
+  async ensurePendingActivity(
+    ctx: WorkflowTransitionContext,
+    targetPending: number,
+  ): Promise<void> {
+    const pendingId = await this.getCurrentPendingActivityId(
+      this.normalizeUrn(ctx.urnNo),
+    );
+    if (pendingId === targetPending) return;
+    await this.syncTowardPendingActivity(ctx, targetPending);
+  }
+
+  /**
+   * Admin product rejection (productStatus → 3).
+   * Early-stage (urnStatus &lt; 2): tip 1 → 0. Always append history row.
+   */
+  async recordProductApprovalRejected(
+    ctx: WorkflowTransitionContext,
+    applyWorkflowRollback: boolean,
+  ): Promise<void> {
+    if (applyWorkflowRollback) {
+      try {
+        const rejected = await this.rejectActivityIfPending(
+          ctx,
+          PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
+        );
+        if (!rejected) {
+          await this.ensurePendingActivity(
+            ctx,
+            PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_REGISTRATION,
+          );
+        }
+      } catch (err) {
+        console.error(
+          '[Workflow] recordProductApprovalRejected tip rollback failed:',
+          err,
+        );
+      }
+    }
+
+    const urnNo = this.normalizeUrn(ctx.urnNo);
+    if (!urnNo) return;
+    const rollbackId = PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_REGISTRATION;
+    const now = new Date();
+    const row = new this.activityLogModel({
+      vendor_id: this.toObjectId(ctx.vendorId, 'vendor_id'),
+      manufacturer_id: this.toObjectId(ctx.manufacturerId, 'manufacturer_id'),
+      urn_no: urnNo,
+      activities_id: PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
+      activity: 'Product rejected by admin',
+      activity_status: PRODUCT_REGISTRATION_ACTIVITY_ID.PRODUCT_APPROVE_REJECT,
+      responsibility: 'Admin',
+      next_acitivities_id: applyWorkflowRollback ? rollbackId : undefined,
+      next_activity: applyWorkflowRollback
+        ? workflowActivityName(rollbackId)
+        : undefined,
+      next_responsibility: applyWorkflowRollback
+        ? workflowActivityResponsibility(rollbackId)
+        : undefined,
+      status: ActivityWorkflowItemStatus.Done,
+      created_at: now,
+      updated_at: now,
+    });
+    if (ctx.session) {
+      await row.save({ session: ctx.session });
+    } else {
+      await row.save();
+    }
   }
 
   private assertCanComplete(activityId: number, pendingId: number | null): void {

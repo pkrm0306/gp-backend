@@ -58,6 +58,19 @@ describe('resolveRenewalActivityState', () => {
     expect(s.current?.activity).toBe(RENEWAL_ACTIVITY_UI.PAYMENT_VERIFICATION);
   });
 
+  it('TEST 4c — payment rejected wins over urnStatus still PAYMENT_SUBMITTED (13)', () => {
+    const s = resolveRenewalActivityState({
+      urnStatus: 13,
+      paymentStatus: 3,
+    });
+    expect(s.phase).toBe('payment_rejected_resubmit');
+    expect(s.completed?.activity).toBe(RENEWAL_ACTIVITY_UI.PAYMENT_REJECTED);
+    expect(s.completed?.status).toBe(1);
+    expect(s.current?.activity).toBe(RENEWAL_ACTIVITY_UI.PAYMENT_PENDING);
+    expect(s.current?.responsibility).toBe('Manufacturer');
+    expect(s.current?.status).toBe(0);
+  });
+
   it('TEST 5 — admin approves payment → forms Current', () => {
     const s = resolveRenewalActivityState({
       urnStatus: 14,

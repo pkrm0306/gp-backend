@@ -375,7 +375,13 @@ export class RenewUrnTabReviewService {
     const requiredCount = buildRenewRequiredReviewSlots().length;
     const summary = await this.buildSummaryForCycle(urnNo, cycleId, requiredCount);
 
-    await this.logTabReviewDecision(urnNo, dto.tabKey, dto.decision, urnStatus);
+    await this.logTabReviewDecision(
+      urnNo,
+      dto.tabKey,
+      dto.decision,
+      urnStatus,
+      dto.rejectionRemarks,
+    );
 
     return {
       urnNo,
@@ -670,6 +676,7 @@ export class RenewUrnTabReviewService {
     tabKey: string,
     decision: 'approved' | 'rejected',
     urnStatus: number,
+    rejectionRemarks?: string,
   ): Promise<void> {
     try {
       const context = await resolveUrnRenewContext(this.productModel, urnNo);
@@ -677,6 +684,8 @@ export class RenewUrnTabReviewService {
       const label =
         buildRenewRequiredReviewSlots().find((s) => s.tabKey === tabKey)?.label ??
         tabKey;
+      const remarks =
+        decision === 'rejected' ? String(rejectionRemarks ?? '').trim() : '';
 
       await this.activityLogService.logActivity({
         vendor_id: ownership.vendorId,
@@ -685,13 +694,16 @@ export class RenewUrnTabReviewService {
         activities_id: urnStatus,
         activity:
           decision === 'rejected'
-            ? `Renewal section rejected: ${label}`
+            ? remarks
+              ? `Renewal section rejected: ${label}: ${remarks}`
+              : `Renewal section rejected: ${label}`
             : `Renewal section approved: ${label}`,
         activity_status: urnStatus,
         responsibility: 'Admin',
         next_responsibility: 'Admin',
         next_acitivities_id: urnStatus,
         next_activity: 'Renewal process review',
+        status: 1,
       });
     } catch {
       /* activity log is best-effort */

@@ -19,7 +19,7 @@ export const ACTIVITY_LIFECYCLE_STEPS: Readonly<
     responsibility: 'Admin',
   },
   2: {
-    activity: 'Assign Registration Fee',
+    activity: 'Assign Registration Fee and Proposal Document',
     responsibility: 'Admin',
   },
   3: {

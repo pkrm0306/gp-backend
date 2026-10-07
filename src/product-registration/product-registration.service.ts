@@ -6418,6 +6418,18 @@ export class ProductRegistrationService implements OnModuleInit {
             ),
           );
       } else if (dto.updateStatusTo === 3 && previousProductStatus !== 3) {
+        // Activity Log: early reject rolls tip 1→0; later rejects keep tip, append history.
+        await this.productRegistrationWorkflowService
+          .recordProductApprovalRejected(
+            { vendorId, manufacturerId, urnNo },
+            previousUrnStatus < 2,
+          )
+          .catch((err) =>
+            this.logger.warn(
+              `[Admin URN Status] Product reject activity log failed: ${(err as Error).message}`,
+            ),
+          );
+
         if (previousUrnStatus < 2) {
           const manufacturer = await this.manufacturerModel
             .findById(manufacturerId)

@@ -48,4 +48,38 @@ describe('activity-log Quick View helpers', () => {
       status: ActivityWorkflowItemStatus.Pending,
     });
   });
+
+  it('reopens activity after Done when a newer Pending exists (reject/resend)', () => {
+    const current = resolveCurrentWorkflowActivityLog(
+      [
+        {
+          activities_id: 5,
+          activity_status: 5,
+          activity: 'Process Forms in Progress',
+          status: ActivityWorkflowItemStatus.Done,
+          created_at: new Date('2026-01-01'),
+        },
+        {
+          activities_id: 7,
+          activity_status: 7,
+          activity: 'Review & Submit for Final Review',
+          status: ActivityWorkflowItemStatus.Pending,
+          created_at: new Date('2026-01-02'),
+        },
+        {
+          activities_id: 5,
+          activity_status: 5,
+          activity: 'Process Forms in Progress',
+          status: ActivityWorkflowItemStatus.Pending,
+          created_at: new Date('2026-01-03'),
+        },
+      ],
+      5,
+    );
+
+    expect(current).toMatchObject({
+      activities_id: 5,
+      status: ActivityWorkflowItemStatus.Pending,
+    });
+  });
 });

@@ -30,6 +30,11 @@ import {
 } from '../manufacturers/schemas/manufacturer.schema';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { ProductRegistrationWorkflowService } from '../activity-log/product-registration-workflow.service';
+import {
+  PRODUCT_REGISTRATION_ACTIVITY_ID,
+  workflowActivityName,
+} from '../activity-log/activity-workflow.constants';
+import { RENEWAL_ACTIVITY, RENEWAL_NEXT_ACTIVITY } from '../renew/constants/renewal-activity.constants';
 import { uploadFile } from '../utils/upload-file.util';
 import { VendorProposalApprovalDto } from './dto/vendor-proposal-approval.dto';
 import {
@@ -662,10 +667,30 @@ export class PaymentsService {
     paymentRejectionRemarks: string,
     urnStatus: number,
   ): Promise<void> {
+    const remarks = String(paymentRejectionRemarks ?? '').trim();
     const isCertification = paymentType === 'certification';
-    const activityLabel = isCertification
-      ? 'Approve/Reject Certification Fee'
-      : 'Approve/Reject Registration Fee';
+    const isRenew = paymentType === 'renew';
+
+    let activityLabel: string;
+    let nextActivity: string;
+    if (isRenew) {
+      activityLabel = remarks
+        ? `${RENEWAL_ACTIVITY.PAYMENT_REJECTED}: ${remarks}`
+        : RENEWAL_ACTIVITY.PAYMENT_REJECTED;
+      nextActivity = RENEWAL_NEXT_ACTIVITY.VENDOR_SUBMIT_PAYMENT;
+    } else if (isCertification) {
+      activityLabel = remarks
+        ? `Admin rejected certification fee payment: ${remarks}`
+        : 'Admin rejected certification fee payment';
+      nextActivity = 'Certification Fee Payment';
+    } else {
+      activityLabel = remarks
+        ? `Admin rejected registration fee payment: ${remarks}`
+        : 'Admin rejected registration fee payment';
+      nextActivity =
+        'Approve/Reject Registration Fee Proposal and make payment';
+    }
+
     await this.logTimelineEntry(
       vendorId,
       manufacturerId,
@@ -673,9 +698,7 @@ export class PaymentsService {
       {
         activity: activityLabel,
         responsibility: 'Admin',
-        next_activity: isCertification
-          ? 'Certification Fee Payment'
-          : 'Approve/Reject Registration Fee Proposal and make payment',
+        next_activity: nextActivity,
         next_responsibility: 'Manufacturer',
         activities_id: urnStatus,
         activity_status: urnStatus,
@@ -688,6 +711,50 @@ export class PaymentsService {
       paymentStatus: 3,
       paymentRejectionRemarks,
     });
+  }
+
+  /**
+   * Registration/certification payment reject → rollback structured tip (4→3 / 10→9).
+   * Renew uses activity-state API; no WORKFLOW_REJECT_TARGET there.
+   */
+  private async rollbackTipAfterPaymentReject(
+    vendorObjectId: Types.ObjectId,
+    manufacturerId: string | Types.ObjectId,
+    urnNo: string,
+    paymentType: string,
+  ): Promise<void> {
+    if (paymentType !== 'registration' && paymentType !== 'certification') {
+      return;
+    }
+    const rejectFrom =
+      paymentType === 'certification'
+        ? PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_CERTIFICATION_FEE
+        : PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REGISTRATION_FEE;
+    const rollbackTo =
+      paymentType === 'certification'
+        ? PRODUCT_REGISTRATION_ACTIVITY_ID.CERTIFICATION_FEE_PAYMENT
+        : PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT;
+
+    const ctx = {
+      vendorId: vendorObjectId,
+      manufacturerId,
+      urnNo,
+    };
+    try {
+      const rejected =
+        await this.productRegistrationWorkflowService.rejectActivityIfPending(
+          ctx,
+          rejectFrom,
+        );
+      if (!rejected) {
+        await this.productRegistrationWorkflowService.ensurePendingActivity(
+          ctx,
+          rollbackTo,
+        );
+      }
+    } catch (err) {
+      console.error('[Payment] rollbackTipAfterPaymentReject failed:', err);
+    }
   }
 
   private applyPaymentStatusUpdate(
@@ -2412,7 +2479,9 @@ export class PaymentsService {
               anyProduct.manufacturerId.toString(),
               normalizedUrn,
               {
-                activity: 'Assign Registration Fee',
+                activity: workflowActivityName(
+                  PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+                ),
                 responsibility: 'Admin',
                 next_activity:
                   'Approve/Reject Registration Fee Proposal and make payment',
@@ -2631,6 +2700,12 @@ export class PaymentsService {
               urnStatus,
             );
           }
+          await this.rollbackTipAfterPaymentReject(
+            effectiveVendorObjectId,
+            anyProduct.manufacturerId,
+            normalizedUrn,
+            paymentType,
+          );
           this.lifecycleNotification
             .notifyRegistrationPaymentRejected({
               manufacturerId: anyProduct.manufacturerId.toString(),
@@ -2802,15 +2877,16 @@ export class PaymentsService {
 
     const urnStatus =
       typeof product.urnStatus === 'number' ? product.urnStatus : 0;
+    const manufacturerId = product.manufacturerId.toString();
     if (status === 1) {
       await this.logTimelineEntry(
         vendorId,
-        product.manufacturerId.toString(),
+        manufacturerId,
         normalizedUrn,
         {
-          activity: 'Approve/Reject Registration Fee Proposal and make payment',
+          activity: 'Vendor approved registration fee proposal',
           responsibility: 'Manufacturer',
-          next_activity: 'Approve/Reject Registration Fee',
+          next_activity: 'Approve/Reject Registration Fee Proposal and make payment',
           next_responsibility: 'Manufacturer',
           activities_id: urnStatus,
           activity_status: urnStatus,
@@ -2819,22 +2895,48 @@ export class PaymentsService {
       );
     } else {
       const activityLabel = remarks
-        ? `Approve/Reject Registration Fee Proposal and make payment: ${remarks}`
-        : 'Approve/Reject Registration Fee Proposal and make payment';
+        ? `Vendor rejected registration fee proposal: ${remarks}`
+        : 'Vendor rejected registration fee proposal';
       await this.logTimelineEntry(
         vendorId,
-        product.manufacturerId.toString(),
+        manufacturerId,
         normalizedUrn,
         {
           activity: activityLabel,
           responsibility: 'Manufacturer',
-          next_activity: 'Assign Registration Fee',
+          next_activity: workflowActivityName(
+            PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+          ),
           next_responsibility: 'Admin',
           activities_id: urnStatus,
           activity_status: urnStatus,
         },
         urnStatus,
       );
+      // Structured tip rollback 3 → 2 (Assign Fee + Proposal for Admin).
+      try {
+        const ctx = {
+          vendorId: vendorObjectId,
+          manufacturerId: product.manufacturerId,
+          urnNo: normalizedUrn,
+        };
+        const rejected =
+          await this.productRegistrationWorkflowService.rejectActivityIfPending(
+            ctx,
+            PRODUCT_REGISTRATION_ACTIVITY_ID.APPROVE_REJECT_REG_FEE_PROPOSAL_PAYMENT,
+          );
+        if (!rejected) {
+          await this.productRegistrationWorkflowService.ensurePendingActivity(
+            ctx,
+            PRODUCT_REGISTRATION_ACTIVITY_ID.ASSIGN_REGISTRATION_FEE,
+          );
+        }
+      } catch (err) {
+        console.error(
+          '[Payment] Proposal reject tip rollback failed:',
+          err,
+        );
+      }
     }
 
     return this.formatPaymentForApi(updated);

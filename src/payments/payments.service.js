@@ -882,7 +882,7 @@ var PaymentsService = function () {
                             manufacturerId = product.manufacturerId.toString();
                             if (!(hasProposalFile && paymentType === 'registration')) return [3 /*break*/, 4];
                             return [4 /*yield*/, this.logTimelineEntry(vendorId, manufacturerId, urnNo, {
-                                    activity: 'Assign Registration Fee',
+                                    activity: 'Assign Registration Fee and Proposal Document',
                                     responsibility: 'Admin',
                                     next_activity: 'Approve/Reject Registration Fee Proposal and make payment',
                                     next_responsibility: 'Manufacturer',
@@ -895,7 +895,7 @@ var PaymentsService = function () {
                         case 4:
                             label = paymentType === 'certification'
                                 ? 'Assign Certification Fee'
-                                : 'Assign Registration Fee';
+                                : 'Assign Registration Fee and Proposal Document';
                             return [4 /*yield*/, this.logTimelineEntry(vendorId, manufacturerId, urnNo, {
                                     activity: label,
                                     responsibility: 'Admin',
@@ -1734,8 +1734,8 @@ var PaymentsService = function () {
                             urnStatus = typeof anyProduct.urnStatus === 'number' ? anyProduct.urnStatus : 0;
                             return [4 /*yield*/, this.logTimelineEntry(effectiveVendorId, anyProduct.manufacturerId.toString(), normalizedUrn_1, {
                                     activity: currentApproval === 2
-                                        ? 'Assign Registration Fee'
-                                        : 'Assign Registration Fee',
+                                        ? 'Assign Registration Fee and Proposal Document'
+                                        : 'Assign Registration Fee and Proposal Document',
                                     responsibility: 'Admin',
                                     next_activity: 'Approve/Reject Registration Fee Proposal and make payment',
                                     next_responsibility: 'Manufacturer',
@@ -2020,7 +2020,7 @@ var PaymentsService = function () {
                             return [4 /*yield*/, this.logTimelineEntry(vendorId, product.manufacturerId.toString(), normalizedUrn, {
                                     activity: activityLabel,
                                     responsibility: 'Manufacturer',
-                                    next_activity: 'Assign Registration Fee',
+                                    next_activity: 'Assign Registration Fee and Proposal Document',
                                     next_responsibility: 'Admin',
                                     activities_id: urnStatus,
                                     activity_status: urnStatus,
