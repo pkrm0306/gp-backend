@@ -45,6 +45,10 @@ export class GalleryService {
     return raw;
   }
 
+  private resolveVideoPath(video?: string | null): string {
+    return this.resolveImagePath(video);
+  }
+
   private async nextGalleryId(): Promise<number> {
     const doc = await this.galleryCounterModel
       .findOneAndUpdate(
@@ -100,6 +104,11 @@ export class GalleryService {
       : rest?.image
         ? [rest.image]
         : [];
+    const videos = Array.isArray(rest?.galleryVideos)
+      ? rest.galleryVideos
+      : rest?.video
+        ? [rest.video]
+        : [];
 
     return {
       ...rest,
@@ -116,6 +125,10 @@ export class GalleryService {
       galleryImages: images,
       gallery_image:
         rest?.gallery_image ?? this.resolveImagePath(rest?.image),
+      video: videos[0] ?? null,
+      galleryVideos: videos,
+      gallery_video:
+        rest?.gallery_video ?? this.resolveVideoPath(rest?.video),
       is_active: Number(rest?.status) === 1,
     };
   }
@@ -130,6 +143,9 @@ export class GalleryService {
       image: formatted.image,
       galleryImages: formatted.galleryImages,
       gallery_image: formatted.gallery_image,
+      video: formatted.video,
+      galleryVideos: formatted.galleryVideos,
+      gallery_video: formatted.gallery_video,
       title: formatted.title,
       eventName: formatted.title,
       description: formatted.description,
@@ -148,6 +164,8 @@ export class GalleryService {
     description?: string;
     image?: string;
     galleryImages?: string[];
+    video?: string;
+    galleryVideos?: string[];
     status?: number;
   }) {
     const galleryId = await this.nextGalleryId();
@@ -158,6 +176,12 @@ export class GalleryService {
         : payload.image
           ? [payload.image]
           : [];
+    const videos =
+      Array.isArray(payload.galleryVideos) && payload.galleryVideos.length
+        ? payload.galleryVideos
+        : payload.video
+          ? [payload.video]
+          : [];
 
     const doc = new this.galleryModel({
       galleryId,
@@ -165,6 +189,9 @@ export class GalleryService {
       image: images[0],
       gallery_image: this.resolveImagePath(images[0]),
       galleryImages: images,
+      video: videos[0],
+      gallery_video: this.resolveVideoPath(videos[0]),
+      galleryVideos: videos,
       galleryType: payload.galleryType,
       description: payload.description,
       date: payload.date,
@@ -189,6 +216,8 @@ export class GalleryService {
       description?: string;
       image?: string;
       galleryImages?: string[];
+      video?: string;
+      galleryVideos?: string[];
     },
   ) {
     const { where } = this.parseGalleryIdentifier(identifier);
@@ -223,6 +252,28 @@ export class GalleryService {
       if (first) {
         $set.image = first;
         $set.gallery_image = this.resolveImagePath(first);
+      } else {
+        $set.image = '';
+        $set.gallery_image = '';
+      }
+    }
+    if (payload.video !== undefined) {
+      $set.video = payload.video;
+      $set.gallery_video = this.resolveVideoPath(payload.video);
+    }
+    if (payload.galleryVideos !== undefined) {
+      $set.galleryVideos = Array.isArray(payload.galleryVideos)
+        ? payload.galleryVideos
+        : [];
+      const firstVideo = Array.isArray(payload.galleryVideos)
+        ? payload.galleryVideos[0]
+        : undefined;
+      if (firstVideo) {
+        $set.video = firstVideo;
+        $set.gallery_video = this.resolveVideoPath(firstVideo);
+      } else {
+        $set.video = '';
+        $set.gallery_video = '';
       }
     }
 

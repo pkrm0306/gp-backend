@@ -89,7 +89,6 @@ describe('AdminService Banner Functionality', () => {
         imageUrl: '/uploads/banners/home.jpg',
         title: 'Home Banner',
         sequenceNumber: 1,
-        description: 'Banner description',
         status: 'active',
       } as any,
       'manual_url',
@@ -113,7 +112,6 @@ describe('AdminService Banner Functionality', () => {
           imageUrl: '/uploads/banners/home.jpg',
           title: 'Home Banner',
           sequenceNumber: 1,
-          description: 'Banner description',
         } as any,
         'manual_url',
       ),
@@ -193,7 +191,6 @@ describe('AdminService Banner Functionality', () => {
       imageUrl: '/uploads/banners/updated.jpg',
       title: 'Updated',
       sequenceNumber: 4,
-      description: 'Updated desc',
       status: 'inactive',
     });
 
@@ -210,7 +207,6 @@ describe('AdminService Banner Functionality', () => {
       service.updateBanner(vendorId, bannerId, {
         title: 'Updated',
         sequenceNumber: 1,
-        description: 'Updated desc',
       }),
     ).rejects.toBeInstanceOf(ConflictException);
   });
@@ -256,7 +252,6 @@ describe('AdminService Banner Functionality', () => {
           imageUrl: '/uploads/banners/home.jpg',
           title: 'x',
           sequenceNumber: 1,
-          description: 'y',
         } as any,
         'manual_url',
       ),

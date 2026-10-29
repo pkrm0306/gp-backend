@@ -16,6 +16,7 @@ import { WebsiteService } from './website.service';
 import { NewsletterSubscribeDto } from './dto/newsletter-subscribe.dto';
 import { NewsletterRecordDto } from './dto/newsletter-record.dto';
 import { ContactSubmitDto } from './dto/contact-submit.dto';
+import { EventRegistrationSubmitDto } from './dto/event-registration-submit.dto';
 import { CategoriesService } from '../categories/categories.service';
 import { ListManufacturersQueryDto } from '../manufacturers/dto/list-manufacturers-query.dto';
 import { ListCategoriesQueryDto } from '../categories/dto/list-categories-query.dto';
@@ -195,7 +196,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public articles list (paginated)',
     description:
-      'Returns active articles for website/blog cards (newest first). Default pagination: page=1, limit=12 (max 50).',
+      'Returns active articles for website/blog cards (newest first). Default pagination: page=1, limit=12 (max 100).',
   })
   @ApiResponse({ status: 200, description: 'Articles retrieved successfully' })
   async listPublicArticles(
@@ -221,7 +222,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public article by id',
     description:
-      'Returns one active article for the public website (title, description, date, image, pdf).',
+      'Returns one active article for the public website (title, description, date, image/images). First image is the heading; all images are for the gallery below What\'s inside.',
   })
   @ApiResponse({ status: 200, description: 'Article retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Article not found' })
@@ -266,7 +267,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public events list (paginated)',
     description:
-      'Returns active events for the public website events page. Default pagination: page=1, limit=10 (max 200). Sorted by event date (newest first).',
+      'Returns published events (eventStatus=1) for the public website events page (past and upcoming). Each row includes `is_active` based on end date. Default pagination: page=1, limit=10 (max 200). Sorted by event date (newest first).',
   })
   @ApiResponse({
     status: 200,
@@ -285,7 +286,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public gallery list (paginated)',
     description:
-      'Returns active gallery items for the public website. Default: page=1, limit=50 (max 50). No authentication required.',
+      'Returns active gallery items for the public website (images and videos). Default: page=1, limit=50 (max 50). No authentication required.',
   })
   @ApiResponse({
     status: 200,
@@ -510,6 +511,54 @@ export class WebsiteController {
   async submitContact(@Body() dto: ContactSubmitDto) {
     const data = await this.websiteService.submitContact(dto);
     return { message: 'Message sent successfully', data };
+  }
+
+  @Post('event-registration')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Public event registration submit',
+    description:
+      'Stores an event registration from the public event detail page. ' +
+      'Requires consent=true. Optional `recaptchaToken` is verified when reCAPTCHA is configured. ' +
+      'Duplicate registrations for the same email + eventSlug return 409.',
+  })
+  @ApiBody({ type: EventRegistrationSubmitDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Registration saved',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Registration saved' },
+        referenceCode: { type: 'string', example: 'GP-00042' },
+        id: { type: 'string' },
+        data: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            referenceCode: { type: 'string' },
+            eventSlug: { type: 'string' },
+            email: { type: 'string' },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  @ApiResponse({
+    status: 409,
+    description: 'Duplicate registration for email + eventSlug',
+  })
+  async submitEventRegistration(@Body() dto: EventRegistrationSubmitDto) {
+    const data = await this.websiteService.submitEventRegistration(dto);
+    return {
+      message: 'Registration saved',
+      referenceCode: data.referenceCode,
+      id: data.id,
+      data,
+    };
   }
 
   @Patch('events/:id/status')

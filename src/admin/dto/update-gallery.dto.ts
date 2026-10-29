@@ -46,4 +46,21 @@ export class UpdateGalleryDto {
   @IsString()
   @Transform(({ value }) => emptyToUndefined(value))
   eventDescription?: string;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    format: 'binary',
+    description:
+      'Optional gallery video upload (mp4/webm/mov). Prefer multipart field `video` / `videos`; also accepted on `image`.',
+  })
+  @IsOptional()
+  video?: any;
+
+  @ApiPropertyOptional({
+    description:
+      'JSON array of existing video URLs to keep when editing (same pattern as existingImages).',
+    example: '["/uploads/gallery/clip.mp4"]',
+  })
+  @IsOptional()
+  existingVideos?: string;
 }

@@ -41,8 +41,17 @@ export function getCloudFrontBaseUrl(): string | null {
   const raw = process.env.AWS_CLOUDFRONT_URL?.trim();
   if (!raw) return null;
 
+  // Tolerate accidentally pasted log/noise after the host (e.g. "…cloudfront.net GET /…").
+  const hostMatch = raw.match(
+    /https?:\/\/[a-z0-9.-]+\.cloudfront\.net(?=\/|\s|$)/i,
+  );
+  const candidate = hostMatch?.[0] ?? raw.split(/\s+/)[0] ?? raw;
+
   try {
-    const parsed = new URL(raw);
+    const parsed = new URL(candidate);
+    if (!/\.cloudfront\.net$/i.test(parsed.hostname) && hostMatch) {
+      return new URL(hostMatch[0]).origin;
+    }
     const segments = parsed.pathname.split('/').filter(Boolean);
     if (segments.length === 0) {
       return parsed.origin;

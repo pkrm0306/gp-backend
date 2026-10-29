@@ -57,33 +57,50 @@ export function isUsableMulterVideoFile(
   return isUsableMulterImageFile(file);
 }
 
-/** First usable file among known field names (from FileFieldsInterceptor). */
+const BANNER_VIDEO_ALLOWED_EXTS = new Set(['mp4', 'webm', 'mov', 'm4v']);
+
+/** True when a usable Multer file looks like an allowed banner video. */
+export function isBannerVideoLikeFile(
+  file?: Express.Multer.File | null,
+): boolean {
+  if (!isUsableMulterVideoFile(file)) return false;
+  const mime = String(file?.mimetype ?? '').toLowerCase();
+  const ext = file?.originalname?.split('.').pop()?.toLowerCase() ?? '';
+  if (mime.startsWith('video/')) {
+    return BANNER_VIDEO_ALLOWED_MIMES.has(mime) || BANNER_VIDEO_ALLOWED_EXTS.has(ext);
+  }
+  return BANNER_VIDEO_ALLOWED_EXTS.has(ext);
+}
+
+/** First usable image among known field names (skips video-like payloads). */
 export function pickBannerImageFile(
   files?: Record<string, Express.Multer.File[]> | null,
 ): Express.Multer.File | undefined {
   if (!files || typeof files !== 'object') return undefined;
   for (const name of BANNER_IMAGE_FILE_FIELD_NAMES) {
     const f = files[name]?.[0];
-    if (isUsableMulterImageFile(f)) return f;
+    if (!isUsableMulterImageFile(f)) continue;
+    if (isBannerVideoLikeFile(f)) continue;
+    return f;
   }
   return undefined;
 }
 
-/** First usable video among known field names (from FileFieldsInterceptor). */
+/**
+ * First usable video among known video fields, or a video sent under an image
+ * field name (`image` / `file` / …) so clients can upload either media type.
+ */
 export function pickBannerVideoFile(
   files?: Record<string, Express.Multer.File[]> | null,
 ): Express.Multer.File | undefined {
   if (!files || typeof files !== 'object') return undefined;
   for (const name of BANNER_VIDEO_FILE_FIELD_NAMES) {
     const f = files[name]?.[0];
-    if (!isUsableMulterVideoFile(f)) continue;
-    const mime = String(f?.mimetype ?? '').toLowerCase();
-    const ext = f?.originalname?.split('.').pop()?.toLowerCase() ?? '';
-    const allowedExts = new Set(['mp4', 'webm', 'mov', 'm4v']);
-    if (mime && !BANNER_VIDEO_ALLOWED_MIMES.has(mime)) {
-      if (!allowedExts.has(ext)) continue;
-    }
-    return f;
+    if (isBannerVideoLikeFile(f)) return f;
+  }
+  for (const name of BANNER_IMAGE_FILE_FIELD_NAMES) {
+    const f = files[name]?.[0];
+    if (isBannerVideoLikeFile(f)) return f;
   }
   return undefined;
 }
@@ -111,16 +128,23 @@ export function createBannerDiskMulterOptions() {
         return;
       }
       const mime = String(file.mimetype ?? '').toLowerCase();
+      const ext = extname(file.originalname || '').toLowerCase().replace(/^\./, '');
+      const okVideo =
+        BANNER_VIDEO_ALLOWED_MIMES.has(mime) ||
+        ((!mime || mime === 'application/octet-stream') &&
+          BANNER_VIDEO_ALLOWED_EXTS.has(ext)) ||
+        (mime.startsWith('video/') && BANNER_VIDEO_ALLOWED_EXTS.has(ext));
       if (bannerImageFieldSet.has(file.fieldname)) {
-        cb(null, mime.startsWith('image/'));
+        // Accept images, or videos sent on the same field names as images.
+        if (mime.startsWith('image/')) {
+          cb(null, true);
+          return;
+        }
+        cb(null, okVideo);
         return;
       }
       if (bannerVideoFieldSet.has(file.fieldname)) {
-        const ext = extname(file.originalname || '').toLowerCase();
-        const allowedExts = new Set(['.mp4', '.webm', '.mov', '.m4v']);
-        const okMime = !mime || BANNER_VIDEO_ALLOWED_MIMES.has(mime);
-        const okExt = allowedExts.has(ext);
-        cb(null, okMime || okExt);
+        cb(null, okVideo);
         return;
       }
       cb(null, false);

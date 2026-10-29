@@ -37,6 +37,14 @@ import {
   EventIdCounterSchema,
 } from '../events/schemas/event-id-counter.schema';
 import {
+  EventRegistration,
+  EventRegistrationSchema,
+} from '../events/schemas/event-registration.schema';
+import {
+  EventRegistrationIdCounter,
+  EventRegistrationIdCounterSchema,
+} from '../events/schemas/event-registration-id-counter.schema';
+import {
   TeamMemberDisplayOrderCounter,
   TeamMemberDisplayOrderCounterSchema,
 } from './schemas/team-member-display-order-counter.schema';
@@ -127,6 +135,11 @@ import {
       { name: Notification.name, schema: NotificationSchema },
       { name: Event.name, schema: EventSchema },
       { name: EventIdCounter.name, schema: EventIdCounterSchema },
+      { name: EventRegistration.name, schema: EventRegistrationSchema },
+      {
+        name: EventRegistrationIdCounter.name,
+        schema: EventRegistrationIdCounterSchema,
+      },
       {
         name: TeamMemberDisplayOrderCounter.name,
         schema: TeamMemberDisplayOrderCounterSchema,

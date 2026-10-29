@@ -9,6 +9,13 @@ import {
 export type EventDocument = Event & Document;
 export { GALLERY_TYPES, GalleryType };
 
+/** Max gallery images allowed on event create/edit (same cap as articles/gallery). */
+export const EVENT_MAX_IMAGES = 10;
+
+/** Event delivery format (checkbox multiselect on admin create/edit). */
+export const EVENT_FORMATS = ['inperson', 'online'] as const;
+export type EventFormat = (typeof EVENT_FORMATS)[number];
+
 @Schema({ _id: false })
 export class EventBrochureItem {
   @Prop({ required: true, trim: true })
@@ -20,6 +27,39 @@ export class EventBrochureItem {
 
 export const EventBrochureItemSchema =
   SchemaFactory.createForClass(EventBrochureItem);
+
+@Schema({ _id: false })
+export class EventProgrammeAtAGlanceItem {
+  /** 1-based day index within the event date range. */
+  @Prop({ required: true, type: Number, min: 1 })
+  day: number;
+
+  /** Optional ISO date (YYYY-MM-DD) for the programme day. */
+  @Prop({ required: false, trim: true })
+  date?: string;
+
+  @Prop({ required: true, trim: true })
+  time: string;
+
+  @Prop({ required: true, trim: true })
+  description: string;
+}
+
+export const EventProgrammeAtAGlanceItemSchema = SchemaFactory.createForClass(
+  EventProgrammeAtAGlanceItem,
+);
+
+@Schema({ _id: false })
+export class EventKeyThemeItem {
+  @Prop({ required: true, trim: true })
+  heading: string;
+
+  @Prop({ required: true, trim: true })
+  description: string;
+}
+
+export const EventKeyThemeItemSchema =
+  SchemaFactory.createForClass(EventKeyThemeItem);
 
 @Schema({ collection: 'events', timestamps: false })
 export class Event {
@@ -68,6 +108,15 @@ export class Event {
   @Prop()
   eventLocation?: string;
 
+  /**
+   * Delivery format(s): inperson and/or online (admin checkbox multiselect).
+   */
+  @Prop({
+    type: [{ type: String, enum: EVENT_FORMATS }],
+    default: [],
+  })
+  format?: EventFormat[];
+
   @Prop()
   contactPersonName?: string;
 
@@ -91,6 +140,29 @@ export class Event {
   /** Multiple brochure cards (heading + external link). */
   @Prop({ type: [EventBrochureItemSchema], default: [] })
   brochures?: EventBrochureItem[];
+
+  /** Audience bullets for the public "Who should attend" section. */
+  @Prop({ type: [String], default: [] })
+  whoShouldAttend?: string[];
+
+  /** Key themes for the public event detail page (heading + description). */
+  @Prop({ type: [EventKeyThemeItemSchema], default: [] })
+  keyThemes?: EventKeyThemeItem[];
+
+  /**
+   * "Programme at a glance" slots (time + description), optionally tagged with `day`
+   * (and `date`) so multi-day events can store any number of rows per day.
+   */
+  @Prop({ type: [EventProgrammeAtAGlanceItemSchema], default: [] })
+  programmeAtAGlance?: EventProgrammeAtAGlanceItem[];
+
+  /** Venue / travel notes for the public event detail page. */
+  @Prop({ default: '', trim: true })
+  venueAndTravel?: string;
+
+  /** Tag pills shown on the public event detail page. */
+  @Prop({ type: [String], default: [] })
+  tags?: string[];
 
   @Prop({ required: true, type: Number, default: 1 })
   eventStatus: number; // 0=Inactive, 1=Active

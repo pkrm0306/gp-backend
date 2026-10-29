@@ -1,15 +1,20 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform, Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
+  ArrayUnique,
   IsArray,
   IsEmail,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
   Length,
-  ValidateNested,
 } from 'class-validator';
-import { EventBrochureItemDto } from './event-brochure-item.dto';
+import {
+  EVENT_FORMATS,
+  EventFormat,
+} from '../../events/schemas/event.schema';
+import { normalizeEventFormatInput } from '../../events/utils/event-detail-sections.util';
 
 export class CreateEventDto {
   @ApiProperty({ example: 'Green Summit 2026' })
@@ -72,6 +77,20 @@ export class CreateEventDto {
   )
   eventLocation?: string;
 
+  @ApiPropertyOptional({
+    enum: EVENT_FORMATS,
+    isArray: true,
+    example: ['inperson', 'online'],
+    description:
+      'Event format checkbox multiselect: inperson and/or online. Send as JSON array, repeated form fields, or comma-separated.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => normalizeEventFormatInput(value))
+  @IsArray()
+  @ArrayUnique()
+  @IsIn([...EVENT_FORMATS], { each: true })
+  format?: EventFormat[];
+
   @ApiPropertyOptional({ example: '<p>Eco-labelled products summit</p>' })
   @IsOptional()
   @IsString()
@@ -122,34 +141,4 @@ export class CreateEventDto {
     value === undefined || value === null ? undefined : String(value).trim(),
   )
   registrationLink?: string;
-
-  @ApiPropertyOptional({
-    example:
-      'https://www.linkedin.com/posts/cii-greenpro-ecolabelling_greenpro-summit-2025-brochure-03062025-activity-7335663123154014208-2ScV',
-    description: 'Legacy single brochure link (prefer brochures[]).',
-  })
-  @IsOptional()
-  @IsString()
-  @Transform(({ value }) =>
-    value === undefined || value === null ? undefined : String(value).trim(),
-  )
-  brochureLink?: string;
-
-  @ApiPropertyOptional({
-    description:
-      'Brochure cards for the event. Each item requires heading and link. ' +
-      'Multipart forms may send this as a JSON string.',
-    type: [EventBrochureItemDto],
-    example: [
-      {
-        heading: 'GreenPro Summit Brochure',
-        link: 'https://example.com/brochure.pdf',
-      },
-    ],
-  })
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => EventBrochureItemDto)
-  brochures?: EventBrochureItemDto[];
 }

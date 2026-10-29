@@ -21,6 +21,7 @@ export class ResponseInterceptor implements NestInterceptor {
       url.includes('/categories/export') ||
       url.includes('/api/manufacturers/export') ||
       url.includes('/api/admin/products/export') ||
+      url.includes('/admin/event-registrations/export') ||
       url.includes('/products/certificates/') ||
       url.includes('/certificate-correction/preview') ||
       /\/api\/standards\/[^/]+\/file(?:\?|$)/.test(url)

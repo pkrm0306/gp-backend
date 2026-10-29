@@ -12,7 +12,8 @@ export class Banner {
   @Prop({ required: false, default: '' })
   banner_image?: string;
 
-  @Prop({ required: true })
+  /** Optional when the banner is video-only. */
+  @Prop({ required: false, default: '' })
   imageUrl: string;
 
   /** Tracks how banner image was provided: uploaded file vs URL/path in form. */
@@ -44,8 +45,8 @@ export class Banner {
   @Prop({ required: true, min: 1 })
   sequenceNumber: number;
 
-  @Prop({ required: true })
-  description: string;
+  @Prop({ required: false, default: '' })
+  description?: string;
 
   /** 1 = active (toggle on), 0 = inactive (toggle off). */
   @Prop({ default: 1 })

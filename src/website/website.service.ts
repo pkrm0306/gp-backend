@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -17,11 +18,21 @@ import {
 } from './schemas/newsletter-subscriber.schema';
 import { NewsletterSubscribeDto } from './dto/newsletter-subscribe.dto';
 import { ContactSubmitDto } from './dto/contact-submit.dto';
+import { EventRegistrationSubmitDto } from './dto/event-registration-submit.dto';
 import {
   ContactMessage,
   ContactMessageDocument,
 } from './schemas/contact-message.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
+import {
+  EventRegistration,
+  EventRegistrationDocument,
+} from '../events/schemas/event-registration.schema';
+import {
+  EventRegistrationIdCounter,
+  EventRegistrationIdCounterDocument,
+  EVENT_REGISTRATION_ID_COUNTER_KEY,
+} from '../events/schemas/event-registration-id-counter.schema';
 import {
   VendorUser,
   VendorUserDocument,
@@ -142,6 +153,10 @@ export class WebsiteService {
     private contactMessageModel: Model<ContactMessageDocument>,
     @InjectModel(Event.name)
     private eventModel: Model<EventDocument>,
+    @InjectModel(EventRegistration.name)
+    private eventRegistrationModel: Model<EventRegistrationDocument>,
+    @InjectModel(EventRegistrationIdCounter.name)
+    private eventRegistrationCounterModel: Model<EventRegistrationIdCounterDocument>,
     @InjectModel(VendorUser.name)
     private vendorUserModel: Model<VendorUserDocument>,
     @InjectModel(Notification.name)
@@ -164,6 +179,22 @@ export class WebsiteService {
     private readonly websiteAnalytics: WebsiteAnalyticsService,
     private readonly recaptchaService: RecaptchaService,
   ) {}
+
+  private async nextEventRegistrationReferenceCode(): Promise<string> {
+    const doc = await this.eventRegistrationCounterModel
+      .findOneAndUpdate(
+        { _id: EVENT_REGISTRATION_ID_COUNTER_KEY },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true },
+      )
+      .exec();
+    if (!doc || typeof doc.seq !== 'number' || !Number.isFinite(doc.seq)) {
+      throw new InternalServerErrorException(
+        'Failed to allocate registration reference code',
+      );
+    }
+    return `GP-${String(doc.seq).padStart(5, '0')}`;
+  }
 
   private getWebsitePublicListCacheTtlSeconds(): number {
     const ttl = parseInt(
@@ -432,6 +463,7 @@ export class WebsiteService {
       'website',
       'public',
       'gallery',
+      'v2',
       String(page),
       String(limit),
       this.shortHash(origin),
@@ -470,7 +502,13 @@ export class WebsiteService {
         : row.image
           ? [row.image]
           : [];
+      const videos = Array.isArray(row.galleryVideos)
+        ? row.galleryVideos
+        : row.video
+          ? [row.video]
+          : [];
       const normalizedImages = images.map((img) => normalizeImageUrl(img));
+      const normalizedVideos = videos.map((vid) => normalizeImageUrl(vid));
       return {
         s_no: row.s_no,
         id: row.id,
@@ -483,6 +521,9 @@ export class WebsiteService {
         image: normalizedImages[0] ?? null,
         images: normalizedImages,
         event_image: normalizeImageUrl(row.gallery_image ?? row.event_image),
+        video: normalizedVideos[0] ?? null,
+        videos: normalizedVideos,
+        gallery_video: normalizeImageUrl(row.gallery_video),
         is_active: row.is_active ?? true,
       };
     });
@@ -505,7 +546,7 @@ export class WebsiteService {
     return payload;
   }
 
-  /** Public paginated events for website (active only, default 10 per page). */
+  /** Public paginated events for website (published / eventStatus=1, default 10 per page). */
   async getPublicEventsPaginated(
     query: PublicListEventsQueryDto,
     origin: string,
@@ -516,7 +557,7 @@ export class WebsiteService {
       'website',
       'public',
       'events',
-      'v4',
+      'v8',
       String(page),
       String(limit),
       this.shortHash(origin),
@@ -580,7 +621,7 @@ export class WebsiteService {
       'website',
       'public',
       'articles',
-      'v2',
+      'v3',
       String(page),
       String(limit),
       this.shortHash(origin),
@@ -619,14 +660,22 @@ export class WebsiteService {
         externalUrl && !shortDescription
           ? String(a.description ?? '').trim()
           : shortDescription;
+      const images = (
+        Array.isArray(a.images)
+          ? a.images
+          : a.image
+            ? [a.image]
+            : []
+      )
+        .map((img) => normalizeImageUrl(img))
+        .filter(Boolean);
       return {
         ...a,
         description: externalUrl ? '' : a.description,
         shortDescription: legacyShort,
-        image: normalizeImageUrl(a.image),
+        image: images[0] ?? normalizeImageUrl(a.image),
         article_image: normalizeImageUrl(a.article_image),
-        pdf: normalizeImageUrl(a.pdf),
-        article_pdf: normalizeImageUrl(a.article_pdf),
+        images,
         is_active: true,
       };
     });
@@ -673,6 +722,15 @@ export class WebsiteService {
       externalUrl && !shortDescription
         ? String(article.description ?? '').trim()
         : shortDescription;
+    const images = (
+      Array.isArray(article.images)
+        ? article.images
+        : article.image
+          ? [article.image]
+          : []
+    )
+      .map((img) => normalizeImageUrl(img))
+      .filter(Boolean);
 
     return {
       message: 'Article retrieved successfully',
@@ -680,10 +738,9 @@ export class WebsiteService {
         ...article,
         description: externalUrl ? '' : article.description,
         shortDescription: legacyShort,
-        image: normalizeImageUrl(article.image),
+        image: images[0] ?? normalizeImageUrl(article.image),
         article_image: normalizeImageUrl(article.article_image),
-        pdf: normalizeImageUrl(article.pdf),
-        article_pdf: normalizeImageUrl(article.article_pdf),
+        images,
         is_active: true,
       },
     };
@@ -1664,6 +1721,114 @@ export class WebsiteService {
       subject: (saved as any).subject,
       message: (saved as any).message,
       createdAt: (saved as any).createdAt,
+    };
+  }
+
+  /**
+   * Public event registration form submit.
+   * Enforces unique (eventSlug, email); returns a human-readable referenceCode.
+   */
+  async submitEventRegistration(dto: EventRegistrationSubmitDto) {
+    // Optional on this endpoint — verify only when the client sends a token.
+    const recaptchaToken = pickRecaptchaToken(
+      dto as unknown as Record<string, unknown>,
+    );
+    if (recaptchaToken) {
+      await this.recaptchaService.assertRecaptchaToken(recaptchaToken);
+    }
+
+    const eventSlug = String(dto.eventSlug ?? '').trim();
+    const email = String(dto.email ?? '')
+      .trim()
+      .toLowerCase();
+    if (!eventSlug || !email) {
+      throw new BadRequestException({
+        message: 'eventSlug and email are required',
+        errors: {
+          ...(eventSlug ? {} : { eventSlug: 'eventSlug is required' }),
+          ...(email ? {} : { email: 'email is required' }),
+        },
+      });
+    }
+
+    const referenceCode = await this.nextEventRegistrationReferenceCode();
+    const payload: Partial<EventRegistration> = {
+      referenceCode,
+      eventSlug,
+      eventTitle: String(dto.eventTitle ?? '').trim(),
+      eventDate: String(dto.eventDate ?? '').trim(),
+      eventTime: String(dto.eventTime ?? '').trim(),
+      eventLocation: String(dto.eventLocation ?? '').trim(),
+      fullName: String(dto.fullName ?? '').trim(),
+      email,
+      phone: String(dto.phone ?? '').trim(),
+      city: String(dto.city ?? '').trim(),
+      organisation: String(dto.organisation ?? '').trim(),
+      designation: String(dto.designation ?? '').trim(),
+      attendanceMode: dto.attendanceMode,
+      participantRole: dto.participantRole,
+      sessionsOfInterest: Array.isArray(dto.sessionsOfInterest)
+        ? dto.sessionsOfInterest.map((s) => String(s ?? '').trim()).filter(Boolean)
+        : [],
+      accessibilityOrDietaryNotes: String(
+        dto.accessibilityOrDietaryNotes ?? '',
+      ).trim(),
+      consent: true,
+      sourcePath: String(dto.sourcePath ?? '').trim(),
+      status: 'new',
+      adminNotes: '',
+    };
+
+    let saved: EventRegistrationDocument;
+    try {
+      const created = new this.eventRegistrationModel(payload);
+      saved = await created.save();
+    } catch (e: any) {
+      if (e?.code === 11000) {
+        throw new ConflictException({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'You have already registered for this event with this email',
+          errors: {
+            email: 'Already registered for this event',
+          },
+        });
+      }
+      throw new InternalServerErrorException(
+        e?.message || 'Failed to save event registration',
+      );
+    }
+
+    const id = String((saved as any)._id);
+    await this.createNotification({
+      title: 'New event registration',
+      message: `${payload.fullName || email} registered for ${payload.eventTitle || eventSlug} (${referenceCode}).`,
+      type: 'info',
+      source: 'website',
+      referenceType: 'event_registration',
+      referenceId: id,
+      actorName: payload.fullName || email,
+    });
+
+    this.emailService.sendInBackground(() =>
+      this.emailService.sendEventRegistrationConfirmationEmail({
+        email,
+        fullName: payload.fullName || '',
+        referenceCode,
+        eventTitle: payload.eventTitle || '',
+        eventDate: payload.eventDate || '',
+        eventTime: payload.eventTime || '',
+        eventLocation: payload.eventLocation || '',
+        attendanceMode: payload.attendanceMode || '',
+      }),
+    );
+
+    return {
+      id,
+      referenceCode,
+      eventSlug,
+      email,
+      createdAt: (saved as any).createdAt ?? null,
     };
   }
 

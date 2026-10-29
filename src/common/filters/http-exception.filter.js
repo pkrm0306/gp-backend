@@ -67,6 +67,18 @@ var HttpExceptionFilter = function () {
                     message = responseObj.message || message;
                     error = responseObj.error || error;
                 }
+                // Nest object-form exceptions (`{ message }`) often omit `error`.
+                if (error === 'Internal Server Error' &&
+                    status !== common_1.HttpStatus.INTERNAL_SERVER_ERROR) {
+                    var statusName = common_1.HttpStatus[status];
+                    error =
+                        typeof statusName === 'string'
+                            ? statusName
+                                .split('_')
+                                .map(function (w) { return w.charAt(0) + w.slice(1).toLowerCase(); })
+                                .join(' ')
+                            : error;
+                }
             }
             else if (exception instanceof SyntaxError) {
                 status = common_1.HttpStatus.BAD_REQUEST;

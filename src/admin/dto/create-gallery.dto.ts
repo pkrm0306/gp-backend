@@ -48,4 +48,13 @@ export class CreateGalleryDto {
     value === undefined || value === null ? undefined : String(value).trim(),
   )
   eventDescription?: string;
+
+  @ApiPropertyOptional({
+    type: 'string',
+    format: 'binary',
+    description:
+      'Optional gallery video upload (mp4/webm/mov). Prefer multipart field `video` / `videos`; also accepted on `image`.',
+  })
+  @IsOptional()
+  video?: any;
 }

@@ -23,7 +23,11 @@ import { Banner, BannerDocument } from '../banners/schemas/banner.schema';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import * as crypto from 'crypto';
 import { ListTeamMembersQueryDto } from './dto/list-team-members-query.dto';
-import { Event, EventDocument } from '../events/schemas/event.schema';
+import {
+  Event,
+  EventDocument,
+  EventFormat,
+} from '../events/schemas/event.schema';
 import {
   buildWebsiteVisibleEventsMatch,
   isEventVisibleOnWebsite,
@@ -35,14 +39,39 @@ import {
 import {
   mapEventBrochuresFromDoc,
   primaryEventBrochureLink,
-  type EventBrochureRow,
 } from '../events/utils/event-brochures.util';
+import {
+  mapEventFormatFromDoc,
+  mapEventTagsFromDoc,
+  mapKeyThemesFromDoc,
+  mapProgrammeAtAGlanceFromDoc,
+  mapVenueAndTravelFromDoc,
+  mapWhoShouldAttendFromDoc,
+  type EventKeyThemeRow,
+  type EventProgrammeAtAGlanceRow,
+} from '../events/utils/event-detail-sections.util';
 import { Article, ArticleDocument } from '../articles/schemas/article.schema';
+import {
+  mapKeyPointsFromDoc,
+  mapTagsFromDoc,
+  mapWhatsInsideFromDoc,
+  mapWhoItsForFromDoc,
+  type ArticleKeyPointRow,
+} from '../articles/utils/article-detail-sections.util';
 import {
   EventIdCounter,
   EventIdCounterDocument,
   EVENT_ID_COUNTER_KEY,
 } from '../events/schemas/event-id-counter.schema';
+import {
+  EventRegistration,
+  EventRegistrationDocument,
+  EVENT_REGISTRATION_STATUSES,
+  type EventRegistrationStatus,
+} from '../events/schemas/event-registration.schema';
+import { ListEventRegistrationsQueryDto } from './dto/list-event-registrations-query.dto';
+import { UpdateEventRegistrationDto } from './dto/update-event-registration.dto';
+import { slugifyPublicName } from '../common/utils/unique-slug.util';
 import {
   TeamMemberDisplayOrderCounter,
   TeamMemberDisplayOrderCounterDocument,
@@ -250,6 +279,8 @@ export class AdminService {
     private eventModel: Model<EventDocument>,
     @InjectModel(EventIdCounter.name)
     private eventCounterModel: Model<EventIdCounterDocument>,
+    @InjectModel(EventRegistration.name)
+    private eventRegistrationModel: Model<EventRegistrationDocument>,
     @InjectModel(TeamMemberDisplayOrderCounter.name)
     private teamMemberDisplayOrderCounterModel: Model<TeamMemberDisplayOrderCounterDocument>,
     @InjectModel(NewsletterSubscriber.name)
@@ -1008,14 +1039,6 @@ export class AdminService {
     return raw;
   }
 
-  private resolveArticlePdfPath(pdfUrl?: string | null): string {
-    const raw = String(pdfUrl ?? '').trim();
-    if (!raw) return '';
-    if (raw.startsWith('/uploads/')) return raw;
-    if (raw.startsWith('uploads/')) return `/${raw}`;
-    return raw;
-  }
-
   private resolveArticleAssetForResponse(rawUrl?: string | null): string {
     const raw = String(rawUrl ?? '').trim();
     if (!raw) return '';
@@ -1094,6 +1117,12 @@ export class AdminService {
       ...(registrationLink ? { registrationLink } : {}),
       brochures,
       brochureLink,
+      whoShouldAttend: mapWhoShouldAttendFromDoc(rest ?? {}),
+      keyThemes: mapKeyThemesFromDoc(rest ?? {}),
+      programmeAtAGlance: mapProgrammeAtAGlanceFromDoc(rest ?? {}),
+      venueAndTravel: mapVenueAndTravelFromDoc(rest ?? {}),
+      tags: mapEventTagsFromDoc(rest ?? {}),
+      format: mapEventFormatFromDoc(rest ?? {}),
       ...(id ? { id } : {}),
     };
   }
@@ -1148,16 +1177,17 @@ export class AdminService {
     galleryImages?: string[];
     galleryType?: string;
     registrationLink?: string;
-    brochureLink?: string;
-    brochures?: EventBrochureRow[];
+    whoShouldAttend?: string[];
+    keyThemes?: EventKeyThemeRow[];
+    programmeAtAGlance?: EventProgrammeAtAGlanceRow[];
+    venueAndTravel?: string;
+    tags?: string[];
+    format?: EventFormat[];
   }) {
     const eventId = await this.nextEventId();
     const now = new Date();
     const eventStartDate = payload.eventStartDate ?? payload.eventDate;
     const eventEndDate = payload.eventEndDate ?? eventStartDate;
-    const brochures = payload.brochures ?? [];
-    const brochureLink =
-      primaryEventBrochureLink(brochures) ?? payload.brochureLink;
 
     const doc = new this.eventModel({
       eventId,
@@ -1178,13 +1208,17 @@ export class AdminService {
       eventStartTime: payload.eventStartTime,
       eventEndTime: payload.eventEndTime,
       eventLocation: payload.eventLocation,
+      format: payload.format ?? [],
       contactPersonName: payload.contactPersonName,
       contactPersonDesignation: payload.contactPersonDesignation,
       contactPersonEmail: payload.contactPersonEmail,
       contactPersonPhone: payload.contactPersonPhone,
       registrationLink: payload.registrationLink,
-      brochures,
-      brochureLink,
+      whoShouldAttend: payload.whoShouldAttend ?? [],
+      keyThemes: payload.keyThemes ?? [],
+      programmeAtAGlance: payload.programmeAtAGlance ?? [],
+      venueAndTravel: payload.venueAndTravel ?? '',
+      tags: payload.tags ?? [],
       eventStatus:
         payload.eventStatus === 0 || payload.eventStatus === 1
           ? payload.eventStatus
@@ -1218,8 +1252,12 @@ export class AdminService {
       galleryImages?: string[];
       galleryType?: string;
       registrationLink?: string;
-      brochureLink?: string;
-      brochures?: EventBrochureRow[];
+      whoShouldAttend?: string[];
+      keyThemes?: EventKeyThemeRow[];
+      programmeAtAGlance?: EventProgrammeAtAGlanceRow[];
+      venueAndTravel?: string;
+      tags?: string[];
+      format?: EventFormat[];
       eventStatus?: number;
     },
     kind: 'event' | 'gallery' = 'event',
@@ -1312,16 +1350,18 @@ export class AdminService {
         $set.registrationLink = '';
       }
     }
-    if (payload.brochures !== undefined) {
-      $set.brochures = payload.brochures;
-      const primaryBrochure = primaryEventBrochureLink(payload.brochures);
-      $set.brochureLink = primaryBrochure ?? '';
-    } else if (
-      payload.brochureLink !== undefined &&
-      String(payload.brochureLink).trim() !== ''
-    ) {
-      $set.brochureLink = payload.brochureLink;
+    if (payload.whoShouldAttend !== undefined) {
+      $set.whoShouldAttend = payload.whoShouldAttend;
     }
+    if (payload.keyThemes !== undefined) $set.keyThemes = payload.keyThemes;
+    if (payload.programmeAtAGlance !== undefined) {
+      $set.programmeAtAGlance = payload.programmeAtAGlance;
+    }
+    if (payload.venueAndTravel !== undefined) {
+      $set.venueAndTravel = payload.venueAndTravel;
+    }
+    if (payload.tags !== undefined) $set.tags = payload.tags;
+    if (payload.format !== undefined) $set.format = payload.format;
     if (payload.eventStatus === 0 || payload.eventStatus === 1) {
       $set.eventStatus = payload.eventStatus;
     }
@@ -1351,7 +1391,7 @@ export class AdminService {
       .find({ ...this.eventKindMatch(kind), ...NOT_SOFT_DELETED })
       .sort({ createdDate: -1, _id: -1 })
       .select(
-        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink brochures',
+        'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation format eventStatus createdDate updatedDate eventId registrationLink brochureLink brochures whoShouldAttend keyThemes programmeAtAGlance venueAndTravel tags',
       )
       .lean()
       .exec();
@@ -1374,7 +1414,9 @@ export class AdminService {
       ...NOT_SOFT_DELETED,
     };
     if (options?.activeOnly) {
-      Object.assign(where, buildWebsiteVisibleEventsMatch());
+      // Published events only. `is_active` on each row still reflects whether
+      // the end date has passed (see mapEventListRow / isEventVisibleOnWebsite).
+      where.eventStatus = 1;
     }
 
     const [total, rows] = await Promise.all([
@@ -1385,7 +1427,7 @@ export class AdminService {
         .skip((safePage - 1) * safePerPage)
         .limit(safePerPage)
         .select(
-          'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation eventStatus createdDate updatedDate eventId registrationLink brochureLink brochures',
+          'eventName eventDescription eventImage event_image galleryImages galleryType eventDate eventStartDate eventEndDate eventStartTime eventEndTime eventLocation format eventStatus createdDate updatedDate eventId registrationLink brochureLink brochures whoShouldAttend keyThemes programmeAtAGlance venueAndTravel tags',
         )
         .lean()
         .exec(),
@@ -1437,6 +1479,7 @@ export class AdminService {
       eventEndDate: endDatePart,
       dateTime: [datePart, timePart].filter(Boolean).join(' '),
       location: String(e.eventLocation ?? ''),
+      format: mapEventFormatFromDoc(e ?? {}),
       is_active: visible,
       ...(registrationLink ? { registrationLink } : {}),
       brochures,
@@ -1444,6 +1487,11 @@ export class AdminService {
         primaryEventBrochureLink(brochures) ||
         e.brochureLink ||
         DEFAULT_EVENT_BROCHURE_LINK,
+      whoShouldAttend: mapWhoShouldAttendFromDoc(e ?? {}),
+      keyThemes: mapKeyThemesFromDoc(e ?? {}),
+      programmeAtAGlance: mapProgrammeAtAGlanceFromDoc(e ?? {}),
+      venueAndTravel: mapVenueAndTravelFromDoc(e ?? {}),
+      tags: mapEventTagsFromDoc(e ?? {}),
     };
   }
 
@@ -1580,15 +1628,33 @@ export class AdminService {
     };
   }
 
+  private normalizeArticleImagesList(raw?: string[] | null): string[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => String(v ?? '').trim()).filter(Boolean);
+  }
+
+  /** Prefer `images[]`; fall back to legacy single `image` for older docs. */
+  private resolveArticleImagesFromDoc(a: any): string[] {
+    const fromArray = this.normalizeArticleImagesList(a?.images);
+    if (fromArray.length) return fromArray;
+    const legacy = String(a?.image ?? '').trim();
+    return legacy ? [legacy] : [];
+  }
+
   async createArticle(payload: {
     title: string;
+    publisher?: string;
     description?: string;
     shortDescription?: string;
     date: Date;
     image?: string;
+    images?: string[];
     url?: string;
     externalUrl?: boolean;
-    pdf?: string;
+    whatsInside?: string[];
+    keyPoints?: ArticleKeyPointRow[];
+    whoItsFor?: string[];
+    tags?: string[];
     status?: number;
   }) {
     const externalUrl = payload.externalUrl === true;
@@ -1608,17 +1674,30 @@ export class AdminService {
       throw new BadRequestException('description is required');
     }
 
+    const images = this.normalizeArticleImagesList(
+      Array.isArray(payload.images) && payload.images.length
+        ? payload.images
+        : payload.image
+          ? [payload.image]
+          : [],
+    );
+    const image = images[0] ?? payload.image;
+
     const doc = new this.articleModel({
       title: String(payload.title ?? '').trim(),
+      publisher: String(payload.publisher ?? '').trim(),
       description: externalUrl ? '' : description,
       shortDescription: externalUrl ? shortDescription : '',
       date: payload.date,
-      image: payload.image,
-      article_image: this.resolveArticleImagePath(payload.image),
+      image,
+      article_image: this.resolveArticleImagePath(image),
+      images,
       url: externalUrl ? url : '',
       externalUrl,
-      pdf: payload.pdf,
-      article_pdf: this.resolveArticlePdfPath(payload.pdf),
+      whatsInside: payload.whatsInside ?? [],
+      keyPoints: payload.keyPoints ?? [],
+      whoItsFor: payload.whoItsFor ?? [],
+      tags: payload.tags ?? [],
       status: payload.status === 0 || payload.status === 1 ? payload.status : 1,
       isDeleted: false,
       deletedAt: null,
@@ -1640,13 +1719,18 @@ export class AdminService {
     id: string,
     payload: {
       title?: string;
+      publisher?: string;
       description?: string;
       shortDescription?: string;
       date?: Date;
       image?: string;
+      images?: string[];
       url?: string;
       externalUrl?: boolean;
-      pdf?: string;
+      whatsInside?: string[];
+      keyPoints?: ArticleKeyPointRow[];
+      whoItsFor?: string[];
+      tags?: string[];
       status?: number;
     },
   ) {
@@ -1659,21 +1743,33 @@ export class AdminService {
 
     const $set: Record<string, unknown> = {};
     if (payload.title !== undefined) $set.title = String(payload.title).trim();
+    if (payload.publisher !== undefined) {
+      $set.publisher = String(payload.publisher).trim();
+    }
     if (payload.description !== undefined) $set.description = String(payload.description).trim();
     if (payload.shortDescription !== undefined) {
       $set.shortDescription = String(payload.shortDescription).trim();
     }
     if (payload.date !== undefined) $set.date = payload.date;
-    if (payload.image !== undefined) {
+    if (payload.images !== undefined) {
+      const images = this.normalizeArticleImagesList(payload.images);
+      $set.images = images;
+      const first = images[0] ?? '';
+      $set.image = first;
+      $set.article_image = this.resolveArticleImagePath(first);
+    } else if (payload.image !== undefined) {
       $set.image = payload.image;
       $set.article_image = this.resolveArticleImagePath(payload.image);
+      $set.images = this.normalizeArticleImagesList(
+        payload.image ? [payload.image] : [],
+      );
     }
     if (payload.url !== undefined) $set.url = String(payload.url).trim();
     if (payload.externalUrl !== undefined) $set.externalUrl = payload.externalUrl === true;
-    if (payload.pdf !== undefined) {
-      $set.pdf = payload.pdf;
-      $set.article_pdf = this.resolveArticlePdfPath(payload.pdf);
-    }
+    if (payload.whatsInside !== undefined) $set.whatsInside = payload.whatsInside;
+    if (payload.keyPoints !== undefined) $set.keyPoints = payload.keyPoints;
+    if (payload.whoItsFor !== undefined) $set.whoItsFor = payload.whoItsFor;
+    if (payload.tags !== undefined) $set.tags = payload.tags;
     if (payload.status === 0 || payload.status === 1) $set.status = payload.status;
     if (Object.keys($set).length === 0) {
       throw new BadRequestException('No fields to update');
@@ -1766,11 +1862,25 @@ export class AdminService {
     return '';
   }
 
+  private mapArticleDetailSections(a: any) {
+    return {
+      whatsInside: mapWhatsInsideFromDoc(a),
+      keyPoints: mapKeyPointsFromDoc(a),
+      whoItsFor: mapWhoItsForFromDoc(a),
+      tags: mapTagsFromDoc(a),
+    };
+  }
+
   private mapArticleListRow(a: any, serialNo: number) {
+    const images = this.resolveArticleImagesFromDoc(a).map(
+      (img) => this.resolveArticleAssetForResponse(img),
+    );
+    const first = images[0] ?? null;
     return {
       s_no: serialNo,
       id: String(a._id),
       title: String(a.title ?? ''),
+      publisher: String(a.publisher ?? ''),
       description: String(a.description ?? ''),
       shortDescription: this.resolveArticleShortDescription(a),
       date:
@@ -1779,16 +1889,14 @@ export class AdminService {
           : a?.date
             ? new Date(a.date).toISOString().slice(0, 10)
             : '',
-      image: this.resolveArticleAssetForResponse(a.image) || null,
+      image: first,
       article_image: this.resolveArticleAssetForResponse(
-        a.article_image ?? this.resolveArticleImagePath(a.image),
+        a.article_image ?? this.resolveArticleImagePath(first),
       ),
+      images,
       url: String(a.url ?? ''),
       externalUrl: a.externalUrl === true,
-      pdf: this.resolveArticleAssetForResponse(a.pdf) || null,
-      article_pdf: this.resolveArticleAssetForResponse(
-        a.article_pdf ?? this.resolveArticlePdfPath(a.pdf),
-      ),
+      ...this.mapArticleDetailSections(a),
       is_active: Number(a.status) === 1,
     };
   }
@@ -1798,7 +1906,7 @@ export class AdminService {
       .find({ ...NOT_SOFT_DELETED })
       .sort({ createdAt: -1, _id: -1 })
       .select(
-        'title description shortDescription date image article_image url externalUrl pdf article_pdf status',
+        'title publisher description shortDescription date image article_image images url externalUrl whatsInside keyPoints whoItsFor tags status',
       )
       .lean()
       .exec();
@@ -1827,7 +1935,7 @@ export class AdminService {
         .skip((safePage - 1) * safePerPage)
         .limit(safePerPage)
         .select(
-          'title description shortDescription date image article_image url externalUrl pdf article_pdf status',
+          'title publisher description shortDescription date image article_image images url externalUrl whatsInside keyPoints whoItsFor tags status',
         )
         .lean()
         .exec(),
@@ -1863,9 +1971,15 @@ export class AdminService {
       .exec();
     if (!article) throw new NotFoundException('Article not found');
 
+    const images = this.resolveArticleImagesFromDoc(article).map((img) =>
+      this.resolveArticleAssetForResponse(img),
+    );
+    const first = images[0] ?? null;
+
     return {
       id: String((article as any)._id),
       title: String((article as any).title ?? ''),
+      publisher: String((article as any).publisher ?? ''),
       description: String((article as any).description ?? ''),
       shortDescription: this.resolveArticleShortDescription(article),
       date:
@@ -1874,21 +1988,18 @@ export class AdminService {
           : (article as any)?.date
             ? new Date((article as any).date).toISOString().slice(0, 10)
             : '',
-      image: this.resolveArticleAssetForResponse((article as any).image) || null,
+      image: first,
       article_image: this.resolveArticleAssetForResponse(
         (article as any).article_image ??
-          this.resolveArticleImagePath((article as any).image),
+          this.resolveArticleImagePath(first),
       ),
+      images,
       url:
         (article as any).externalUrl === true
           ? String((article as any).url ?? '')
           : '',
       externalUrl: (article as any).externalUrl === true,
-      pdf: this.resolveArticleAssetForResponse((article as any).pdf) || null,
-      article_pdf: this.resolveArticleAssetForResponse(
-        (article as any).article_pdf ??
-          this.resolveArticlePdfPath((article as any).pdf),
-      ),
+      ...this.mapArticleDetailSections(article),
       is_active: Number((article as any).status) === 1,
     };
   }
@@ -2651,7 +2762,7 @@ export class AdminService {
 
   async createBanner(
     vendorScope: string | null,
-    dto: CreateBannerDto & { imageUrl: string; videoUrl?: string },
+    dto: CreateBannerDto & { imageUrl?: string; videoUrl?: string },
     resolvedImageSource: 'binary_upload' | 'manual_url',
     resolvedVideoSource?: 'binary_upload',
   ) {
@@ -2695,7 +2806,7 @@ export class AdminService {
       ...(resolvedVideoSource ? { videoSource: resolvedVideoSource } : {}),
       heading: dto.title.trim(),
       sequenceNumber,
-      description: dto.description.trim(),
+      description: '',
       status:
         String(dto.status ?? '').trim().toLowerCase() === 'inactive' ||
         String(dto.status ?? '').trim() === '0'
@@ -2808,7 +2919,6 @@ export class AdminService {
       clearVideo?: boolean;
       title?: string;
       sequenceNumber?: number;
-      description?: string;
       status?: string;
     },
   ) {
@@ -2858,9 +2968,6 @@ export class AdminService {
     }
     if (payload.sequenceNumber !== undefined) {
       $set.sequenceNumber = payload.sequenceNumber;
-    }
-    if (payload.description !== undefined) {
-      $set.description = payload.description.trim();
     }
     if (payload.status !== undefined) {
       $set.status =
@@ -3856,6 +3963,395 @@ export class AdminService {
       createdAt: (msg as any).createdAt ?? null,
       inquiryType: String((msg as any).inquiryType ?? 'contact'),
       ...this.mapInquiryAcknowledgement(msg as Record<string, unknown>),
+    };
+  }
+
+  private buildEventRegistrationFilter(
+    query: ListEventRegistrationsQueryDto,
+  ): Record<string, unknown> {
+    const filter: Record<string, unknown> = {};
+
+    const eventSlug = String(query.eventSlug ?? '').trim();
+    if (eventSlug) {
+      filter.eventSlug = eventSlug;
+    }
+
+    const search = String(query.search ?? '').trim();
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
+      filter.$or = [{ eventSlug: regex }, { eventTitle: regex }];
+    }
+
+    if (query.attendanceMode) {
+      filter.attendanceMode = query.attendanceMode;
+    }
+    if (query.participantRole) {
+      filter.participantRole = query.participantRole;
+    }
+    if (query.status) {
+      filter.status = query.status;
+    }
+
+    const createdAt: Record<string, Date> = {};
+    const fromRaw = String(query.from ?? '').trim();
+    const toRaw = String(query.to ?? '').trim();
+    if (fromRaw) {
+      const from = new Date(fromRaw);
+      if (!Number.isNaN(from.getTime())) {
+        createdAt.$gte = from;
+      }
+    }
+    if (toRaw) {
+      const to = new Date(toRaw);
+      if (!Number.isNaN(to.getTime())) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(toRaw)) {
+          to.setHours(23, 59, 59, 999);
+        }
+        createdAt.$lte = to;
+      }
+    }
+    if (Object.keys(createdAt).length > 0) {
+      filter.createdAt = createdAt;
+    }
+
+    return filter;
+  }
+
+  private mapEventRegistrationListRow(
+    r: Record<string, unknown>,
+    idx: number,
+  ) {
+    return {
+      s_no: idx + 1,
+      id: String(r._id ?? r.id ?? ''),
+      referenceCode: String(r.referenceCode ?? ''),
+      eventSlug: String(r.eventSlug ?? ''),
+      eventTitle: String(r.eventTitle ?? ''),
+      fullName: String(r.fullName ?? ''),
+      email: String(r.email ?? ''),
+      phone: String(r.phone ?? ''),
+      attendanceMode: String(r.attendanceMode ?? ''),
+      participantRole: String(r.participantRole ?? ''),
+      city: String(r.city ?? ''),
+      organisation: String(r.organisation ?? ''),
+      status: String(r.status ?? 'new'),
+      createdAt: r.createdAt ?? null,
+    };
+  }
+
+  private async resolveRelatedEventForRegistration(input: {
+    eventSlug: string;
+    eventTitle: string;
+  }): Promise<{
+    eventId: number | null;
+    eventMongoId: string | null;
+    eventName: string | null;
+  }> {
+    const slug = String(input.eventSlug ?? '').trim().toLowerCase();
+    const title = String(input.eventTitle ?? '').trim();
+    if (!slug && !title) {
+      return { eventId: null, eventMongoId: null, eventName: null };
+    }
+
+    const or: Record<string, unknown>[] = [];
+    if (title) {
+      or.push({ eventName: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') });
+    }
+    if (slug && /^\d+$/.test(slug)) {
+      or.push({ eventId: Number(slug) });
+    }
+
+    let event =
+      or.length > 0
+        ? await this.eventModel
+            .findOne({ ...NOT_SOFT_DELETED, $or: or })
+            .select('_id eventId eventName')
+            .lean()
+            .exec()
+        : null;
+
+    if (!event && slug) {
+      // Events have no stored slug yet — match by slugified eventName among recent rows.
+      const candidates = await this.eventModel
+        .find({ ...NOT_SOFT_DELETED })
+        .select('_id eventId eventName')
+        .sort({ createdDate: -1 })
+        .limit(200)
+        .lean()
+        .exec();
+      event =
+        (candidates ?? []).find(
+          (row) => slugifyPublicName(String(row.eventName ?? '')) === slug,
+        ) ?? null;
+    }
+
+    if (!event) {
+      return { eventId: null, eventMongoId: null, eventName: null };
+    }
+
+    const name = String(event.eventName ?? '').trim();
+    return {
+      eventId:
+        typeof event.eventId === 'number'
+          ? event.eventId
+          : Number(event.eventId) || null,
+      eventMongoId: String(event._id),
+      eventName: name || null,
+    };
+  }
+
+  async listEventRegistrations(query: ListEventRegistrationsQueryDto) {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+    const skip = (page - 1) * limit;
+    const filter = this.buildEventRegistrationFilter(query);
+
+    const [totalCount, rows] = await Promise.all([
+      this.eventRegistrationModel.countDocuments(filter).exec(),
+      this.eventRegistrationModel
+        .find(filter)
+        .select(
+          'referenceCode eventSlug eventTitle fullName email phone attendanceMode participantRole city organisation status createdAt',
+        )
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+    ]);
+
+    const data = (rows ?? []).map((r, idx) =>
+      this.mapEventRegistrationListRow(r as Record<string, unknown>, skip + idx),
+    );
+
+    return {
+      data,
+      totalCount,
+      currentPage: page,
+      totalPages: Math.max(1, Math.ceil(totalCount / limit)),
+      page,
+      limit,
+    };
+  }
+
+  async getEventRegistrationById(id: string) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException('Invalid registration id');
+    }
+
+    const row = await this.eventRegistrationModel
+      .findOne({ _id: objectId })
+      .lean()
+      .exec();
+
+    if (!row) {
+      throw new NotFoundException('Event registration not found');
+    }
+
+    const relatedEvent = await this.resolveRelatedEventForRegistration({
+      eventSlug: String(row.eventSlug ?? ''),
+      eventTitle: String(row.eventTitle ?? ''),
+    });
+
+    return {
+      id: String(row._id),
+      referenceCode: String(row.referenceCode ?? ''),
+      eventSlug: String(row.eventSlug ?? ''),
+      eventTitle: String(row.eventTitle ?? ''),
+      eventDate: String(row.eventDate ?? ''),
+      eventTime: String(row.eventTime ?? ''),
+      eventLocation: String(row.eventLocation ?? ''),
+      fullName: String(row.fullName ?? ''),
+      email: String(row.email ?? ''),
+      phone: String(row.phone ?? ''),
+      city: String(row.city ?? ''),
+      organisation: String(row.organisation ?? ''),
+      designation: String(row.designation ?? ''),
+      attendanceMode: String(row.attendanceMode ?? ''),
+      participantRole: String(row.participantRole ?? ''),
+      sessionsOfInterest: Array.isArray(row.sessionsOfInterest)
+        ? row.sessionsOfInterest.map((s) => String(s ?? ''))
+        : [],
+      accessibilityOrDietaryNotes: String(
+        row.accessibilityOrDietaryNotes ?? '',
+      ),
+      consent: Boolean(row.consent),
+      sourcePath: String(row.sourcePath ?? ''),
+      status: String(row.status ?? 'new'),
+      adminNotes: String(row.adminNotes ?? ''),
+      createdAt: row.createdAt ?? null,
+      updatedAt: row.updatedAt ?? null,
+      relatedEvent,
+    };
+  }
+
+  async updateEventRegistration(id: string, dto: UpdateEventRegistrationDto) {
+    let objectId: Types.ObjectId;
+    try {
+      objectId = new Types.ObjectId(id);
+    } catch {
+      throw new BadRequestException('Invalid registration id');
+    }
+
+    const $set: Record<string, unknown> = {};
+    if (dto.status !== undefined) {
+      if (
+        !EVENT_REGISTRATION_STATUSES.includes(
+          dto.status as EventRegistrationStatus,
+        )
+      ) {
+        throw new BadRequestException('Invalid status');
+      }
+      $set.status = dto.status;
+    }
+    if (dto.adminNotes !== undefined) {
+      $set.adminNotes = String(dto.adminNotes ?? '').trim();
+    }
+
+    if (Object.keys($set).length === 0) {
+      throw new BadRequestException(
+        'Provide status and/or adminNotes to update',
+      );
+    }
+
+    const updated = await this.eventRegistrationModel
+      .findOneAndUpdate({ _id: objectId }, { $set }, { new: true })
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Event registration not found');
+    }
+
+    return this.getEventRegistrationById(String(updated._id));
+  }
+
+  async exportEventRegistrationsCsv(
+    query: ListEventRegistrationsQueryDto,
+  ): Promise<{ buffer: Buffer; fileName: string }> {
+    const filter = this.buildEventRegistrationFilter(query);
+    const rows = await this.eventRegistrationModel
+      .find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .lean()
+      .exec();
+
+    const headers = [
+      'referenceCode',
+      'eventSlug',
+      'eventTitle',
+      'eventDate',
+      'eventTime',
+      'eventLocation',
+      'fullName',
+      'email',
+      'phone',
+      'city',
+      'organisation',
+      'designation',
+      'attendanceMode',
+      'participantRole',
+      'sessionsOfInterest',
+      'accessibilityOrDietaryNotes',
+      'consent',
+      'sourcePath',
+      'status',
+      'adminNotes',
+      'createdAt',
+    ];
+
+    const escapeCsv = (value: unknown): string => {
+      const raw = value == null ? '' : String(value);
+      if (/[",\n\r]/.test(raw)) {
+        return `"${raw.replace(/"/g, '""')}"`;
+      }
+      return raw;
+    };
+
+    const lines = [headers.join(',')];
+    for (const row of rows ?? []) {
+      const sessions = Array.isArray(row.sessionsOfInterest)
+        ? row.sessionsOfInterest.map((s) => String(s ?? '')).join('; ')
+        : '';
+      const createdAt =
+        row.createdAt instanceof Date
+          ? row.createdAt.toISOString()
+          : row.createdAt
+            ? String(row.createdAt)
+            : '';
+      lines.push(
+        [
+          row.referenceCode,
+          row.eventSlug,
+          row.eventTitle,
+          row.eventDate,
+          row.eventTime,
+          row.eventLocation,
+          row.fullName,
+          row.email,
+          row.phone,
+          row.city,
+          row.organisation,
+          row.designation,
+          row.attendanceMode,
+          row.participantRole,
+          sessions,
+          row.accessibilityOrDietaryNotes,
+          row.consent,
+          row.sourcePath,
+          row.status,
+          row.adminNotes,
+          createdAt,
+        ]
+          .map(escapeCsv)
+          .join(','),
+      );
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    return {
+      buffer: Buffer.from(`\uFEFF${lines.join('\n')}`, 'utf8'),
+      fileName: `event-registrations-${stamp}.csv`,
+    };
+  }
+
+  async countEventRegistrationsByEventSlug(eventSlug?: string) {
+    const filter: Record<string, unknown> = {};
+    const slug = String(eventSlug ?? '').trim();
+    if (slug) {
+      filter.eventSlug = slug;
+    }
+    const total = await this.eventRegistrationModel.countDocuments(filter).exec();
+    if (slug) {
+      return { eventSlug: slug, total };
+    }
+    const byEvent = await this.eventRegistrationModel
+      .aggregate<{
+        _id: string;
+        count: number;
+        eventTitle: string;
+      }>([
+        {
+          $group: {
+            _id: '$eventSlug',
+            count: { $sum: 1 },
+            eventTitle: { $first: '$eventTitle' },
+          },
+        },
+        { $sort: { count: -1 } },
+      ])
+      .exec();
+    return {
+      total,
+      byEvent: (byEvent ?? []).map((r) => ({
+        eventSlug: String(r._id ?? ''),
+        eventTitle: String(r.eventTitle ?? ''),
+        count: Number(r.count) || 0,
+      })),
     };
   }
 

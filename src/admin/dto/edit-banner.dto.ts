@@ -8,10 +8,7 @@ import {
   Min,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
-import {
-  IsReadableNotEmpty,
-  MaxReadableLength,
-} from '../../common/validators/readable-text.validator';
+import { IsReadableNotEmpty } from '../../common/validators/readable-text.validator';
 
 export class EditBannerDto {
   @ApiPropertyOptional({
@@ -74,19 +71,6 @@ export class EditBannerDto {
   @IsString()
   @IsIn(['binary_upload', 'manual_url'])
   imageSource?: 'binary_upload' | 'manual_url';
-
-  @ApiPropertyOptional({
-    example: 'Up to 50% off selected items.',
-    description: 'Banner description (max 1000 readable characters)',
-  })
-  @IsOptional()
-  @IsString()
-  @IsReadableNotEmpty()
-  @MaxReadableLength(1000)
-  @Transform(({ value }) =>
-    value === undefined || value === null ? undefined : String(value).trim(),
-  )
-  description?: string;
 
   @ApiPropertyOptional({
     description:

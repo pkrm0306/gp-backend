@@ -35,7 +35,7 @@ export function readExplicitPaymentCurrency(
 
 /**
  * Currency to return on a payment.
- * Certification rows with no stored currency inherit the registration currency.
+ * Certification and renew rows with no stored currency inherit the registration currency.
  */
 export function resolvePaymentCurrencyForResponse(options: {
   payment: Record<string, unknown>;
@@ -47,7 +47,7 @@ export function resolvePaymentCurrencyForResponse(options: {
   const paymentType = String(options.payment.paymentType ?? '')
     .trim()
     .toLowerCase();
-  if (paymentType === 'certification') {
+  if (paymentType === 'certification' || paymentType === 'renew') {
     const inherited = normalizePaymentCurrencyCode(options.registrationCurrency);
     if (inherited) return inherited;
   }

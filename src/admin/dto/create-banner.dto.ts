@@ -8,16 +8,13 @@ import {
   Matches,
   Min,
 } from 'class-validator';
-import {
-  IsReadableNotEmpty,
-  MaxReadableLength,
-} from '../../common/validators/readable-text.validator';
+import { IsReadableNotEmpty } from '../../common/validators/readable-text.validator';
 
 export class CreateBannerDto {
   @ApiPropertyOptional({
     example: '/uploads/banners/banner-123.jpg',
     description:
-      'Banner image URL/path. Optional when uploading multipart file `image`.',
+      'Banner image URL/path. Optional when uploading multipart image or video.',
   })
   @IsOptional()
   @Transform(({ value }) => {
@@ -69,16 +66,6 @@ export class CreateBannerDto {
   @IsString()
   @IsIn(['binary_upload', 'manual_url'])
   imageSource?: 'binary_upload' | 'manual_url';
-
-  @ApiProperty({
-    example: 'Up to 50% off selected items.',
-    description: 'Banner description (max 1000 readable characters)',
-  })
-  @IsString()
-  @IsReadableNotEmpty()
-  @MaxReadableLength(1000)
-  @Transform(({ value }) => String(value ?? '').trim())
-  description: string;
 
   @ApiPropertyOptional({
     description:

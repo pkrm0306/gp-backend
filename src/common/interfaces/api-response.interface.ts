@@ -10,5 +10,7 @@ export interface ApiResponse<T = any> {
   error?: string;
   code?: string;
   fieldErrors?: Record<string, string>;
+  /** Alias of fieldErrors for website/BFF clients. */
+  errors?: Record<string, string>;
   issues?: ApiFieldIssue[];
 }

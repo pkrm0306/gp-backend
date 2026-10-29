@@ -30,6 +30,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = (responseObj.message as string | string[]) || message;
         error = (responseObj.error as string) || error;
       }
+      // Nest object-form exceptions (`{ message }`) often omit `error`.
+      if (
+        error === 'Internal Server Error' &&
+        status !== HttpStatus.INTERNAL_SERVER_ERROR
+      ) {
+        const statusName = HttpStatus[status];
+        error =
+          typeof statusName === 'string'
+            ? statusName
+                .split('_')
+                .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+                .join(' ')
+            : error;
+      }
     } else if (exception instanceof SyntaxError) {
       status = HttpStatus.BAD_REQUEST;
       message = this.formatInvalidJsonMessage(exception.message);
@@ -117,7 +131,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
           typeof fieldErrorSource === 'object' &&
           !Array.isArray(fieldErrorSource)
         ) {
-          apiResponse.fieldErrors = fieldErrorSource as Record<string, string>;
+          const mapped = fieldErrorSource as Record<string, string>;
+          apiResponse.fieldErrors = mapped;
+          // Alias for public website / BFF clients that expect `errors`.
+          apiResponse.errors = mapped;
         }
         if (Array.isArray(extra.issues)) {
           apiResponse.issues = extra.issues as ApiResponse['issues'];

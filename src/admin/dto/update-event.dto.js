@@ -38,7 +38,6 @@ exports.UpdateEventDto = void 0;
 var swagger_1 = require("@nestjs/swagger");
 var class_transformer_1 = require("class-transformer");
 var class_validator_1 = require("class-validator");
-var event_brochure_item_dto_1 = require("./event-brochure-item.dto");
 function emptyToUndefined(value) {
     if (value === undefined || value === null)
         return undefined;
@@ -86,12 +85,6 @@ var UpdateEventDto = function () {
     var _registrationLink_decorators;
     var _registrationLink_initializers = [];
     var _registrationLink_extraInitializers = [];
-    var _brochureLink_decorators;
-    var _brochureLink_initializers = [];
-    var _brochureLink_extraInitializers = [];
-    var _brochures_decorators;
-    var _brochures_initializers = [];
-    var _brochures_extraInitializers = [];
     return _a = /** @class */ (function () {
             function UpdateEventDto() {
                 this.eventName = __runInitializers(this, _eventName_initializers, void 0);
@@ -107,9 +100,7 @@ var UpdateEventDto = function () {
                 this.contactPersonEmail = (__runInitializers(this, _contactPersonDesignation_extraInitializers), __runInitializers(this, _contactPersonEmail_initializers, void 0));
                 this.contactPersonPhone = (__runInitializers(this, _contactPersonEmail_extraInitializers), __runInitializers(this, _contactPersonPhone_initializers, void 0));
                 this.registrationLink = (__runInitializers(this, _contactPersonPhone_extraInitializers), __runInitializers(this, _registrationLink_initializers, void 0));
-                this.brochureLink = (__runInitializers(this, _registrationLink_extraInitializers), __runInitializers(this, _brochureLink_initializers, void 0));
-                this.brochures = (__runInitializers(this, _brochureLink_extraInitializers), __runInitializers(this, _brochures_initializers, void 0));
-                __runInitializers(this, _brochures_extraInitializers);
+                __runInitializers(this, _registrationLink_extraInitializers);
             }
             return UpdateEventDto;
         }()),
@@ -180,18 +171,6 @@ var UpdateEventDto = function () {
                     var value = _b.value;
                     return emptyToUndefined(value);
                 })];
-            _brochureLink_decorators = [(0, swagger_1.ApiPropertyOptional)({
-                    example: 'https://www.linkedin.com/posts/cii-greenpro-ecolabelling_greenpro-summit-2025-brochure-03062025-activity-7335663123154014208-2ScV',
-                    description: 'Legacy single brochure link (prefer brochures[]).',
-                }), (0, class_validator_1.IsOptional)(), (0, class_validator_1.IsString)(), (0, class_transformer_1.Transform)(function (_b) {
-                    var value = _b.value;
-                    return emptyToUndefined(value);
-                })];
-            _brochures_decorators = [(0, swagger_1.ApiPropertyOptional)({
-                    description: 'Replace all brochure cards. Each item requires heading and link. ' +
-                        'Send [] to clear. Multipart forms may send JSON string.',
-                    type: [event_brochure_item_dto_1.EventBrochureItemDto],
-                }), (0, class_validator_1.IsOptional)(), (0, class_validator_1.IsArray)(), (0, class_validator_1.ValidateNested)({ each: true }), (0, class_transformer_1.Type)(function () { return event_brochure_item_dto_1.EventBrochureItemDto; })];
             __esDecorate(null, null, _eventName_decorators, { kind: "field", name: "eventName", static: false, private: false, access: { has: function (obj) { return "eventName" in obj; }, get: function (obj) { return obj.eventName; }, set: function (obj, value) { obj.eventName = value; } }, metadata: _metadata }, _eventName_initializers, _eventName_extraInitializers);
             __esDecorate(null, null, _eventStartDate_decorators, { kind: "field", name: "eventStartDate", static: false, private: false, access: { has: function (obj) { return "eventStartDate" in obj; }, get: function (obj) { return obj.eventStartDate; }, set: function (obj, value) { obj.eventStartDate = value; } }, metadata: _metadata }, _eventStartDate_initializers, _eventStartDate_extraInitializers);
             __esDecorate(null, null, _eventEndDate_decorators, { kind: "field", name: "eventEndDate", static: false, private: false, access: { has: function (obj) { return "eventEndDate" in obj; }, get: function (obj) { return obj.eventEndDate; }, set: function (obj, value) { obj.eventEndDate = value; } }, metadata: _metadata }, _eventEndDate_initializers, _eventEndDate_extraInitializers);
@@ -205,8 +184,6 @@ var UpdateEventDto = function () {
             __esDecorate(null, null, _contactPersonEmail_decorators, { kind: "field", name: "contactPersonEmail", static: false, private: false, access: { has: function (obj) { return "contactPersonEmail" in obj; }, get: function (obj) { return obj.contactPersonEmail; }, set: function (obj, value) { obj.contactPersonEmail = value; } }, metadata: _metadata }, _contactPersonEmail_initializers, _contactPersonEmail_extraInitializers);
             __esDecorate(null, null, _contactPersonPhone_decorators, { kind: "field", name: "contactPersonPhone", static: false, private: false, access: { has: function (obj) { return "contactPersonPhone" in obj; }, get: function (obj) { return obj.contactPersonPhone; }, set: function (obj, value) { obj.contactPersonPhone = value; } }, metadata: _metadata }, _contactPersonPhone_initializers, _contactPersonPhone_extraInitializers);
             __esDecorate(null, null, _registrationLink_decorators, { kind: "field", name: "registrationLink", static: false, private: false, access: { has: function (obj) { return "registrationLink" in obj; }, get: function (obj) { return obj.registrationLink; }, set: function (obj, value) { obj.registrationLink = value; } }, metadata: _metadata }, _registrationLink_initializers, _registrationLink_extraInitializers);
-            __esDecorate(null, null, _brochureLink_decorators, { kind: "field", name: "brochureLink", static: false, private: false, access: { has: function (obj) { return "brochureLink" in obj; }, get: function (obj) { return obj.brochureLink; }, set: function (obj, value) { obj.brochureLink = value; } }, metadata: _metadata }, _brochureLink_initializers, _brochureLink_extraInitializers);
-            __esDecorate(null, null, _brochures_decorators, { kind: "field", name: "brochures", static: false, private: false, access: { has: function (obj) { return "brochures" in obj; }, get: function (obj) { return obj.brochures; }, set: function (obj, value) { obj.brochures = value; } }, metadata: _metadata }, _brochures_initializers, _brochures_extraInitializers);
             if (_metadata) Object.defineProperty(_a, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
         })(),
         _a;

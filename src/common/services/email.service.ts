@@ -588,6 +588,56 @@ Thank you for joining GreenPro!
     await this.sendEmail(email, subject, htmlBody, textBody);
   }
 
+  async sendEventRegistrationConfirmationEmail(input: {
+    email: string;
+    fullName: string;
+    referenceCode: string;
+    eventTitle: string;
+    eventDate?: string;
+    eventTime?: string;
+    eventLocation?: string;
+    attendanceMode?: string;
+  }): Promise<void> {
+    const name = this.escapeHtml(input.fullName?.trim() || 'there');
+    const ref = this.escapeHtml(input.referenceCode);
+    const title = this.escapeHtml(input.eventTitle || 'the event');
+    const date = this.escapeHtml(input.eventDate || '—');
+    const time = this.escapeHtml(input.eventTime || '—');
+    const location = this.escapeHtml(input.eventLocation || '—');
+    const mode = this.escapeHtml(input.attendanceMode || '—');
+    const subject = `GreenPro event registration confirmed (${input.referenceCode})`;
+    const htmlBody = `
+      <p>Hi ${name},</p>
+      <p>Thank you for registering for <strong>${title}</strong>.</p>
+      <p>Your registration reference is <strong>${ref}</strong>. Please keep this for your records.</p>
+      <ul>
+        <li><strong>Date:</strong> ${date}</li>
+        <li><strong>Time:</strong> ${time}</li>
+        <li><strong>Location:</strong> ${location}</li>
+        <li><strong>Attendance:</strong> ${mode}</li>
+      </ul>
+      <p>We look forward to seeing you.</p>
+      <p>Best regards,<br/>The GreenPro Team</p>
+    `;
+    const textBody = [
+      `Hi ${input.fullName?.trim() || 'there'},`,
+      '',
+      `Thank you for registering for ${input.eventTitle || 'the event'}.`,
+      `Your registration reference is ${input.referenceCode}.`,
+      '',
+      `Date: ${input.eventDate || '—'}`,
+      `Time: ${input.eventTime || '—'}`,
+      `Location: ${input.eventLocation || '—'}`,
+      `Attendance: ${input.attendanceMode || '—'}`,
+      '',
+      'Best regards,',
+      'The GreenPro Team',
+    ].join('\n');
+    await this.sendEmail(input.email, subject, htmlBody, textBody, {
+      skipAdminCc: true,
+    });
+  }
+
   async sendPasswordResetEmail(
     email: string,
     newPassword: string,

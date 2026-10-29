@@ -30,6 +30,8 @@ export const ALL_GALLERY_TYPES = [
 ] as const;
 
 export const GALLERY_MAX_IMAGES = 10;
+/** Max videos per gallery item (same cap as images). */
+export const GALLERY_MAX_VIDEOS = 10;
 
 export type GalleryDocument = Gallery & Document;
 
@@ -52,6 +54,17 @@ export class Gallery {
 
   @Prop({ type: [String], default: [] })
   galleryImages?: string[];
+
+  /** Relative path for first uploaded gallery video (e.g. gallery/file.mp4). */
+  @Prop()
+  gallery_video?: string;
+
+  /** Public URL/path for first gallery video. */
+  @Prop()
+  video?: string;
+
+  @Prop({ type: [String], default: [] })
+  galleryVideos?: string[];
 
   @Prop({ enum: ALL_GALLERY_TYPES, required: true })
   galleryType: GalleryType;

@@ -60,36 +60,9 @@ export function adminImageMemoryMulterOptions(maxBytes = FIVE_MB): Options {
   };
 }
 
-/** Admin articles: image fields + standard documents on `pdf` / `file`. */
+/** Admin articles: image uploads only (max 10; no PDF). */
 export function adminArticleMemoryMulterOptions(): Options {
-  return {
-    storage: memoryStorage(),
-    limits: { fileSize: FIVE_MB },
-    fileFilter: (_req, file, cb) => {
-      if (!file?.originalname) {
-        cb(null, true);
-        return;
-      }
-      if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-        if (isAllowedStandardDocumentFile(file)) {
-          cb(null, true);
-        } else {
-          cb(
-            new BadRequestException(
-              STANDARD_DOCUMENT_VALIDATION_MESSAGE,
-            ) as unknown as null,
-            false,
-          );
-        }
-        return;
-      }
-      if (ADMIN_IMAGE_MIMES.has(file.mimetype) || file.mimetype?.startsWith('image/')) {
-        cb(null, true);
-      } else {
-        cb(null, false);
-      }
-    },
-  };
+  return adminImageMemoryMulterOptions(FIVE_MB);
 }
 
 /** Certification / URN multipart document uploads. */

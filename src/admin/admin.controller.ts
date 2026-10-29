@@ -74,6 +74,8 @@ import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 import { DeleteNewsletterSubscriberDto } from './dto/delete-newsletter-subscriber.dto';
 import { UpdateNewsletterSubscriberStatusDto } from './dto/update-newsletter-subscriber-status.dto';
 import { DeleteContactMessageDto } from './dto/delete-contact-message.dto';
+import { ListEventRegistrationsQueryDto } from './dto/list-event-registrations-query.dto';
+import { UpdateEventRegistrationDto } from './dto/update-event-registration.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -91,6 +93,7 @@ import {
 import { BUSINESS_VERTICALS } from '../vendor-users/schemas/vendor-user.schema';
 import {
   GALLERY_MAX_IMAGES,
+  GALLERY_MAX_VIDEOS,
   GALLERY_TYPE_OPTIONS,
   GALLERY_TYPES,
   GalleryType,
@@ -103,12 +106,19 @@ import {
   pickBannerImageFile,
   pickBannerVideoFile,
 } from './utils/banner-image-upload.util';
-import { assertBannerVideoDurationWithinLimit } from './utils/banner-video-duration.util';
-import { adminImageMemoryMulterOptions } from '../common/upload/multer-universal.config';
 import {
-  isAllowedStandardDocumentFile,
-  STANDARD_DOCUMENT_VALIDATION_MESSAGE,
-} from '../common/upload/document-upload.validation';
+  GALLERY_MEDIA_MULTIPART_FIELDS,
+  galleryMediaMemoryMulterOptions,
+  pickGalleryImageFiles,
+  pickGalleryVideoFiles,
+} from './utils/gallery-image-upload.util';
+import { assertBannerVideoDurationWithinLimit } from './utils/banner-video-duration.util';
+import {
+  adminArticleMemoryMulterOptions,
+  adminImageMemoryMulterOptions,
+} from '../common/upload/multer-universal.config';
+import { ARTICLE_MAX_IMAGES } from '../articles/schemas/article.schema';
+import { EVENT_MAX_IMAGES } from '../events/schemas/event.schema';
 import {
   DashboardActivityQueryDto,
   DashboardMetricsQueryDto,
@@ -116,7 +126,39 @@ import {
 } from './dto/dashboard-metrics-query.dto';
 import { PaymentsService } from '../payments/payments.service';
 import { AdminListPaymentsDto } from '../payments/dto/admin-list-payments.dto';
-import { normalizeEventBrochuresInput } from '../events/utils/event-brochures.util';
+import {
+  EVENT_KEY_THEME_DESCRIPTION_MAX,
+  EVENT_KEY_THEME_HEADING_MAX,
+  EVENT_KEY_THEMES_MAX,
+  EVENT_PROGRAMME_DESCRIPTION_MAX,
+  EVENT_PROGRAMME_TIME_MAX,
+  EVENT_TAG_ITEM_MAX,
+  EVENT_TAGS_MAX,
+  EVENT_VENUE_AND_TRAVEL_MAX,
+  EVENT_WHO_SHOULD_ATTEND_ITEM_MAX,
+  EVENT_WHO_SHOULD_ATTEND_MAX,
+  normalizeEventTagsInput,
+  normalizeKeyThemesInput,
+  normalizeProgrammeAtAGlanceInput,
+  normalizeVenueAndTravelInput,
+  normalizeWhoShouldAttendInput,
+  pickFormArrayField,
+} from '../events/utils/event-detail-sections.util';
+import {
+  ARTICLE_KEY_POINT_DESCRIPTION_MAX,
+  ARTICLE_KEY_POINT_HEADING_MAX,
+  ARTICLE_KEY_POINTS_MAX,
+  ARTICLE_TAG_ITEM_MAX,
+  ARTICLE_TAGS_MAX,
+  ARTICLE_WHATS_INSIDE_ITEM_MAX,
+  ARTICLE_WHATS_INSIDE_MAX,
+  ARTICLE_WHO_ITS_FOR_ITEM_MAX,
+  ARTICLE_WHO_ITS_FOR_MAX,
+  normalizeKeyPointsInput,
+  normalizeTagsInput,
+  normalizeWhatsInsideInput,
+  normalizeWhoItsForInput,
+} from '../articles/utils/article-detail-sections.util';
 import { VendorCertificateService } from '../product-registration/services/vendor-certificate.service';
 import { Types } from 'mongoose';
 
@@ -673,17 +715,6 @@ export class AdminController {
     );
   }
 
-  private parseEventBrochuresFromBody(
-    body: Record<string, unknown>,
-    pick: (keys: string[]) => unknown,
-  ) {
-    const raw = pick(['brochures', 'brochure_items', 'brochureItems']);
-    if (raw === undefined) {
-      return undefined;
-    }
-    return normalizeEventBrochuresInput(raw);
-  }
-
   private resolveEventDateRange(body: Record<string, unknown>): {
     eventStartDate: Date;
     eventEndDate: Date;
@@ -823,6 +854,121 @@ export class AdminController {
     }
   }
 
+  private assertGalleryVideoCount(count: number): void {
+    if (count > GALLERY_MAX_VIDEOS) {
+      throw new BadRequestException(
+        `A gallery item can have at most ${GALLERY_MAX_VIDEOS} videos`,
+      );
+    }
+  }
+
+  private assertArticleImageCount(count: number): void {
+    if (count > ARTICLE_MAX_IMAGES) {
+      throw new BadRequestException(
+        `An article can have at most ${ARTICLE_MAX_IMAGES} images`,
+      );
+    }
+  }
+
+  /** Keep only the first N event images; extras are ignored (no error). */
+  private takeFirstEventImages<T>(items: T[]): T[] {
+    return items.slice(0, EVENT_MAX_IMAGES);
+  }
+
+  /** Article images via shared upload helper (local uploads/ or S3 when configured). */
+  private async uploadArticleImageFiles(
+    files: Express.Multer.File[],
+  ): Promise<string[]> {
+    const urls: string[] = [];
+    for (const file of files) {
+      if (!file?.buffer?.length && !file?.path) {
+        continue;
+      }
+      const uploaded = await uploadFile(file, 'articles');
+      urls.push(uploaded.fileUrl);
+    }
+    return urls;
+  }
+
+  private collectArticleImageFiles(files?: {
+    image?: Express.Multer.File[];
+    'image[]'?: Express.Multer.File[];
+    images?: Express.Multer.File[];
+  }): Express.Multer.File[] {
+    return [
+      ...(files?.image ?? []),
+      ...(files?.['image[]'] ?? []),
+      ...(files?.images ?? []),
+    ];
+  }
+
+  /** Event images via shared upload helper (local uploads/ or S3 when configured). */
+  private async uploadEventImageFiles(
+    files: Express.Multer.File[],
+  ): Promise<string[]> {
+    const urls: string[] = [];
+    for (const file of files) {
+      if (!file?.buffer?.length && !file?.path) {
+        continue;
+      }
+      const uploaded = await uploadFile(file, 'events');
+      urls.push(uploaded.fileUrl);
+    }
+    return urls;
+  }
+
+  /**
+   * Collect event image uploads. Prefer multi-image fields (`image` / `images`);
+   * only fall back to legacy `eventImage` / `event_image` when those are empty,
+   * so a client that sends both does not double-count past the max of 10.
+   */
+  private collectEventImageFiles(files?: {
+    image?: Express.Multer.File[];
+    'image[]'?: Express.Multer.File[];
+    images?: Express.Multer.File[];
+    eventImage?: Express.Multer.File[];
+    event_image?: Express.Multer.File[];
+  }): Express.Multer.File[] {
+    const multi = [
+      ...(files?.image ?? []),
+      ...(files?.['image[]'] ?? []),
+      ...(files?.images ?? []),
+    ];
+    if (multi.length > 0) {
+      return this.dedupeMulterFiles(multi);
+    }
+    return this.dedupeMulterFiles([
+      ...(files?.eventImage ?? []),
+      ...(files?.event_image ?? []),
+    ]);
+  }
+
+  private dedupeMulterFiles(
+    files: Express.Multer.File[],
+  ): Express.Multer.File[] {
+    const seen = new Set<Express.Multer.File>();
+    const out: Express.Multer.File[] = [];
+    for (const file of files) {
+      if (!file || seen.has(file)) continue;
+      seen.add(file);
+      out.push(file);
+    }
+    return out;
+  }
+
+  /** Unique keep-list of existing image URLs (order preserved). */
+  private dedupeImageUrls(urls: string[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const url of urls) {
+      const key = String(url).trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+    return out;
+  }
+
   private normalizeTeamMemberRoleIds(body: any): string[] {
     const parseJsonArray = (value: string): string[] | null => {
       try {
@@ -900,6 +1046,11 @@ export class AdminController {
         : item?.eventImage
           ? [item.eventImage]
           : [];
+    const videos = Array.isArray(item?.galleryVideos)
+      ? item.galleryVideos
+      : item?.video
+        ? [item.video]
+        : [];
     const rawDate = item?.date ?? item?.eventDate;
     const normalizedDate =
       rawDate instanceof Date
@@ -919,10 +1070,13 @@ export class AdminController {
       image: images[0] ?? null,
       images,
       event_image: item?.gallery_image ?? item?.event_image ?? null,
+      video: videos[0] ?? null,
+      videos,
+      gallery_video: item?.gallery_video ?? null,
     };
   }
 
-  /** Gallery/event images via shared upload helper (local uploads/ or S3 when configured). */
+  /** Gallery images/videos via shared upload helper (local uploads/ or S3 when configured). */
   private async uploadGalleryImageFiles(
     files: Express.Multer.File[],
   ): Promise<string[]> {
@@ -937,12 +1091,24 @@ export class AdminController {
     return urls;
   }
 
+  private async uploadGalleryVideoFiles(
+    files: Express.Multer.File[],
+  ): Promise<string[]> {
+    return this.uploadGalleryImageFiles(files);
+  }
+
   private mapArticleResponse(item: any) {
     const id = item?.id ?? (item?._id ? String(item._id) : undefined);
     const externalUrl = item?.externalUrl === true;
+    const images = Array.isArray(item?.images)
+      ? item.images.filter(Boolean)
+      : item?.image
+        ? [item.image]
+        : [];
     return {
       id,
       title: item?.title ?? '',
+      publisher: item?.publisher ?? '',
       description: item?.description ?? '',
       shortDescription:
         item?.shortDescription ??
@@ -953,13 +1119,81 @@ export class AdminController {
           : item?.date
             ? new Date(item.date).toISOString().slice(0, 10)
             : '',
-      image: item?.image ?? null,
+      image: images[0] ?? item?.image ?? null,
       article_image: item?.article_image ?? '',
+      images,
       url: item?.url ?? '',
       externalUrl,
-      pdf: item?.pdf ?? null,
-      article_pdf: item?.article_pdf ?? '',
+      whatsInside: Array.isArray(item?.whatsInside) ? item.whatsInside : [],
+      keyPoints: Array.isArray(item?.keyPoints) ? item.keyPoints : [],
+      whoItsFor: Array.isArray(item?.whoItsFor) ? item.whoItsFor : [],
+      tags: Array.isArray(item?.tags) ? item.tags : [],
       is_active: Number(item?.status) === 1 || item?.is_active === true,
+    };
+  }
+
+  /** Shared parser for article detail sections (multipart JSON arrays OK). */
+  private parseCmsDetailSectionsFromBody(body: Record<string, unknown>) {
+    const pick = (keys: string[]) => {
+      for (const key of keys) {
+        if (body?.[key] !== undefined) return body[key];
+      }
+      return undefined;
+    };
+    return {
+      whatsInside: normalizeWhatsInsideInput(
+        pick(['whatsInside', 'whats_inside', 'whatsinside']),
+      ),
+      keyPoints: normalizeKeyPointsInput(
+        pick(['keyPoints', 'key_points', 'keyTakeaways', 'key_takeaways']),
+      ),
+      whoItsFor: normalizeWhoItsForInput(
+        pick(['whoItsFor', 'who_its_for', 'whoIsItFor', 'who_is_it_for']),
+      ),
+      tags: normalizeTagsInput(pick(['tags'])),
+    };
+  }
+
+  /** Parser for event detail sections (multipart JSON / indexed fields OK). */
+  private parseEventDetailSectionsFromBody(body: Record<string, unknown>) {
+    const pickScalar = (keys: string[]) => {
+      for (const key of keys) {
+        if (body?.[key] !== undefined) return body[key];
+      }
+      const lowerMap = new Map(
+        Object.keys(body ?? {}).map((k) => [k.toLowerCase(), k] as const),
+      );
+      for (const key of keys) {
+        const actual = lowerMap.get(key.toLowerCase());
+        if (actual !== undefined && body?.[actual] !== undefined) {
+          return body[actual];
+        }
+      }
+      return undefined;
+    };
+    return {
+      whoShouldAttend: normalizeWhoShouldAttendInput(
+        pickFormArrayField(body, [
+          'whoShouldAttend',
+          'who_should_attend',
+          'whoShouldAttendList',
+        ]),
+      ),
+      keyThemes: normalizeKeyThemesInput(
+        pickFormArrayField(body, ['keyThemes', 'key_themes', 'themes']),
+      ),
+      programmeAtAGlance: normalizeProgrammeAtAGlanceInput(
+        pickFormArrayField(body, [
+          'programmeAtAGlance',
+          'programme_at_a_glance',
+          'programAtAGlance',
+          'programme',
+        ]),
+      ),
+      venueAndTravel: normalizeVenueAndTravelInput(
+        pickScalar(['venueAndTravel', 'venue_and_travel', 'venueTravel']),
+      ),
+      tags: normalizeEventTagsInput(pickFormArrayField(body, ['tags'])),
     };
   }
 
@@ -1047,26 +1281,32 @@ export class AdminController {
   @ApiOperation({
     summary: 'Create banner',
     description:
-      'Creates a banner for the logged-in vendor. Provide either a multipart image file (**image**, **bannerImage**, **banner_image**, or **file**) or **imageUrl** (http(s) public URL or `/uploads/...`). Server stores **imageSource**: `binary_upload` vs `manual_url` from that choice.',
+      'Creates a banner for the logged-in vendor. Provide an image (**image** / **bannerImage** / **banner_image** / **file**, or **imageUrl**) and/or a video (**video** / **bannerVideo** / **banner_video**, or a video file on the image field names). At least one of image or video is required.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        image: { type: 'string', format: 'binary', description: 'Primary file field name' },
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'Image or video file (primary field name)',
+        },
         bannerImage: { type: 'string', format: 'binary' },
         banner_image: { type: 'string', format: 'binary' },
         file: { type: 'string', format: 'binary' },
+        video: { type: 'string', format: 'binary', description: 'Banner video (mp4/webm/mov)' },
+        bannerVideo: { type: 'string', format: 'binary' },
+        banner_video: { type: 'string', format: 'binary' },
         imageUrl: {
           type: 'string',
           description:
-            'Public http(s) image URL or `/uploads/...` path. Optional when uploading a file.',
+            'Public http(s) image URL or `/uploads/...` path. Optional when uploading a file or video.',
         },
         title: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
         sequenceNumber: { type: 'number', example: 1 },
-        description: { type: 'string' },
         imageSource: {
           type: 'string',
           enum: ['binary_upload', 'manual_url'],
@@ -1101,7 +1341,6 @@ export class AdminController {
       status: body.status,
       sequenceNumber:
         body.sequenceNumber ?? body.sequence ?? body.displayOrder ?? body.order,
-      description: body.description ?? body.bannerDescription,
       imageSource: body.imageSource,
       videoDurationSeconds: body.videoDurationSeconds,
     });
@@ -1116,19 +1355,21 @@ export class AdminController {
     const imageUrl = uploadedFile
       ? (await uploadFile(uploadedFile, 'banners')).fileUrl
       : dto.imageUrl;
-    if (!imageUrl) {
-      throw new BadRequestException(
-        'Banner image is required (upload a file or provide imageUrl)',
-      );
-    }
     const videoUrl = await resolveUploadedBannerVideoUrl(
       uploadedVideo,
       mergeBannerVideoDurationBody(req.body, body, dto),
     );
-    const resolvedImageSource = uploadedFile ? 'binary_upload' : 'manual_url';
+    if (!imageUrl && !videoUrl) {
+      throw new BadRequestException(
+        'Banner media is required (upload an image or video file, or provide imageUrl)',
+      );
+    }
+    const resolvedImageSource = uploadedFile
+      ? ('binary_upload' as const)
+      : ('manual_url' as const);
     const data = await this.adminService.createBanner(
       vendorScope,
-      { ...dto, imageUrl, ...(videoUrl ? { videoUrl } : {}) },
+      { ...dto, imageUrl: imageUrl ?? '', ...(videoUrl ? { videoUrl } : {}) },
       resolvedImageSource,
       videoUrl ? 'binary_upload' : undefined,
     );
@@ -1144,19 +1385,21 @@ export class AdminController {
   @ApiOperation({
     summary: 'Edit banner',
     description:
-      'Edits a banner for the logged-in vendor. Replace the image by uploading multipart **image**, **bannerImage**, **banner_image**, or **file**, or by sending a new **imageUrl** (public http(s) URL or `/uploads/...`).',
+      'Edits a banner for the logged-in vendor. Replace media by uploading an image (**image** / **bannerImage** / **banner_image** / **file**) and/or video (**video** / **bannerVideo** / **banner_video**), or by sending a new **imageUrl**. Video URLs are not accepted.',
   })
   @ApiParam({ name: 'id', description: 'Banner MongoDB id (from banner list)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['title', 'sequenceNumber', 'description'],
       properties: {
         image: { type: 'string', format: 'binary' },
         bannerImage: { type: 'string', format: 'binary' },
         banner_image: { type: 'string', format: 'binary' },
         file: { type: 'string', format: 'binary' },
+        video: { type: 'string', format: 'binary' },
+        bannerVideo: { type: 'string', format: 'binary' },
+        banner_video: { type: 'string', format: 'binary' },
         imageUrl: {
           type: 'string',
           description:
@@ -1165,7 +1408,6 @@ export class AdminController {
         title: { type: 'string' },
         status: { type: 'string', enum: ['active', 'inactive'] },
         sequenceNumber: { type: 'number', example: 1 },
-        description: { type: 'string' },
         imageSource: {
           type: 'string',
           enum: ['binary_upload', 'manual_url'],
@@ -1202,7 +1444,6 @@ export class AdminController {
       title: body.title ?? body.heading,
       status: body.status,
       sequenceNumber: body.sequenceNumber,
-      description: body.description,
       videoDurationSeconds: body.videoDurationSeconds,
     });
 
@@ -1221,8 +1462,7 @@ export class AdminController {
       dto.imageUrl === undefined &&
       dto.title === undefined &&
       dto.status === undefined &&
-      dto.sequenceNumber === undefined &&
-      dto.description === undefined
+      dto.sequenceNumber === undefined
     ) {
       throw new BadRequestException('Provide at least one field to update');
     }
@@ -1250,7 +1490,6 @@ export class AdminController {
       ...(dto.sequenceNumber !== undefined
         ? { sequenceNumber: dto.sequenceNumber }
         : {}),
-      ...(dto.description !== undefined ? { description: dto.description } : {}),
     });
     return { message: 'Banner updated successfully', data };
   }
@@ -1259,37 +1498,22 @@ export class AdminController {
   @Permissions(PERMISSIONS.EVENTS_ADD)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
-    FileInterceptor('image', {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'events'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `event-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        const allowedMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-        ];
-        cb(null, allowedMimes.includes(file.mimetype));
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-    }),
+    FileFieldsInterceptor(
+      [
+        // Accept extras so we can keep the first EVENT_MAX_IMAGES (rest ignored).
+        { name: 'image', maxCount: 50 },
+        { name: 'image[]', maxCount: 50 },
+        { name: 'images', maxCount: 50 },
+        { name: 'eventImage', maxCount: 50 },
+        { name: 'event_image', maxCount: 50 },
+      ],
+      adminImageMemoryMulterOptions(),
+    ),
   )
   @ApiOperation({
     summary: 'Create event',
     description:
-      'Creates an event (Admin panel). Multipart form fields: eventName, image, eventDate, eventStartTime, eventEndTime, eventLocation, eventDescription, and contact person details.',
+      `Creates an event (Admin panel). Multipart fields: eventName, images (first ${EVENT_MAX_IMAGES} kept; extras ignored), event start/end dates, times, location, format (inperson/online multiselect), description, contact person details, and detail sections (whoShouldAttend, keyThemes, programmeAtAGlance, venueAndTravel, tags). Programme at a glance accepts any number of {day?, time, description} entries (multiple per day allowed; at least one required). Array fields may be sent as JSON strings.`,
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -1298,22 +1522,74 @@ export class AdminController {
       required: ['eventName', 'eventDate'],
       properties: {
         eventName: { type: 'string' },
-        image: { type: 'string', format: 'binary' },
+        image: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: `Upload images (first ${EVENT_MAX_IMAGES} kept; extras ignored). Field name "image" or "images".`,
+        },
         eventDate: { type: 'string', example: '2026-04-08' },
+        eventStartDate: { type: 'string', example: '2026-04-08' },
+        eventEndDate: { type: 'string', example: '2026-04-10' },
         eventStartTime: { type: 'string' },
         eventEndTime: { type: 'string' },
         eventLocation: { type: 'string' },
-        eventDescription: { type: 'string' },
+        format: {
+          type: 'array',
+          items: { type: 'string', enum: ['inperson', 'online'] },
+          description:
+            'Checkbox multiselect: inperson and/or online. Also accepts JSON string or comma-separated values.',
+          example: ['inperson', 'online'],
+        },
+        eventDescription: {
+          type: 'string',
+          description: 'Event description section',
+        },
         contactPersonName: { type: 'string' },
         contactPersonDesignation: { type: 'string' },
         contactPersonEmail: { type: 'string' },
         contactPersonPhone: { type: 'string' },
+        whoShouldAttend: {
+          type: 'string',
+          description: `JSON array of strings (max ${EVENT_WHO_SHOULD_ATTEND_MAX} items, ${EVENT_WHO_SHOULD_ATTEND_ITEM_MAX} chars each)`,
+          example: '["Architects and consultants","Manufacturers"]',
+        },
+        keyThemes: {
+          type: 'string',
+          description: `JSON array of {heading, description} (max ${EVENT_KEY_THEMES_MAX}; heading ${EVENT_KEY_THEME_HEADING_MAX}, description ${EVENT_KEY_THEME_DESCRIPTION_MAX})`,
+          example:
+            '[{"heading":"Net-zero materials","description":"Pathways to lower embodied carbon in construction."}]',
+        },
+        programmeAtAGlance: {
+          type: 'string',
+          description: `JSON array of {day?, date?, time, description} slots, or nested {day, items:[{time, description}]} day wrappers — any number of entries; multiple per day allowed (time max ${EVENT_PROGRAMME_TIME_MAX}, description max ${EVENT_PROGRAMME_DESCRIPTION_MAX})`,
+          example:
+            '[{"day":1,"time":"09:00 AM","description":"Registration and welcome"},{"day":2,"time":"10:00 AM","description":"Workshops"}]',
+        },
+        venueAndTravel: {
+          type: 'string',
+          description: `Venue and travel notes (max ${EVENT_VENUE_AND_TRAVEL_MAX} chars)`,
+        },
+        tags: {
+          type: 'string',
+          description: `JSON array of strings (max ${EVENT_TAGS_MAX} items, ${EVENT_TAG_ITEM_MAX} chars each)`,
+          example: '["Summit","Building materials","Eco-labels"]',
+        },
       },
     },
   })
   @ApiResponse({ status: 201, description: 'Event created successfully' })
   @ApiResponse({ status: 400, description: 'Validation error' })
-  async createEvent(@Body() body: any, @UploadedFile() file?: any) {
+  async createEvent(
+    @Body() body: any,
+    @UploadedFiles()
+    files?: {
+      image?: Express.Multer.File[];
+      'image[]'?: Express.Multer.File[];
+      images?: Express.Multer.File[];
+      eventImage?: Express.Multer.File[];
+      event_image?: Express.Multer.File[];
+    },
+  ) {
     const pick = (keys: string[]) => {
       for (const k of keys) {
         if (body?.[k] !== undefined) return body[k];
@@ -1334,6 +1610,9 @@ export class AdminController {
       eventStartTime: pick(['eventStartTime', 'startTime', 'event_start_time']),
       eventEndTime: pick(['eventEndTime', 'endTime', 'event_end_time']),
       eventLocation: pick(['eventLocation', 'location', 'event_location']),
+      format:
+        pickFormArrayField(body ?? {}, ['format', 'eventFormat', 'event_format']) ??
+        pick(['format', 'eventFormat', 'event_format']),
       eventDescription: pick([
         'eventDescription',
         'description',
@@ -1361,7 +1640,6 @@ export class AdminController {
         'contactPhone',
       ]),
       registrationLink: pick(['registrationLink', 'registration_link']),
-      brochureLink: pick(['brochureLink', 'brochure_link']),
     });
 
     const errors = await validate(dto);
@@ -1376,11 +1654,23 @@ export class AdminController {
     const eventStatus = this.parseEventStatus(
       pick(['eventStatus', 'status', 'is_active', 'active']),
     );
-    const brochures = this.parseEventBrochuresFromBody(body, pick);
+    // Programme at a glance is required on create (any number of time/description rows).
+    const programmeRaw = pickFormArrayField(body ?? {}, [
+      'programmeAtAGlance',
+      'programme_at_a_glance',
+      'programAtAGlance',
+      'programme',
+    ]);
+    const detailSections = this.parseEventDetailSectionsFromBody({
+      ...(body ?? {}),
+      programmeAtAGlance: programmeRaw !== undefined ? programmeRaw : [],
+    });
 
-    const eventImage = file
-      ? (await uploadFile(file, 'events')).fileUrl
-      : undefined;
+    const imageFiles = this.takeFirstEventImages(
+      this.collectEventImageFiles(files),
+    );
+    const uploadedImages = await this.uploadEventImageFiles(imageFiles);
+    const eventImage = uploadedImages[0];
     const data = await this.adminService.createEvent({
       eventName: dto.eventName,
       eventDate: eventStartDate,
@@ -1389,15 +1679,25 @@ export class AdminController {
       eventStartTime: dto.eventStartTime,
       eventEndTime: dto.eventEndTime,
       eventLocation: dto.eventLocation,
+      ...(dto.format !== undefined ? { format: dto.format } : {}),
       eventDescription: dto.eventDescription,
       contactPersonName: dto.contactPersonName,
       contactPersonDesignation: dto.contactPersonDesignation,
       contactPersonEmail: dto.contactPersonEmail,
       contactPersonPhone: dto.contactPersonPhone,
       registrationLink: dto.registrationLink,
-      brochureLink: dto.brochureLink,
-      ...(brochures !== undefined ? { brochures } : {}),
-      eventImage,
+      ...(detailSections.whoShouldAttend !== undefined
+        ? { whoShouldAttend: detailSections.whoShouldAttend }
+        : {}),
+      ...(detailSections.keyThemes !== undefined
+        ? { keyThemes: detailSections.keyThemes }
+        : {}),
+      programmeAtAGlance: detailSections.programmeAtAGlance ?? [],
+      ...(detailSections.venueAndTravel !== undefined
+        ? { venueAndTravel: detailSections.venueAndTravel }
+        : {}),
+      ...(detailSections.tags !== undefined ? { tags: detailSections.tags } : {}),
+      ...(eventImage ? { eventImage, galleryImages: uploadedImages } : {}),
       ...(eventStatus !== undefined ? { eventStatus } : {}),
     });
 
@@ -1410,43 +1710,20 @@ export class AdminController {
   @UseInterceptors(
     FileFieldsInterceptor(
       [
-        { name: 'image', maxCount: 20 },
-        { name: 'images', maxCount: 20 },
-        { name: 'eventImage', maxCount: 20 },
-        { name: 'event_image', maxCount: 20 },
+        // Accept extras so we can keep the first EVENT_MAX_IMAGES (rest ignored).
+        { name: 'image', maxCount: 50 },
+        { name: 'image[]', maxCount: 50 },
+        { name: 'images', maxCount: 50 },
+        { name: 'eventImage', maxCount: 50 },
+        { name: 'event_image', maxCount: 50 },
       ],
-      {
-        storage: diskStorage({
-          destination: join(process.cwd(), 'uploads', 'events'),
-          filename: (req, file, cb) => {
-            const uniqueSuffix =
-              Date.now() + '-' + Math.round(Math.random() * 1e9);
-            const ext = extname(file.originalname || '');
-            cb(null, `event-${uniqueSuffix}${ext}`);
-          },
-        }),
-        fileFilter: (req, file, cb) => {
-          if (!file?.originalname) {
-            cb(null, true);
-            return;
-          }
-          const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-          ];
-          cb(null, allowedMimes.includes(file.mimetype));
-        },
-        limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminImageMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
     summary: 'Edit event',
     description:
-      'Edits an event (Admin panel). Same fields as create. URL param `id` can be MongoDB _id or numeric eventId.',
+      `Edits an event (Admin panel). Same fields as create, including format (inperson/online multiselect), detail sections (whoShouldAttend, keyThemes, programmeAtAGlance, venueAndTravel, tags) and images (first ${EVENT_MAX_IMAGES} of existingImages + new uploads kept; extras ignored). Pass existingImages as a JSON array of kept URLs and upload new files via image/images. Programme at a glance accepts any number of {day?, time, description} entries when sent. URL param \`id\` can be MongoDB _id or numeric eventId.`,
   })
   @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
   @ApiConsumes('multipart/form-data')
@@ -1455,16 +1732,57 @@ export class AdminController {
       type: 'object',
       properties: {
         eventName: { type: 'string' },
-        image: { type: 'string', format: 'binary' },
+        image: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: `Upload additional images (first ${EVENT_MAX_IMAGES} of existingImages + new files kept; extras ignored)`,
+        },
+        existingImages: {
+          type: 'string',
+          description: 'JSON array of existing image URLs to keep',
+        },
         eventDate: { type: 'string', example: '09-04-2026' },
+        eventStartDate: { type: 'string', example: '2026-04-08' },
+        eventEndDate: { type: 'string', example: '2026-04-10' },
         eventStartTime: { type: 'string' },
         eventEndTime: { type: 'string' },
         eventLocation: { type: 'string' },
-        eventDescription: { type: 'string' },
+        format: {
+          type: 'array',
+          items: { type: 'string', enum: ['inperson', 'online'] },
+          description:
+            'Checkbox multiselect: inperson and/or online. Also accepts JSON string or comma-separated values.',
+          example: ['inperson', 'online'],
+        },
+        eventDescription: {
+          type: 'string',
+          description: 'Event description section',
+        },
         contactPersonName: { type: 'string' },
         contactPersonDesignation: { type: 'string' },
         contactPersonEmail: { type: 'string' },
         contactPersonPhone: { type: 'string' },
+        whoShouldAttend: {
+          type: 'string',
+          description: `JSON array of strings (max ${EVENT_WHO_SHOULD_ATTEND_MAX} items)`,
+        },
+        keyThemes: {
+          type: 'string',
+          description: `JSON array of {heading, description} (max ${EVENT_KEY_THEMES_MAX})`,
+        },
+        programmeAtAGlance: {
+          type: 'string',
+          description:
+            'JSON array of {day?, date?, time, description} slots, or nested {day, items:[{time, description}]} — any number of entries; multiple per day allowed',
+        },
+        venueAndTravel: {
+          type: 'string',
+          description: `Venue and travel notes (max ${EVENT_VENUE_AND_TRAVEL_MAX} chars)`,
+        },
+        tags: {
+          type: 'string',
+          description: `JSON array of strings (max ${EVENT_TAGS_MAX} items)`,
+        },
       },
     },
   })
@@ -1477,6 +1795,8 @@ export class AdminController {
     @UploadedFiles()
     files?: {
       image?: Express.Multer.File[];
+      'image[]'?: Express.Multer.File[];
+      images?: Express.Multer.File[];
       eventImage?: Express.Multer.File[];
       event_image?: Express.Multer.File[];
     },
@@ -1501,6 +1821,9 @@ export class AdminController {
       eventStartTime: pick(['eventStartTime', 'startTime', 'event_start_time']),
       eventEndTime: pick(['eventEndTime', 'endTime', 'event_end_time']),
       eventLocation: pick(['eventLocation', 'location', 'event_location']),
+      format:
+        pickFormArrayField(body ?? {}, ['format', 'eventFormat', 'event_format']) ??
+        pick(['format', 'eventFormat', 'event_format']),
       eventDescription: pick([
         'eventDescription',
         'description',
@@ -1528,7 +1851,6 @@ export class AdminController {
         'contactPhone',
       ]),
       registrationLink: pick(['registrationLink', 'registration_link']),
-      brochureLink: pick(['brochureLink', 'brochure_link']),
     });
 
     const errors = await validate(dto);
@@ -1556,16 +1878,25 @@ export class AdminController {
     const eventStatus = this.parseEventStatus(
       pick(['eventStatus', 'status', 'is_active', 'active']),
     );
-    const brochures = this.parseEventBrochuresFromBody(body, pick);
+    const detailSections = this.parseEventDetailSectionsFromBody(body ?? {});
 
-    const picked =
-      files?.image?.[0] ||
-      files?.eventImage?.[0] ||
-      files?.event_image?.[0] ||
-      null;
-    const eventImage = picked
-      ? (await uploadFile(picked, 'events')).fileUrl
-      : undefined;
+    // Prefer existingImages; galleryImages is accepted as a keep-list alias.
+    // Cap at EVENT_MAX_IMAGES: keep URLs first, then new uploads; extras ignored.
+    const existingImages = this.parseJsonStringArrayField(
+      body?.existingImages ?? body?.existing_images ?? body?.galleryImages,
+    );
+    const keepUrls =
+      existingImages !== undefined
+        ? this.takeFirstEventImages(this.dedupeImageUrls(existingImages))
+        : undefined;
+    const slotsLeft = EVENT_MAX_IMAGES - (keepUrls?.length ?? 0);
+    const imageFiles = this.collectEventImageFiles(files).slice(0, slotsLeft);
+    const uploadedImages = await this.uploadEventImageFiles(imageFiles);
+    const mergedImages =
+      keepUrls !== undefined || uploadedImages.length > 0
+        ? [...(keepUrls ?? []), ...uploadedImages]
+        : undefined;
+
     const data = await this.adminService.updateEvent(id, {
       ...(dto.eventName !== undefined ? { eventName: dto.eventName } : {}),
       ...(eventStartDate !== undefined ? { eventStartDate, eventDate: eventStartDate } : {}),
@@ -1579,6 +1910,7 @@ export class AdminController {
       ...(dto.eventLocation !== undefined
         ? { eventLocation: dto.eventLocation }
         : {}),
+      ...(dto.format !== undefined ? { format: dto.format } : {}),
       ...(dto.eventDescription !== undefined
         ? { eventDescription: dto.eventDescription }
         : {}),
@@ -1597,12 +1929,26 @@ export class AdminController {
       ...(dto.registrationLink !== undefined
         ? { registrationLink: dto.registrationLink }
         : {}),
-      ...(dto.brochureLink !== undefined
-        ? { brochureLink: dto.brochureLink }
+      ...(detailSections.whoShouldAttend !== undefined
+        ? { whoShouldAttend: detailSections.whoShouldAttend }
         : {}),
-      ...(brochures !== undefined ? { brochures } : {}),
+      ...(detailSections.keyThemes !== undefined
+        ? { keyThemes: detailSections.keyThemes }
+        : {}),
+      ...(detailSections.programmeAtAGlance !== undefined
+        ? { programmeAtAGlance: detailSections.programmeAtAGlance }
+        : {}),
+      ...(detailSections.venueAndTravel !== undefined
+        ? { venueAndTravel: detailSections.venueAndTravel }
+        : {}),
+      ...(detailSections.tags !== undefined ? { tags: detailSections.tags } : {}),
       ...(eventStatus !== undefined ? { eventStatus } : {}),
-      ...(eventImage ? { eventImage } : {}),
+      ...(mergedImages !== undefined
+        ? {
+            galleryImages: mergedImages,
+            ...(mergedImages[0] ? { eventImage: mergedImages[0] } : {}),
+          }
+        : {}),
     });
 
     return { message: 'Event updated successfully', data };
@@ -1613,18 +1959,15 @@ export class AdminController {
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileFieldsInterceptor(
-      [
-        { name: 'image', maxCount: GALLERY_MAX_IMAGES },
-        { name: 'image[]', maxCount: GALLERY_MAX_IMAGES },
-        { name: 'images', maxCount: GALLERY_MAX_IMAGES },
-      ],
-      adminImageMemoryMulterOptions(),
+      GALLERY_MEDIA_MULTIPART_FIELDS,
+      galleryMediaMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
     summary: 'Create gallery item',
     description:
-      'Creates a gallery item. Fields accepted: title, description, date, galleryType, image. ' +
+      'Creates a gallery item. Fields accepted: title, description, date, galleryType, image, video. ' +
+      'Upload images (`image` / `images`) and/or videos (`video` / `videos`, or a video file on the image field). ' +
       'galleryType dropdown must only use: Training & Workshops, Site Visits, Recognition.',
   })
   @ApiConsumes('multipart/form-data')
@@ -1640,7 +1983,17 @@ export class AdminController {
         image: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
-          description: 'Upload one or more images with field name "image"',
+          description:
+            'Upload one or more images (or videos) with field name "image"',
+        },
+        video: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'Upload one or more videos (mp4/webm/mov)',
+        },
+        videos: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
         },
       },
     },
@@ -1649,18 +2002,10 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Validation error' })
   async createGallery(
     @Body() body: any,
-    @UploadedFiles()
-    files?: {
-      image?: Express.Multer.File[];
-      'image[]'?: Express.Multer.File[];
-      images?: Express.Multer.File[];
-    },
+    @UploadedFiles() files?: Record<string, Express.Multer.File[]>,
   ) {
-    const allImages = [
-      ...(files?.image ?? []),
-      ...(files?.['image[]'] ?? []),
-      ...(files?.images ?? []),
-    ];
+    const allImages = pickGalleryImageFiles(files);
+    const allVideos = pickGalleryVideoFiles(files);
     const pick = (keys: string[]) => {
       for (const k of keys) {
         if (body?.[k] !== undefined) return body[k];
@@ -1700,7 +2045,9 @@ export class AdminController {
       );
     }
     const galleryImages = await this.uploadGalleryImageFiles(allImages);
+    const galleryVideos = await this.uploadGalleryVideoFiles(allVideos);
     this.assertGalleryImageCount(galleryImages.length);
+    this.assertGalleryVideoCount(galleryVideos.length);
     const galleryType = this.parseGalleryType(
       pick(['galleryType', 'type', 'category']),
       true,
@@ -1712,6 +2059,9 @@ export class AdminController {
       galleryType,
       ...(galleryImages.length
         ? { galleryImages, image: galleryImages[0] }
+        : {}),
+      ...(galleryVideos.length
+        ? { galleryVideos, video: galleryVideos[0] }
         : {}),
     });
     return {
@@ -1725,20 +2075,15 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileFieldsInterceptor(
-      [
-        { name: 'image', maxCount: GALLERY_MAX_IMAGES },
-        { name: 'image[]', maxCount: GALLERY_MAX_IMAGES },
-        { name: 'images', maxCount: GALLERY_MAX_IMAGES },
-        { name: 'eventImage', maxCount: GALLERY_MAX_IMAGES },
-        { name: 'event_image', maxCount: GALLERY_MAX_IMAGES },
-      ],
-      adminImageMemoryMulterOptions(),
+      GALLERY_MEDIA_MULTIPART_FIELDS,
+      galleryMediaMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
     summary: 'Edit gallery item',
     description:
-      'Edits a gallery item by id. Fields accepted: title, description, date, galleryType, image. ' +
+      'Edits a gallery item by id. Fields accepted: title, description, date, galleryType, image, video. ' +
+      'Replace/keep media with existingImages / existingVideos plus new image/video uploads. ' +
       'galleryType dropdown must only use: Training & Workshops, Site Visits, Recognition.',
   })
   @ApiParam({ name: 'id', description: 'MongoDB _id OR numeric eventId' })
@@ -1754,7 +2099,25 @@ export class AdminController {
         image: {
           type: 'array',
           items: { type: 'string', format: 'binary' },
-          description: 'Upload one or more images with field name "image"',
+          description:
+            'Upload one or more images (or videos) with field name "image"',
+        },
+        video: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'Upload one or more videos (mp4/webm/mov)',
+        },
+        videos: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
+        existingImages: {
+          type: 'string',
+          description: 'JSON array of image URLs to keep',
+        },
+        existingVideos: {
+          type: 'string',
+          description: 'JSON array of video URLs to keep',
         },
       },
     },
@@ -1765,22 +2128,10 @@ export class AdminController {
   async editGallery(
     @Param('id') id: string,
     @Body() body: any,
-    @UploadedFiles()
-    files?: {
-      image?: Express.Multer.File[];
-      'image[]'?: Express.Multer.File[];
-      images?: Express.Multer.File[];
-      eventImage?: Express.Multer.File[];
-      event_image?: Express.Multer.File[];
-    },
+    @UploadedFiles() files?: Record<string, Express.Multer.File[]>,
   ) {
-    const allImages = [
-      ...(files?.image ?? []),
-      ...(files?.['image[]'] ?? []),
-      ...(files?.images ?? []),
-      ...(files?.eventImage ?? []),
-      ...(files?.event_image ?? []),
-    ];
+    const allImages = pickGalleryImageFiles(files);
+    const allVideos = pickGalleryVideoFiles(files);
     const pick = (keys: string[]) => {
       for (const k of keys) {
         if (body?.[k] !== undefined) return body[k];
@@ -1829,13 +2180,24 @@ export class AdminController {
     const existingImages = this.parseJsonStringArrayField(
       pick(['existingImages']),
     );
+    const existingVideos = this.parseJsonStringArrayField(
+      pick(['existingVideos', 'existing_videos']),
+    );
     const uploadedImages = await this.uploadGalleryImageFiles(allImages);
+    const uploadedVideos = await this.uploadGalleryVideoFiles(allVideos);
     const mergedGalleryImages =
       existingImages !== undefined || uploadedImages.length > 0
         ? [...(existingImages ?? []), ...uploadedImages]
         : undefined;
+    const mergedGalleryVideos =
+      existingVideos !== undefined || uploadedVideos.length > 0
+        ? [...(existingVideos ?? []), ...uploadedVideos]
+        : undefined;
     if (mergedGalleryImages !== undefined) {
       this.assertGalleryImageCount(mergedGalleryImages.length);
+    }
+    if (mergedGalleryVideos !== undefined) {
+      this.assertGalleryVideoCount(mergedGalleryVideos.length);
     }
     const data = await this.galleryService.updateGallery(id, {
       ...(title !== undefined ? { title } : {}),
@@ -1846,6 +2208,12 @@ export class AdminController {
         ? {
             galleryImages: mergedGalleryImages,
             image: mergedGalleryImages[0],
+          }
+        : {}),
+      ...(mergedGalleryVideos !== undefined
+        ? {
+            galleryVideos: mergedGalleryVideos,
+            video: mergedGalleryVideos[0],
           }
         : {}),
     });
@@ -1869,12 +2237,102 @@ export class AdminController {
     return { message: 'Events retrieved successfully', data };
   }
 
+  @Get('event-registrations/list')
+  @Permissions(PERMISSIONS.EVENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List event registrations',
+    description:
+      'Paginated admin list of public event registrations. Filters: search (eventSlug/title), eventSlug, attendanceMode, participantRole, status, from/to date range. Sorted by createdAt newest first.',
+  })
+  @ApiResponse({ status: 200, description: 'Event registrations list' })
+  async listEventRegistrations(@Query() query: ListEventRegistrationsQueryDto) {
+    const result = await this.adminService.listEventRegistrations(query);
+    return {
+      message: 'Event registrations retrieved successfully',
+      data: result.data,
+      totalCount: result.totalCount,
+      currentPage: result.currentPage,
+      totalPages: result.totalPages,
+      page: result.page,
+      limit: result.limit,
+    };
+  }
+
+  @Get('event-registrations/export')
+  @Permissions(PERMISSIONS.EVENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Export event registrations CSV',
+    description:
+      'CSV export of filtered event registrations (same filters as list).',
+  })
+  @ApiResponse({ status: 200, description: 'CSV file' })
+  async exportEventRegistrations(
+    @Query() query: ListEventRegistrationsQueryDto,
+  ): Promise<StreamableFile> {
+    const file = await this.adminService.exportEventRegistrationsCsv(query);
+    return new StreamableFile(file.buffer, {
+      type: 'text/csv; charset=utf-8',
+      disposition: `attachment; filename="${file.fileName}"`,
+    });
+  }
+
+  @Get('event-registrations/counts')
+  @Permissions(PERMISSIONS.EVENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Event registration counts',
+    description:
+      'Dashboard helper: total registrations, optionally filtered by eventSlug, plus per-event breakdown when no slug is given.',
+  })
+  @ApiQuery({ name: 'eventSlug', required: false, type: String })
+  async countEventRegistrations(@Query('eventSlug') eventSlug?: string) {
+    const data =
+      await this.adminService.countEventRegistrationsByEventSlug(eventSlug);
+    return { message: 'Event registration counts retrieved', data };
+  }
+
+  @Get('event-registrations/:id')
+  @Permissions(PERMISSIONS.EVENTS_VIEW)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'View event registration',
+    description:
+      'Full registration detail including sessionsOfInterest, notes, consent, sourcePath, and a relatedEvent link when a matching CMS event is found.',
+  })
+  @ApiParam({ name: 'id', description: 'Registration MongoDB id' })
+  @ApiResponse({ status: 200, description: 'Event registration details' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  async getEventRegistration(@Param('id') id: string) {
+    const data = await this.adminService.getEventRegistrationById(id);
+    return { message: 'Event registration retrieved successfully', data };
+  }
+
+  @Patch('event-registrations/:id')
+  @Permissions(PERMISSIONS.EVENTS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update event registration status / admin notes',
+  })
+  @ApiParam({ name: 'id', description: 'Registration MongoDB id' })
+  @ApiBody({ type: UpdateEventRegistrationDto })
+  @ApiResponse({ status: 200, description: 'Updated' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  async updateEventRegistration(
+    @Param('id') id: string,
+    @Body() dto: UpdateEventRegistrationDto,
+  ) {
+    const data = await this.adminService.updateEventRegistration(id, dto);
+    return { message: 'Event registration updated successfully', data };
+  }
+
   @Get('events/list')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'List events (public website)',
     description:
-      'Returns paginated events for the public website events page. Default: page=1, limit=10. Only events whose end date has not passed are returned.',
+      'Returns paginated published events (eventStatus=1) for the public website events page (past and upcoming). Default: page=1, limit=10. Each row includes `is_active` based on whether the event end date has passed.',
   })
   @ApiQuery({
     name: 'page',
@@ -2128,69 +2586,61 @@ export class AdminController {
   @UseInterceptors(
     FileFieldsInterceptor(
       [
-        { name: 'image', maxCount: 1 },
-        { name: 'pdf', maxCount: 1 },
-        { name: 'file', maxCount: 1 },
+        { name: 'image', maxCount: ARTICLE_MAX_IMAGES },
+        { name: 'image[]', maxCount: ARTICLE_MAX_IMAGES },
+        { name: 'images', maxCount: ARTICLE_MAX_IMAGES },
       ],
-      {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'articles'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `article-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-          if (isAllowedStandardDocumentFile(file)) {
-            cb(null, true);
-            return;
-          }
-          cb(
-            new BadRequestException(STANDARD_DOCUMENT_VALIDATION_MESSAGE),
-            false,
-          );
-          return;
-        }
-        const allowedImageMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-        ];
-        cb(null, allowedImageMimes.includes(file.mimetype));
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminArticleMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
     summary: 'Create article',
     description:
-      'Creates an article with title, date, image, file/pdf (PDF), externalUrl toggle and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url and shortDescription are required and full description is hidden.',
+      `Creates an article with title, publisher, date, up to ${ARTICLE_MAX_IMAGES} images (1st = heading; all shown below What's inside), externalUrl toggle, detail sections (whatsInside, keyPoints, whoItsFor, tags) and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url and shortDescription are required and full description is hidden. Array fields may be sent as JSON strings in multipart.`,
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['title', 'date', 'image', 'pdf'],
+      required: ['title', 'date', 'image'],
       properties: {
         title: { type: 'string' },
+        publisher: {
+          type: 'string',
+          description: 'Publisher / source name (plain text)',
+          example: 'IGBC',
+        },
         description: { type: 'string' },
         shortDescription: { type: 'string' },
         date: { type: 'string', example: '2026-05-05' },
         externalUrl: { type: 'boolean', default: false },
-        image: { type: 'string', format: 'binary' },
-        file: { type: 'string', format: 'binary' },
-        pdf: { type: 'string', format: 'binary' },
+        image: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: `Upload 1–${ARTICLE_MAX_IMAGES} images (field name "image"). First image is the heading; all images appear below What's inside.`,
+        },
         url: { type: 'string' },
+        whatsInside: {
+          type: 'string',
+          description: `JSON array of strings (max ${ARTICLE_WHATS_INSIDE_MAX} items, ${ARTICLE_WHATS_INSIDE_ITEM_MAX} chars each)`,
+          example: '["Introduction to Green Building","Cement and manufacturing"]',
+        },
+        keyPoints: {
+          type: 'string',
+          description: `JSON array of {heading, description} (max ${ARTICLE_KEY_POINTS_MAX}; heading ${ARTICLE_KEY_POINT_HEADING_MAX}, description ${ARTICLE_KEY_POINT_DESCRIPTION_MAX})`,
+          example:
+            '[{"heading":"Standardization","description":"Clearer standards help procurement teams compare materials."}]',
+        },
+        whoItsFor: {
+          type: 'string',
+          description: `JSON array of strings (max ${ARTICLE_WHO_ITS_FOR_MAX} items, ${ARTICLE_WHO_ITS_FOR_ITEM_MAX} chars each)`,
+          example: '["Architects and consultants","Government and corporate procurement teams"]',
+        },
+        tags: {
+          type: 'string',
+          description: `JSON array of strings (max ${ARTICLE_TAGS_MAX} items, ${ARTICLE_TAG_ITEM_MAX} chars each)`,
+          example: '["Event","Building materials","Eco-labels"]',
+        },
         status: { type: 'string', enum: ['active', 'inactive'] },
       },
     },
@@ -2202,12 +2652,13 @@ export class AdminController {
     @UploadedFiles()
     files?: {
       image?: Express.Multer.File[];
-      pdf?: Express.Multer.File[];
-      file?: Express.Multer.File[];
+      'image[]'?: Express.Multer.File[];
+      images?: Express.Multer.File[];
     },
   ) {
     const title = String(body?.title ?? '').trim();
     if (!title) throw new BadRequestException('title is required');
+    const publisher = String(body?.publisher ?? '').trim();
     const rawDate = String(body?.date ?? '').trim();
     if (!rawDate) throw new BadRequestException('date is required');
     const date = /^\d{2}-\d{2}-\d{4}$/.test(rawDate)
@@ -2235,10 +2686,14 @@ export class AdminController {
             : false);
     const externalUrl = inferredExternalUrl;
     const status = this.parseEventStatus(body?.status);
-    const imageFile = files?.image?.[0];
-    const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
-    if (!imageFile) throw new BadRequestException('image is required');
-    if (!pdfFile) throw new BadRequestException('pdf/file is required');
+    const detailSections = this.parseCmsDetailSectionsFromBody(body ?? {});
+    const uploadedImages = await this.uploadArticleImageFiles(
+      this.collectArticleImageFiles(files),
+    );
+    this.assertArticleImageCount(uploadedImages.length);
+    if (!uploadedImages.length) {
+      throw new BadRequestException('image is required');
+    }
     if (externalUrl) {
       if (!url) {
         throw new BadRequestException('url is required when externalUrl is true');
@@ -2251,20 +2706,27 @@ export class AdminController {
     } else if (!description) {
       throw new BadRequestException('description is required');
     }
-    const imageUpload = imageFile ? await uploadFile(imageFile, 'articles') : undefined;
-    const pdfUpload = pdfFile ? await uploadFile(pdfFile, 'articles') : undefined;
-    const image = imageUpload?.fileUrl;
-    const pdf = pdfUpload?.fileUrl;
 
     const data = await this.adminService.createArticle({
       title,
+      publisher,
       description: externalUrl ? '' : description,
       shortDescription: externalUrl ? shortDescription : '',
       date,
-      image,
-      pdf,
+      images: uploadedImages,
+      image: uploadedImages[0],
       url: externalUrl ? url : '',
       externalUrl,
+      ...(detailSections.whatsInside !== undefined
+        ? { whatsInside: detailSections.whatsInside }
+        : {}),
+      ...(detailSections.keyPoints !== undefined
+        ? { keyPoints: detailSections.keyPoints }
+        : {}),
+      ...(detailSections.whoItsFor !== undefined
+        ? { whoItsFor: detailSections.whoItsFor }
+        : {}),
+      ...(detailSections.tags !== undefined ? { tags: detailSections.tags } : {}),
       ...(status !== undefined ? { status } : {}),
     });
     return {
@@ -2279,53 +2741,17 @@ export class AdminController {
   @UseInterceptors(
     FileFieldsInterceptor(
       [
-        { name: 'image', maxCount: 1 },
-        { name: 'pdf', maxCount: 1 },
-        { name: 'file', maxCount: 1 },
+        { name: 'image', maxCount: ARTICLE_MAX_IMAGES },
+        { name: 'image[]', maxCount: ARTICLE_MAX_IMAGES },
+        { name: 'images', maxCount: ARTICLE_MAX_IMAGES },
       ],
-      {
-      storage: diskStorage({
-        destination: join(process.cwd(), 'uploads', 'articles'),
-        filename: (req, file, cb) => {
-          const uniqueSuffix =
-            Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname || '');
-          cb(null, `article-${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (!file?.originalname) {
-          cb(null, true);
-          return;
-        }
-        if (file.fieldname === 'pdf' || file.fieldname === 'file') {
-          if (isAllowedStandardDocumentFile(file)) {
-            cb(null, true);
-            return;
-          }
-          cb(
-            new BadRequestException(STANDARD_DOCUMENT_VALIDATION_MESSAGE),
-            false,
-          );
-          return;
-        }
-        const allowedImageMimes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/gif',
-          'image/webp',
-        ];
-        cb(null, allowedImageMimes.includes(file.mimetype));
-      },
-      limits: { fileSize: 5 * 1024 * 1024 },
-      },
+      adminArticleMemoryMulterOptions(),
     ),
   )
   @ApiOperation({
     summary: 'Edit article',
     description:
-      'Edits article fields: title, date, image, file/pdf (PDF), externalUrl toggle, url/description/shortDescription and status. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url and shortDescription are required and full description is hidden.',
+      `Edits article fields: title, publisher, date, images (max ${ARTICLE_MAX_IMAGES}; 1st = heading), externalUrl toggle, url/description/shortDescription, detail sections (whatsInside, keyPoints, whoItsFor, tags) and status. Pass existingImages as a JSON array of kept URLs and upload new files via image. If externalUrl=false, description is required and url is hidden. If externalUrl=true, url and shortDescription are required and full description is hidden. Array fields may be sent as JSON strings in multipart.`,
   })
   @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
   @ApiConsumes('multipart/form-data')
@@ -2334,14 +2760,41 @@ export class AdminController {
       type: 'object',
       properties: {
         title: { type: 'string' },
+        publisher: {
+          type: 'string',
+          description: 'Publisher / source name (plain text)',
+          example: 'IGBC',
+        },
         description: { type: 'string' },
         shortDescription: { type: 'string' },
         date: { type: 'string', example: '2026-05-05' },
         externalUrl: { type: 'boolean' },
-        image: { type: 'string', format: 'binary' },
-        file: { type: 'string', format: 'binary' },
-        pdf: { type: 'string', format: 'binary' },
+        image: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: `Upload additional images (max ${ARTICLE_MAX_IMAGES} total with existingImages)`,
+        },
+        existingImages: {
+          type: 'string',
+          description: 'JSON array of existing image URLs to keep',
+        },
         url: { type: 'string' },
+        whatsInside: {
+          type: 'string',
+          description: `JSON array of strings (max ${ARTICLE_WHATS_INSIDE_MAX} items, ${ARTICLE_WHATS_INSIDE_ITEM_MAX} chars each)`,
+        },
+        keyPoints: {
+          type: 'string',
+          description: `JSON array of {heading, description} (max ${ARTICLE_KEY_POINTS_MAX})`,
+        },
+        whoItsFor: {
+          type: 'string',
+          description: `JSON array of strings (max ${ARTICLE_WHO_ITS_FOR_MAX} items)`,
+        },
+        tags: {
+          type: 'string',
+          description: `JSON array of strings (max ${ARTICLE_TAGS_MAX} items)`,
+        },
         status: { type: 'string', enum: ['active', 'inactive'] },
       },
     },
@@ -2355,8 +2808,8 @@ export class AdminController {
     @UploadedFiles()
     files?: {
       image?: Express.Multer.File[];
-      pdf?: Express.Multer.File[];
-      file?: Express.Multer.File[];
+      'image[]'?: Express.Multer.File[];
+      images?: Express.Multer.File[];
     },
   ) {
     let date: Date | undefined = undefined;
@@ -2376,12 +2829,20 @@ export class AdminController {
     const explicitExternalUrl = this.parseExternalUrlToggle(
       this.resolveExternalUrlRaw(body),
     );
-    const imageFile = files?.image?.[0];
-    const pdfFile = files?.pdf?.[0] ?? files?.file?.[0];
-    const imageUpload = imageFile ? await uploadFile(imageFile, 'articles') : undefined;
-    const pdfUpload = pdfFile ? await uploadFile(pdfFile, 'articles') : undefined;
-    const image = imageUpload?.fileUrl;
-    const pdf = pdfUpload?.fileUrl;
+    const detailSections = this.parseCmsDetailSectionsFromBody(body ?? {});
+    const existingImages = this.parseJsonStringArrayField(
+      body?.existingImages ?? body?.existing_images,
+    );
+    const uploadedImages = await this.uploadArticleImageFiles(
+      this.collectArticleImageFiles(files),
+    );
+    const mergedImages =
+      existingImages !== undefined || uploadedImages.length > 0
+        ? [...(existingImages ?? []), ...uploadedImages]
+        : undefined;
+    if (mergedImages !== undefined) {
+      this.assertArticleImageCount(mergedImages.length);
+    }
     const description =
       body?.description !== undefined ? String(body.description).trim() : undefined;
     const shortDescription =
@@ -2391,6 +2852,10 @@ export class AdminController {
         ? this.readArticleShortDescription(body)
         : undefined;
     const url = body?.url !== undefined ? String(body.url).trim() : undefined;
+    const publisher =
+      body?.publisher !== undefined
+        ? String(body.publisher).trim()
+        : undefined;
     const inferredExternalUrl =
       explicitExternalUrl ??
       (url !== undefined && description === undefined && shortDescription !== undefined
@@ -2402,14 +2867,26 @@ export class AdminController {
             : undefined);
     const data = await this.adminService.updateArticle(id, {
       ...(body?.title !== undefined ? { title: body.title } : {}),
+      ...(publisher !== undefined ? { publisher } : {}),
       ...(description !== undefined ? { description } : {}),
       ...(shortDescription !== undefined ? { shortDescription } : {}),
       ...(date !== undefined ? { date } : {}),
       ...(url !== undefined ? { url } : {}),
       ...(inferredExternalUrl !== undefined ? { externalUrl: inferredExternalUrl } : {}),
       ...(status !== undefined ? { status } : {}),
-      ...(image !== undefined ? { image } : {}),
-      ...(pdf !== undefined ? { pdf } : {}),
+      ...(mergedImages !== undefined
+        ? { images: mergedImages, image: mergedImages[0] }
+        : {}),
+      ...(detailSections.whatsInside !== undefined
+        ? { whatsInside: detailSections.whatsInside }
+        : {}),
+      ...(detailSections.keyPoints !== undefined
+        ? { keyPoints: detailSections.keyPoints }
+        : {}),
+      ...(detailSections.whoItsFor !== undefined
+        ? { whoItsFor: detailSections.whoItsFor }
+        : {}),
+      ...(detailSections.tags !== undefined ? { tags: detailSections.tags } : {}),
     });
     return {
       message: 'Article updated successfully',
@@ -2423,7 +2900,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'List articles',
     description:
-      'Returns articles with title, description, date, image, url and active flag (newest first).',
+      'Returns articles with title, publisher, description, date, image/images, url and active flag (newest first).',
   })
   @ApiResponse({ status: 200, description: 'Articles retrieved successfully' })
   async listArticles() {
@@ -2440,7 +2917,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Get article by id',
     description:
-      'Returns one article for view/edit with title, description, date, image, url and active flag.',
+      'Returns one article for view/edit with title, publisher, description, date, image, url and active flag.',
   })
   @ApiParam({ name: 'id', description: 'Article MongoDB _id' })
   @ApiResponse({ status: 200, description: 'Article retrieved successfully' })

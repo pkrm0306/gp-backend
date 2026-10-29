@@ -44,6 +44,21 @@ describe('payment-currency.util', () => {
     ).toBe('EUR');
   });
 
+  it('defaults renew currency to the registration currency when unset', () => {
+    expect(
+      resolvePaymentCurrencyForResponse({
+        payment: { paymentType: 'renew' },
+        registrationCurrency: 'USD',
+      }),
+    ).toBe('USD');
+    expect(
+      resolvePaymentCurrencyForResponse({
+        payment: { paymentType: 'renew', currency: 'AED' },
+        registrationCurrency: 'USD',
+      }),
+    ).toBe('AED');
+  });
+
   it('finds the registration currency among URN payments', () => {
     expect(
       registrationCurrencyFromPayments([

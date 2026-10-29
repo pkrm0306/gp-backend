@@ -12,6 +12,14 @@ import {
 } from './schemas/contact-message.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
 import {
+  EventRegistration,
+  EventRegistrationSchema,
+} from '../events/schemas/event-registration.schema';
+import {
+  EventRegistrationIdCounter,
+  EventRegistrationIdCounterSchema,
+} from '../events/schemas/event-registration-id-counter.schema';
+import {
   Product,
   ProductSchema,
 } from '../product-registration/schemas/product.schema';
@@ -47,6 +55,11 @@ import { RecaptchaService } from '../common/services/recaptcha.service';
       { name: NewsletterSubscriber.name, schema: NewsletterSubscriberSchema },
       { name: ContactMessage.name, schema: ContactMessageSchema },
       { name: Event.name, schema: EventSchema },
+      { name: EventRegistration.name, schema: EventRegistrationSchema },
+      {
+        name: EventRegistrationIdCounter.name,
+        schema: EventRegistrationIdCounterSchema,
+      },
       { name: Product.name, schema: ProductSchema },
       { name: Manufacturer.name, schema: ManufacturerSchema },
       { name: Category.name, schema: CategorySchema },

@@ -51,7 +51,6 @@ describe('AdminController Banner Endpoints', () => {
       { vendorId: 'v1' },
       {
         title: 'Banner 1',
-        description: 'Desc',
         sequenceNumber: 1,
         status: 'active',
         imageUrl: 'https://example.com/banner.jpg',
@@ -72,7 +71,7 @@ describe('AdminController Banner Endpoints', () => {
     await expect(
       controller.createBanner(
         { role: 'vendor' } as any,
-        { title: 'Banner 1', description: 'Desc', sequenceNumber: 1 },
+        { title: 'Banner 1', sequenceNumber: 1 },
         { body: {} } as any,
         undefined,
       ),
@@ -86,7 +85,6 @@ describe('AdminController Banner Endpoints', () => {
       { role: 'staff' },
       {
         title: 'Banner 1',
-        description: 'Desc',
         sequenceNumber: 1,
         status: 'active',
         imageUrl: 'https://example.com/banner.jpg',
@@ -102,13 +100,71 @@ describe('AdminController Banner Endpoints', () => {
     );
   });
 
+  it('creates banner with video only (no image)', async () => {
+    const uploadFileUtil = require('../utils/upload-file.util');
+    const spy = jest
+      .spyOn(uploadFileUtil, 'uploadFile')
+      .mockResolvedValue({ fileUrl: '/uploads/banners/banner-video-1.mp4' });
+
+    adminServiceMock.createBanner.mockResolvedValue({
+      id: 'b1',
+      title: 'Video Banner',
+      videoUrl: '/uploads/banners/banner-video-1.mp4',
+    } as any);
+
+    const res = await controller.createBanner(
+      { vendorId: 'v1' },
+      {
+        title: 'Video Banner',
+        sequenceNumber: 1,
+        status: 'active',
+        videoDurationSeconds: 12,
+      },
+      { body: { videoDurationSeconds: 12 } } as any,
+      {
+        video: [
+          {
+            fieldname: 'video',
+            originalname: 'clip.mp4',
+            mimetype: 'video/mp4',
+            size: 1024,
+            buffer: Buffer.alloc(1024),
+          } as any,
+        ],
+      },
+    );
+
+    expect(adminServiceMock.createBanner).toHaveBeenCalledWith(
+      'v1',
+      expect.objectContaining({
+        imageUrl: '',
+        videoUrl: '/uploads/banners/banner-video-1.mp4',
+      }),
+      'manual_url',
+      'binary_upload',
+    );
+    expect(res.message).toBe('Banner created successfully');
+    spy.mockRestore();
+  });
+
+  it('rejects create when neither image nor video is provided', async () => {
+    await expect(
+      controller.createBanner(
+        { vendorId: 'v1' },
+        { title: 'Banner 1', sequenceNumber: 1 },
+        { body: {} } as any,
+        undefined,
+      ),
+    ).rejects.toThrow(/Banner media is required/);
+  });
+
   it('edits banner and forwards payload', async () => {
     adminServiceMock.updateBanner.mockResolvedValue({ id: 'b1', title: 'Updated' } as any);
 
     const res = await controller.editBanner(
       { vendorId: 'v1' },
       'b1',
-      { title: 'Updated', description: 'Desc', sequenceNumber: 2, status: 'inactive' },
+      { title: 'Updated', sequenceNumber: 2, status: 'inactive' },
       {} as any,
       undefined,
     );
@@ -117,7 +173,6 @@ describe('AdminController Banner Endpoints', () => {
       title: 'Updated',
       status: 'inactive',
       sequenceNumber: 2,
-      description: 'Desc',
     });
     expect(res.message).toBe('Banner updated successfully');
   });
@@ -130,7 +185,6 @@ describe('AdminController Banner Endpoints', () => {
       'b1',
       {
         title: 'Updated',
-        description: 'Desc',
         sequenceNumber: 2,
         status: 'active',
         imageUrl: 'https://cdn.example.com/existing-banner.jpg',
@@ -145,7 +199,6 @@ describe('AdminController Banner Endpoints', () => {
       title: 'Updated',
       status: 'active',
       sequenceNumber: 2,
-      description: 'Desc',
     });
     expect(res.message).toBe('Banner updated successfully');
   });
