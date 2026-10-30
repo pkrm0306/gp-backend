@@ -1561,13 +1561,23 @@ export class ProductRegistrationService implements OnModuleInit {
         email_id: '',
         phone_number: '',
         designation: '',
+        status: 1,
       };
     }
+    const statusRaw = slot.status;
+    const status =
+      statusRaw === 0 ||
+      statusRaw === '0' ||
+      statusRaw === false ||
+      String(statusRaw ?? '').trim().toLowerCase() === 'inactive'
+        ? 0
+        : 1;
     return {
       name: String(slot.name ?? '').trim(),
       email_id: String(slot.email_id ?? '').trim(),
       phone_number: String(slot.phone_number ?? '').trim(),
       designation: String(slot.designation ?? '').trim(),
+      status,
     };
   }
 

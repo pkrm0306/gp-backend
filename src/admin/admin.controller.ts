@@ -1502,7 +1502,7 @@ export class AdminController {
       [
         // Accept extras so we can keep the first EVENT_MAX_IMAGES (rest ignored).
         { name: 'image', maxCount: 50 },
-        { name: 'image[]', maxCount: 50 },
+        { name: 'image[]', maxCount: 50 }, 
         { name: 'images', maxCount: 50 },
         { name: 'eventImage', maxCount: 50 },
         { name: 'event_image', maxCount: 50 },

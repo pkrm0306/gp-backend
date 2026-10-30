@@ -61,6 +61,7 @@ import { AuthService } from '../auth/auth.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
 import { LifecycleNotificationService } from '../notifications/lifecycle-notification.service';
+import { PartnersService } from '../partners/partners.service';
 import { countCertifiedPlantCertificatesByManufacturerIds } from '../product-registration/helpers/certified-plant-certificate-count.util';
 import {
   ProductPlant,
@@ -159,6 +160,7 @@ export class ManufacturersService implements OnModuleInit {
     private readonly zohoDealsService: ZohoDealsService,
     @Inject(forwardRef(() => LifecycleNotificationService))
     private readonly lifecycleNotification: LifecycleNotificationService,
+    private readonly partnersService: PartnersService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -1120,6 +1122,72 @@ export class ManufacturersService implements OnModuleInit {
       .exec();
   }
 
+  /**
+   * Manufacturer whose technical or marketing contact email matches (vendor profile contacts).
+   */
+  async findByProfileContactEmail(
+    email: string,
+  ): Promise<ManufacturerDocument | null> {
+    const normalized = String(email ?? '').trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    const notSoftDeleted = {
+      $or: [
+        { accountDeletedAt: { $exists: false } },
+        { accountDeletedAt: null },
+      ],
+    };
+    const emailRegex = new RegExp(`^${escapeRegex(normalized)}$`, 'i');
+    return this.manufacturerModel
+      .findOne({
+        ...notSoftDeleted,
+        $or: [
+          { 'technicalContact.email_id': normalized },
+          { 'marketingContact.email_id': normalized },
+          { 'technicalContact.email_id': emailRegex },
+          { 'marketingContact.email_id': emailRegex },
+        ],
+      })
+      .exec();
+  }
+
+  /**
+   * Ensure technical/marketing contact emails have Active partner portal logins.
+   * Used after profile contact save and lazily on vendor login for contact emails.
+   */
+  async ensurePortalAccessForManufacturerContacts(
+    manufacturer: ManufacturerDocument,
+    options?: { preferredPassword?: string },
+  ): Promise<void> {
+    const manufacturerId = manufacturer._id.toString();
+    const slots = [
+      manufacturer.technicalContact,
+      manufacturer.marketingContact,
+    ];
+    const contacts = slots
+      .map((slot) => ({
+        name: String(slot?.name ?? '').trim(),
+        email: String(slot?.email_id ?? '').trim(),
+        phone: String(slot?.phone_number ?? '').trim(),
+        status: this.resolveVendorContactStatus(slot?.status) as 0 | 1,
+      }))
+      .filter((c) => c.email);
+
+    if (!contacts.length) {
+      return;
+    }
+
+    await this.partnersService.ensurePortalAccessForProfileContacts(
+      manufacturerId,
+      contacts,
+      {
+        ownerEmail: String(manufacturer.vendor_email ?? '').trim(),
+        preferredPassword: options?.preferredPassword,
+      },
+    );
+  }
+
   async findByVendorPhone(
     phone: string,
   ): Promise<ManufacturerDocument | null> {
@@ -1333,7 +1401,18 @@ export class ManufacturersService implements OnModuleInit {
       email_id: '',
       phone_number: '',
       designation: '',
+      status: 1,
     };
+  }
+
+  private resolveVendorContactStatus(value: unknown): 0 | 1 {
+    if (value === undefined || value === null || value === '') return 1;
+    if (typeof value === 'boolean') return value ? 1 : 0;
+    const raw = String(value).trim().toLowerCase();
+    if (raw === '0' || raw === 'inactive' || raw === 'false') return 0;
+    const n = Number(raw);
+    if (n === 0) return 0;
+    return 1;
   }
 
   private mapVendorContactSlot(
@@ -1348,6 +1427,25 @@ export class ManufacturersService implements OnModuleInit {
       email_id: String(s.email_id ?? '').trim(),
       phone_number: String(s.phone_number ?? '').trim(),
       designation: String(s.designation ?? '').trim(),
+      status: this.resolveVendorContactStatus(s.status),
+    };
+  }
+
+  private toVendorContactSlotWrite(
+    dto: {
+      name: string;
+      email_id: string;
+      phone_number: string;
+      designation: string;
+      status?: 0 | 1;
+    },
+  ) {
+    return {
+      name: dto.name.trim(),
+      email_id: dto.email_id.trim().toLowerCase(),
+      phone_number: dto.phone_number.trim(),
+      designation: dto.designation.trim(),
+      status: this.resolveVendorContactStatus(dto.status),
     };
   }
 
@@ -2124,21 +2222,14 @@ export class ManufacturersService implements OnModuleInit {
     const session = await this.connection.startSession();
     session.startTransaction();
     try {
+      const technicalContact = this.toVendorContactSlotWrite(dto.technicalContact);
+      const marketingContact = this.toVendorContactSlotWrite(dto.marketingContact);
+
       await this.update(
         resolvedManufacturer._id.toString(),
         {
-          technicalContact: {
-            name: dto.technicalContact.name.trim(),
-            email_id: dto.technicalContact.email_id.trim().toLowerCase(),
-            phone_number: dto.technicalContact.phone_number.trim(),
-            designation: dto.technicalContact.designation.trim(),
-          },
-          marketingContact: {
-            name: dto.marketingContact.name.trim(),
-            email_id: dto.marketingContact.email_id.trim().toLowerCase(),
-            phone_number: dto.marketingContact.phone_number.trim(),
-            designation: dto.marketingContact.designation.trim(),
-          },
+          technicalContact,
+          marketingContact,
         } as Partial<Manufacturer>,
         session,
       );
@@ -2147,6 +2238,36 @@ export class ManufacturersService implements OnModuleInit {
       if (!updated) {
         throw new NotFoundException('Manufacturer not found');
       }
+
+      // Sync partner portal logins: Active → ensure login; Inactive → restrict access.
+      const manufacturerId = resolvedManufacturer._id.toString();
+      try {
+        await this.partnersService.ensurePortalAccessForProfileContacts(
+          manufacturerId,
+          [
+            {
+              name: technicalContact.name,
+              email: technicalContact.email_id,
+              phone: technicalContact.phone_number,
+              status: technicalContact.status,
+            },
+            {
+              name: marketingContact.name,
+              email: marketingContact.email_id,
+              phone: marketingContact.phone_number,
+              status: marketingContact.status,
+            },
+          ],
+          {
+            ownerEmail: String(updated.vendor_email ?? '').trim(),
+          },
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Profile contact portal access seeding failed: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      }
+
       return {
         technicalContact: this.mapVendorContactSlot(updated.technicalContact),
         marketingContact: this.mapVendorContactSlot(updated.marketingContact),

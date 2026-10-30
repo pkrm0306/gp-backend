@@ -181,7 +181,10 @@ export class VendorController {
   @ApiOperation({
     summary: 'Update technical and marketing contacts',
     description:
-      'JSON body with **technicalContact** and **marketingContact** objects. Each must include **name**, **email_id**, **phone_number**, and **designation** (all required).',
+      'JSON body with **technicalContact** and **marketingContact** objects. Each must include **name**, **email_id**, **phone_number**, and **designation** (all required). ' +
+      'Optional **status** per contact: **1/active** (default) enables portal login; **0/inactive** restricts portal access. ' +
+      'Each contact email is provisioned a partner login when missing; new Active accounts receive credentials by email. ' +
+      'The manufacturer owner email is skipped (already has vendor login).',
   })
   @ApiBody({ type: UpdateVendorContactsDto })
   @ApiResponse({ status: 200, description: 'Contacts updated successfully' })

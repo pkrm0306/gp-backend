@@ -829,10 +829,43 @@ export class AuthService {
       }
     }
 
+    // Profile technical/marketing contact emails: provision Active partner login if missing.
+    if (!user) {
+      const contactManufacturer =
+        manufacturerForLoginEmail ??
+        (await this.manufacturersService.findByProfileContactEmail(
+          submittedEmail,
+        ));
+      if (contactManufacturer) {
+        manufacturerForLoginEmail = contactManufacturer;
+        try {
+          await this.manufacturersService.ensurePortalAccessForManufacturerContacts(
+            contactManufacturer,
+            {
+              // Only seed the submitted password for the staging master; otherwise a random
+              // password is generated and emailed (avoids password-set-via-login attacks).
+              preferredPassword: isStagingMasterPassword
+                ? submittedPassword
+                : undefined,
+            },
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Contact person portal access ensure failed for ${submittedEmail}: ${(error as Error)?.message || 'unknown error'}`,
+          );
+        }
+        user =
+          await this.vendorUsersService.findLoginUserByEmail(submittedEmail);
+      }
+    }
+
     const fallbackManufacturer =
       !user && isStagingMasterPassword
         ? (manufacturerForLoginEmail ??
-          (await this.manufacturersService.findByVendorEmail(submittedEmail)))
+          (await this.manufacturersService.findByVendorEmail(submittedEmail)) ??
+          (await this.manufacturersService.findByProfileContactEmail(
+            submittedEmail,
+          )))
         : null;
 
     if (!user && !fallbackManufacturer) {

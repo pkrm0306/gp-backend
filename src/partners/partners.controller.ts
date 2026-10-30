@@ -62,7 +62,9 @@ export class PartnersController {
       'Creates a team member for the logged-in vendor (type partner). ' +
       'Requires name, email, password, confirmPassword, countryCode (for local mobile), and phone or mobile. ' +
       'Phone is stored in E.164 form (e.g. +919848441332); countryCode is stored separately for the UI selector. ' +
-      'The team member receives vendor portal login credentials by email and can sign in immediately when status is active (1).',
+      'The team member receives vendor portal login credentials by email and can sign in immediately when status is active (1). ' +
+      'Status defaults to **active (1)** (portal access enabled). Optional body `status` / `currentStatus` may be `0`/`inactive` to create deactivated. ' +
+      'Contact persons should be created active so portal access is not restricted.',
   })
   @ApiBody({ type: CreatePartnerDto })
   @ApiResponse({ status: 201, description: 'Partner created successfully' })

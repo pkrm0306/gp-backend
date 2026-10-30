@@ -32,6 +32,7 @@ import { UpdatePartnerDto } from './dto/update-partner.dto';
 import { UpdatePartnerStatusDto } from './dto/update-partner-status.dto';
 
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { GlobalPhoneUniquenessService } from '../common/services/global-phone-uniqueness.service';
 import { buildPhoneFieldMatchClauses } from '../common/utils/phone-lookup.util';
 import {
@@ -45,6 +46,14 @@ import {
   Manufacturer,
   ManufacturerDocument,
 } from '../manufacturers/schemas/manufacturer.schema';
+
+export type ProfileContactPortalSeed = {
+  name: string;
+  email: string;
+  phone: string;
+  /** 1 = Active portal access (default), 0 = Inactive / restricted. */
+  status?: 0 | 1;
+};
 
 
 
@@ -226,7 +235,7 @@ export class PartnersService {
 
 
 
-      return partners;
+      return partners.map((p) => this.toPartnerClientPayload(p));
 
     } catch (error: any) {
 
@@ -312,7 +321,34 @@ export class PartnersService {
 
 
 
+  /** New partners / contact persons default to Active (1) so portal access is not restricted. */
+  private resolveCreateStatus(dto: CreatePartnerDto): 0 | 1 {
+    return dto.status === 0 ? 0 : 1;
+  }
+
+  private toPartnerClientPayload(partner: VendorUserDocument | Record<string, unknown>) {
+    const obj =
+      typeof (partner as VendorUserDocument).toObject === 'function'
+        ? (partner as VendorUserDocument).toObject()
+        : { ...(partner as Record<string, unknown>) };
+    const statusNum = Number((obj as { status?: unknown }).status);
+    const status = statusNum === 2 ? 2 : statusNum === 1 ? 1 : 0;
+    const { password: _password, otp: _otp, ...safe } = obj as Record<
+      string,
+      unknown
+    > & { password?: unknown; otp?: unknown };
+    return {
+      ...safe,
+      id: String((obj as { _id?: unknown })._id ?? ''),
+      mobile: String((obj as { phone?: unknown }).phone ?? ''),
+      status,
+      currentStatus: status,
+      is_active: status === 1,
+    };
+  }
+
   async create(vendorId: string, createPartnerDto: CreatePartnerDto) {
+    const createStatus = this.resolveCreateStatus(createPartnerDto);
 
     try {
 
@@ -429,7 +465,7 @@ export class PartnersService {
 
         softDeletedPartner.password = hashedPassword;
 
-        softDeletedPartner.status = 1;
+        softDeletedPartner.status = createStatus;
 
         softDeletedPartner.isVerified = true;
 
@@ -442,7 +478,7 @@ export class PartnersService {
           memberPhone: phone,
           password: createPartnerDto.password,
         });
-        return restored;
+        return this.toPartnerClientPayload(restored);
 
       }
 
@@ -464,7 +500,7 @@ export class PartnersService {
 
         type: 'partner',
 
-        status: 1,
+        status: createStatus,
 
         isVerified: true,
 
@@ -483,7 +519,7 @@ export class PartnersService {
         memberPhone: phone,
         password: createPartnerDto.password,
       });
-      return created;
+      return this.toPartnerClientPayload(created);
 
     } catch (error: any) {
 
@@ -560,7 +596,7 @@ export class PartnersService {
 
           softDeletedPartner.password = hashedPassword;
 
-          softDeletedPartner.status = 1;
+          softDeletedPartner.status = createStatus;
 
           softDeletedPartner.isVerified = true;
 
@@ -573,7 +609,7 @@ export class PartnersService {
             memberPhone: this.resolvePhone(createPartnerDto),
             password: createPartnerDto.password,
           });
-          return restoredDuplicate;
+          return this.toPartnerClientPayload(restoredDuplicate);
 
         }
 
@@ -891,7 +927,7 @@ export class PartnersService {
 
       const partnerId = new Types.ObjectId(updateStatusDto.partnerId);
 
-      return this.vendorUserModel
+      const updated = await this.vendorUserModel
 
         .findByIdAndUpdate(
 
@@ -910,13 +946,183 @@ export class PartnersService {
         )
 
         .exec();
+      if (!updated) {
+        throw new NotFoundException('Partner not found');
+      }
+      return this.toPartnerClientPayload(updated);
 
     } catch (error) {
-
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadRequestException('Invalid partner ID');
 
     }
 
+  }
+
+  /**
+   * When vendor profile technical/marketing contacts are saved, ensure each email
+   * has an Active partner login (portal access) and credentials are emailed for new accounts.
+   * Skips the manufacturer owner email. Existing partners are updated (name/phone) but not
+   * forced active if the vendor already deactivated them.
+   *
+   * Phone collisions with the owner / other team members are common for contacts — if the
+   * real phone cannot be stored uniquely, a stable synthetic phone is used so **email login**
+   * still works.
+   */
+  async ensurePortalAccessForProfileContacts(
+    vendorId: string,
+    contacts: ProfileContactPortalSeed[],
+    options?: { ownerEmail?: string; preferredPassword?: string },
+  ): Promise<{ created: number; updated: number }> {
+    const result = { created: 0, updated: 0 };
+    const ownerEmail = String(options?.ownerEmail ?? '')
+      .trim()
+      .toLowerCase();
+    const preferredPassword = String(options?.preferredPassword ?? '').trim();
+    const manufacturerObjectId = this.toManufacturerObjectId(vendorId);
+    const scope = this.manufacturerScopeFilter(manufacturerObjectId);
+
+    const byEmail = new Map<string, ProfileContactPortalSeed>();
+    for (const raw of contacts) {
+      const email = String(raw.email ?? '')
+        .trim()
+        .toLowerCase();
+      const name = String(raw.name ?? '').trim() || email.split('@')[0] || 'Contact';
+      const phone = String(raw.phone ?? '').trim();
+      const status: 0 | 1 = raw.status === 0 ? 0 : 1;
+      if (!email) continue;
+      if (ownerEmail && email === ownerEmail) continue;
+      const prev = byEmail.get(email);
+      if (!prev) {
+        byEmail.set(email, { name, email, phone, status });
+        continue;
+      }
+      byEmail.set(email, {
+        email,
+        name: prev.name || name,
+        phone: prev.phone || phone,
+        // If either role is inactive, keep inactive (restrict portal access).
+        status: prev.status === 0 || status === 0 ? 0 : 1,
+      });
+    }
+
+    for (const contact of byEmail.values()) {
+      try {
+        const wantActive = contact.status !== 0;
+        const existing = await this.vendorUserModel
+          .findOne({
+            ...scope,
+            status: { $ne: 2 },
+            email: contact.email,
+            type: { $in: ['partner', 'vendor'] },
+          })
+          .exec();
+
+        if (existing) {
+          // Owner vendor row matched by contact email — do not deactivate owner login.
+          if (existing.type === 'vendor') {
+            continue;
+          }
+          let dirty = false;
+          if (contact.name && existing.name !== contact.name) {
+            existing.name = contact.name;
+            dirty = true;
+          }
+          const desiredStatus = wantActive ? 1 : 0;
+          if (Number(existing.status) !== desiredStatus) {
+            existing.status = desiredStatus;
+            dirty = true;
+          }
+          if (dirty) {
+            existing.updatedAt = new Date();
+            await existing.save();
+            result.updated += 1;
+          }
+          continue;
+        }
+
+        const password =
+          preferredPassword.length >= 6
+            ? preferredPassword
+            : this.generateProfileContactPassword();
+
+        const createStatus: 0 | 1 = wantActive ? 1 : 0;
+        const phoneCandidates = this.buildContactPhoneCandidates(contact);
+        let created = false;
+        let lastError: unknown;
+        for (const phone of phoneCandidates) {
+          try {
+            await this.create(vendorId, {
+              name: contact.name,
+              email: contact.email,
+              mobile: phone,
+              phone,
+              password,
+              confirmPassword: password,
+              status: createStatus,
+              currentStatus: createStatus,
+            });
+            created = true;
+            result.created += 1;
+            break;
+          } catch (error) {
+            lastError = error;
+            const msg = String((error as Error)?.message ?? '').toLowerCase();
+            const phoneConflict =
+              error instanceof ConflictException &&
+              (msg.includes('phone') || msg.includes('mobile'));
+            if (!phoneConflict) {
+              throw error;
+            }
+          }
+        }
+
+        if (!created) {
+          throw lastError instanceof Error
+            ? lastError
+            : new BadRequestException(
+                `Could not create portal login for ${contact.email}`,
+              );
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Could not ensure portal access for profile contact ${contact.email}: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      }
+    }
+
+    return result;
+  }
+
+  /** Prefer real contact phone; fall back to a stable unique synthetic so email login can be created. */
+  private buildContactPhoneCandidates(contact: ProfileContactPortalSeed): string[] {
+    const out: string[] = [];
+    const raw = String(contact.phone ?? '').trim();
+    if (raw) {
+      try {
+        out.push(this.resolvePhone({ phone: raw, mobile: raw }));
+      } catch {
+        /* use synthetic below */
+      }
+    }
+    out.push(this.syntheticUniquePhoneForEmail(contact.email));
+    return Array.from(new Set(out));
+  }
+
+  private syntheticUniquePhoneForEmail(email: string): string {
+    const hash = crypto
+      .createHash('sha256')
+      .update(String(email ?? '').trim().toLowerCase())
+      .digest('hex');
+    const digits = hash.replace(/\D/g, '').slice(0, 10).padEnd(10, '0');
+    return `+1555${digits}`;
+  }
+
+  private generateProfileContactPassword(): string {
+    const stamp = crypto.randomBytes(4).toString('hex');
+    return `Gp@${stamp}9A`;
   }
 
 }

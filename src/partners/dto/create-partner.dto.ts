@@ -4,11 +4,25 @@ import {
   IsString,
   IsEmail,
   IsNotEmpty,
+  IsIn,
+  IsOptional,
   MinLength,
   Matches,
   ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
+
+function resolvePartnerCreateStatus(value: unknown): 0 | 1 | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  const raw = String(value).trim().toLowerCase();
+  if (raw === '1' || raw === 'active' || raw === 'true') return 1;
+  if (raw === '0' || raw === 'inactive' || raw === 'false') return 0;
+  const n = Number(raw);
+  if (n === 1) return 1;
+  if (n === 0) return 0;
+  return undefined;
+}
 
 export class CreatePartnerDto {
   @ApiProperty({ description: 'Partner / team member name' })
@@ -81,4 +95,32 @@ export class CreatePartnerDto {
   @IsString()
   @IsNotEmpty()
   confirmPassword: string;
+
+  /**
+   * Portal access status. Defaults to **1 (active)** so contact persons / team members
+   * can sign in immediately. Use **0** to create already inactive (no portal login).
+   * Also accepts `active` / `inactive` and the alias `currentStatus`.
+   */
+  @ApiPropertyOptional({
+    enum: [0, 1, 'active', 'inactive'],
+    default: 1,
+    description:
+      '1/active (default) = portal access enabled; 0/inactive = created but cannot log in until activated.',
+  })
+  @IsOptional()
+  @Transform(({ value, obj }) => {
+    const fromStatus = resolvePartnerCreateStatus(value);
+    if (fromStatus !== undefined) return fromStatus;
+    return resolvePartnerCreateStatus(obj?.currentStatus);
+  })
+  @IsIn([0, 1])
+  status?: 0 | 1;
+
+  /** Alias for `status` (vendor UI). Whitelisted so forbidNonWhitelisted does not reject create. */
+  @Allow()
+  currentStatus?: number | string | boolean;
+
+  /** Optional vendor UI hint; ignored by API (password still required in body). */
+  @Allow()
+  autoGeneratePassword?: boolean | string;
 }
