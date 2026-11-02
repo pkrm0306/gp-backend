@@ -184,13 +184,15 @@ export class VendorController {
       'JSON body with **technicalContact** and **marketingContact** objects. Each must include **name**, **email_id**, **phone_number**, and **designation** (all required). ' +
       'Optional **status** per contact: **1/active** (default) enables portal login; **0/inactive** restricts portal access. ' +
       'Each contact email is provisioned a partner login when missing; new Active accounts receive credentials by email. ' +
-      'The manufacturer owner email is skipped (already has vendor login).',
+      'The manufacturer owner email is skipped (already has vendor login). ' +
+      'Rejects with **400 VALIDATION_ERROR** when **email_id** or **phone_number** already exists, with nested **fieldErrors** under each contact field (for under-field UI, not toast).',
   })
   @ApiBody({ type: UpdateVendorContactsDto })
   @ApiResponse({ status: 200, description: 'Contacts updated successfully' })
   @ApiResponse({
     status: 400,
-    description: 'Validation error or no linked manufacturer',
+    description:
+      'Validation error, no linked manufacturer, or email/phone already exists (nested fieldErrors on technicalContact / marketingContact)',
   })
   async updateVendorContacts(
     @CurrentUser()

@@ -124,6 +124,25 @@ export class PartnersService {
     return resolvePartnerCountryCode(dto);
   }
 
+  /**
+   * Under-field validation for team-member / contact-person forms (not toast).
+   * Shape matches HttpExceptionFilter + vendor portal parsers (`email` / `mobile`).
+   */
+  private throwPartnerFieldConflict(
+    field: 'email' | 'mobile',
+    message: string,
+  ): never {
+    throw new BadRequestException({
+      statusCode: 400,
+      error: 'Bad Request',
+      code: 'VALIDATION_ERROR',
+      message,
+      fieldErrors: { [field]: message },
+      errors: { [field]: message },
+      issues: [{ field, message }],
+    });
+  }
+
   private buildPartnerPhoneMatch(phone: string): Record<string, unknown>[] {
     return buildPhoneFieldMatchClauses('phone', phone);
   }
@@ -359,9 +378,12 @@ export class PartnersService {
       return;
     }
 
-    // Soft-deleted partner/vendor belonging to another manufacturer stays blocked.
+      // Soft-deleted partner/vendor belonging to another manufacturer stays blocked.
     if (ownerId !== vendorId) {
-      throw new ConflictException('Email already exists for another vendor');
+      this.throwPartnerFieldConflict(
+        'email',
+        'Email already exists for another vendor',
+      );
     }
   }
 
@@ -514,7 +536,17 @@ export class PartnersService {
 
 
 
-      await this.globalPhoneUniqueness.assertPhoneAvailable(phone);
+      try {
+        await this.globalPhoneUniqueness.assertPhoneAvailable(phone);
+      } catch (error) {
+        if (error instanceof ConflictException) {
+          this.throwPartnerFieldConflict(
+            'mobile',
+            'Phone number already exists',
+          );
+        }
+        throw error;
+      }
 
 
 
@@ -544,14 +576,16 @@ export class PartnersService {
 
         if (existingActivePartner.email === email) {
 
-          throw new ConflictException('Email already exists for this vendor');
+          this.throwPartnerFieldConflict(
+            'email',
+            'Email already exists for this vendor',
+          );
 
         }
 
-        throw new ConflictException(
-
+        this.throwPartnerFieldConflict(
+          'mobile',
           'Phone number already exists for this vendor',
-
         );
 
       }
@@ -679,6 +713,15 @@ export class PartnersService {
           }
         }
 
+        if (field === 'email') {
+          this.throwPartnerFieldConflict('email', 'Email already exists');
+        }
+        if (field === 'phone' || field === 'mobile') {
+          this.throwPartnerFieldConflict(
+            'mobile',
+            'Phone number already exists',
+          );
+        }
         throw new ConflictException(`${field} already exists`);
 
       }
@@ -777,11 +820,19 @@ export class PartnersService {
 
         if (resolvedPhone) {
 
-          await this.globalPhoneUniqueness.assertPhoneAvailable(resolvedPhone, {
-
-            excludeUserId: partnerId,
-
-          });
+          try {
+            await this.globalPhoneUniqueness.assertPhoneAvailable(resolvedPhone, {
+              excludeUserId: partnerId,
+            });
+          } catch (error) {
+            if (error instanceof ConflictException) {
+              this.throwPartnerFieldConflict(
+                'mobile',
+                'Phone number already exists',
+              );
+            }
+            throw error;
+          }
 
         }
 
@@ -839,14 +890,16 @@ export class PartnersService {
 
           if (nextEmail && existingPartner.email === nextEmail) {
 
-            throw new ConflictException('Email already exists for this vendor');
+            this.throwPartnerFieldConflict(
+              'email',
+              'Email already exists for this vendor',
+            );
 
           }
 
-          throw new ConflictException(
-
+          this.throwPartnerFieldConflict(
+            'mobile',
             'Phone number already exists for this vendor',
-
           );
 
         }
@@ -1189,6 +1242,24 @@ export class PartnersService {
               );
         }
       } catch (error) {
+        const msg = String((error as Error)?.message ?? '').toLowerCase();
+        const emailConflict =
+          (error instanceof ConflictException ||
+            error instanceof BadRequestException) &&
+          (msg.includes('email') || msg.includes('already registered'));
+        if (emailConflict) {
+          // Include the contact email so the profile UI can target the right field.
+          const message = `Email already exists (${contact.email})`;
+          throw new BadRequestException({
+            statusCode: 400,
+            error: 'Bad Request',
+            code: 'VALIDATION_ERROR',
+            message,
+            fieldErrors: { email: message },
+            errors: { email: message },
+            issues: [{ field: 'email', message }],
+          });
+        }
         this.logger.warn(
           `Could not ensure portal access for profile contact ${contact.email}: ${(error as Error)?.message || 'unknown error'}`,
         );

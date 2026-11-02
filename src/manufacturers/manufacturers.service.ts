@@ -56,7 +56,11 @@ import {
   GlobalPhoneUniquenessService,
   GLOBAL_PHONE_UNAVAILABLE_MESSAGE,
 } from '../common/services/global-phone-uniqueness.service';
-import { buildPhoneLookupVariants, normalizePhoneDigits } from '../common/utils/phone-lookup.util';
+import {
+  buildPhoneFieldMatchClauses,
+  buildPhoneLookupVariants,
+  normalizePhoneDigits,
+} from '../common/utils/phone-lookup.util';
 import { AuthService } from '../auth/auth.service';
 import { normalizeManufacturerName } from './manufacturer-identifier.util';
 import { ZohoDealsService } from '../zoho/services/zoho-deals.service';
@@ -585,6 +589,259 @@ export class ManufacturersService implements OnModuleInit {
 
     await Promise.all(tasks);
     return conflicts;
+  }
+
+  /**
+   * True when another manufacturer already stores this email on technical/marketing contacts.
+   */
+  private async isProfileContactEmailTakenOnAnotherManufacturer(
+    email: string,
+    excludeManufacturerId: string,
+    session?: ClientSession,
+  ): Promise<boolean> {
+    const normalized = this.normalizeVendorEmail(email);
+    if (!normalized) {
+      return false;
+    }
+    const emailRx = this.vendorEmailCaseInsensitiveRegex(normalized);
+    const filter: Record<string, unknown> = {
+      $or: [
+        { accountDeletedAt: { $exists: false } },
+        { accountDeletedAt: null },
+      ],
+      $and: [
+        {
+          $or: [
+            { 'technicalContact.email_id': normalized },
+            { 'marketingContact.email_id': normalized },
+            { 'technicalContact.email_id': emailRx },
+            { 'marketingContact.email_id': emailRx },
+          ],
+        },
+      ],
+    };
+    if (Types.ObjectId.isValid(excludeManufacturerId)) {
+      filter._id = { $ne: new Types.ObjectId(excludeManufacturerId) };
+    }
+    const query = this.manufacturerModel.findOne(filter).select('_id').lean();
+    if (session) query.session(session);
+    return Boolean(await query.exec());
+  }
+
+  /**
+   * True when another manufacturer already stores this phone on technical/marketing contacts.
+   */
+  private async isProfileContactPhoneTakenOnAnotherManufacturer(
+    phone: string,
+    excludeManufacturerId: string,
+    session?: ClientSession,
+  ): Promise<boolean> {
+    const trimmed = String(phone ?? '').trim();
+    if (!trimmed) {
+      return false;
+    }
+    const techClauses = buildPhoneFieldMatchClauses(
+      'technicalContact.phone_number',
+      trimmed,
+    );
+    const marketingClauses = buildPhoneFieldMatchClauses(
+      'marketingContact.phone_number',
+      trimmed,
+    );
+    const phoneOr = [...techClauses, ...marketingClauses];
+    if (!phoneOr.length) {
+      return false;
+    }
+    const filter: Record<string, unknown> = {
+      $and: [
+        { $or: phoneOr },
+        {
+          $or: [
+            { accountDeletedAt: { $exists: false } },
+            { accountDeletedAt: null },
+          ],
+        },
+      ],
+    };
+    if (Types.ObjectId.isValid(excludeManufacturerId)) {
+      filter._id = { $ne: new Types.ObjectId(excludeManufacturerId) };
+    }
+    const query = this.manufacturerModel.findOne(filter).select('_id').lean();
+    if (session) query.session(session);
+    return Boolean(await query.exec());
+  }
+
+  /**
+   * Validates technical/marketing contact tab email + phone uniqueness and returns
+   * nested fieldErrors for under-field UI (not toast):
+   * `{ technicalContact: { email_id, phone_number }, marketingContact: { ... } }`.
+   */
+  private async collectVendorProfileContactTabConflicts(
+    manufacturerId: string,
+    slots: {
+      prefix: 'technicalContact' | 'marketingContact';
+      email_id: string;
+      phone_number: string;
+    }[],
+    options?: { session?: ClientSession },
+  ): Promise<{
+    messages: string[];
+    fieldErrors: Record<string, Record<string, string>>;
+    issues: Array<{ field: string; message: string }>;
+  }> {
+    const messages: string[] = [];
+    const fieldErrors: Record<string, Record<string, string>> = {};
+    const issues: Array<{ field: string; message: string }> = [];
+    const emailMsg = this.vendorEmailDuplicateMessage();
+    const phoneMsg = GLOBAL_PHONE_UNAVAILABLE_MESSAGE;
+
+    const ensureSlot = (prefix: string) => {
+      if (!fieldErrors[prefix]) {
+        fieldErrors[prefix] = {};
+      }
+      return fieldErrors[prefix];
+    };
+
+    const emailAvailability = new Map<string, boolean>();
+    const phoneAvailability = new Map<string, boolean>();
+
+    for (const slot of slots) {
+      const email = this.normalizeVendorEmail(slot.email_id);
+      const phone = String(slot.phone_number ?? '').trim();
+
+      if (email) {
+        let available = emailAvailability.get(email);
+        if (available === undefined) {
+          const [portalAvailable, takenOnOtherMfg] = await Promise.all([
+            this.isVendorEmailAvailableForManufacturer(manufacturerId, email),
+            this.isProfileContactEmailTakenOnAnotherManufacturer(
+              email,
+              manufacturerId,
+              options?.session,
+            ),
+          ]);
+          available = portalAvailable && !takenOnOtherMfg;
+          emailAvailability.set(email, available);
+        }
+        if (!available) {
+          ensureSlot(slot.prefix).email_id = emailMsg;
+          issues.push({ field: `${slot.prefix}.email_id`, message: emailMsg });
+          messages.push(emailMsg);
+        }
+      }
+
+      if (phone) {
+        const phoneKey =
+          normalizePhoneDigits(phone).slice(-10) || phone.toLowerCase();
+        let available = phoneAvailability.get(phoneKey);
+        if (available === undefined) {
+          const [portalConflicts, takenOnOtherMfg] = await Promise.all([
+            this.collectManufacturerContactConflicts(
+              manufacturerId,
+              { phone },
+              { session: options?.session },
+            ),
+            this.isProfileContactPhoneTakenOnAnotherManufacturer(
+              phone,
+              manufacturerId,
+              options?.session,
+            ),
+          ]);
+          available = portalConflicts.length === 0 && !takenOnOtherMfg;
+          phoneAvailability.set(phoneKey, available);
+        }
+        if (!available) {
+          ensureSlot(slot.prefix).phone_number = phoneMsg;
+          issues.push({
+            field: `${slot.prefix}.phone_number`,
+            message: phoneMsg,
+          });
+          messages.push(phoneMsg);
+        }
+      }
+    }
+
+    return { messages: Array.from(new Set(messages)), fieldErrors, issues };
+  }
+
+  /**
+   * Convert a late portal-seed ConflictException into nested contact fieldErrors
+   * so the vendor profile UI can show the message under email/phone (not toast).
+   */
+  private toVendorContactsValidationError(
+    error: ConflictException,
+    technical: { email_id: string; phone_number: string },
+    marketing: { email_id: string; phone_number: string },
+  ): BadRequestException {
+    const raw = error.getResponse();
+    const messageText =
+      typeof raw === 'string'
+        ? raw
+        : typeof raw === 'object' &&
+            raw &&
+            typeof (raw as { message?: unknown }).message === 'string'
+          ? String((raw as { message: string }).message)
+          : Array.isArray(
+                typeof raw === 'object' && raw
+                  ? (raw as { message?: unknown }).message
+                  : undefined,
+              )
+            ? ((raw as { message: string[] }).message).join('; ')
+            : error.message;
+
+    const lower = messageText.toLowerCase();
+    const isEmail = lower.includes('email');
+    const isPhone = !isEmail && (lower.includes('phone') || lower.includes('mobile'));
+    const emailMsg = this.vendorEmailDuplicateMessage();
+    const phoneMsg = GLOBAL_PHONE_UNAVAILABLE_MESSAGE;
+    const fieldErrors: Record<string, Record<string, string>> = {};
+    const issues: Array<{ field: string; message: string }> = [];
+
+    const matchEmail = (slotEmail: string) => {
+      const normalized = this.normalizeVendorEmail(slotEmail);
+      return normalized && lower.includes(normalized);
+    };
+
+    const attachEmail = (prefix: 'technicalContact' | 'marketingContact') => {
+      if (!fieldErrors[prefix]) fieldErrors[prefix] = {};
+      fieldErrors[prefix].email_id = emailMsg;
+      issues.push({ field: `${prefix}.email_id`, message: emailMsg });
+    };
+    const attachPhone = (prefix: 'technicalContact' | 'marketingContact') => {
+      if (!fieldErrors[prefix]) fieldErrors[prefix] = {};
+      fieldErrors[prefix].phone_number = phoneMsg;
+      issues.push({ field: `${prefix}.phone_number`, message: phoneMsg });
+    };
+
+    if (isEmail) {
+      const techHit = matchEmail(technical.email_id);
+      const mktHit = matchEmail(marketing.email_id);
+      if (techHit) attachEmail('technicalContact');
+      if (mktHit) attachEmail('marketingContact');
+      if (!techHit && !mktHit) {
+        if (technical.email_id) attachEmail('technicalContact');
+        else if (marketing.email_id) attachEmail('marketingContact');
+      }
+    } else if (isPhone) {
+      if (technical.phone_number) attachPhone('technicalContact');
+      if (marketing.phone_number) attachPhone('marketingContact');
+    } else if (technical.email_id) {
+      attachEmail('technicalContact');
+    }
+
+    const messages = Array.from(
+      new Set(issues.map((i) => i.message).filter(Boolean)),
+    );
+
+    return new BadRequestException({
+      statusCode: 400,
+      error: 'Bad Request',
+      code: 'VALIDATION_ERROR',
+      message: messages.join('; ') || emailMsg,
+      fieldErrors,
+      errors: fieldErrors,
+      issues,
+    });
   }
 
   private async assertVendorPhoneAvailableForUserId(
@@ -2240,14 +2497,45 @@ export class ManufacturersService implements OnModuleInit {
       String(resolvedManufacturer.marketingContact?.email_id ?? '').trim(),
     ].filter(Boolean);
 
+    const technicalContact = this.toVendorContactSlotWrite(dto.technicalContact);
+    const marketingContact = this.toVendorContactSlotWrite(dto.marketingContact);
+    const manufacturerId = resolvedManufacturer._id.toString();
+
+    const {
+      messages: contactConflicts,
+      fieldErrors: contactFieldErrors,
+      issues: contactIssues,
+    } = await this.collectVendorProfileContactTabConflicts(manufacturerId, [
+      {
+        prefix: 'technicalContact',
+        email_id: technicalContact.email_id,
+        phone_number: technicalContact.phone_number,
+      },
+      {
+        prefix: 'marketingContact',
+        email_id: marketingContact.email_id,
+        phone_number: marketingContact.phone_number,
+      },
+    ]);
+    if (contactConflicts.length > 0) {
+      // VALIDATION_ERROR + nested fieldErrors so the vendor profile UI shows
+      // messages under email/phone fields instead of a toast.
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        code: 'VALIDATION_ERROR',
+        message: contactConflicts.join('; '),
+        fieldErrors: contactFieldErrors,
+        errors: contactFieldErrors,
+        issues: contactIssues,
+      });
+    }
+
     const session = await this.connection.startSession();
     session.startTransaction();
     try {
-      const technicalContact = this.toVendorContactSlotWrite(dto.technicalContact);
-      const marketingContact = this.toVendorContactSlotWrite(dto.marketingContact);
-
       await this.update(
-        resolvedManufacturer._id.toString(),
+        manufacturerId,
         {
           technicalContact,
           marketingContact,
@@ -2255,14 +2543,13 @@ export class ManufacturersService implements OnModuleInit {
         session,
       );
       await session.commitTransaction();
-      const updated = await this.findById(resolvedManufacturer._id.toString());
+      const updated = await this.findById(manufacturerId);
       if (!updated) {
         throw new NotFoundException('Manufacturer not found');
       }
 
       // Sync partner portal logins: Active → ensure login; Inactive → restrict access.
       // Also soft-delete partners for replaced contact emails so they leave the employee list.
-      const manufacturerId = resolvedManufacturer._id.toString();
       try {
         await this.partnersService.ensurePortalAccessForProfileContacts(
           manufacturerId,
@@ -2286,6 +2573,18 @@ export class ManufacturersService implements OnModuleInit {
           },
         );
       } catch (error) {
+        if (error instanceof BadRequestException) {
+          // Already shaped as VALIDATION_ERROR with fieldErrors from partners.
+          throw error;
+        }
+        if (error instanceof ConflictException) {
+          // Map late portal-seed conflicts onto nested contact fields for under-field UI.
+          throw this.toVendorContactsValidationError(
+            error,
+            technicalContact,
+            marketingContact,
+          );
+        }
         this.logger.warn(
           `Profile contact portal access seeding failed: ${(error as Error)?.message || 'unknown error'}`,
         );
