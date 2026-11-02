@@ -1266,6 +1266,9 @@ export class ManufacturersService implements OnModuleInit {
       vendorUser.name,
     );
 
+    const portalType = String(vendorUser.type ?? '').trim().toLowerCase();
+    const portalStatus = Number(vendorUser.status);
+
     return {
       _id: manufacturer._id,
       manufacturerName: manufacturer.manufacturerName,
@@ -1317,6 +1320,19 @@ export class ManufacturersService implements OnModuleInit {
       marketingContact: this.mapVendorContactSlot(
         manufacturer.marketingContact as VendorContactSlot | undefined,
       ),
+      // Login identity (partner vs vendor owner) for portal session checks / refresh UX.
+      userId: vendorUser._id.toString(),
+      vendorUserId: vendorUser._id.toString(),
+      type: portalType || 'vendor',
+      role: portalType || 'vendor',
+      ...(portalType === 'partner'
+        ? {
+            currentStatus: portalStatus,
+            // Partner account status only — do not override manufacturer vendor_status above.
+            partnerStatus: portalStatus,
+            isPartner: true,
+          }
+        : {}),
       createdAt: manufacturer.createdAt,
       updatedAt: manufacturer.updatedAt,
     };

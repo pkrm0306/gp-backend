@@ -830,6 +830,9 @@ export class AuthService {
     }
 
     // Profile technical/marketing contact emails: provision Active partner login if missing.
+    // Soft-deleted staff/partner rows that still hold the global unique email are reclaimed
+    // inside PartnersService so login gets a real partner userId (not manufacturerId).
+    let loginViaProfileContact = false;
     if (!user) {
       const contactManufacturer =
         manufacturerForLoginEmail ??
@@ -837,6 +840,7 @@ export class AuthService {
           submittedEmail,
         ));
       if (contactManufacturer) {
+        loginViaProfileContact = true;
         manufacturerForLoginEmail = contactManufacturer;
         try {
           await this.manufacturersService.ensurePortalAccessForManufacturerContacts(
@@ -859,17 +863,21 @@ export class AuthService {
       }
     }
 
+    // Manufacturer-only staging fallback is for primary vendor_email rows missing a users doc.
+    // Never use it for profile contacts — JWT userId would be the manufacturer id and
+    // refresh /profile fail in assertVendorPortalUserAccountActive.
     const fallbackManufacturer =
-      !user && isStagingMasterPassword
+      !user && isStagingMasterPassword && !loginViaProfileContact
         ? (manufacturerForLoginEmail ??
-          (await this.manufacturersService.findByVendorEmail(submittedEmail)) ??
-          (await this.manufacturersService.findByProfileContactEmail(
-            submittedEmail,
-          )))
+          (await this.manufacturersService.findByVendorEmail(submittedEmail)))
         : null;
 
     if (!user && !fallbackManufacturer) {
-      throw new UnauthorizedException('Email not registered');
+      throw new UnauthorizedException(
+        loginViaProfileContact
+          ? 'Portal access could not be enabled for this contact email'
+          : 'Email not registered',
+      );
     }
 
     if (user && !isStagingMasterPassword) {

@@ -326,6 +326,101 @@ export class PartnersService {
     return dto.status === 0 ? 0 : 1;
   }
 
+  /**
+   * Soft-deleted rows (esp. legacy staff) still occupy the global unique `email` index.
+   * Reclaim them as Active partners so profile-contact / team-member portal logins work.
+   */
+  private async findReclaimableSoftDeletedByEmail(
+    email: string,
+  ): Promise<VendorUserDocument | null> {
+    return this.vendorUserModel
+      .findOne({
+        email,
+        status: 2,
+      })
+      .exec();
+  }
+
+  private assertSoftDeletedEmailCanBecomePartner(
+    softDeleted: VendorUserDocument,
+    vendorId: string,
+  ): void {
+    const type = String(softDeleted.type ?? '')
+      .trim()
+      .toLowerCase();
+    const ownerId =
+      softDeleted.manufacturerId?.toString() || softDeleted.vendorId?.toString();
+
+    // Soft-deleted platform accounts (or unscoped rows) can be reused for vendor portal login.
+    if (type === 'staff' || type === 'admin' || !ownerId) {
+      return;
+    }
+
+    // Soft-deleted partner/vendor belonging to another manufacturer stays blocked.
+    if (ownerId !== vendorId) {
+      throw new ConflictException('Email already exists for another vendor');
+    }
+  }
+
+  private async restoreSoftDeletedAsPartner(
+    softDeleted: VendorUserDocument,
+    vendorId: string,
+    params: {
+      name: string;
+      email: string;
+      phone: string;
+      countryCode?: string;
+      password: string;
+      status: 0 | 1;
+    },
+  ): Promise<VendorUserDocument> {
+    this.assertSoftDeletedEmailCanBecomePartner(softDeleted, vendorId);
+    const manufacturerObjectId = this.toManufacturerObjectId(vendorId);
+    const hashedPassword = await bcrypt.hash(params.password, 10);
+
+    const updated = await this.vendorUserModel
+      .findByIdAndUpdate(
+        softDeleted._id,
+        {
+          $set: {
+            manufacturerId: manufacturerObjectId,
+            vendorId: manufacturerObjectId,
+            name: params.name,
+            email: params.email,
+            phone: params.phone,
+            ...(params.countryCode ? { countryCode: params.countryCode } : {}),
+            password: hashedPassword,
+            type: 'partner',
+            status: params.status,
+            isVerified: true,
+            updatedAt: new Date(),
+          },
+          // Drop staff/website-team fields that unique indexes / validation still key on.
+          $unset: {
+            team: 1,
+            businessVertical: 1,
+            displayOrder: 1,
+            sector_ids: 1,
+            sector_id: 1,
+            category_ids: 1,
+            category_id: 1,
+            image: 1,
+            designation: 1,
+            showOnWebsite: 1,
+          },
+        },
+        { new: true, runValidators: true },
+      )
+      .exec();
+
+    if (!updated) {
+      throw new BadRequestException(
+        `Could not restore portal login for ${params.email}`,
+      );
+    }
+    return updated;
+  }
+
   private toPartnerClientPayload(partner: VendorUserDocument | Record<string, unknown>) {
     const obj =
       typeof (partner as VendorUserDocument).toObject === 'function'
@@ -415,63 +510,21 @@ export class PartnersService {
 
 
 
-      const softDeletedPartner = await this.vendorUserModel
+      const softDeletedUser = await this.findReclaimableSoftDeletedByEmail(email);
 
-        .findOne({
-
-          email,
-
-          status: 2,
-
-          type: 'partner',
-
-        })
-
-        .exec();
-
-
-
-      if (softDeletedPartner) {
-
-        const ownerId =
-
-          softDeletedPartner.manufacturerId?.toString() ||
-
-          softDeletedPartner.vendorId?.toString();
-
-        if (ownerId !== vendorId) {
-
-          throw new ConflictException(
-
-            'Email already exists for another vendor',
-
-          );
-
-        }
-
-        const hashedPassword = await bcrypt.hash(createPartnerDto.password, 10);
-
-        softDeletedPartner.manufacturerId = manufacturerObjectId;
-
-        softDeletedPartner.vendorId = manufacturerObjectId;
-
-        softDeletedPartner.name = createPartnerDto.name.trim();
-
-        softDeletedPartner.phone = phone;
-
-        if (countryCode) {
-          softDeletedPartner.countryCode = countryCode;
-        }
-
-        softDeletedPartner.password = hashedPassword;
-
-        softDeletedPartner.status = createStatus;
-
-        softDeletedPartner.isVerified = true;
-
-        softDeletedPartner.updatedAt = new Date();
-
-        const restored = await softDeletedPartner.save();
+      if (softDeletedUser) {
+        const restored = await this.restoreSoftDeletedAsPartner(
+          softDeletedUser,
+          vendorId,
+          {
+            name: createPartnerDto.name.trim(),
+            email,
+            phone,
+            countryCode,
+            password: createPartnerDto.password,
+            status: createStatus,
+          },
+        );
         this.scheduleAdminTeamMemberRegisteredEmail(vendorId, {
           memberName: createPartnerDto.name.trim(),
           memberEmail: email,
@@ -479,7 +532,6 @@ export class PartnersService {
           password: createPartnerDto.password,
         });
         return this.toPartnerClientPayload(restored);
-
       }
 
 
@@ -538,79 +590,45 @@ export class PartnersService {
       if (error.code === 11000) {
 
         const field = Object.keys(error.keyPattern || {})[0] || 'field';
+        const conflictValue = error.keyValue?.[field];
+        const softDeletedUser =
+          field === 'email' && conflictValue
+            ? await this.findReclaimableSoftDeletedByEmail(
+                String(conflictValue).trim().toLowerCase(),
+              )
+            : await this.vendorUserModel
+                .findOne({
+                  [field]: conflictValue,
+                  status: 2,
+                })
+                .exec();
 
-        const softDeletedPartner = await this.vendorUserModel
-
-          .findOne({
-
-            [field]: error.keyValue?.[field],
-
-            status: 2,
-
-            type: 'partner',
-
-          })
-
-          .exec();
-
-
-
-        const ownerId =
-
-          softDeletedPartner?.manufacturerId?.toString() ||
-
-          softDeletedPartner?.vendorId?.toString();
-
-
-
-        if (softDeletedPartner && ownerId === vendorId) {
-
-          const hashedPassword = await bcrypt.hash(
-
-            createPartnerDto.password,
-
-            10,
-
-          );
-
-          softDeletedPartner.manufacturerId =
-
-            this.toManufacturerObjectId(vendorId);
-
-          softDeletedPartner.vendorId = this.toManufacturerObjectId(vendorId);
-
-          softDeletedPartner.name = createPartnerDto.name.trim();
-
-          softDeletedPartner.email = createPartnerDto.email
-
-            .trim()
-
-            .toLowerCase();
-
-          softDeletedPartner.phone = this.resolvePhone(createPartnerDto);
-
-          const restoredCountryCode = this.resolveCountryCode(createPartnerDto);
-          if (restoredCountryCode) {
-            softDeletedPartner.countryCode = restoredCountryCode;
+        if (softDeletedUser) {
+          try {
+            const restoredDuplicate = await this.restoreSoftDeletedAsPartner(
+              softDeletedUser,
+              vendorId,
+              {
+                name: createPartnerDto.name.trim(),
+                email: createPartnerDto.email.trim().toLowerCase(),
+                phone: this.resolvePhone(createPartnerDto),
+                countryCode: this.resolveCountryCode(createPartnerDto),
+                password: createPartnerDto.password,
+                status: createStatus,
+              },
+            );
+            this.scheduleAdminTeamMemberRegisteredEmail(vendorId, {
+              memberName: createPartnerDto.name.trim(),
+              memberEmail: createPartnerDto.email.trim().toLowerCase(),
+              memberPhone: this.resolvePhone(createPartnerDto),
+              password: createPartnerDto.password,
+            });
+            return this.toPartnerClientPayload(restoredDuplicate);
+          } catch (restoreError) {
+            if (restoreError instanceof ConflictException) {
+              throw restoreError;
+            }
           }
-
-          softDeletedPartner.password = hashedPassword;
-
-          softDeletedPartner.status = createStatus;
-
-          softDeletedPartner.isVerified = true;
-
-          softDeletedPartner.updatedAt = new Date();
-
-          const restoredDuplicate = await softDeletedPartner.save();
-          this.scheduleAdminTeamMemberRegisteredEmail(vendorId, {
-            memberName: createPartnerDto.name.trim(),
-            memberEmail: createPartnerDto.email.trim().toLowerCase(),
-            memberPhone: this.resolvePhone(createPartnerDto),
-            password: createPartnerDto.password,
-          });
-          return this.toPartnerClientPayload(restoredDuplicate);
-
         }
 
         throw new ConflictException(`${field} already exists`);
