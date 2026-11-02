@@ -2235,6 +2235,11 @@ export class ManufacturersService implements OnModuleInit {
       );
     }
 
+    const previousContactEmails = [
+      String(resolvedManufacturer.technicalContact?.email_id ?? '').trim(),
+      String(resolvedManufacturer.marketingContact?.email_id ?? '').trim(),
+    ].filter(Boolean);
+
     const session = await this.connection.startSession();
     session.startTransaction();
     try {
@@ -2256,6 +2261,7 @@ export class ManufacturersService implements OnModuleInit {
       }
 
       // Sync partner portal logins: Active → ensure login; Inactive → restrict access.
+      // Also soft-delete partners for replaced contact emails so they leave the employee list.
       const manufacturerId = resolvedManufacturer._id.toString();
       try {
         await this.partnersService.ensurePortalAccessForProfileContacts(
@@ -2276,6 +2282,7 @@ export class ManufacturersService implements OnModuleInit {
           ],
           {
             ownerEmail: String(updated.vendor_email ?? '').trim(),
+            previousEmails: previousContactEmails,
           },
         );
       } catch (error) {

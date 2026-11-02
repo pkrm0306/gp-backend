@@ -217,25 +217,28 @@ export class PartnersService {
 
 
 
-      const partners = await this.vendorUserModel
+      const [partners, contactPhoneByEmail] = await Promise.all([
+        this.vendorUserModel
+          .find({
+            ...this.manufacturerScopeFilter(manufacturerObjectId),
+            type: 'partner',
+            status: { $ne: 2 },
+          })
+          .sort({ createdAt: -1, _id: -1 })
+          .exec(),
+        this.getProfileContactPhoneByEmail(manufacturerObjectId),
+      ]);
 
-        .find({
-
-          ...this.manufacturerScopeFilter(manufacturerObjectId),
-
-          type: 'partner',
-
-          status: { $ne: 2 },
-
-        })
-
-        .sort({ createdAt: -1, _id: -1 })
-
-        .exec();
-
-
-
-      return partners.map((p) => this.toPartnerClientPayload(p));
+      return partners.map((p) => {
+        const email = String(p.email ?? '')
+          .trim()
+          .toLowerCase();
+        const profilePhone = contactPhoneByEmail.get(email);
+        return this.toPartnerClientPayload(
+          p,
+          profilePhone ? { phone: profilePhone } : undefined,
+        );
+      });
 
     } catch (error: any) {
 
@@ -421,7 +424,10 @@ export class PartnersService {
     return updated;
   }
 
-  private toPartnerClientPayload(partner: VendorUserDocument | Record<string, unknown>) {
+  private toPartnerClientPayload(
+    partner: VendorUserDocument | Record<string, unknown>,
+    overrides?: { phone?: string },
+  ) {
     const obj =
       typeof (partner as VendorUserDocument).toObject === 'function'
         ? (partner as VendorUserDocument).toObject()
@@ -432,14 +438,56 @@ export class PartnersService {
       string,
       unknown
     > & { password?: unknown; otp?: unknown };
+    const phone =
+      overrides?.phone !== undefined
+        ? String(overrides.phone ?? '').trim()
+        : String((obj as { phone?: unknown }).phone ?? '');
     return {
       ...safe,
+      phone,
       id: String((obj as { _id?: unknown })._id ?? ''),
-      mobile: String((obj as { phone?: unknown }).phone ?? ''),
+      mobile: phone,
       status,
       currentStatus: status,
       is_active: status === 1,
     };
+  }
+
+  /**
+   * Map of profile technical/marketing contact email → phone_number as saved on the
+   * manufacturer (so employee list can show the same number as the profile section).
+   */
+  private async getProfileContactPhoneByEmail(
+    manufacturerObjectId: Types.ObjectId,
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    const manufacturer = await this.manufacturerModel
+      .findById(manufacturerObjectId)
+      .select('technicalContact marketingContact')
+      .lean()
+      .exec();
+    if (!manufacturer) {
+      return map;
+    }
+
+    const slots = [
+      (manufacturer as { technicalContact?: { email_id?: string; phone_number?: string } })
+        .technicalContact,
+      (manufacturer as { marketingContact?: { email_id?: string; phone_number?: string } })
+        .marketingContact,
+    ];
+    for (const slot of slots) {
+      const email = String(slot?.email_id ?? '')
+        .trim()
+        .toLowerCase();
+      const phone = String(slot?.phone_number ?? '').trim();
+      if (!email || !phone) continue;
+      // Prefer first non-empty; if both contacts share email, keep existing.
+      if (!map.has(email)) {
+        map.set(email, phone);
+      }
+    }
+    return map;
   }
 
   async create(vendorId: string, createPartnerDto: CreatePartnerDto) {
@@ -985,6 +1033,10 @@ export class PartnersService {
    * Skips the manufacturer owner email. Existing partners are updated (name/phone) but not
    * forced active if the vendor already deactivated them.
    *
+   * When `previousEmails` is provided (profile contact edit), partner rows for emails that
+   * are no longer technical/marketing contacts are soft-deleted (status 2) so they leave
+   * the employee / team-member list.
+   *
    * Phone collisions with the owner / other team members are common for contacts — if the
    * real phone cannot be stored uniquely, a stable synthetic phone is used so **email login**
    * still works.
@@ -992,9 +1044,14 @@ export class PartnersService {
   async ensurePortalAccessForProfileContacts(
     vendorId: string,
     contacts: ProfileContactPortalSeed[],
-    options?: { ownerEmail?: string; preferredPassword?: string },
-  ): Promise<{ created: number; updated: number }> {
-    const result = { created: 0, updated: 0 };
+    options?: {
+      ownerEmail?: string;
+      preferredPassword?: string;
+      /** Prior technical/marketing emails before this save (for removing obsolete list rows). */
+      previousEmails?: string[];
+    },
+  ): Promise<{ created: number; updated: number; removed: number }> {
+    const result = { created: 0, updated: 0, removed: 0 };
     const ownerEmail = String(options?.ownerEmail ?? '')
       .trim()
       .toLowerCase();
@@ -1053,10 +1110,33 @@ export class PartnersService {
             existing.status = desiredStatus;
             dirty = true;
           }
+          // Keep stored phone aligned with profile when uniqueness allows (else list
+          // still overlays profile phone via findAll).
+          const phoneBeforeSync = String(existing.phone ?? '');
+          const syncedPhone = await this.trySyncProfileContactPhone(
+            existing,
+            contact,
+            vendorId,
+          );
+          if (syncedPhone) {
+            dirty = true;
+          }
           if (dirty) {
             existing.updatedAt = new Date();
-            await existing.save();
-            result.updated += 1;
+            try {
+              await existing.save();
+              result.updated += 1;
+            } catch (saveError: any) {
+              // Unique phone index can reject when contact shares the owner number.
+              if (saveError?.code === 11000 && syncedPhone) {
+                existing.phone = phoneBeforeSync;
+                existing.updatedAt = new Date();
+                await existing.save();
+                result.updated += 1;
+              } else {
+                throw saveError;
+              }
+            }
           }
           continue;
         }
@@ -1088,10 +1168,14 @@ export class PartnersService {
           } catch (error) {
             lastError = error;
             const msg = String((error as Error)?.message ?? '').toLowerCase();
-            const phoneConflict =
-              error instanceof ConflictException &&
-              (msg.includes('phone') || msg.includes('mobile'));
-            if (!phoneConflict) {
+            const phoneIssue =
+              (error instanceof ConflictException ||
+                error instanceof BadRequestException) &&
+              (msg.includes('phone') ||
+                msg.includes('mobile') ||
+                msg.includes('country code') ||
+                msg.includes('dial'));
+            if (!phoneIssue) {
               throw error;
             }
           }
@@ -1111,7 +1195,156 @@ export class PartnersService {
       }
     }
 
+    result.removed = await this.softDeleteObsoleteProfileContactPartners(
+      vendorId,
+      Array.from(byEmail.keys()),
+      options?.previousEmails ?? [],
+      ownerEmail,
+    );
+
     return result;
+  }
+
+  /**
+   * Soft-delete partner portal rows for previous profile-contact emails that are no longer
+   * technical/marketing contacts (so they disappear from the employee list).
+   * Never removes the manufacturer owner or emails still present on current contacts.
+   */
+  private async softDeleteObsoleteProfileContactPartners(
+    vendorId: string,
+    currentEmails: string[],
+    previousEmails: string[],
+    ownerEmail: string,
+  ): Promise<number> {
+    const keep = new Set(
+      currentEmails
+        .map((e) => String(e ?? '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+    if (ownerEmail) {
+      keep.add(ownerEmail);
+    }
+
+    const obsolete = Array.from(
+      new Set(
+        previousEmails
+          .map((e) => String(e ?? '').trim().toLowerCase())
+          .filter((e) => e && !keep.has(e)),
+      ),
+    );
+    if (!obsolete.length) {
+      return 0;
+    }
+
+    const manufacturerObjectId = this.toManufacturerObjectId(vendorId);
+    const scope = this.manufacturerScopeFilter(manufacturerObjectId);
+    let removed = 0;
+
+    for (const email of obsolete) {
+      try {
+        const result = await this.vendorUserModel
+          .updateMany(
+            {
+              ...scope,
+              type: 'partner',
+              status: { $ne: 2 },
+              email,
+            },
+            {
+              $set: {
+                status: 2,
+                updatedAt: new Date(),
+              },
+            },
+          )
+          .exec();
+        removed += Number(result.modifiedCount ?? 0);
+      } catch (error) {
+        this.logger.warn(
+          `Could not soft-delete obsolete profile contact partner ${email}: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      }
+    }
+
+    return removed;
+  }
+
+  /**
+   * Attempt to store the profile contact phone on an existing partner row.
+   * Returns true when the in-memory document was updated (caller must save).
+   * Skips quietly when the number is taken (unique index / global uniqueness) —
+   * employee list still shows the profile number via {@link findAll} overlay.
+   */
+  private async trySyncProfileContactPhone(
+    existing: VendorUserDocument,
+    contact: ProfileContactPortalSeed,
+    vendorId: string,
+  ): Promise<boolean> {
+    const raw = String(contact.phone ?? '').trim();
+    if (!raw) {
+      return false;
+    }
+
+    let desiredPhone: string;
+    try {
+      desiredPhone = this.resolvePhone({ phone: raw, mobile: raw });
+    } catch {
+      desiredPhone = raw;
+    }
+
+    const current = String(existing.phone ?? '').trim();
+    if (
+      this.phonesLookSame(current, desiredPhone) ||
+      this.phonesLookSame(current, raw)
+    ) {
+      return false;
+    }
+
+    try {
+      await this.globalPhoneUniqueness.assertPhoneAvailable(desiredPhone, {
+        excludeUserId: existing._id,
+      });
+
+      const manufacturerObjectId = this.toManufacturerObjectId(vendorId);
+      const phoneMatch = this.buildPartnerPhoneMatch(desiredPhone);
+      if (phoneMatch.length) {
+        const conflict = await this.vendorUserModel
+          .findOne({
+            ...this.manufacturerScopeFilter(manufacturerObjectId),
+            _id: { $ne: existing._id },
+            status: { $ne: 2 },
+            $or: phoneMatch,
+          })
+          .select('_id')
+          .lean()
+          .exec();
+        if (conflict) {
+          return false;
+        }
+      }
+
+      existing.phone = desiredPhone;
+      return true;
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        return false;
+      }
+      this.logger.warn(
+        `Could not sync profile contact phone for ${contact.email}: ${(error as Error)?.message || 'unknown error'}`,
+      );
+      return false;
+    }
+  }
+
+  private phonesLookSame(a: string, b: string): boolean {
+    const digits = (v: string) => String(v ?? '').replace(/\D/g, '');
+    const da = digits(a);
+    const db = digits(b);
+    if (!da || !db) return false;
+    if (da === db) return true;
+    const ta = da.length >= 10 ? da.slice(-10) : da;
+    const tb = db.length >= 10 ? db.slice(-10) : db;
+    return ta === tb;
   }
 
   /** Prefer real contact phone; fall back to a stable unique synthetic so email login can be created. */
@@ -1122,7 +1355,9 @@ export class PartnersService {
       try {
         out.push(this.resolvePhone({ phone: raw, mobile: raw }));
       } catch {
-        /* use synthetic below */
+        // Keep the profile phone as typed when normalization fails — better for list
+        // display when uniqueness still allows the raw value.
+        out.push(raw);
       }
     }
     out.push(this.syntheticUniquePhoneForEmail(contact.email));
