@@ -49,7 +49,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public manufacturers listing',
     description:
-      'Public API to list manufacturers with optional list filters. Only manufacturers with at least one certified, active (non-deleted) product are returned. Each manufacturer includes manufacturer_product_count, productCount, and resolved manufacturerImage / manufacturerImageUrl URLs for the public website.',
+      'Public API to list manufacturers with optional list filters. Only manufacturers with at least one certified, active (non-deleted) product are returned. Each manufacturer includes manufacturer_product_count, productCount, certifiedProductCount (same public visibility as POST /website/public/products/certified/list), optional city / stateName / countryName from the most common primary plant among those products (manufacturer HQ city is not stored), and resolved manufacturerImage / manufacturerImageUrl URLs for the public website.',
   })
   @ApiResponse({
     status: 200,
@@ -64,7 +64,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public categories listing',
     description:
-      'Public API to list categories with optional list filters. Only categories with at least one certified, active (non-deleted) product are returned. Each category includes category_product_count, category_manufacturer_count, and resolved category_image / category_image_url / categoryImageUrl fields for the public website.',
+      'Public API to list categories with optional list filters. Only categories with at least one certified, active (non-deleted) product are returned. Each category includes category_product_count, productCount, certifiedProductCount (same public visibility as POST /website/public/products/certified/list), category_manufacturer_count, and resolved category_image / category_image_url / categoryImageUrl fields for the public website.',
   })
   @ApiResponse({
     status: 200,
@@ -83,7 +83,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public category by unique slug',
     description:
-      'Resolve an active category for SEO paths `/categories/{categorySlug}`. Returns 404 when missing or inactive / without certified products.',
+      'Resolve an active category for SEO paths `/categories/{categorySlug}`. Includes certifiedProductCount / productCount / category_product_count (same visibility as certified/list). Returns 404 when missing or inactive / without certified products.',
   })
   @ApiResponse({ status: 200, description: 'Category retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Category not found' })
@@ -101,7 +101,7 @@ export class WebsiteController {
   @ApiOperation({
     summary: 'Public manufacturer by unique slug',
     description:
-      'Resolve a website-visible manufacturer for SEO paths `/manufacturers/{manufacturerSlug}`.',
+      'Resolve a website-visible manufacturer for SEO paths `/manufacturers/{manufacturerSlug}`. Includes certifiedProductCount and optional city / stateName / countryName (same rules as the public manufacturers listing).',
   })
   @ApiResponse({
     status: 200,

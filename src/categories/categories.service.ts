@@ -54,7 +54,29 @@ export type CategoryListItem = Record<string, unknown> & {
   categoryImageUrl?: string | null;
   category_product_count?: number;
   category_manufacturer_count?: number;
+  /** Same value as category_product_count; mirrors manufacturer.certifiedProductCount */
+  certifiedProductCount?: number;
+  productCount?: number;
 };
+
+/** Public website count aliases (frontend accepts certifiedProductCount / productCount). */
+function withPublicCategoryProductCountAliases(counts: {
+  category_product_count: number;
+  category_manufacturer_count: number;
+}): {
+  category_product_count: number;
+  category_manufacturer_count: number;
+  certifiedProductCount: number;
+  productCount: number;
+} {
+  const n = counts.category_product_count;
+  return {
+    category_product_count: n,
+    category_manufacturer_count: counts.category_manufacturer_count,
+    certifiedProductCount: n,
+    productCount: n,
+  };
+}
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -269,7 +291,7 @@ export class CategoriesService implements OnModuleInit {
       category_image_url,
       categoryImageUrl: category_image_url,
       ...seo,
-      ...counts,
+      ...withPublicCategoryProductCountAliases(counts),
     };
   }
 
@@ -596,7 +618,7 @@ export class CategoriesService implements OnModuleInit {
     const cacheKey = this.redisService.buildKey(
       'categories',
       'list',
-      'website-public-certified-products-v4-slugs',
+      'website-public-certified-products-v5-certifiedProductCount',
       JSON.stringify({
         sector: query.sector ?? null,
         sectors: String(query.sectors || '')
@@ -671,7 +693,7 @@ export class CategoriesService implements OnModuleInit {
         category_image_url,
         categoryImageUrl: category_image_url,
         ...seo,
-        ...counts,
+        ...withPublicCategoryProductCountAliases(counts),
       };
     });
 

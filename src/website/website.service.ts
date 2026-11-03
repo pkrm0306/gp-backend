@@ -367,7 +367,7 @@ export class WebsiteService {
       'public',
       'manufacturers',
       'with-certified-products',
-      'v6-slugs',
+      'v7-location-counts',
       this.shortHash(this.stableJsonStringify(normalized)),
     );
   }
@@ -1427,7 +1427,7 @@ export class WebsiteService {
       'website',
       'public',
       'categories-by-manufacturer',
-      'v4-slugs',
+      'v5-certifiedProductCount',
       manufacturerSlug || manufacturerId,
     );
     try {

@@ -79,6 +79,13 @@ import ExcelJS from 'exceljs';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 
+/** Display location for public manufacturer directory cards. */
+type ManufacturerPublicDisplayLocation = {
+  city: string;
+  stateName?: string | null;
+  countryName?: string | null;
+};
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -255,10 +262,11 @@ export class ManufacturersService implements OnModuleInit {
       throw new NotFoundException('Manufacturer not found');
     }
 
+    const manufacturerId = new Types.ObjectId(String(m._id));
     const productCount = await this.productModel
       .countDocuments(
         matchWebsitePublicCertifiedProducts({
-          manufacturerId: m._id,
+          manufacturerId,
         }),
       )
       .exec();
@@ -266,9 +274,14 @@ export class ManufacturersService implements OnModuleInit {
       throw new NotFoundException('Manufacturer not found');
     }
 
+    const locationByManufacturerId =
+      await this.loadPublicDisplayLocationByManufacturerIds([manufacturerId]);
+
     return this.formatManufacturerApiRow(m as any, {
       productCount,
       manufacturer_product_count: productCount,
+      certifiedProductCount: productCount,
+      location: locationByManufacturerId.get(manufacturerId.toString()),
       applySeoDefa: true,
     });
   }
@@ -1112,7 +1125,9 @@ export class ManufacturersService implements OnModuleInit {
       manufacturer_product_count?: number;
       manufacturer_vendor_count?: number;
       productCount?: number;
+      certifiedProductCount?: number;
       certifiedPlantCount?: number;
+      location?: ManufacturerPublicDisplayLocation | null;
       applySeoDefa?: boolean;
     } = {},
   ) {
@@ -1184,9 +1199,37 @@ export class ManufacturersService implements OnModuleInit {
       ...(options.productCount !== undefined
         ? { productCount: options.productCount }
         : {}),
+      ...(options.certifiedProductCount !== undefined
+        ? { certifiedProductCount: options.certifiedProductCount }
+        : options.productCount !== undefined
+          ? { certifiedProductCount: options.productCount }
+          : {}),
+      ...this.formatPublicManufacturerLocationFields(options.location),
       ...seo,
       createdAt: m.createdAt,
       updatedAt: m.updatedAt,
+    };
+  }
+
+  private formatPublicManufacturerLocationFields(
+    location?: ManufacturerPublicDisplayLocation | null,
+  ): {
+    city?: string;
+    state?: string;
+    stateName?: string;
+    country?: string;
+    countryName?: string;
+  } {
+    if (!location) {
+      return {};
+    }
+    const city = String(location.city ?? '').trim();
+    const stateName = String(location.stateName ?? '').trim();
+    const countryName = String(location.countryName ?? '').trim();
+    return {
+      ...(city ? { city } : {}),
+      ...(stateName ? { state: stateName, stateName } : {}),
+      ...(countryName ? { country: countryName, countryName } : {}),
     };
   }
 
@@ -3712,6 +3755,159 @@ export class ManufacturersService implements OnModuleInit {
   }
 
   /**
+   * Preferred card location: manufacturer HQ/profile city is not stored, so fall back
+   * to the most common primary-plant city among publicly listed certified products
+   * (same visibility as POST /website/public/products/certified/list). Tie-break by
+   * earliest plant `createdDate` for stable directory display.
+   */
+  private async loadPublicDisplayLocationByManufacturerIds(
+    manufacturerIds: Types.ObjectId[],
+  ): Promise<Map<string, ManufacturerPublicDisplayLocation>> {
+    if (!manufacturerIds.length) {
+      return new Map();
+    }
+
+    const rows = await this.productModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        city: string | null;
+        stateName: string | null;
+        countryName: string | null;
+      }>([
+        {
+          $match: matchWebsitePublicCertifiedProducts({
+            manufacturerId: { $in: manufacturerIds },
+          }),
+        },
+        {
+          $lookup: {
+            from: 'product_plants',
+            let: { pid: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$productId', '$$pid'] },
+                  is_deleted: { $ne: true },
+                },
+              },
+              { $sort: { createdDate: 1 as const } },
+              { $limit: 1 },
+              {
+                $lookup: {
+                  from: 'states',
+                  localField: 'stateId',
+                  foreignField: '_id',
+                  as: 'st',
+                },
+              },
+              {
+                $unwind: {
+                  path: '$st',
+                  preserveNullAndEmptyArrays: true,
+                },
+              },
+              {
+                $lookup: {
+                  from: 'countries',
+                  localField: 'countryId',
+                  foreignField: '_id',
+                  as: 'co',
+                },
+              },
+              {
+                $unwind: {
+                  path: '$co',
+                  preserveNullAndEmptyArrays: true,
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  city: 1,
+                  stateId: 1,
+                  countryId: 1,
+                  createdDate: 1,
+                  stateName: {
+                    $ifNull: ['$st.stateName', '$st.name'],
+                  },
+                  countryName: {
+                    $ifNull: ['$co.countryName', '$co.name'],
+                  },
+                },
+              },
+            ],
+            as: 'primaryPlant',
+          },
+        },
+        {
+          $unwind: {
+            path: '$primaryPlant',
+            preserveNullAndEmptyArrays: false,
+          },
+        },
+        {
+          $addFields: {
+            _cityKey: {
+              $toLower: {
+                $trim: {
+                  input: { $ifNull: ['$primaryPlant.city', ''] },
+                },
+              },
+            },
+          },
+        },
+        {
+          $match: {
+            _cityKey: { $ne: '' },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              manufacturerId: '$manufacturerId',
+              cityKey: '$_cityKey',
+              stateId: '$primaryPlant.stateId',
+              countryId: '$primaryPlant.countryId',
+            },
+            city: { $first: '$primaryPlant.city' },
+            stateName: { $first: '$primaryPlant.stateName' },
+            countryName: { $first: '$primaryPlant.countryName' },
+            count: { $sum: 1 },
+            earliestPlant: { $min: '$primaryPlant.createdDate' },
+          },
+        },
+        { $sort: { count: -1 as const, earliestPlant: 1 as const } },
+        {
+          $group: {
+            _id: '$_id.manufacturerId',
+            city: { $first: '$city' },
+            stateName: { $first: '$stateName' },
+            countryName: { $first: '$countryName' },
+          },
+        },
+      ])
+      .exec();
+
+    const out = new Map<string, ManufacturerPublicDisplayLocation>();
+    for (const row of rows) {
+      const city = String(row.city ?? '').trim();
+      if (!city) continue;
+      out.set(String(row._id), {
+        city,
+        stateName:
+          row.stateName != null && String(row.stateName).trim() !== ''
+            ? String(row.stateName).trim()
+            : null,
+        countryName:
+          row.countryName != null && String(row.countryName).trim() !== ''
+            ? String(row.countryName).trim()
+            : null,
+      });
+    }
+    return out;
+  }
+
+  /**
    * Public website manufacturers listing: only manufacturers with at least one certified,
    * non–soft-deleted product, excluding inactive / account-deleted manufacturers.
    */
@@ -3794,13 +3990,19 @@ export class ManufacturersService implements OnModuleInit {
     const manufacturerIds = rows.map((m) => new Types.ObjectId(String(m._id)));
     const useWebsitePublicCertifiedProductCount =
       options?.useWebsitePublicCertifiedProductCount === true;
-    const [vendorUsersByMfgId, publicProductCountsByManufacturerId] =
-      await Promise.all([
-        this.loadPrimaryVendorUsersByManufacturerIds(manufacturerIds),
-        useWebsitePublicCertifiedProductCount
-          ? this.countWebsitePublicProductsByManufacturer(manufacturerIds)
-          : Promise.resolve(undefined),
-      ]);
+    const [
+      vendorUsersByMfgId,
+      publicProductCountsByManufacturerId,
+      publicLocationByManufacturerId,
+    ] = await Promise.all([
+      this.loadPrimaryVendorUsersByManufacturerIds(manufacturerIds),
+      useWebsitePublicCertifiedProductCount
+        ? this.countWebsitePublicProductsByManufacturer(manufacturerIds)
+        : Promise.resolve(undefined),
+      useWebsitePublicCertifiedProductCount
+        ? this.loadPublicDisplayLocationByManufacturerIds(manufacturerIds)
+        : Promise.resolve(undefined),
+    ]);
 
     const certifiedPlantCountsByManufacturerId =
       useWebsitePublicCertifiedProductCount
@@ -3823,6 +4025,8 @@ export class ManufacturersService implements OnModuleInit {
             primaryVendorUserId: primaryVendor?.userId,
             manufacturer_product_count,
             productCount: manufacturer_product_count,
+            certifiedProductCount: manufacturer_product_count,
+            location: publicLocationByManufacturerId?.get(mid.toString()),
             applySeoDefa: true,
           });
         }

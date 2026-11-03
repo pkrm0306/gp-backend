@@ -10805,11 +10805,15 @@ export class ProductRegistrationService implements OnModuleInit {
         row.category_image,
         apiBaseUrl,
       );
+      const productCount = Number(row.productCount ?? 0);
       return {
         ...row,
         category_image: category_image_url ?? row.category_image ?? null,
         category_image_url,
         categoryImageUrl: category_image_url,
+        productCount,
+        category_product_count: productCount,
+        certifiedProductCount: productCount,
       };
     });
 
